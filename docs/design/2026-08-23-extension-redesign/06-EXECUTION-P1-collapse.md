@@ -280,3 +280,50 @@ removed from the user's settings afterwards.
   path comment pin the current location.
 - Retire the `/sliver/*` route alias and the `hayba_sliver_*` tool aliases one
   release after this ships.
+
+
+---
+
+## Library directory moved — DONE and verified live (2026-08-25)
+
+`%APPDATA%/Hayba/slivers` -> `%APPDATA%/Hayba/recipes`. Both halves moved in
+one commit (`4a8dbc0f`) because they read the same directory: move one and the
+Recipes panel goes empty.
+
+Both run the same migration before their first read. It renames the directory,
+which is atomic, so the two are expected to race on startup and losing is
+harmless — the loser finds the destination already there. When the destination
+exists (partly migrated, or the other half won) it moves over only what is
+missing and never overwrites, so a spec edited since upgrading is not clobbered
+by the stale copy left behind. A move, not a copy: two live libraries would
+drift the moment either was edited.
+
+**Verified against the real library, not just in tests.** The machine's library
+was staged back into a genuine pre-upgrade state (only the old directory, both
+spec spellings inside) and the editor launched:
+
+    LogTemp: HaybaRecipeLoader: moved the recipe library to
+             C:\Users\Admin\AppData\Roaming/Hayba/recipes
+
+`slivers/` is gone, `recipes/` holds everything.
+
+**A bug that only the live test would have caught.** The migration was first
+wired into `SRecipesPanel::Construct`, so it ran only if the user happened to
+open the Recipes tab. The first live launch migrated nothing and the directory
+sat unmoved. A data migration gated on visiting a particular tab is not a
+migration, it is a coin flip. It moved to `FHaybaMCPModule::StartupModule`
+(`bfb14fc1`), which is where it belongs, and the second launch moved the
+library immediately.
+
+The unit tests passed the whole time — they exercise `MigrateLegacyLibrary`
+directly and never had an opinion about who calls it.
+
+**Coverage:** 3 vitest cases plus `Hayba.Recipes.Loader.LibraryMove` (whole-
+directory move, partly-migrated fill-without-overwrite, nothing-to-do). Both
+UE tests `Result={Success}` on the final build.
+
+### Remaining
+
+Retire the `/sliver/*` route alias, the `hayba_sliver_*` tool aliases and the
+`.sliver.json` read path one release after this ships. Nothing else carries the
+old vocabulary.
