@@ -34,6 +34,8 @@ import { appendMeta, isSceneMutating } from './hayba-tool-meta.js';
 import type { HaybaToolMeta } from './hayba-tool-meta.js';
 import { withValidationNudge } from './tool-result.js';
 import { isUnderEvidenceContract, withEvidenceWarning } from './response-evidence.js';
+import { unknownParamKeys, withUnknownParamWarning } from './unknown-params.js';
+import { TOOL_ALIASES } from './tool-aliases.js';
 import { recordSchema, type Cost } from './schema-registry.js';
 import { registerToolMeta } from './tool-meta-registry.js';
 import { appendNicheBriefing } from './niche-briefing.js';
@@ -150,12 +152,29 @@ export function materializeTool(
     description: appendMeta(d.description, d.meta),
     schema: d.wireSchema ?? d.schema,
     handler: async (params: Record<string, unknown>): Promise<RichToolResult> => {
+      // Every spelling this tool accepts: the canonical schema, the wire
+      // schema where it differs (compatibility aliases live there), and the
+      // alias map. Counting an accepted key as unknown would make the warning
+      // noise, and noise is how a warning stops being read.
+      const accepted = new Set<string>([
+        ...Object.keys(d.schema ?? {}),
+        ...Object.keys(d.wireSchema ?? {}),
+        // AliasMap is canonical -> [alias, ...], so BOTH sides count as
+        // accepted: a caller using a documented alias must not be told the
+        // parameter was ignored.
+        ...Object.keys(TOOL_ALIASES[d.name] ?? {}),
+        ...Object.values(TOOL_ALIASES[d.name] ?? {}).flat(),
+      ]);
+      const ignored = unknownParamKeys(params, accepted);
+
       const r = await d.handler(params, session);
       const shaped = niche
         ? appendNicheBriefing(niche, session, r)
         : { content: r.content, isError: r.isError };
       const checked = evidence ? withEvidenceWarning(shaped) : shaped;
-      return nudge ? withValidationNudge(checked) : checked;
+      const nudged = nudge ? withValidationNudge(checked) : checked;
+      // Last, so the note sits at the end of whatever else was appended.
+      return withUnknownParamWarning(nudged, ignored, accepted);
     },
   };
 }
