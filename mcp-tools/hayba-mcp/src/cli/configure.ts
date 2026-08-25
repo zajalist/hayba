@@ -65,6 +65,37 @@ export const CLIENT_SPECS: readonly ClientSpec[] = [
   },
 ] as const;
 
+/**
+ * The entry name we write.
+ *
+ * Older docs used `hayba-toolkit`, so an install that followed them has a
+ * working server under a different key. Detection must NOT key off this name
+ * -- see {@link entryPointsAtHayba} -- or doctor reports a perfectly good
+ * install as unconfigured, which is precisely the false alarm this whole
+ * feature exists to remove.
+ */
+export const CANONICAL_SERVER_NAME = 'hayba';
+
+/** Names we have historically written or documented. */
+export const KNOWN_SERVER_NAMES = ['hayba', 'hayba-toolkit'] as const;
+
+/**
+ * Does this config entry launch *our* server, whatever it is called?
+ *
+ * Keyed on the path it runs, because that is the thing that makes it ours.
+ * A user is free to name the entry anything.
+ */
+export function entryPointsAtHayba(entry: unknown): boolean {
+  if (typeof entry !== 'object' || entry === null) return false;
+  const args = (entry as { args?: unknown }).args;
+  if (!Array.isArray(args)) return false;
+  return args.some(
+    (a) =>
+      typeof a === 'string' &&
+      /hayba[-_]?mcp[\\/](dist[\\/])?index\.(js|ts)$/i.test(a.replace(/\\/g, '/')),
+  );
+}
+
 export type Verdict =
   /** No entry by that name; we added one. */
   | 'added'
@@ -72,6 +103,8 @@ export type Verdict =
   | 'already-current'
   /** An entry exists and differs. We do NOT overwrite without being told to. */
   | 'differs'
+  /** Our server is already configured, under a different entry name. */
+  | 'exists-under-other-name'
   /** The file exists but is not JSON we can safely rewrite. */
   | 'unparsable';
 
@@ -81,6 +114,8 @@ export interface ConfigPlan {
   nextText?: string;
   /** What is already there, when the verdict is `differs`. */
   existing?: unknown;
+  /** The name it is configured under, for `exists-under-other-name`. */
+  foundAs?: string;
   /** Why we refused, when we refused. */
   reason?: string;
 }
@@ -164,6 +199,23 @@ export function planConfigChange(
       reason:
         `"${serverName}" is already configured for ${spec.label} with different ` +
         'settings — not overwriting it without --force',
+    };
+  }
+
+  // No entry by our name -- but the server may already be configured under a
+  // different one. Older docs said `hayba-toolkit`, and a user may have picked
+  // their own. Adding ours anyway would leave two entries launching the same
+  // process: the client starts both, the tool list is duplicated, and nothing
+  // reports an error.
+  const otherName = Object.entries(servers).find(([, v]) => entryPointsAtHayba(v))?.[0];
+  if (otherName !== undefined) {
+    return {
+      verdict: 'exists-under-other-name',
+      foundAs: otherName,
+      reason:
+        `${spec.label} already launches this server as "${otherName}" — not adding a ` +
+        `second entry, which would start it twice. Rename it to "${serverName}" if you ` +
+        'want the canonical name, or leave it as is; both work.',
     };
   }
 

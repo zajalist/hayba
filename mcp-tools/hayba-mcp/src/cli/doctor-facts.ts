@@ -4,7 +4,7 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import type { DoctorFacts } from './doctor.js';
-import { CLIENT_SPECS } from './configure.js';
+import { CLIENT_SPECS, entryPointsAtHayba } from './configure.js';
 import { configPathFor } from './configure-facts.js';
 
 /** Find HaybaMCPToolkit under <project>/Plugins, at any nesting depth of one. */
@@ -154,8 +154,12 @@ export function findConfiguredClients(projectRoot: string): {
       try {
         const j = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
         const map = j[spec.serversKey];
-        if (typeof map === 'object' && map !== null && 'hayba' in map) {
-          configured.push(spec.id);
+        if (typeof map === 'object' && map !== null) {
+          // By the path it launches, not by the entry's name. Older docs said
+          // `hayba-toolkit`; a name check would call those installs broken.
+          const entries = Object.entries(map as Record<string, unknown>);
+          const hit = entries.find(([, v]) => entryPointsAtHayba(v));
+          if (hit) configured.push(`${spec.id} (as "${hit[0]}")`);
         }
       } catch {
         // A config we cannot parse is a config we cannot vouch for. It counts

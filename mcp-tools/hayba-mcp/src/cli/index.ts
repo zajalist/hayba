@@ -131,7 +131,7 @@ export async function runDoctor(args: string[]): Promise<number> {
  */
 export async function runConfigure(args: string[]): Promise<number> {
   const [
-    { CLIENT_SPECS, planConfigChange, planConfigOverwrite },
+    { CLIENT_SPECS, CANONICAL_SERVER_NAME, planConfigChange, planConfigOverwrite },
     { configPathFor, detectClients, readConfigText, writeConfigText, serverEntryFor },
   ] = await Promise.all([import('./configure.js'), import('./configure-facts.js')]);
 
@@ -179,12 +179,17 @@ export async function runConfigure(args: string[]): Promise<number> {
     }
 
     const plan = force
-      ? planConfigOverwrite(current, spec, 'hayba', entry)
-      : planConfigChange(current, spec, 'hayba', entry);
+      ? planConfigOverwrite(current, spec, CANONICAL_SERVER_NAME, entry)
+      : planConfigChange(current, spec, CANONICAL_SERVER_NAME, entry);
 
     switch (plan.verdict) {
       case 'already-current':
         console.log(`${spec.label}: already configured — ${path}`);
+        break;
+      case 'exists-under-other-name':
+        // Working install, different name. Reporting this as a failure would
+        // send someone to fix something that is not broken.
+        console.log(`${spec.label}: already configured as "${plan.foundAs}" — ${path}`);
         break;
       case 'differs':
         console.error(`${spec.label}: ${plan.reason}\n  ${path}`);

@@ -35,9 +35,21 @@ recompile. See the [plugin README](../unreal/HaybaMCPToolkit/README.md).
 ## Step 3 — Register the server with your agent host
 
 ```bash
-# Claude Code
-claude mcp add hayba-toolkit -- node /path/to/hayba/mcp-tools/hayba-mcp/dist/index.js
+node mcp-tools/hayba-mcp/dist/cli/index.js configure
 ```
+
+This detects Claude Code / Cursor / VS Code / Claude Desktop and writes the
+entry for each. It refuses to overwrite an entry that differs, and backs up
+anything it changes. `--dry-run` shows what it would do without doing it.
+
+If you would rather register it yourself:
+
+```bash
+claude mcp add hayba -- node /absolute/path/to/hayba/mcp-tools/hayba-mcp/dist/index.js
+```
+
+The name is yours to choose — the tooling identifies this server by the path
+it launches, not by what the entry is called.
 
 Open UE; the **Hayba MCP Toolkit** panel appears in the toolbar. Pick
 **Integrated** or **API Key** mode in the onboarding wizard.

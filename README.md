@@ -56,26 +56,44 @@ and is not written yet.
 Copy [`unreal/HaybaMCPToolkit/`](unreal/HaybaMCPToolkit) into your UE project's
 `Plugins/` folder, regenerate project files, and compile. **UE 5.8**, VS 2022.
 
-### 2. Point your agent host at the server
+### 2. Build the server and point your editor at it
 
 ```bash
 npm install && npm --prefix mcp-tools/hayba-mcp run build
 
-# Claude Code
-claude mcp add hayba-toolkit -- node /path/to/hayba/mcp-tools/hayba-mcp/dist/index.js
+# Writes the MCP entry into every client it finds here
+# (Claude Code / Cursor / VS Code / Claude Desktop)
+node mcp-tools/hayba-mcp/dist/cli/index.js configure
 ```
+
+`configure` exists because the step it replaces — hand-editing JSON with an
+absolute path in it — fails *silently*: get the path wrong and your assistant
+simply shows no Hayba tools, with no error anywhere to search for.
+
+It never overwrites an entry that differs from what it would write, leaves a
+`.hayba-backup` beside anything it changes, and preserves every other server
+in the file. Use `--dry-run` to see what it would do, `--client <id>` to pick
+one, `--force` to replace a differing entry.
+
+<details>
+<summary>Configuring by hand instead</summary>
 
 ```jsonc
 // Claude Desktop — claude_desktop_config.json
+// (VS Code uses "servers" instead of "mcpServers", and wants "type": "stdio")
 {
   "mcpServers": {
-    "hayba-toolkit": {
+    "hayba": {
       "command": "node",
-      "args": ["/path/to/hayba/mcp-tools/hayba-mcp/dist/index.js"]
+      "args": ["/absolute/path/to/hayba/mcp-tools/hayba-mcp/dist/index.js"]
     }
   }
 }
 ```
+
+The entry name is yours to choose — the tooling identifies this server by the
+path it launches, not by what you call it.
+</details>
 
 ### 3. Open the editor, then check it took
 
@@ -83,9 +101,16 @@ claude mcp add hayba-toolkit -- node /path/to/hayba/mcp-tools/hayba-mcp/dist/ind
 node mcp-tools/hayba-mcp/dist/cli/index.js doctor --project <path to your .uproject>
 ```
 
-`doctor` checks the four things that actually break — plugin present, its
-dependencies resolved, the editor reachable on its port, and both halves
-speaking the same protocol version — and each failure says what to do about it.
+`doctor` checks the five things that actually break, and each failure says what
+to do about it:
+
+| check | why it is there |
+|---|---|
+| a client is configured | the only failure that is completely silent — nothing errors, because nothing was ever asked to start |
+| plugin installed | npm alone is half an install |
+| dependencies resolved | read from the plugin's own `.uplugin`, not guessed |
+| editor reachable | on its port, with what is holding it if not |
+| versions match | judged on protocol version, not marketing version |
 
 Then ask Claude: *"Search the PCG node catalog for voronoi, propose a 3-step
 plan to author a Voronoi graph, and execute it after I approve."*

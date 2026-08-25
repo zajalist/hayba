@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
   CLIENT_SPECS,
+  CANONICAL_SERVER_NAME,
+  entryPointsAtHayba,
   buildEntry,
   planConfigChange,
   planConfigOverwrite,
@@ -150,5 +152,70 @@ describe('planConfigOverwrite', () => {
     const current = JSON.stringify({ mcpServers: { hayba: { ...ENTRY } } });
     expect(planConfigOverwrite(current, spec('claude-code'), 'hayba', ENTRY).verdict)
       .toBe('already-current');
+  });
+});
+
+describe('identifying our own entry', () => {
+  // Detection keys on the path launched, not the entry name. The README
+  // documented `hayba-toolkit` while the tool writes `hayba`; a name check
+  // would report every README-following install as unconfigured.
+  it('recognises the server whatever the entry is called', () => {
+    const e = { command: 'node', args: ['C:/x/mcp-tools/hayba-mcp/dist/index.js'] };
+    expect(entryPointsAtHayba(e)).toBe(true);
+  });
+
+  it('recognises Windows backslash paths', () => {
+    expect(entryPointsAtHayba({
+      command: 'node', args: ['C:\\x\\hayba-mcp\\dist\\index.js'],
+    })).toBe(true);
+  });
+
+  it('recognises a source (.ts) run and a non-dist layout', () => {
+    expect(entryPointsAtHayba({ command: 'node', args: ['/x/hayba-mcp/index.ts'] })).toBe(true);
+  });
+
+  it('does NOT claim someone else\'s server', () => {
+    expect(entryPointsAtHayba({ command: 'node', args: ['/x/other-mcp/dist/index.js'] })).toBe(false);
+    expect(entryPointsAtHayba({ command: 'python', args: ['server.py'] })).toBe(false);
+    expect(entryPointsAtHayba({ args: 'not-an-array' })).toBe(false);
+    expect(entryPointsAtHayba(null)).toBe(false);
+    expect(entryPointsAtHayba({})).toBe(false);
+  });
+
+  it('does not match a path that merely mentions hayba', () => {
+    // A user's unrelated server living under a hayba checkout is not us.
+    expect(entryPointsAtHayba({
+      command: 'node', args: ['/repos/hayba/some-other-tool/index.js'],
+    })).toBe(false);
+  });
+});
+
+describe('a server already configured under another name', () => {
+  const legacy = JSON.stringify({
+    mcpServers: {
+      'hayba-toolkit': { command: 'node', args: ['C:/x/mcp-tools/hayba-mcp/dist/index.js'] },
+    },
+  });
+
+  it('does not add a SECOND entry launching the same process', () => {
+    // Two entries means the client starts the server twice and shows every
+    // tool twice, with nothing reporting an error.
+    const plan = planConfigChange(legacy, spec('claude-code'), CANONICAL_SERVER_NAME, ENTRY);
+    expect(plan.verdict).toBe('exists-under-other-name');
+    expect(plan.foundAs).toBe('hayba-toolkit');
+    expect(plan.nextText).toBeUndefined();
+  });
+
+  it('says both names work, because they do', () => {
+    const plan = planConfigChange(legacy, spec('claude-code'), CANONICAL_SERVER_NAME, ENTRY);
+    expect(plan.reason).toContain('both work');
+  });
+
+  it('still adds ours when the other entry is someone else\'s server', () => {
+    const other = JSON.stringify({
+      mcpServers: { unrelated: { command: 'node', args: ['/x/other/index.js'] } },
+    });
+    expect(planConfigChange(other, spec('claude-code'), CANONICAL_SERVER_NAME, ENTRY).verdict)
+      .toBe('added');
   });
 });
