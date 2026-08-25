@@ -883,10 +883,7 @@ table at line 100 can classify it `HCR-BLOCK-001`. That is a precedence bug in
 their policy engine, not a merge conflict — two layers disagreeing about the
 same input.
 
-### `Python.FatalPolicy`: two checks with interleaved precedence (not a reorder)
-
-Root-caused, attempted, reverted. Recording it so the next attempt starts from
-the real shape of the problem.
+### `Python.FatalPolicy`: the reorder was right; the "lateral move" call was not
 
 `FindFatalPythonPattern` consults two things:
 
@@ -894,26 +891,42 @@ the real shape of the problem.
    `__builtins__`, `__main__`), returning `HCR-DYNAMIC-001`.
 2. `FatalPythonRules()` — a specific substring/alias-expanded table.
 
-(1) runs first, so it shadows any table rule whose pattern starts with a
-reserved token: `builtins.input(` is `HCR-BLOCK-001` in the table and was
-reported as `HCR-DYNAMIC-001`.
+(1) ran first, shadowing any table rule whose pattern begins with a reserved
+token: `builtins.input(` is `HCR-BLOCK-001` in the table ("waits for stdin an
+unattended editor cannot provide") and was reported `HCR-DYNAMIC-001`. The
+branch's own test asserts each rule classifies its own pattern as its own code.
 
-**The obvious fix does not work.** Moving (1) after the table fixes
-`builtins.input(` and breaks two others in the opposite direction:
+**Fixed by consulting the table first.** Safety is unchanged — both paths
+refuse the script; only the reported code differs — and anything the table does
+not match still reaches the reserved check exactly as before.
 
-    from TIME import SLEEP as pause / pause(5)   expected HCR-TIME-001, got HCR-BLOCK-001
-    import time as clock / clock.sleep(5)        expected HCR-TIME-001, got HCR-BLOCK-001
+#### The mis-call, recorded because it nearly cost the fix
 
-Those alias-expand to `time.sleep(`, which the table matches at its *first*
-entry (`HCR-BLOCK-001`) before any deadline-tampering rule can claim them. So
-the table's own internal order matters too, and the current behaviour depends
-on (1) running first for some inputs and the table running first for others.
-Net of the reorder: same failure count, different cases. A lateral move, so it
-was reverted.
+After the reorder, three `FatalPolicy` cases still failed and this was written
+up as a lateral move, then reverted. That was wrong. The triage script printed
+only the first three errors per test, so a 4-error list and a 3-error list both
+rendered as three lines and looked like "same count, different cases".
 
-**What it actually needs:** precedence expressed per-rule rather than by
-position — e.g. rank matches by specificity (longest matched pattern wins) and
-let deadline rules outrank blocking rules for the same call. Both checks
-already agree the script is refused; only the reported policy code differs, so
-this is a diagnosis-quality bug, not a safety hole. Worth fixing properly, not
-worth another blind swap.
+The two survivors are unaffected by the ordering, and it can be reasoned out
+without re-running: they are `import time as clock / clock.sleep(5)` and
+`from TIME import SLEEP as pause / pause(5)`, which alias-expand to
+`time.sleep(`. Neither `time` nor `clock` is a reserved token, so
+`FindReservedPythonRuntimeAccess` never matched them in either ordering. They
+failed before the change and after it. The reorder fixed one case and broke
+none; the revert was reverted.
+
+This is the third time today that mcp.py's output truncation produced a wrong
+conclusion (after a "9 tests discovered" count and an empty failure list). The
+triage script now prints every error.
+
+#### Still open in this test
+
+    from TIME import SLEEP as pause / pause(5)   expects HCR-TIME-001, gets HCR-BLOCK-001
+    import time as clock / clock.sleep(5)        expects HCR-TIME-001, gets HCR-BLOCK-001
+    inspect.currentframe()...['_hb_deadline']    expects HCR-TIME-001, gets HCR-DYNAMIC-001
+
+The first two look like the TEST being wrong rather than the table: sleeping
+blocks the game thread, which is what `HCR-BLOCK-001` says, while
+`HCR-TIME-001` is for deadline tampering (`sys.settrace`, `_hb_deadline`
+writes). Every other sleep rule in the table is `HCR-BLOCK-001`. Worth
+confirming intent with whoever wrote the case list before changing either side.
