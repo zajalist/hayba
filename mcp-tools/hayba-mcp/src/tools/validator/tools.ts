@@ -248,14 +248,14 @@ export async function validatorSetRuleEnabledHandler(args: { rule_id: string; en
   return { ok: true };
 }
 
-function toApiFinding(f: import('../../validator/index.js').ValidatorFinding) {
+function toApiFinding(f: import('../../validator/index.js').FindingRecord) {
   return {
     rule_id: f.ruleId,
     severity: f.severity,
     message: f.message,
     hint: f.hint,
     refs: f.refs,
-    context: f.context,
+    context: f.data,
     timestamp: f.timestamp,
     tool_name: f.toolName,
     resolved: f.resolved ?? false,

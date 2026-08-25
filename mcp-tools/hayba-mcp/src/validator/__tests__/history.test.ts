@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
@@ -10,7 +10,7 @@ import {
   setHistoryPath,
   getHistoryPath,
 } from '../history.js';
-import type { ValidatorFinding } from '../rules.js';
+import type { FindingRecord } from '../history.js';
 
 let tmpDir: string;
 
@@ -24,9 +24,10 @@ afterEach(() => {
   rmSync(tmpDir, { recursive: true, force: true });
 });
 
-function mkFinding(overrides: Partial<ValidatorFinding> = {}): ValidatorFinding {
+function mkFinding(overrides: Partial<FindingRecord> = {}): FindingRecord {
   return {
     ruleId: 'pcg_zero_instances_after_execute',
+    category: 'pcg',
     severity: 'warning',
     message: 'test',
     hint: 'test',
@@ -100,5 +101,51 @@ describe('history', () => {
 
   it('getHistoryPath honours the override', () => {
     expect(getHistoryPath()).toBe(join(tmpDir, 'history.jsonl'));
+  });
+});
+
+describe('records written before the verdict collapse', () => {
+  // A user upgrading has a history file full of the old shape. Losing it to a
+  // refactor would be a worse outcome than the refactor is worth, so the read
+  // side adapts instead of the write side rewriting.
+  const legacyLine = JSON.stringify({
+    ruleId: 'pcg_asset_not_found',
+    severity: 'error',
+    message: 'no such asset',
+    hint: 'check the path',
+    context: { assetPath: '/Game/Missing' },
+    timestamp: '2026-01-01T00:00:00.000Z',
+    toolName: 'pcg_execute_graph',
+  });
+
+  it('still load, with context read as data', async () => {
+    writeFileSync(getHistoryPath(), legacyLine + '\n', 'utf-8');
+
+    const [f] = await listFindings({ includeResolved: true });
+
+    expect(f?.ruleId).toBe('pcg_asset_not_found');
+    expect(f?.data).toEqual({ assetPath: '/Game/Missing' });
+    // The old shape had no category at all; `general` is the honest answer
+    // rather than guessing a subsystem from the rule id.
+    expect(f?.category).toBe('general');
+    expect('context' in (f as object)).toBe(false);
+  });
+
+  it('can still be resolved by timestamp after adapting', async () => {
+    writeFileSync(getHistoryPath(), legacyLine + '\n', 'utf-8');
+
+    // The timestamp is the record id. If migration dropped or changed it, a
+    // user could see a finding but never clear it.
+    expect(await markResolved('2026-01-01T00:00:00.000Z', true)).toBe(true);
+    expect(await listFindings()).toEqual([]);
+  });
+
+  it('do not disturb records already in the new shape', async () => {
+    const modern = JSON.stringify(mkFinding({ category: 'landscape', data: { n: 1 } }));
+    writeFileSync(getHistoryPath(), modern + '\n', 'utf-8');
+
+    const [f] = await listFindings({ includeResolved: true });
+    expect(f?.category).toBe('landscape');
+    expect(f?.data).toEqual({ n: 1 });
   });
 });

@@ -33,15 +33,15 @@ import {
 import { addSocket as addSocketToProfile } from '../../plumb/profile-store.js';
 import { makeGuardFn } from '../../plumb/grammar-guards.js';
 import type { Socket } from '../../plumb/contracts.js';
-import { replaceFindingsWithPrefix, type ValidatorFinding } from '../../validator/index.js';
+import { replaceFindingsWithPrefix, type FindingRecord } from '../../validator/index.js';
 import { segmentProject } from '../visual/sidecar-client.js';
 
 /** Convert a PLUMB Verdict's failing constraints into unified validator
  *  findings — so PLUMB violations show in the one Validation tab alongside the
  *  legacy rule findings. */
-function verdictToFindings(verdict: Verdict, constraints: Constraint[], nowIso: string): ValidatorFinding[] {
+function verdictToFindings(verdict: Verdict, constraints: Constraint[], nowIso: string): FindingRecord[] {
   const byId = new Map(constraints.map(c => [c.id, c]));
-  const out: ValidatorFinding[] = [];
+  const out: FindingRecord[] = [];
   for (const gate of verdict.gates) {
     for (const r of gate.constraints) {
       if (r.ok) continue;
@@ -54,7 +54,8 @@ function verdictToFindings(verdict: Verdict, constraints: Constraint[], nowIso: 
         message: `[${gate.gate}] ${r.primitive} failed${object ? ` on ${object}` : ''}${r.detail ? ` — ${r.detail}` : ''}`,
         hint: `Suggested fix: ${fix}.${r.locked === false && r.confidence !== undefined ? ' (qualitative — lock the field to hard-gate)' : ''}`,
         refs: c?.refs,
-        context: { value_m: r.value_m, fix: r.fix?.translate, gate: gate.gate, object, primitive: r.primitive, hard: r.hard },
+        category: 'general',
+        data: { value_m: r.value_m, fix: r.fix?.translate, gate: gate.gate, object, primitive: r.primitive, hard: r.hard },
         timestamp: nowIso,
         toolName: 'plumb_validate',
       });

@@ -94,10 +94,11 @@ export const uiValidateHandler: ToolHandler = async (args) => {
     for (const f of result.findings) {
       await appendFinding({
         ruleId: f.ruleId,
+        category: f.category,
         severity: f.severity,
         message: f.message,
         hint: f.hint,
-        context: toContext(f, widget_blueprint_path, platform),
+        data: toContext(f, widget_blueprint_path, platform),
         // Distinct per finding so resolve/clear can address them individually;
         // the runner emits them in one pass, so a shared stamp would collide.
         timestamp: `${timestamp}#${f.ruleId}:${f.subject ?? '-'}`,

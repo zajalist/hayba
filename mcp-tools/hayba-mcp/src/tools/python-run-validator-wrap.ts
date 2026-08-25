@@ -46,7 +46,8 @@ export function makeValidatedPythonRunHandler(opts: WrapOpts = {}): ToolHandler 
         message: 'python_run script opens a TCP socket to the UE plugin port (would deadlock)',
         hint: 'Use the Python plugin API (`unreal.*`) directly instead of round-tripping through the TCP server (52342–52350).',
         refs: ['[[python-run-no-self-connect]]'],
-        context: { script_preview: args.script.slice(0, 200) },
+        category: 'python',
+        data: { script_preview: args.script.slice(0, 200) },
         toolName: 'python_run',
       });
       return attachFindingsToResponse(
@@ -76,7 +77,8 @@ export function makeValidatedPythonRunHandler(opts: WrapOpts = {}): ToolHandler 
         message: `python_run script registers an engine-lifetime callback ('${danglingPattern}') that would dangle and crash the editor`,
         hint: 'Do the work inline in this python_run call instead of registering a persistent tick/shutdown/engine-init callback. If you truly need one, keep the callable on a module-global so it is never garbage-collected and pass allow_unsafe=true.',
         refs: ['[[python-run-no-dangling-delegate]]'],
-        context: { pattern: danglingPattern, script_preview: args.script.slice(0, 200) },
+        category: 'python',
+        data: { pattern: danglingPattern, script_preview: args.script.slice(0, 200) },
         toolName: 'python_run',
       });
       return attachFindingsToResponse(

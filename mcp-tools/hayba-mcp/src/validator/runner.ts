@@ -4,11 +4,14 @@
 //   - runAfterTool: post-condition pass triggered by tool wrappers.
 //   - runManual:    user-driven pass triggered by validator_run MCP tool.
 
-import { RULES, rulesForTool, rulesById, type ValidatorContext, type ValidatorFinding, type ValidatorRule } from './rules.js';
+import { RULES, rulesForTool, rulesById, type ValidatorContext, type ValidatorRule } from './rules.js';
+import type { FindingRecord } from './history.js';
+import type { RuleFinding } from './rules.js';
 import { appendFinding } from './history.js';
 import { isRuleDisabled } from './config.js';
 
-export type { ValidatorContext, ValidatorFinding } from './rules.js';
+export type { ValidatorContext } from './rules.js';
+export type { FindingRecord } from './history.js';
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -16,13 +19,13 @@ function nowIso(): string {
 
 /** Evaluate every rule registered to trigger after `ctx.toolName`. Persists
  *  each non-null finding to history before returning. */
-export async function runAfterTool(ctx: ValidatorContext): Promise<ValidatorFinding[]> {
+export async function runAfterTool(ctx: ValidatorContext): Promise<FindingRecord[]> {
   const rules = rulesForTool(ctx.toolName);
-  const findings: ValidatorFinding[] = [];
+  const findings: FindingRecord[] = [];
   for (const rule of rules) {
     if (isRuleDisabled(rule.id)) continue;
     if (!rule.evaluate) continue;
-    let f: ValidatorFinding | null = null;
+    let f: RuleFinding | null = null;
     try {
       f = await rule.evaluate(ctx);
     } catch (e) {
@@ -30,6 +33,7 @@ export async function runAfterTool(ctx: ValidatorContext): Promise<ValidatorFind
       // went wrong, but don't fail the parent tool call.
       f = {
         ruleId: rule.id,
+        category: rule.category,
         severity: 'info',
         message: `validator: rule "${rule.id}" evaluator threw`,
         hint: e instanceof Error ? e.message : String(e),
@@ -39,8 +43,9 @@ export async function runAfterTool(ctx: ValidatorContext): Promise<ValidatorFind
     }
     if (f) {
       // Normalise fields the evaluator might omit.
-      const normalised: ValidatorFinding = {
+      const normalised: FindingRecord = {
         ...f,
+        category: f.category ?? rule.category,
         timestamp: f.timestamp || nowIso(),
         toolName: f.toolName || ctx.toolName,
       };
@@ -61,7 +66,7 @@ export interface ManualRunScope {
 export async function runManual(
   scope: ManualRunScope | 'all',
   ctxFactory: (rule: ValidatorRule) => ValidatorContext,
-): Promise<ValidatorFinding[]> {
+): Promise<FindingRecord[]> {
   const byId = rulesById();
   const wanted: ValidatorRule[] = [];
   if (scope === 'all') {
@@ -73,7 +78,7 @@ export async function runManual(
     }
   }
 
-  const findings: ValidatorFinding[] = [];
+  const findings: FindingRecord[] = [];
   for (const rule of wanted) {
     if (isRuleDisabled(rule.id)) continue;
     if (!rule.evaluate) continue;
@@ -81,8 +86,9 @@ export async function runManual(
     try {
       const f = await rule.evaluate(ctx);
       if (f) {
-        const normalised: ValidatorFinding = {
+        const normalised: FindingRecord = {
           ...f,
+          category: f.category ?? rule.category,
           timestamp: f.timestamp || nowIso(),
           toolName: f.toolName || ctx.toolName,
         };
@@ -90,8 +96,9 @@ export async function runManual(
         await appendFinding(normalised);
       }
     } catch (e) {
-      const f: ValidatorFinding = {
+      const f: FindingRecord = {
         ruleId: rule.id,
+        category: rule.category,
         severity: 'info',
         message: `validator: rule "${rule.id}" evaluator threw`,
         hint: e instanceof Error ? e.message : String(e),
@@ -109,9 +116,9 @@ export async function runManual(
  *  that need to emit a pre-flight rejection). The finding is persisted to
  *  history just like an after-tool finding. */
 export async function emitDirectFinding(
-  partial: Omit<ValidatorFinding, 'timestamp'> & { timestamp?: string },
-): Promise<ValidatorFinding> {
-  const f: ValidatorFinding = { ...partial, timestamp: partial.timestamp ?? nowIso() };
+  partial: Omit<FindingRecord, 'timestamp'> & { timestamp?: string },
+): Promise<FindingRecord> {
+  const f: FindingRecord = { ...partial, timestamp: partial.timestamp ?? nowIso() };
   await appendFinding(f);
   return f;
 }

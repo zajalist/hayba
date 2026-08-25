@@ -12,6 +12,8 @@
 // duplicating the metadata.
 
 import type { UeProbe } from './ue-probe.js';
+import type { Finding } from './finding.js';
+import type { RuleCategory } from './config.js';
 
 export type ValidatorSeverity = 'error' | 'warning' | 'info';
 
@@ -29,19 +31,10 @@ export interface ValidatorContext {
   scratchDir: string;
 }
 
-export interface ValidatorFinding {
-  ruleId: string;
-  severity: ValidatorSeverity;
-  message: string;
-  hint: string;
-  refs?: string[];
-  context?: Record<string, unknown>;
-  /** ISO8601 timestamp; doubles as the stable record id for resolve/clear. */
-  timestamp: string;
-  toolName: string;
-  resolved?: boolean;
-  resolvedAt?: string;
-}
+/** What an evaluator returns. `category` and the record fields are stamped by
+ *  the runner from the rule and the call that triggered it, so an evaluator
+ *  that omits them is not being sloppy -- it is not repeating itself. */
+export type RuleFinding = Omit<Finding, 'category'> & { category?: RuleCategory };
 
 export type ValidatorTrigger =
   | 'manual'
@@ -49,6 +42,8 @@ export type ValidatorTrigger =
 
 export interface ValidatorRule {
   id: string;
+  /** Which subsystem the rule speaks about. Stamped onto its findings. */
+  category: RuleCategory;
   severity: ValidatorSeverity;
   message: string;
   hint: string;
@@ -56,7 +51,7 @@ export interface ValidatorRule {
   trigger: ValidatorTrigger;
   /** When omitted, the rule is descriptive only — present in the catalog so
    *  users see it in the Configure panel, but never auto-evaluated. */
-  evaluate?: (ctx: ValidatorContext) => Promise<ValidatorFinding | null>;
+  evaluate?: (ctx: ValidatorContext) => Promise<RuleFinding | null>;
 }
 
 // ── Catalog ─────────────────────────────────────────────────────────────────
@@ -69,6 +64,7 @@ export const RULES: ValidatorRule[] = [
   // ── Section F: 5 rules from PR #227 ─────────────────────────────────────
   {
     id: 'pcg_zero_instances_after_execute',
+    category: 'pcg',
     severity: 'warning',
     message: 'PCG graph executed but produced 0 instances in the world',
     hint: 'The graph ran (componentsExecuted > 0) but no Hierarchical/Instanced Static Mesh instances exist on any PCGVolume using it. Common causes: Surface Sampler bound to a non-landscape source, all points culled by a Density filter, or output pin not wired to a Static Mesh Spawner. Inspect the graph in the editor and re-run with hayba_execute_pcg_graph.',
@@ -77,6 +73,7 @@ export const RULES: ValidatorRule[] = [
   },
   {
     id: 'tcp_socket_to_self_in_python_run',
+    category: 'python',
     severity: 'error',
     message: 'python_run script opens a TCP socket to the UE plugin port (would deadlock)',
     hint: 'Calling back into the MCP TCP listener (52342–52350) from inside a python_run script reenters the game thread and crashes UE. Use the Python plugin API (`unreal.*`) directly instead of round-tripping through the TCP server.',
@@ -85,6 +82,7 @@ export const RULES: ValidatorRule[] = [
   },
   {
     id: 'dangling_lifetime_callback_in_python_run',
+    category: 'python',
     severity: 'error',
     message: 'python_run script registers an engine-lifetime callback that would dangle and crash the editor',
     hint: 'register_slate_post/pre_tick_callback, register_python_shutdown_callback and register_post_engine_init_callback bind a Python callable into an engine-lifetime delegate. From a one-shot python_run the callable is garbage-collected as soon as the call returns, so the next engine broadcast dereferences freed memory and crashes the editor with a native access violation (#283/#284). Do the work inline, or keep the callable on a module-global and pass allow_unsafe=true.',
@@ -95,6 +93,7 @@ export const RULES: ValidatorRule[] = [
   // ── Other 5 AI-floppy hints from the postmortem ─────────────────────────
   {
     id: 'pcg_execute_no_component_in_world',
+    category: 'pcg',
     severity: 'warning',
     message: 'No PCGComponent in the level is bound to the executed graph',
     hint: 'pcg_execute_graph found 0 PCGComponents referencing this graph. Either drop a PCGVolume into the level and assign the graph, or use actor_spawn to spawn one programmatically before re-executing.',
@@ -103,6 +102,7 @@ export const RULES: ValidatorRule[] = [
   },
   {
     id: 'pcg_asset_not_found',
+    category: 'pcg',
     severity: 'error',
     message: 'PCG asset path could not be resolved',
     hint: 'The provided assetPath did not resolve to a PCGGraph. Double-check the path (must start with /Game/) and that the asset exists — list candidates with hayba_list_pcg_assets.',
@@ -111,6 +111,7 @@ export const RULES: ValidatorRule[] = [
   },
   {
     id: 'landscape_import_no_landscape_in_world',
+    category: 'landscape',
     severity: 'error',
     message: 'landscape_import returned success but no LandscapeProxy exists in the world',
     hint: 'The import handler reported ok=true but no `unreal.LandscapeProxy` actor is present in the editor world. Check the editor output log filtered by `LogHaybaMCPImporter` for the underlying error.',
@@ -119,6 +120,7 @@ export const RULES: ValidatorRule[] = [
   },
   {
     id: 'asset_browse_describe_assets_missing',
+    category: 'asset',
     severity: 'warning',
     message: 'UE responded "Unknown command: describe_assets" — the plugin is out of date',
     hint: 'The hayba_asset_browse handler relies on the `describe_assets` UE command which is missing in this plugin build. Rebuild the HaybaMCPToolkit plugin from source, or use `python_run` with `unreal.EditorAssetLibrary.list_assets()` as a fallback.',

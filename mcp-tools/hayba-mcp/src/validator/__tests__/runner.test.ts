@@ -88,7 +88,7 @@ describe('runAfterTool', () => {
     });
     const f = findings.find(x => x.ruleId === 'pcg_asset_not_found');
     expect(f).toBeDefined();
-    expect(f?.context?.assetPath).toBe('/Game/MissingGraph');
+    expect(f?.data?.assetPath).toBe('/Game/MissingGraph');
   });
 
   it('emits asset_browse_describe_assets_missing from error text', async () => {

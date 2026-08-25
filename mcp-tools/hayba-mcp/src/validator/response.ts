@@ -5,14 +5,14 @@
 //   - attachFindingsToValue     → wraps a raw JSON value (handler that returns
 //                                 plain JSON, then is JSON.stringified for MCP)
 
-import type { ValidatorFinding } from './rules.js';
+import type { FindingRecord } from './history.js';
 
 interface McpResponse {
   content: Array<{ type: 'text'; text: string }>;
   isError?: boolean;
 }
 
-function findingToLine(f: ValidatorFinding): string {
+function findingToLine(f: FindingRecord): string {
   const tag = f.severity === 'error' ? '[validator:error]'
             : f.severity === 'warning' ? '[validator:warning]'
             : '[validator:info]';
@@ -22,7 +22,7 @@ function findingToLine(f: ValidatorFinding): string {
 
 export function attachFindingsToResponse(
   resp: McpResponse,
-  findings: ValidatorFinding[],
+  findings: FindingRecord[],
 ): McpResponse {
   if (!findings.length) return resp;
   const isError = resp.isError === true || findings.some(f => f.severity === 'error');
@@ -34,7 +34,7 @@ export function attachFindingsToResponse(
       message: f.message,
       hint: f.hint,
       refs: f.refs,
-      context: f.context,
+      context: f.data,
       timestamp: f.timestamp,
     })),
   };
@@ -51,8 +51,8 @@ export function attachFindingsToResponse(
 
 export function attachFindingsToValue<T extends Record<string, unknown>>(
   value: T,
-  findings: ValidatorFinding[],
-): T & { validator?: { findings: ValidatorFinding[] } } {
+  findings: FindingRecord[],
+): T & { validator?: { findings: FindingRecord[] } } {
   if (!findings.length) return value;
   return {
     ...value,
@@ -63,9 +63,9 @@ export function attachFindingsToValue<T extends Record<string, unknown>>(
         message: f.message,
         hint: f.hint,
         refs: f.refs,
-        context: f.context,
+        context: f.data,
         timestamp: f.timestamp,
-      })) as unknown as ValidatorFinding[],
+      })) as unknown as FindingRecord[],
     },
   };
 }

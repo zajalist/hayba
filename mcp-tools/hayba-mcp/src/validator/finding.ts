@@ -16,7 +16,6 @@
 
 import type { FixVector, ConstraintResult } from '../plumb/contracts.js';
 import type { RuleCategory } from './config.js';
-import type { ValidatorFinding } from './rules.js';
 
 export type Severity = 'error' | 'warning' | 'info';
 
@@ -76,24 +75,6 @@ export function countBySeverity(findings: readonly Finding[]): Record<Severity, 
 }
 
 // ── Adapters (temporary; each dies with its producer's migration) ───────────
-
-/** Tool-triggered rules carry no category of their own -- they are about the
- *  call, not about a subsystem -- so they land in `general`. */
-export function fromValidatorFinding(f: ValidatorFinding): Finding {
-  return {
-    ruleId: f.ruleId,
-    category: 'general',
-    severity: f.severity,
-    message: f.message,
-    hint: f.hint,
-    refs: f.refs,
-    data: f.context,
-    timestamp: f.timestamp,
-    toolName: f.toolName,
-    resolved: f.resolved,
-    resolvedAt: f.resolvedAt,
-  };
-}
 
 /** PLUMB is the only producer that already speaks in signed margins, so this
  *  adapter is the only one that fills `measurement`. A hard constraint is an

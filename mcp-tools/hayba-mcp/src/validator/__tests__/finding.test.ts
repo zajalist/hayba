@@ -3,7 +3,6 @@ import {
   compareFindings,
   countBySeverity,
   fromConstraintResult,
-  fromValidatorFinding,
   type Finding,
 } from '../finding.js';
 
@@ -32,28 +31,6 @@ describe('Finding ordering', () => {
 });
 
 describe('adapters', () => {
-  it('carries a validator finding across without losing its record fields', () => {
-    const f = fromValidatorFinding({
-      ruleId: 'pcg_asset_not_found',
-      severity: 'error',
-      message: 'no such asset',
-      hint: 'check the path',
-      refs: ['docs/pcg.md'],
-      context: { path: '/Game/Nope' },
-      timestamp: '2026-08-24T00:00:00.000Z',
-      toolName: 'pcg_execute',
-      resolved: true,
-      resolvedAt: '2026-08-24T00:01:00.000Z',
-    });
-
-    // The timestamp is the stable record id used by resolve/clear, so an
-    // adapter that dropped it would silently orphan every resolved finding.
-    expect(f.timestamp).toBe('2026-08-24T00:00:00.000Z');
-    expect(f.resolved).toBe(true);
-    expect(f.data).toEqual({ path: '/Game/Nope' });
-    expect(f.refs).toEqual(['docs/pcg.md']);
-  });
-
   it('keeps the sign of a PLUMB margin, so the direction survives', () => {
     const f = fromConstraintResult({
       name: 'counter_height', primitive: 'min_clearance', ok: false, hard: true,

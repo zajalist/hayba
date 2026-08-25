@@ -4,7 +4,7 @@ import type { AssetRetriever } from '../asset-retriever.js';
 import type { Page } from '../asset-catalog.js';
 import { runAfterTool } from '../../../validator/runner.js';
 import { attachFindingsToValue } from '../../../validator/response.js';
-import type { ValidatorFinding } from '../../../validator/rules.js';
+import type { FindingRecord } from '../../../validator/history.js';
 
 export const assetBrowseSchema = {
   filter: z.object({
@@ -19,7 +19,7 @@ export const assetBrowseSchema = {
 
 export interface AssetBrowseCtx { retriever: AssetRetriever; }
 
-export type AssetBrowseResult = Page & { validator?: { findings: ValidatorFinding[] } };
+export type AssetBrowseResult = Page & { validator?: { findings: FindingRecord[] } };
 
 export async function assetBrowseHandler(
   args: { filter?: { path?: string; class?: string; tag?: string; source?: 'project' | 'polyhaven' | 'ambientcg' | 'sketchfab' | 'fab' | 'unknown' }; offset?: number; limit?: number },

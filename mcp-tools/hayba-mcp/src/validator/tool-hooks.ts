@@ -2,7 +2,7 @@
 // in `rules.ts`. Calling `installToolHooks()` once at server startup attaches
 // every evaluator below.
 
-import { attachEvaluator, type ValidatorContext, type ValidatorFinding } from './rules.js';
+import { attachEvaluator, type ValidatorContext, type RuleFinding } from './rules.js';
 import { probeCount } from './ue-probe.js';
 
 function nowIso(): string {
@@ -55,7 +55,7 @@ with open(out_path, "w") as f:
 print(json.dumps(out))
 `;
 
-async function evaluatePcgZeroInstances(ctx: ValidatorContext): Promise<ValidatorFinding | null> {
+async function evaluatePcgZeroInstances(ctx: ValidatorContext): Promise<RuleFinding | null> {
   const result = asRecord(ctx.toolResult);
   const componentsExecuted = Number(result.componentsExecuted ?? 0);
   if (componentsExecuted <= 0) return null;
@@ -76,7 +76,7 @@ async function evaluatePcgZeroInstances(ctx: ValidatorContext): Promise<Validato
     message: 'PCG graph executed but produced 0 instances in the world',
     hint: 'The graph ran (componentsExecuted > 0) but no HISM/ISM instances exist on any actor. Common causes: Surface Sampler bound to a non-landscape source, all points culled by a Density filter, or output pin not wired to a Static Mesh Spawner.',
     refs: ['[[pcg-surface-sampler-needs-landscape]]'],
-    context: {
+    data: {
       graph: ctx.toolArgs.assetPath ?? ctx.toolArgs.graphPath ?? null,
       componentsExecuted,
       instances: 0,
@@ -88,7 +88,7 @@ async function evaluatePcgZeroInstances(ctx: ValidatorContext): Promise<Validato
 
 // ── pcg_execute_no_component_in_world ───────────────────────────────────────
 
-async function evaluatePcgNoComponentInWorld(ctx: ValidatorContext): Promise<ValidatorFinding | null> {
+async function evaluatePcgNoComponentInWorld(ctx: ValidatorContext): Promise<RuleFinding | null> {
   const text = resultText(ctx.toolResult);
   if (!/No PCGComponents? found using this graph/i.test(text)) return null;
   return {
@@ -97,7 +97,7 @@ async function evaluatePcgNoComponentInWorld(ctx: ValidatorContext): Promise<Val
     message: 'No PCGComponent in the level is bound to the executed graph',
     hint: 'pcg_execute_graph found 0 PCGComponents referencing this graph. Drop a PCGVolume into the level and assign the graph, or spawn one with actor_spawn before re-executing.',
     refs: ['[[pcg-execute-needs-component]]'],
-    context: { graph: ctx.toolArgs.assetPath ?? ctx.toolArgs.graphPath ?? null },
+    data: { graph: ctx.toolArgs.assetPath ?? ctx.toolArgs.graphPath ?? null },
     timestamp: nowIso(),
     toolName: ctx.toolName,
   };
@@ -105,7 +105,7 @@ async function evaluatePcgNoComponentInWorld(ctx: ValidatorContext): Promise<Val
 
 // ── pcg_asset_not_found ─────────────────────────────────────────────────────
 
-async function evaluatePcgAssetNotFound(ctx: ValidatorContext): Promise<ValidatorFinding | null> {
+async function evaluatePcgAssetNotFound(ctx: ValidatorContext): Promise<RuleFinding | null> {
   const text = resultText(ctx.toolResult);
   if (!/(asset not found|could not load asset|invalid asset path|failed to load PCG ?Graph)/i.test(text)) return null;
   return {
@@ -114,7 +114,7 @@ async function evaluatePcgAssetNotFound(ctx: ValidatorContext): Promise<Validato
     message: 'PCG asset path could not be resolved',
     hint: 'Double-check the path (must start with /Game/) and list candidates with hayba_list_pcg_assets.',
     refs: ['[[pcg-asset-path-resolution]]'],
-    context: { assetPath: ctx.toolArgs.assetPath ?? null },
+    data: { assetPath: ctx.toolArgs.assetPath ?? null },
     timestamp: nowIso(),
     toolName: ctx.toolName,
   };
@@ -137,7 +137,7 @@ with open(out_path, "w") as f:
 print(json.dumps({"count": count}))
 `;
 
-async function evaluateLandscapeImportSilentFailure(ctx: ValidatorContext): Promise<ValidatorFinding | null> {
+async function evaluateLandscapeImportSilentFailure(ctx: ValidatorContext): Promise<RuleFinding | null> {
   const result = asRecord(ctx.toolResult);
   // Only fire when the tool claims success.
   if (result.ok === false) return null;
@@ -157,7 +157,7 @@ async function evaluateLandscapeImportSilentFailure(ctx: ValidatorContext): Prom
     message: 'landscape_import returned success but no LandscapeProxy exists in the world',
     hint: 'Check the editor output log filtered by `LogHaybaMCPImporter` for the underlying error.',
     refs: ['[[landscape-import-silent-failure]]'],
-    context: { args: ctx.toolArgs },
+    data: { args: ctx.toolArgs },
     timestamp: nowIso(),
     toolName: ctx.toolName,
   };
@@ -165,7 +165,7 @@ async function evaluateLandscapeImportSilentFailure(ctx: ValidatorContext): Prom
 
 // ── asset_browse_describe_assets_missing ────────────────────────────────────
 
-async function evaluateAssetBrowseDescribeMissing(ctx: ValidatorContext): Promise<ValidatorFinding | null> {
+async function evaluateAssetBrowseDescribeMissing(ctx: ValidatorContext): Promise<RuleFinding | null> {
   const text = resultText(ctx.toolResult);
   if (!/Unknown command:\s*describe_assets/i.test(text)) return null;
   return {
@@ -182,7 +182,7 @@ async function evaluateAssetBrowseDescribeMissing(ctx: ValidatorContext): Promis
 // ── tcp_socket_to_self_in_python_run (post-condition only — pre-flight is
 //    enforced separately in python-run-validator-wrap.ts) ──────────────────
 
-async function evaluatePythonRunSelfSocket(ctx: ValidatorContext): Promise<ValidatorFinding | null> {
+async function evaluatePythonRunSelfSocket(ctx: ValidatorContext): Promise<RuleFinding | null> {
   const script = String(asRecord(ctx.toolArgs).script ?? '');
   if (!isSelfSocketScript(script)) return null;
   return {

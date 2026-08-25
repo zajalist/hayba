@@ -4,7 +4,7 @@ import { executeCommand } from './tool-executor.js';
 import { runAfterTool } from '../validator/runner.js';
 import { liveUeProbe } from '../validator/ue-probe.js';
 import { attachFindingsToValue } from '../validator/response.js';
-import type { ValidatorFinding } from '../validator/rules.js';
+import type { FindingRecord } from '../validator/history.js';
 
 const schema = z.object({
   assetPath: z.string().min(1).describe('Full UE asset path to the PCGGraph to execute')
@@ -13,7 +13,7 @@ const schema = z.object({
 export type ExecutePcgGraphParams = z.infer<typeof schema>;
 
 export interface ExecutePcgGraphResult extends Record<string, unknown> {
-  validator?: { findings: ValidatorFinding[] };
+  validator?: { findings: FindingRecord[] };
 }
 
 export async function executePcgGraph(params: ExecutePcgGraphParams): Promise<ExecutePcgGraphResult> {

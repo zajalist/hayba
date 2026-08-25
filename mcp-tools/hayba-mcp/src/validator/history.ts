@@ -7,7 +7,26 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import type { ValidatorFinding } from './rules.js';
+import type { Finding, Severity } from './finding.js';
+
+/** A finding once it is on disk. The two fields the in-memory shape leaves
+ *  optional are mandatory here: the timestamp doubles as the record id that
+ *  resolve/clear address, and every stored finding came from some tool. */
+export type FindingRecord = Finding & { timestamp: string; toolName: string };
+
+/** Records written before the verdict collapse carry `context` instead of
+ *  `data` and no category at all. They are adapted on read rather than
+ *  rewritten in place, so a user who downgrades keeps their history and
+ *  nobody's findings disappear during an upgrade. */
+function migrateRecord(raw: Record<string, unknown>): FindingRecord {
+  if ('category' in raw && !('context' in raw)) return raw as unknown as FindingRecord;
+  const { context, ...rest } = raw as { context?: Record<string, unknown> };
+  return {
+    ...(rest as unknown as FindingRecord),
+    category: (raw.category as FindingRecord['category']) ?? 'general',
+    ...(context ? { data: context } : {}),
+  };
+}
 
 let HISTORY_PATH_OVERRIDE: string | null = null;
 
@@ -38,7 +57,7 @@ export interface AppendOptions {
   dedupe?: boolean;
 }
 
-export async function appendFinding(f: ValidatorFinding, opts: AppendOptions = {}): Promise<void> {
+export async function appendFinding(f: FindingRecord, opts: AppendOptions = {}): Promise<void> {
   const path = getHistoryPath();
   ensureDir(path);
 
@@ -56,20 +75,20 @@ export interface ListOptions {
   sinceIso?: string;
   includeResolved?: boolean;
   ruleIds?: string[];
-  severities?: Array<ValidatorFinding['severity']>;
+  severities?: Severity[];
 }
 
-export async function listFindings(opts: ListOptions = {}): Promise<ValidatorFinding[]> {
+export async function listFindings(opts: ListOptions = {}): Promise<FindingRecord[]> {
   const path = getHistoryPath();
   if (!existsSync(path)) return [];
   const stat = statSync(path);
   if (stat.size === 0) return [];
 
   const lines = readFileSync(path, 'utf-8').split('\n').filter(l => l.trim().length > 0);
-  const findings: ValidatorFinding[] = [];
+  const findings: FindingRecord[] = [];
   for (const line of lines) {
     try {
-      findings.push(JSON.parse(line) as ValidatorFinding);
+      findings.push(migrateRecord(JSON.parse(line) as Record<string, unknown>));
     } catch {
       // skip malformed lines (partial write, manual edit) — keep tailing.
     }
@@ -114,7 +133,7 @@ export async function markResolved(timestamp: string, resolved: boolean): Promis
 /** Replace every finding whose ruleId starts with `prefix` with `replacement`,
  *  keeping all other findings. Used to merge a fresh PLUMB validation pass into
  *  the single findings store without accumulating stale entries. */
-export async function replaceFindingsWithPrefix(prefix: string, replacement: ValidatorFinding[]): Promise<void> {
+export async function replaceFindingsWithPrefix(prefix: string, replacement: FindingRecord[]): Promise<void> {
   const path = getHistoryPath();
   ensureDir(path);
   const existing = await listFindings({ includeResolved: true });

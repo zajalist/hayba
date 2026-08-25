@@ -107,7 +107,7 @@ describe('ui_validate reporting', () => {
     const lines = historyLines();
     expect(lines.length).toBeGreaterThan(0);
     expect(lines.some((l) => l.ruleId === 'ui_text_overflows_box')).toBe(true);
-    const context = lines[0]!.context as Record<string, unknown>;
+    const context = lines[0]!.data as Record<string, unknown>;
     expect(context.widget_blueprint_path).toBe('/Game/UI/WBP_Probe');
     expect(context.platform).toBe('pc');
   });
