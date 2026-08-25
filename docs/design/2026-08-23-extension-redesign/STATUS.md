@@ -5,20 +5,32 @@ what is actually built, so a reader does not have to diff seven commits against
 five execution docs to find out.
 
 Everything below is on `worktree-extension-rework`, branched from `origin/main`
-at `f0bb8369`. **Nothing here has touched the running MCP** — the live server
-serves from `dist/` in the main worktree, which was never modified.
+at `f0bb8369`.
+
+**On isolation, precisely.** The TypeScript server other people use serves from
+`dist/` in the *main* worktree, which nothing here has written to — every
+`npm run build` in this branch lands in this worktree's own `dist/`.
+
+The C++ side is a weaker claim and was overstated earlier. Verifying the Slate
+work means compiling this branch's plugin and running an editor on it, which
+happens in a separate runtime worktree (`hayba-aphrosia-runtime`, hard-synced
+to the commit under test). That editor is a dev instance, not anyone's working
+session — but it is a real editor running unreleased plugin code, so "nothing
+has touched a running MCP" was too strong. What is true: no shared binary and
+no shared `dist/` is modified, so nobody else's session can pick this branch up
+by accident.
 
 ## Landed
 
 | Item | State | Evidence |
 |---|---|---|
 | **F8** — catalogue search perf | **done** | `searchNodes` haystack cached in a WeakMap; **7.740ms → 1.186ms per query, 6.5×** on a 3000-node corpus. Test pins the property (repeats must not re-pay the build), not a timing number. |
-| **F7** — capability inventory | **done** | `tools/capability-inventory.mjs` derives the surface from `GetCommands()`: **236 commands, 34 handlers**. `docs/CAPABILITIES.md` generated. CI-gated. |
+| **F7** — capability inventory | **done** | `tools/capability-inventory.mjs` derives the surface from `GetCommands()`: **239 commands, 35 handlers**. `docs/CAPABILITIES.md` generated. CI-gated. |
 | **P3a** — icon pipeline | **done** | `tools/build-icons.mjs` derives 148 rasters (37 icons × 16/28/32/56) from the signed masters. Hash manifest, CI-gated. |
 | **P3a** — style layer | **compiled, live** | 24 colour + 11 metric tokens, 37 icons registered as PNG at exact draw sizes, text styles on tokens. Built and run in the editor; `tools/style-token-check.mjs` gates typo'd token names in CI. |
-| CI gates | **4 wired** | capability drift, generated-doc staleness, icon staleness, icon-binding resolution. Each verified to fail on the thing it guards, not just to pass. |
+| CI gates | **5 wired** | capability drift, icon staleness, prompt-names-a-real-tool, style-token resolution, shipped-asset staleness. Each was verified by breaking the thing it guards and watching it go red — a gate that has only ever passed is not known to be a gate. |
 
-Full TS suite green: **187 files, 2119 tests** (re-run after every change).
+Full TS suite green: **201 files, 2264 tests** (re-run after every change), plus `tsc --noEmit` and a full `npm run build` including the asset copy — that last one because the suite runs from `src/` and stayed green through a broken build once already.
 
 Also landed while auditing: a categorical colour family, with two hues fixed
 that sat within 10 degrees of the semantic ochre; raster filenames moved off
@@ -29,6 +41,15 @@ from a timing assertion to an observable one.
 knowing when reading the rest: writing something carefully is not the same as
 having verified it.
 
+## Small open item
+
+`build-icons.mjs` reports one master built but unbound: **material-display**.
+It is a real 37th icon, distinct from `material`. Nothing in the UI asks for
+it, and binding it would mean inventing a destination to justify an asset —
+backwards. It stays built and unbound until something needs it; the icon check
+reports this as a *note*, not a failure, which is the right severity for "an
+asset exists that nobody uses yet".
+
 ## Corrections to the plans in this directory
 
 - **F8's estimate was wrong.** `02-PLAN` and `05-EXECUTION-FOUNDATIONS` say
@@ -36,8 +57,10 @@ having verified it.
   an inverted index would cut it further and is not worth it yet.
 - **F14 is smaller than described.** `HaybaMCPNiagara/` and
   `HaybaMCPSequencer/` are **not in the repo** — they are untracked local build
-  residue in the main worktree. Deleting them is an `rm`, not a commit. Only
-  the registration unification remains, and that is C++.
+  residue in the main worktree. Deleting them is an `rm`, not a commit. The
+  registration unification turned out to be already in place; see
+  03-MASTER-PLAN §F14 for what was actually changed (a silent no-op made
+  loud).
 - **The GAS/MetaSound "described but not implemented" finding is dead.** The
   generated inventory reports zero such commands, confirming it was an artifact
   of a glob that skipped satellite modules. `01-CRITIQUE` §H already said so;
