@@ -2785,19 +2785,40 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleMutateTree(const TSharedPtr<FJsonO
                 WBP->WidgetVariableNameToGuidMap.Remove(Entry.Value);
             }
             WBP->WidgetTree->RemoveWidget(Widget);
+
+            // RemoveWidget detaches from the parent; it does NOT change the
+            // Outer. The outgoing widget still carries its staging name and is
+            // still owned by the tree, so this handler's own invariant check
+            // sees "temporary/trash source names leaked into the tree" and
+            // UMG's compiler -- which enumerates by ownership, not by walking
+            // from the root -- ensures on a widget with no GUID entry.
+            //
+            // Verified with a probe: after a replace, GetAllWidgets did not
+            // list the discarded object and GetObjectsWithOuter(WidgetTree)
+            // did.
+            //
+            // Moving it to the transient package frees the authoring name AND
+            // removes it from the tree, which is what "discarded" should have
+            // meant all along.
+            {
+                UObject* const Graveyard = GetTransientPackage();
+                Widget->Rename(
+                    *MakeUniqueObjectName(Graveyard, Widget->GetClass(), TEXT("HaybaMCP_Discarded")).ToString(),
+                    Graveyard, REN_DontCreateRedirectors | REN_DoNotDirty);
+            }
+
             if (!bPreserveChildren && OldPanel)
             {
-                // RemoveWidget detaches the root but does not destroy the UObject
-                // subtree.  Move descendant names out of the authoring namespace
-                // so an explicit destructive replacement does not make a later
-                // ConstructWidget("OldChildName") silently become OldChildName_1.
+                // Same for the subtree: renaming a descendant within the tree
+                // freed its authoring name but left it owned and enumerable.
                 for (const TPair<UWidget*, FName>& Entry : DiscardedDescendants)
                 {
                     UWidget* Descendant = Entry.Key;
                     if (!Descendant) continue;
+                    UObject* const Graveyard = GetTransientPackage();
                     Descendant->Rename(
-                        *MakeUniqueObjectName(Descendant->GetOuter(), Descendant->GetClass(), TEXT("HaybaMCP_Discarded")).ToString(),
-                        Descendant->GetOuter(), REN_DontCreateRedirectors | REN_DoNotDirty);
+                        *MakeUniqueObjectName(Graveyard, Descendant->GetClass(), TEXT("HaybaMCP_Discarded")).ToString(),
+                        Graveyard, REN_DontCreateRedirectors | REN_DoNotDirty);
                 }
             }
 
