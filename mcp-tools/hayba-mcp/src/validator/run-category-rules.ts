@@ -10,38 +10,23 @@
 // every new category. It is now implemented once, and a category supplies only
 // the part that genuinely differs: what counts as having nothing to check.
 
-import { isRuleDisabled, meetsStrictness, type Strictness } from './config.js';
+import { isRuleDisabled, meetsStrictness, type Strictness, type RuleCategory } from './config.js';
+import { compareFindings, countBySeverity, type Finding, type Severity } from './finding.js';
 
-export type RuleSeverity = 'error' | 'warning' | 'info';
-
-const SEVERITY_ORDER: Record<RuleSeverity, number> = { error: 0, warning: 1, info: 2 };
-
-/** The minimum a finding must carry for this runner to sort and count it.
- *  Categories add their own fields (widget, asset, data, …). */
-export interface BaseFinding {
-  ruleId: string;
-  category: string;
-  severity: RuleSeverity;
-  message: string;
-  hint: string;
-}
+export type RuleSeverity = Severity;
 
 /** The part of a category rule this runner needs. Categories add their own
  *  fields (needsLayout, needs, title, …) and read them in `hasNothingToCheck`. */
 export interface RunnableRule<Ctx> {
   id: string;
-  category: string;
+  category: RuleCategory;
   minStrictness: Strictness;
-  evaluate: (ctx: Ctx) => BaseFinding[];
+  evaluate: (ctx: Ctx) => Finding[];
 }
 
-/** The concrete finding type a rule produces, recovered from its evaluator so
- *  callers get `UiFinding[]` back rather than the base shape. */
-export type FindingOf<R> = R extends { evaluate: (ctx: never) => (infer F)[] } ? F : never;
-
-export interface RuleRunOutcome<F> {
+export interface RuleRunOutcome {
   /** Sorted by severity, then rule id. */
-  findings: F[];
+  findings: Finding[];
   /** How many rules actually ran. Never inflated by skips. */
   evaluated: number;
   /** Ran nothing because their input data was absent. */
@@ -50,7 +35,7 @@ export interface RuleRunOutcome<F> {
   disabled: string[];
   /** Ran nothing because they sit above the configured strictness. */
   belowStrictness: string[];
-  counts: Record<RuleSeverity, number>;
+  counts: Record<Severity, number>;
 }
 
 export interface RuleRunInput<Ctx, R extends RunnableRule<Ctx>> {
@@ -72,15 +57,14 @@ export interface RuleRunInput<Ctx, R extends RunnableRule<Ctx>> {
 
 export function runCategoryRules<Ctx, R extends RunnableRule<Ctx>>(
   input: RuleRunInput<Ctx, R>,
-): RuleRunOutcome<FindingOf<R>> {
+): RuleRunOutcome {
   const { ctx, strictness, hasNothingToCheck } = input;
-  type F = FindingOf<R>;
 
   const selected = input.ruleIds
     ? input.ruleIds.map((id) => input.byId.get(id)).filter((r): r is R => r !== undefined)
     : input.rules;
 
-  const findings: F[] = [];
+  const findings: Finding[] = [];
   const skipped: string[] = [];
   const disabled: string[] = [];
   const belowStrictness: string[] = [];
@@ -102,31 +86,24 @@ export function runCategoryRules<Ctx, R extends RunnableRule<Ctx>>(
 
     evaluated++;
     try {
-      // The constraint types evaluators down to BaseFinding; FindingOf<R>
-      // recovers what this rule actually returns.
-      findings.push(...(rule.evaluate(ctx) as F[]));
+      findings.push(...rule.evaluate(ctx));
     } catch (e) {
       // A thrown rule is surfaced as info rather than failing the whole run:
       // one broken rule must not cost the caller every other finding.
-      // Cast because F may carry category-specific optional fields; the five
-      // required ones are supplied.
       findings.push({
         ruleId: rule.id,
         category: rule.category,
         severity: 'info',
         message: `Rule "${rule.id}" threw while evaluating and was skipped.`,
         hint: e instanceof Error ? e.message : String(e),
-      } as F);
+      });
     }
   }
 
-  findings.sort((a, b) => {
-    const bySeverity = SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity];
-    return bySeverity !== 0 ? bySeverity : a.ruleId.localeCompare(b.ruleId);
-  });
+  findings.sort(compareFindings);
 
-  const counts: Record<RuleSeverity, number> = { error: 0, warning: 0, info: 0 };
-  for (const f of findings) counts[f.severity]++;
-
-  return { findings, evaluated, skipped, disabled, belowStrictness, counts };
+  return {
+    findings, evaluated, skipped, disabled, belowStrictness,
+    counts: countBySeverity(findings),
+  };
 }

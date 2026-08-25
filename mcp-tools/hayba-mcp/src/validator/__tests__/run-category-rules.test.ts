@@ -3,7 +3,8 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { setConfigPath, setRuleDisabled, type Strictness } from '../config.js';
-import { runCategoryRules, type BaseFinding, type RunnableRule } from '../run-category-rules.js';
+import { runCategoryRules, type RunnableRule } from '../run-category-rules.js';
+import type { Finding } from '../finding.js';
 
 let dir: string;
 
@@ -23,7 +24,7 @@ interface FakeCtx {
 interface FakeRule extends RunnableRule<FakeCtx> {
   /** Stands in for UI's `needsLayout` / content's `needs`. */
   needsData: boolean;
-  evaluate: (ctx: FakeCtx) => BaseFinding[];
+  evaluate: (ctx: FakeCtx) => Finding[];
 }
 
 function rule(id: string, over: Partial<FakeRule> = {}): FakeRule {
@@ -65,7 +66,7 @@ describe('runCategoryRules', () => {
   });
 
   it('sorts findings by severity, then rule id', () => {
-    const mk = (id: string, severity: BaseFinding['severity']) =>
+    const mk = (id: string, severity: Finding['severity']) =>
       rule(id, { evaluate: () => [{ ruleId: id, category: 'general', severity, message: '', hint: '' }] });
     const out = run([mk('z', 'info'), mk('b', 'error'), mk('a', 'error'), mk('m', 'warning')]);
     expect(out.findings.map((f) => f.ruleId)).toEqual(['a', 'b', 'm', 'z']);
