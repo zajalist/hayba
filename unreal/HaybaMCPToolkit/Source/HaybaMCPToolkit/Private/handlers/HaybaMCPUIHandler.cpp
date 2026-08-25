@@ -2285,6 +2285,26 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleMutateTree(const TSharedPtr<FJsonO
                     if (!WBP->WidgetVariableNameToGuidMap.Contains(ConstructName))
                         WBP->WidgetVariableNameToGuidMap.Add(ConstructName, OldGuid);
                 }
+                else if (NewWidget && NewWidget->bIsVariable)
+                {
+                    // There was nothing to preserve -- the outgoing widget had
+                    // no GUID entry (it was not a variable, or the entry was
+                    // already gone). Preserving nothing must not leave the
+                    // INCOMING widget unregistered: UMG's compiler ensures on a
+                    // bIsVariable widget missing from WidgetVariableNameToGuidMap
+                    //
+                    //   Ensure condition failed:
+                    //     WidgetBP->WidgetVariableNameToGuidMap.Contains(Widget->GetFName())
+                    //   Widget [X] was added but did not get a GUID
+                    //
+                    // and the replace then fails on an otherwise valid tree.
+                    //
+                    // Gated on bIsVariable in both directions, matching
+                    // ui_set_variable: registering a non-variable would leave a
+                    // phantom entry, which is the problem PurgeSubtreeGuids
+                    // exists to clean up.
+                    RegisterWidgetVariable(WBP, NewWidget);
+                }
             }
             else
             {
