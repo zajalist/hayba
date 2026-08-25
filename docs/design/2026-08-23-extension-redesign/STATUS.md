@@ -742,3 +742,91 @@ The remaining question is unchanged and still unanswered: what does
 `UE_5.8/Engine/Source/Editor/UMGEditor/Public/WidgetBlueprint.h` do not declare
 it (383 lines, no `WidgetTree`, no `ForEachSourceWidget`), so it is inherited
 from a base class elsewhere. Answer that before writing another fix.
+
+---
+
+## The merge is done — and needs one more pass (2026-08-25)
+
+`feat/crash-resilience-advisory-hardening` is merged into
+`worktree-extension-rework` as `4e98fd4b`, with build fixes in `77e4fff9`.
+A backup of the pre-merge tip is on branch **`pre-merge-backup-20260825`**
+(`4817fcfb`) — nothing here is unrecoverable.
+
+### Where it stands
+
+| | before | after |
+|---|---|---|
+| TypeScript suite | 206 files / 2350 tests | **225 files / 2530 tests, all green** |
+| C++ build | clean | **clean** |
+| CI gates | 7 green | **7 green** |
+| UE automation | 38 tests, 2 failing | **63 tests, 7 failing** |
+
+The TypeScript side is fully reconciled and the plugin builds and runs. The
+automation suite is where the work remains.
+
+### Resolutions, and two the plan got wrong
+
+Nine conflicts. Four went as planned; the interesting part is where reading the
+code changed the answer:
+
+- **`tool-hooks.ts`** — a conflict the plan did not predict, created by *this
+  session's own* self-socket fix. Genuinely keep-both: ours added the
+  `create_connection` idiom and `0.0.0.0`, theirs added `::1` (IPv6 loopback).
+  Either alone leaves a live hole. Merged to cover both idioms and all four
+  hosts.
+- **`python-run-validator-wrap.ts`** — our field names (`data`, `category`)
+  carrying their content (`policy_code`, `matched_rule`, `retry_unchanged`).
+- **`list-tool-categories.ts`** — ours, *after* diffing the command arrays:
+  ours is a strict superset (it keeps `blueprint_add_event` visible). Had it
+  been the other way, taking ours would have hidden a command.
+- **`RenderHandler.cpp`** — plan said take ours. **Wrong.** Our blocks
+  reference variables their restructure deleted, so "ours" did not compile.
+  Their version replaces the ad-hoc timeout guard with a staged
+  `HaybaRenderSafety` lease. Took theirs wholesale.
+- **`DataAssetHandler.cpp`** — plan said combine. **Wrong.** Theirs
+  deliberately removes `Modify`/`PostEditChangeProperty`/implicit-save because
+  those broadcast callbacks that can unload or reinstance the target
+  mid-operation. Their contract is memory-only and says so
+  (`save_requested:false`, a `persistence_tip`), which answers our
+  save-honesty concern better than our version did. Took theirs.
+- **`CommandHandler.cpp`** — ours for all three hunks; they were all the inline
+  router special-cases this branch extracted into `UIBridgeHandler`.
+
+### What the merge nearly discarded
+
+Resolving `CommandHandler` in favour of the extraction **silently dropped a
+security fix**: the hardening branch had added a native redaction pass at the
+`ui_tool_stream` boundary, because that route is reachable over raw TCP and a
+direct client could otherwise write a credential into native Tool Stream
+history. It was caught only because their test asserts on it — and the
+assertion failed by reading an *empty slice*, which is a weak way to fail. The
+redaction is now ported into `UIBridgeHandler`, and the test reads the handler
+that owns the code, with a length assertion so an empty slice cannot pass.
+
+One rule was deliberately **not** carried over:
+`actor_position_drift_after_user_edit` has no evaluator on either branch and
+nothing to compare against, and this branch's own test forbids cataloguing a
+rule that cannot fire. The reasoning and the path to landing it properly are in
+`validator/rules.ts` where the rule would have gone.
+
+### The remaining 7 automation failures
+
+Five or six are **their** tests, which presumably passed on their branch, so
+the likely cause is a resolution of mine that favoured our side of something
+they depend on — not flakiness. They are not yet triaged:
+
+    Hayba.MCP.Advisory.ResponseBoundary      expected "success_needs_verification", got ""
+    Hayba.MCP.DataAsset.ReadWritePreflight   enum -1 round-trips as 0
+    Hayba.MCP.Params.Reader                  optional-string default not applied
+    Hayba.MCP.Python.FatalPolicy             got HCR-DYNAMIC-001, expected HCR-BLOCK-001
+    Hayba.MCP.Python.PolicyBoundary          callable-token boundary accepts what it should reject
+    Hayba.MCP.MetaSound.InputBoundary        save not validated before load
+    Hayba.MCP.UI.Replace.PreservesChildren…  pre-existing, but now failing differently
+
+The Python policy-code mismatches are the ones to look at first: they suggest
+their native policy engine is present but partially wired, which is exactly the
+class of thing a merge drops quietly.
+
+**Do not ship this merge until those are triaged.** The build being green and
+2,530 TypeScript tests passing is not sufficient evidence — the whole reason
+the hardening branch exists is behaviour these tests are the only check on.
