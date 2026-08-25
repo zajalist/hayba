@@ -174,6 +174,18 @@ public:
     {
         FString Out;
         if (bParamsMissing || !Params->HasField(Key)) return Default;
+        // TryGetStringField COERCES: a JSON number 1 comes back as "1" and the
+        // call reports success, so the WrongKind guard below never fired for a
+        // wrong kind. "Optional" describes absence, not malformed presence --
+        // check the declared JSON type before trusting the read.
+        {
+            const TSharedPtr<FJsonValue> Field = Params->TryGetField(Key);
+            if (!Field.IsValid() || Field->Type != EJson::String)
+            {
+                WrongKind(Key, TEXT("string"));
+                return Default;
+            }
+        }
         if (!Params->TryGetStringField(Key, Out))
         {
             WrongKind(Key, TEXT("string"));
@@ -224,6 +236,17 @@ public:
     {
         bool Out = false;
         if (bParamsMissing || !Params->HasField(Key)) return Default;
+        // Same coercion problem as OptionalString: the string "true" satisfies
+        // TryGetBoolField, so a caller sending a string where a boolean was
+        // expected was silently accepted.
+        {
+            const TSharedPtr<FJsonValue> Field = Params->TryGetField(Key);
+            if (!Field.IsValid() || Field->Type != EJson::Boolean)
+            {
+                WrongKind(Key, TEXT("boolean"));
+                return Default;
+            }
+        }
         if (!Params->TryGetBoolField(Key, Out))
         {
             WrongKind(Key, TEXT("boolean"));
