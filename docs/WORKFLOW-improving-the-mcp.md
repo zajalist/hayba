@@ -305,7 +305,7 @@ A change is done when **all** of these hold. Anything short, say so explicitly.
 | Thing | Where |
 |---|---|
 | MCP server | `mcp-tools/hayba-mcp` (build: `npm run build:server`) |
-| Plugin source | `unreal/HaybaMCPToolkit` (symlinked into Aphrosia) |
+| Plugin source | `unreal/HaybaMCPToolkit` (symlinked into Aphrosia — **see the symlink note below**) |
 | Host project | `D:\Projects\aphrosia\Aphrosia.uproject` |
 | Editor log | `D:\Projects\aphrosia\Saved\Logs\Aphrosia.log` |
 | Compile errors | `C:\Users\Admin\AppData\Local\UnrealBuildTool\Log.txt` |
@@ -315,3 +315,34 @@ A change is done when **all** of these hold. Anything short, say so explicitly.
 | Tool registrar | `mcp-tools/hayba-mcp/src/tools/register-tool.ts` |
 | Param reader | `unreal/.../Public/HaybaMCPParams.h` |
 | Reflection | `unreal/.../Public/HaybaMCPReflection.h` |
+
+
+### Two traps in this setup
+
+**The satellites are symlinked to a different worktree than the toolkit.**
+In `Aphrosia/Plugins/`:
+
+    HaybaMCPToolkit   -> /d/Hackathons/hayba-aphrosia-runtime/unreal/HaybaMCPToolkit
+    HaybaMCPGAS       -> /d/Hackathons/hayba/unreal/HaybaMCPGAS
+    HaybaMCPMetaSound -> /d/Hackathons/hayba/unreal/HaybaMCPMetaSound
+
+The toolkit follows the runtime worktree, which a branch can hard-sync. The two
+satellites point at the **main** checkout. So an editor built from a feature
+branch runs that branch's toolkit against **main's** GAS and MetaSound. Today
+that is harmless — the satellites are byte-identical to main on this branch —
+but a branch that changes a satellite would test the wrong code and see no
+sign of it. Check with:
+
+    git diff --quiet origin/main HEAD -- unreal/HaybaMCPGAS unreal/HaybaMCPMetaSound
+
+**"Result: Succeeded" does not mean your new file is in the binary.** A build
+launched while the editor is still releasing its DLL can report success without
+compiling what you added. This was observed: a new automation test compiled on
+the *second* build (`[1/4] Compile HaybaSceneQueryTest.cpp`) after the first
+reported success and produced a binary without it. For a new test, the
+authoritative check is discovery, not the build log:
+
+    test_list { "filter": "<YourTestName>" }    -> count must be non-zero
+
+Read `count`, not the tests array: a large `test_list` response can be
+truncated in transit, which looks exactly like "nothing was discovered".
