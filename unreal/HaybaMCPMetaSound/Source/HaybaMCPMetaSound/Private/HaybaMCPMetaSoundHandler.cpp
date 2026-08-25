@@ -492,8 +492,18 @@ static FHaybaHandlerResult MSInspect(const TSharedPtr<FJsonObject>& P)
 static FHaybaHandlerResult MSCompile(const TSharedPtr<FJsonObject>& P)
 {
     bool bSave = true;
-    if (P.IsValid() && P->HasField(TEXT("save")) && !P->TryGetBoolField(TEXT("save"), bSave))
-        return FHaybaHandlerResult::Err(TEXT("metasound_compile: save must be a boolean"));
+    if (P.IsValid() && P->HasField(TEXT("save")))
+    {
+        // Check the declared JSON type, not just whether a read succeeds.
+        // UE converts "yes", "on", "1" and "true" to a boolean, so
+        // TryGetBoolField reports SUCCESS for save:"yes" and this guard never
+        // fired -- a string silently decided whether the asset was written.
+        const TSharedPtr<FJsonValue> Field = P->TryGetField(TEXT("save"));
+        if (!Field.IsValid() || Field->Type != EJson::Boolean)
+            return FHaybaHandlerResult::Err(TEXT("metasound_compile: save must be a boolean"));
+        if (!P->TryGetBoolField(TEXT("save"), bSave))
+            return FHaybaHandlerResult::Err(TEXT("metasound_compile: save must be a boolean"));
+    }
     FString Path, Error; UObject* Asset = LoadMetaSound(P, Path, Error, /*bRequireGameContent=*/true); if (!Asset) return FHaybaHandlerResult::Err(TEXT("metasound_compile: ") + Error);
     UMetaSoundBuilderBase* Builder=AttachBuilder(*Asset); if (!Builder) return FHaybaHandlerResult::Err(TEXT("metasound_compile: builder unavailable"));
     const FMetaSoundFrontendDocumentBuilder& DocBuilder = Builder->GetConstBuilder();
