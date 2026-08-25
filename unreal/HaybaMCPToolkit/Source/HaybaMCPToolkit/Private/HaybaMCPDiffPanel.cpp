@@ -1,4 +1,5 @@
 #include "HaybaMCPDiffPanel.h"
+#include "HaybaMCPStyle.h"
 
 #include "Widgets/SBoxPanel.h"
 #include "Widgets/Layout/SBox.h"
@@ -244,7 +245,7 @@ TSharedRef<SWidget> SHaybaMCPDiffPanel::BuildEntryRow(int32 EntryIndex)
             SNew(STextBlock)
             .Font(FCoreStyle::GetDefaultFontStyle("Mono", 9))
             .Text(FText::FromString(E.Property))
-            .ColorAndOpacity(FSlateColor(FLinearColor(0.78f, 0.80f, 0.88f)))
+            .ColorAndOpacity(FSlateColor(FHaybaMCPStyle::Colour("Hayba.Color.Text.Secondary")))
         ]
         + SHorizontalBox::Slot().FillWidth(0.30f).VAlign(VAlign_Center).Padding(6.f, 0.f, 4.f, 0.f)
         [

@@ -6,6 +6,7 @@
 // focused on conversation, input, footer status, and per-message affordances.
 //
 #include "HaybaMCPChatPanel.h"
+#include "HaybaMCPStyle.h"
 #include "HaybaMCPModule.h"
 #include "HaybaMCPMainPanel.h"
 #include "HaybaMCPClaudeClient.h"
@@ -339,7 +340,7 @@ TSharedRef<SWidget> SHaybaMCPChatPanel::BuildInput()
                         return LOCTEXT("InputHint",
                             "Describe what you want to generate…  (⏎ to send · ⇧⏎ for newline)");
                     })
-                    .ColorAndOpacity(FSlateColor(FLinearColor(0.50f, 0.52f, 0.60f)))
+                    .ColorAndOpacity(FSlateColor(FHaybaMCPStyle::Colour("Hayba.Color.Text.Muted")))
                     .OverflowPolicy(ETextOverflowPolicy::MiddleEllipsis)
                     .Visibility_Lambda([this]()
                     {

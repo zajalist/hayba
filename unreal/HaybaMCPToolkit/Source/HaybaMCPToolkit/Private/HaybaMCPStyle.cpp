@@ -125,6 +125,12 @@ TSharedRef<FSlateStyleSet> FHaybaMCPStyle::Create()
         // pass and fail must not shout over it.
         Tok(TEXT("Hayba.Color.Status.Pass"),    FLinearColor::FromSRGBColor(FColor(0x7E, 0xA5, 0x8A)));
         Tok(TEXT("Hayba.Color.Status.Fail"),    FLinearColor::FromSRGBColor(FColor(0xC4, 0x6E, 0x68)));
+        // Severity is its own axis: how much a finding matters, as opposed
+        // to Cat.* which says what it is about. Tuned to sit beside Pass and
+        // Fail rather than to match the full-saturation primaries the
+        // Validation panel used to draw.
+        Tok(TEXT("Hayba.Color.Status.Warn"),    FLinearColor::FromSRGBColor(FColor(0xC9, 0xA2, 0x5E)));
+        Tok(TEXT("Hayba.Color.Status.Info"),    FLinearColor::FromSRGBColor(FColor(0x7E, 0x9C, 0xC4)));
 
         // Categorical palette — for telling *kinds* apart, not for status.
         //

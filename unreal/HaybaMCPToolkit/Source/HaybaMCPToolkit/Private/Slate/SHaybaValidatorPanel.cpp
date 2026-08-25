@@ -1,5 +1,6 @@
 // SHaybaValidatorPanel.cpp
 #include "Slate/SHaybaValidatorPanel.h"
+#include "HaybaMCPStyle.h"
 
 #include "DirectoryWatcherModule.h"
 #include "Editor.h"
@@ -36,9 +37,9 @@ namespace
 
     FSlateColor ColorForSeverity(const FString& Sev)
     {
-        if (Sev == TEXT("error"))   return FSlateColor(FLinearColor(1.f, 0.3f, 0.3f));
-        if (Sev == TEXT("warning")) return FSlateColor(FLinearColor(1.f, 0.85f, 0.2f));
-        return FSlateColor(FLinearColor(0.55f, 0.7f, 1.f));
+        if (Sev == TEXT("error"))   return FSlateColor(FHaybaMCPStyle::Colour("Hayba.Color.Status.Fail"));
+        if (Sev == TEXT("warning")) return FSlateColor(FHaybaMCPStyle::Colour("Hayba.Color.Status.Warn"));
+        return FSlateColor(FHaybaMCPStyle::Colour("Hayba.Color.Status.Info"));
     }
 
     /** Trim long strings for the table; full text is in the tooltip. */

@@ -179,7 +179,7 @@ TSharedRef<SWidget> SHaybaMCPMainPanel::BuildWatermark()
         + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(4.f, 0.f, 0.f, 0.f)
         [
             SNew(STextBlock)
-            .ColorAndOpacity(FSlateColor(FLinearColor(0.55f, 0.57f, 0.65f)))
+            .ColorAndOpacity(FSlateColor(FHaybaMCPStyle::Colour("Hayba.Color.Text.Muted")))
             .Text(FText::FromString(Version.IsEmpty()
                 ? FString(TEXT("Hayba"))
                 : FString::Printf(TEXT("Hayba v%s"), *Version)))
@@ -508,7 +508,7 @@ TSharedRef<SWidget> SHaybaMCPMainPanel::BuildPanelContent(EHaybaSection Section)
                     + SHorizontalBox::Slot().FillWidth(1.f).VAlign(VAlign_Center).Padding(12.f, 0.f, 0.f, 0.f)
                     [
                         SNew(STextBlock)
-                        .ColorAndOpacity(FSlateColor(FLinearColor(0.55f, 0.57f, 0.65f)))
+                        .ColorAndOpacity(FSlateColor(FHaybaMCPStyle::Colour("Hayba.Color.Text.Muted")))
                         .Text_Lambda([GetCount]()
                         {
                             const int32 N = GetCount();

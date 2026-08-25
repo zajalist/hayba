@@ -76,7 +76,7 @@ TSharedRef<SWidget> SHaybaMCPCapabilitiesPanel::BuildHeader()
             + SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 2.f)
             [
                 SNew(STextBlock)
-                .ColorAndOpacity(FSlateColor(FLinearColor(0.78f, 0.80f, 0.88f)))
+                .ColorAndOpacity(FSlateColor(FHaybaMCPStyle::Colour("Hayba.Color.Text.Secondary")))
                 .AutoWrapText(true)
                 .Text_Lambda([this]()
                 {
@@ -88,7 +88,7 @@ TSharedRef<SWidget> SHaybaMCPCapabilitiesPanel::BuildHeader()
             + SVerticalBox::Slot().AutoHeight()
             [
                 SNew(STextBlock)
-                .ColorAndOpacity(FSlateColor(FLinearColor(0.55f, 0.57f, 0.65f)))
+                .ColorAndOpacity(FSlateColor(FHaybaMCPStyle::Colour("Hayba.Color.Text.Muted")))
                 .Text_Lambda([this]()
                 {
                     return FText::FromString(FString::Printf(
@@ -467,7 +467,7 @@ TSharedRef<SWidget> SHaybaMCPCapabilitiesPanel::BuildCategoryRow(int32 CategoryI
                 + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(8.f, 0.f, 0.f, 0.f)
                 [
                     SNew(STextBlock)
-                    .ColorAndOpacity(FSlateColor(FLinearColor(0.55f, 0.57f, 0.65f)))
+                    .ColorAndOpacity(FSlateColor(FHaybaMCPStyle::Colour("Hayba.Color.Text.Muted")))
                     .Text_Lambda([this, CategoryIndex]()
                     {
                         const FCategoryEntry& C = Categories[CategoryIndex];
@@ -486,7 +486,7 @@ TSharedRef<SWidget> SHaybaMCPCapabilitiesPanel::BuildCategoryRow(int32 CategoryI
                     SNew(STextBlock)
                     .TextStyle(&FAppStyle::Get().GetWidgetStyle<FTextBlockStyle>("SmallText"))
                     .Text(FText::FromString(Cat.Description))
-                    .ColorAndOpacity(FSlateColor(FLinearColor(0.50f, 0.52f, 0.60f)))
+                    .ColorAndOpacity(FSlateColor(FHaybaMCPStyle::Colour("Hayba.Color.Text.Muted")))
                     .AutoWrapText(true)
                 ]
                 + SVerticalBox::Slot().AutoHeight().Padding(0.f, 2.f, 0.f, 4.f)
@@ -529,7 +529,7 @@ TSharedRef<SWidget> SHaybaMCPCapabilitiesPanel::BuildToolRow(int32 CategoryIndex
                 SNew(STextBlock)
                 .Font(MonoFont)
                 .Text(FText::FromString(ToolName))
-                .ColorAndOpacity(FSlateColor(FLinearColor(0.92f, 0.93f, 0.96f)))
+                .ColorAndOpacity(FSlateColor(FHaybaMCPStyle::Colour("Hayba.Color.Text.Primary")))
             ]
             // Description below — supporting text, muted, wraps cleanly.
             + SVerticalBox::Slot().AutoHeight().Padding(0.f, 1.f, 0.f, 0.f)
@@ -537,7 +537,7 @@ TSharedRef<SWidget> SHaybaMCPCapabilitiesPanel::BuildToolRow(int32 CategoryIndex
                 SNew(STextBlock)
                 .TextStyle(&FAppStyle::Get().GetWidgetStyle<FTextBlockStyle>("SmallText"))
                 .Text(FText::FromString(ToolDesc))
-                .ColorAndOpacity(FSlateColor(FLinearColor(0.55f, 0.57f, 0.65f)))
+                .ColorAndOpacity(FSlateColor(FHaybaMCPStyle::Colour("Hayba.Color.Text.Muted")))
                 .AutoWrapText(true)
             ]
         ];
