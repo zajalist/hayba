@@ -9,7 +9,6 @@
 #include "HaybaMCPModule.h"
 #include "HaybaMCPPlanPanel.h"
 #include "HaybaMCPToolStreamPanel.h"
-#include "HaybaMCPSceneMapPanel.h"
 #include "HaybaMCPSceneMapData.h"
 #include "HaybaMCPValidationPanel.h"
 #include "HaybaMCPMemoryPanel.h"
@@ -235,85 +234,17 @@ static void MaybeShowPlanModePrompt()
     });
 }
 
-static EHaybaNodeSemantic SemanticFromString(const FString& S)
-{
-    if (S.Equals(TEXT("foliage"),   ESearchCase::IgnoreCase)) return EHaybaNodeSemantic::Foliage;
-    if (S.Equals(TEXT("building"),  ESearchCase::IgnoreCase)) return EHaybaNodeSemantic::Building;
-    if (S.Equals(TEXT("light"),     ESearchCase::IgnoreCase)) return EHaybaNodeSemantic::Light;
-    if (S.Equals(TEXT("trigger"),   ESearchCase::IgnoreCase)) return EHaybaNodeSemantic::Trigger;
-    if (S.Equals(TEXT("character"), ESearchCase::IgnoreCase)) return EHaybaNodeSemantic::Character;
-    if (S.Equals(TEXT("blueprint"), ESearchCase::IgnoreCase)) return EHaybaNodeSemantic::Blueprint;
-    if (S.Equals(TEXT("ism"),       ESearchCase::IgnoreCase)) return EHaybaNodeSemantic::ISM;
-    return EHaybaNodeSemantic::Other;
-}
 
-static void PushSceneGraphToPanel(const TSharedPtr<FJsonObject>& Data)
-{
-    if (!Data.IsValid()) return;
-    TArray<FHaybaSceneNode> Nodes;
-    TArray<FHaybaSceneEdge> Edges;
-    TMap<FString, int32> IdToIdx;
-
-    const TArray<TSharedPtr<FJsonValue>>* NodesArr = nullptr;
-    if (Data->TryGetArrayField(TEXT("nodes"), NodesArr))
-    {
-        for (const auto& V : *NodesArr)
-        {
-            const TSharedPtr<FJsonObject> N = V->AsObject();
-            if (!N.IsValid()) continue;
-            FHaybaSceneNode SN;
-            N->TryGetStringField(TEXT("actorId"), SN.ActorId);
-            N->TryGetStringField(TEXT("label"),   SN.Label);
-            const TSharedPtr<FJsonObject>* Loc = nullptr;
-            if (N->TryGetObjectField(TEXT("location"), Loc) && Loc && (*Loc).IsValid())
-            {
-                double X = 0, Y = 0;
-                (*Loc)->TryGetNumberField(TEXT("x"), X);
-                (*Loc)->TryGetNumberField(TEXT("y"), Y);
-                SN.WorldPos = FVector2D(X, Y);
-            }
-            FString SemStr;
-            N->TryGetStringField(TEXT("semantic"), SemStr);
-            SN.Semantic = SemanticFromString(SemStr);
-            IdToIdx.Add(SN.ActorId, Nodes.Num());
-            Nodes.Add(MoveTemp(SN));
-        }
-    }
-
-    const TArray<TSharedPtr<FJsonValue>>* EdgesArr = nullptr;
-    if (Data->TryGetArrayField(TEXT("edges"), EdgesArr))
-    {
-        for (const auto& V : *EdgesArr)
-        {
-            const TSharedPtr<FJsonObject> E = V->AsObject();
-            if (!E.IsValid()) continue;
-            FString From, To;
-            E->TryGetStringField(TEXT("from"), From);
-            E->TryGetStringField(TEXT("to"),   To);
-            const int32* FromIdx = IdToIdx.Find(From);
-            const int32* ToIdx   = IdToIdx.Find(To);
-            if (FromIdx && ToIdx)
-            {
-                FHaybaSceneEdge SE;
-                SE.FromIdx = *FromIdx;
-                SE.ToIdx = *ToIdx;
-                E->TryGetBoolField(TEXT("hierarchical"), SE.bHierarchical);
-                Edges.Add(SE);
-            }
-        }
-    }
-
-    AsyncTask(ENamedThreads::GameThread, [Nodes = MoveTemp(Nodes), Edges = MoveTemp(Edges)]()
-    {
-        if (FHaybaMCPModule* M = FModuleManager::GetModulePtr<FHaybaMCPModule>("HaybaMCPToolkit"))
-        {
-            if (TSharedPtr<SHaybaMCPSceneMapPanel> Panel = M->SceneMapPanel.Pin())
-            {
-                Panel->LoadSceneGraph(Nodes, Edges);
-            }
-        }
-    });
-}
+// scene_get_graph used to push its parsed nodes and edges into the Scene Map
+// panel here. That push has been removed: SHaybaMCPSceneMapPanel::LoadSceneGraph
+// was an empty inline stub, so ~60 lines of JSON parsing, a game-thread marshal
+// and a weak-pointer pin all terminated in {}. Both Scene Map renderers build
+// their own cells from the world via HaybaCogMap::BuildForWorld, so nothing was
+// lost by deleting it -- and it removed one of the router's special cases,
+// which is the point: those bypass Plan Mode, the SEH guard, transactions and
+// the journal, and this one was doing it to reach a no-op.
+//
+// The command itself is unchanged; it still returns the graph to the caller.
 
 /** Push findings produced OUTSIDE the editor into the Validation panel.
  *  The panel is push-only from in here, so MCP-side validators (ui_validate
@@ -1064,8 +995,7 @@ FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
     // Push scene-shaped results into their dedicated panels.
     if (Result.bOk && Result.Data.IsValid())
     {
-        if (Cmd == TEXT("scene_get_graph"))           PushSceneGraphToPanel(Result.Data);
-        else if (Cmd == TEXT("scene_validate_physics")) PushPhysicsResultsToPanel(Result.Data);
+        if (Cmd == TEXT("scene_validate_physics")) PushPhysicsResultsToPanel(Result.Data);
         else if (Cmd == TEXT("memory_query"))           PushMemoryResultsToPanel(Result.Data);
         // ui_report_findings carries its payload in the REQUEST, not the
         // response, because the findings were judged MCP-side.

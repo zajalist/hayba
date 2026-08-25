@@ -34,7 +34,6 @@ public:
 
     // Compat shim: the rest of the codebase calls this; keep the signature so
     // we don't break references in HaybaMCPCommandHandler / HaybaMCPModule.
-    void LoadSceneGraph(const TArray<FHaybaSceneNode>&, const TArray<FHaybaSceneEdge>&) {}
     void SelectActorById(const FString&) {}
 
 protected:

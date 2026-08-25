@@ -50,7 +50,6 @@ public:
 
     // Weak references to live sub-panels (set by SHaybaMCPMainPanel as it builds them).
     TWeakPtr<class SHaybaMCPToolStreamPanel> ToolStreamPanel;
-    TWeakPtr<class SHaybaMCPSceneMapPanel>   SceneMapPanel;
     TWeakPtr<class SHaybaMCPPlanPanel>       PlanPanel;
     TWeakPtr<class SHaybaMCPDiffPanel>       DiffPanel;
     TWeakPtr<class SHaybaMCPValidationPanel> ValidationPanel;

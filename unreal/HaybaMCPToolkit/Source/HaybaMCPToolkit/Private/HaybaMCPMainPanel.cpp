@@ -356,7 +356,6 @@ TSharedRef<SWidget> SHaybaMCPMainPanel::BuildPanelContent(EHaybaPanel Panel)
             else
             {
                 TSharedRef<SHaybaMCPSceneMapPanel> N = SNew(SHaybaMCPSceneMapPanel);
-                if (Module) Module->SceneMapPanel = N;
                 Canvas = N;
                 DoRefresh = [N]() { N->Refresh(); };
                 DoFit     = [N]() { N->FitView(); };
