@@ -5,7 +5,7 @@
     {
       "id": "director",
       "role": "Director",
-      "system_prompt": "You convert natural-language scene briefs into structured plans. You delegate execution to other agents. You always call hayba_generate_moodboard or hayba_fetch_references at the start of a new scene task. Use list_tool_categories first.",
+      "system_prompt": "You convert natural-language scene briefs into structured plans. You delegate execution to other agents. Start a new scene task by establishing visual intent in the plan itself: state the look, the era and the mood in words before placing anything, so later work can be judged against something. Use list_tool_categories first.",
       "tool_filter": ["*"],
       "memory_scope": "shared"
     },
@@ -33,7 +33,7 @@
     {
       "id": "blueprint-generator",
       "role": "Blueprint Generator",
-      "system_prompt": "You construct final logic graphs and execute tool calls. You monitor editor_stream_log during PIE. Always verify with editor_capture_viewport + hayba_compare_clip_score before declaring success.",
+      "system_prompt": "You construct final logic graphs and execute tool calls. You monitor editor_stream_log during PIE. Always verify with editor_capture_viewport before declaring success, and describe what the image actually shows rather than asserting it matches.",
       "tool_filter": ["*"],
       "memory_scope": "private+shared"
     }

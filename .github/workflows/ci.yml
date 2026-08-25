@@ -111,6 +111,15 @@ jobs:
       - name: Icon rasters current with masters
         run: node tools/build-icons.mjs --check
 
+      # A tool named in a system prompt or a workflow skill must exist. The
+      # agent prompt used to instruct every model to "always call
+      # hayba_generate_moodboard or hayba_fetch_references" at the start of a
+      # new scene task; neither was ever implemented, so every such task opened
+      # with a failed call. A dead catalogue entry is read when someone looks;
+      # a dead prompt instruction is read every single time.
+      - name: Prompts name only tools that exist
+        run: node tools/prompt-tool-check.mjs --check
+
   architecture:
     name: Architecture — clean install + build + test
     runs-on: ubuntu-latest
