@@ -224,7 +224,13 @@ static FHaybaHandlerResult MeshSetNanite(const TSharedPtr<FJsonObject>& P)
 {
     FHaybaParamReader R(P, TEXT("mesh_set_nanite"));
     const FString Path = R.RequiredString(TEXT("path"));
-    const bool bEnable = R.RequiredBool(TEXT("enable"));
+    // The reader has no RequiredBool. Check presence explicitly so an omitted
+    // flag is an error rather than a silent default, then read it through
+    // OptionalBool, which rejects a wrong JSON kind (a string "true" is not a
+    // boolean).
+    if (!P.IsValid() || !P->HasField(TEXT("enable")))
+        return FHaybaHandlerResult::Err(TEXT("mesh_set_nanite: missing required boolean enable"));
+    const bool bEnable = R.OptionalBool(TEXT("enable"), false);
     if (R.HasErrors()) return FHaybaHandlerResult::Err(R.ErrorMessage());
 
     UStaticMesh* Mesh = Cast<UStaticMesh>(FSoftObjectPath(Path).TryLoad());
