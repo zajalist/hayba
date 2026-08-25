@@ -34,6 +34,7 @@ public:
 
 private:
     FHaybaHandlerResult HandleMemorySet(const TSharedPtr<FJsonObject>& P);
+    FHaybaHandlerResult HandleCapturePanel(const TSharedPtr<FJsonObject>& P);
     FHaybaHandlerResult HandleToolStream(const TSharedPtr<FJsonObject>& P);
     FHaybaHandlerResult HandleToolStreamNewTurn(const TSharedPtr<FJsonObject>& P);
 };

@@ -113,6 +113,10 @@ EHaybaPanel SHaybaMCPMainPanel::PanelForSection(EHaybaSection Section)
 
 void SHaybaMCPMainPanel::Construct(const FArguments& InArgs, FHaybaMCPModule* InModule)
 {
+    // Register the dock root so ui_capture_panel can screenshot it. Done first
+    // so a capture during construction still finds a valid widget.
+    if (InModule) InModule->MainPanel = SharedThis(this);
+
     Module = InModule;
 
     ChildSlot
@@ -208,6 +212,33 @@ TSharedRef<SWidget> SHaybaMCPMainPanel::BuildHeader()
             ]
             + SHorizontalBox::Slot().FillWidth(1.f)
             [ SNew(SBox) ]
+            // The gear. Right-aligned in the chrome so configuration is
+            // reachable without standing beside the five nouns as a peer.
+            + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
+            [
+                SNew(SButton)
+                .ButtonStyle(FAppStyle::Get(), "HoverHintOnly")
+                .ToolTipText(NSLOCTEXT("Hayba", "OpenSettings",
+                    "Settings — connection, backend, sidecar, Plan Mode, capabilities"))
+                .ContentPadding(FMargin(4.f, 2.f))
+                .OnClicked(this, &SHaybaMCPMainPanel::OnSidebarClick, EHaybaPanel::Settings)
+                [
+                    SNew(SBox).WidthOverride(16.f).HeightOverride(16.f)
+                    [
+                        SNew(SImage)
+                        .Image(FHaybaMCPStyle::GetBrush(TEXT("Hayba.Icon.Settings")))
+                        .ColorAndOpacity_Lambda([this]()
+                        {
+                            // Ochre marks the ACTIVE destination throughout the
+                            // dock; the gear follows the same rule so it reads
+                            // as selected when Settings is open.
+                            return CurrentPanel == EHaybaPanel::Settings
+                                ? FSlateColor(FHaybaMCPStyle::Colour("Hayba.Color.Accent.Ochre"))
+                                : FSlateColor(FHaybaMCPStyle::Colour("Hayba.Color.Text.Secondary"));
+                        })
+                    ]
+                ]
+            ]
         ];
 }
 
@@ -215,12 +246,18 @@ TSharedRef<SWidget> SHaybaMCPMainPanel::BuildSidebar()
 {
     SAssignNew(Sidebar, SVerticalBox);
 
-    // Five destinations plus the gear, ordered the way the work flows: ask,
-    // watch it happen, check it against the rules, look at the world it
-    // changed, reach for what to place next.
+    // FIVE destinations, ordered the way the work flows: ask, watch it happen,
+    // check it against the rules, look at the world it changed, reach for what
+    // to place next.
+    //
+    // Settings is deliberately NOT here. The IA is explicit: "Settings is a
+    // gear action in the chrome, not a peer destination ... so configuration
+    // does not compete with the five nouns." It lived in this list with
+    // identical treatment, which made it a sixth noun. It is now the gear in
+    // the header.
     TArray<EHaybaPanel> Items = {
         EHaybaPanel::Chat, EHaybaPanel::Activity, EHaybaPanel::Rules,
-        EHaybaPanel::World, EHaybaPanel::Library, EHaybaPanel::Settings,
+        EHaybaPanel::World, EHaybaPanel::Library,
     };
     for (EHaybaPanel P : Items)
     {

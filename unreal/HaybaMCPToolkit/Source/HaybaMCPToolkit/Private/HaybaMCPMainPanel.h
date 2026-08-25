@@ -58,8 +58,12 @@ public:
 
 private:
     FHaybaMCPModule* Module = nullptr;
-    EHaybaPanel CurrentPanel = EHaybaPanel::Chat;
-    EHaybaSection CurrentSection = EHaybaSection::Chat;
+    // Activity is home. The IA calls it "default / home: proposed -> executing
+    // -> done" and makes it the integration point every consequential action
+    // lands in. Opening on Chat put the asking surface before the evidence
+    // surface.
+    EHaybaPanel CurrentPanel = EHaybaPanel::Activity;
+    EHaybaSection CurrentSection = EHaybaSection::ToolStream;
 
     TSharedPtr<SBox> ContentArea;
     TSharedPtr<SVerticalBox> Sidebar;

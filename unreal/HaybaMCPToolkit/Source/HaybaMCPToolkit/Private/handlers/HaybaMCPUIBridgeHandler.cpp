@@ -1,4 +1,10 @@
 #include "HaybaMCPUIBridgeHandler.h"
+#include "HAL/FileManager.h"
+#include "Misc/FileHelper.h"
+#include "ImageUtils.h"
+#include "Framework/Application/SlateApplication.h"
+#include "HaybaMCPParams.h"
+#include "HaybaMCPMainPanel.h"
 #include "HaybaMCPSecretRedaction.h"
 
 #include "HaybaMCPModule.h"
@@ -12,6 +18,7 @@ TArray<FString> FHaybaMCPUIBridgeHandler::GetCommands() const
 {
     return {
         TEXT("ui_memory_set"),
+        TEXT("ui_capture_panel"),
         TEXT("ui_tool_stream"),
         TEXT("ui_tool_stream_new_turn"),
     };
@@ -22,6 +29,7 @@ FHaybaHandlerResult FHaybaMCPUIBridgeHandler::Handle(const FString& Cmd, const T
     if (!Params.IsValid()) return FHaybaHandlerResult::Err(TEXT("UIBridgeHandler: missing params"));
 
     if (Cmd == TEXT("ui_memory_set"))           return HandleMemorySet(Params);
+    if (Cmd == TEXT("ui_capture_panel"))        return HandleCapturePanel(Params);
     if (Cmd == TEXT("ui_tool_stream"))          return HandleToolStream(Params);
     if (Cmd == TEXT("ui_tool_stream_new_turn")) return HandleToolStreamNewTurn(Params);
 
@@ -56,6 +64,61 @@ FHaybaHandlerResult FHaybaMCPUIBridgeHandler::HandleMemorySet(const TSharedPtr<F
     return Received();
 }
 
+FHaybaHandlerResult FHaybaMCPUIBridgeHandler::HandleCapturePanel(const TSharedPtr<FJsonObject>& P)
+{
+    FHaybaParamReader R(P, TEXT("ui_capture_panel"));
+    const FString OutPath = R.RequiredString(TEXT("path"));
+    if (R.HasErrors()) return FHaybaHandlerResult::Err(R.ErrorMessage());
+
+    // Absolute paths only, and never inside the engine install. A relative
+    // name here would resolve against the editor's working directory, which
+    // is the Unreal install tree.
+    if (FPaths::IsRelative(OutPath))
+        return FHaybaHandlerResult::Err(
+            TEXT("ui_capture_panel: path must be absolute; a relative name resolves into the Unreal install tree"));
+
+    FHaybaMCPModule* M = FModuleManager::GetModulePtr<FHaybaMCPModule>("HaybaMCPToolkit");
+    TSharedPtr<SHaybaMCPMainPanel> Panel = M ? M->MainPanel.Pin() : nullptr;
+    if (!Panel.IsValid())
+        return FHaybaHandlerResult::Err(
+            TEXT("ui_capture_panel: the Hayba dock is not open; open it from the toolbar first"));
+
+    TArray<FColor> Pixels;
+    FIntVector Size(0, 0, 0);
+    if (!FSlateApplication::Get().TakeScreenshot(Panel.ToSharedRef(), Pixels, Size)
+        || Size.X <= 0 || Size.Y <= 0 || Pixels.Num() == 0)
+    {
+        return FHaybaHandlerResult::Err(
+            TEXT("ui_capture_panel: Slate returned no pixels; the panel may be collapsed or offscreen"));
+    }
+
+    // TakeScreenshot leaves alpha as rendered, which can make the PNG appear
+    // empty in viewers that honour it. The dock is opaque; force it.
+    for (FColor& C : Pixels) C.A = 255;
+
+    TArray64<uint8> Png;
+    FImageUtils::PNGCompressImageArray(Size.X, Size.Y, Pixels, Png);
+    if (Png.Num() == 0)
+        return FHaybaHandlerResult::Err(TEXT("ui_capture_panel: PNG compression produced no bytes"));
+
+    const FString Dir = FPaths::GetPath(OutPath);
+    IFileManager::Get().MakeDirectory(*Dir, /*Tree*/ true);
+    if (!FFileHelper::SaveArrayToFile(Png, *OutPath))
+        return FHaybaHandlerResult::Err(FString::Printf(
+            TEXT("ui_capture_panel: could not write %s"), *OutPath));
+
+    // Read the file back rather than trusting the write, and report the
+    // dimensions so a caller can tell a real capture from a 1x1 stub.
+    const int64 OnDisk = IFileManager::Get().FileSize(*OutPath);
+
+    auto Out = MakeShared<FJsonObject>();
+    Out->SetStringField(TEXT("path"), OutPath);
+    Out->SetNumberField(TEXT("width"), Size.X);
+    Out->SetNumberField(TEXT("height"), Size.Y);
+    Out->SetNumberField(TEXT("bytes"), static_cast<double>(OnDisk));
+    Out->SetBoolField(TEXT("verified"), OnDisk > 0);
+    return FHaybaHandlerResult::Ok(Out);
+}
 FHaybaHandlerResult FHaybaMCPUIBridgeHandler::HandleToolStream(const TSharedPtr<FJsonObject>& P)
 {
     // Lets the Node side mirror its own tool-call lifecycle into the Tool

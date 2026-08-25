@@ -142,7 +142,7 @@ const DOMAINS: ReadonlyArray<{ domain: string; command_count: number; commands: 
   },
   { domain: 'bt', command_count: 4, commands: ['bt_get_info', 'bt_add_node', 'bt_connect', 'bt_compile'] },
   { domain: 'input', command_count: 3, commands: ['input_create_action', 'input_create_mapping', 'input_add_mapping'] },
-  { domain: 'ui', command_count: 3, commands: ['ui_create_widget', 'ui_add_element', 'ui_query'] },
+  { domain: 'ui', command_count: 4, commands: ['ui_create_widget', 'ui_add_element', 'ui_query', 'ui_capture_panel'] },
   { domain: 'net', command_count: 2, commands: ['net_debug', 'net_set_replication'] },
   // Import hygiene (mesh_generate_collision / _uvs, mesh_build_lods,
   // mesh_set_nanite) is listed because Code Mode discovers capabilities HERE:

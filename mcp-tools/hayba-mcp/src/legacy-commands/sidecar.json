@@ -6568,6 +6568,48 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false
+    },
+    "ui_capture_panel": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPUIBridgeHandler::HandleCapturePanel",
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": "Screenshot the Hayba dock itself to a PNG. editor_capture_viewport captures the 3D scene; this captures the extension UI - header, sidebar and the active destination - so panel changes can be looked at rather than inferred from source. Requires the dock to be open. Reports width/height/bytes read back off disk so a caller can tell a real capture from an empty file.",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "required": true,
+          "description": "Absolute output path for the PNG. Relative paths are refused: they resolve into the Unreal install tree."
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "path",
+            "type": "string"
+          },
+          {
+            "name": "width",
+            "type": "number"
+          },
+          {
+            "name": "height",
+            "type": "number"
+          },
+          {
+            "name": "bytes",
+            "type": "number",
+            "description": "File size read back off disk"
+          },
+          {
+            "name": "verified",
+            "type": "boolean",
+            "description": "True when the file exists and is non-empty"
+          }
+        ]
+      }
     }
   }
 }

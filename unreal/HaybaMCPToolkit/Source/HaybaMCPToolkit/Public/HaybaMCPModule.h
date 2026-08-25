@@ -53,6 +53,12 @@ public:
     static const FName TabStudio;
 
     // Weak references to live sub-panels (set by SHaybaMCPMainPanel as it builds them).
+    //
+    // MainPanel is the dock root, kept so ui_capture_panel can screenshot the
+    // extension's own UI. Nothing else could see it: editor_capture_viewport
+    // captures the 3D scene, so every claim about these panels was read off
+    // the source rather than looked at.
+    TWeakPtr<class SHaybaMCPMainPanel>       MainPanel;
     TWeakPtr<class SHaybaMCPToolStreamPanel> ToolStreamPanel;
     TWeakPtr<class SHaybaMCPPlanPanel>       PlanPanel;
     TWeakPtr<class SHaybaMCPDiffPanel>       DiffPanel;

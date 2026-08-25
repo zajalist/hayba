@@ -13,9 +13,9 @@ The number below is the one with a definition: commands declared in a
 | What | Count |
 |---|---|
 | Handler classes declaring commands | **35** |
-| Commands declared in C++ | **243** |
-| Commands described in `sidecar.json` | 158 |
-| …of those, marked agent-callable | 154 |
+| Commands declared in C++ | **244** |
+| Commands described in `sidecar.json` | 159 |
+| …of those, marked agent-callable | 155 |
 
 _Every declared command is either described in `sidecar.json` or wrapped in TS._
 
@@ -166,6 +166,6 @@ registration list. Satellite-module handlers register themselves via
 | `test` | FHaybaMCPTestHandler | 3 | yes |
 | `texture` | FHaybaMCPTextureHandler | 4 | yes |
 | `ui` | FHaybaMCPUIHandler | 16 | yes |
-| `ui_bridge` | FHaybaMCPUIBridgeHandler | 3 | yes |
+| `ui_bridge` | FHaybaMCPUIBridgeHandler | 4 | yes |
 | `vault` | FHaybaMCPVaultHandler | 5 | yes |
 | `wp` | FHaybaMCPWorldPartitionHandler | 3 | yes |
