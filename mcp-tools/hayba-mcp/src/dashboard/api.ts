@@ -20,6 +20,7 @@ import type { EncyclopediaEntry } from '../encyclopedia.js';
 import { getCachedSidecarHealth, pingSidecar } from '../tools/visual/sidecar-client.js';
 import { registerChatRoutes } from '../chat/chat-server.js';
 import { jsonObjectBody, stringQuery } from '../http/express-boundary.js';
+import { executeCommand } from '../tools/tool-executor.js';
 
 /**
  * Register REST API endpoints for the dashboard.
@@ -83,6 +84,10 @@ export function registerApiRoutes(app: Express): void {
       if (!client.isConnected()) {
         return res.json({ connected: false, error: 'Not connected to UE', ...sidecarFields });
       }
+      // Deliberately raw. This IS the connection check, and routing it
+      // through executeCommand would apply retry and cost-timeout policy
+      // to the question "is the socket up" -- turning a fast honest no
+      // into a slow retried maybe.
       const response = await client.send('ping', {}, 5000);
       if (response.ok) {
         res.json({ connected: true, ...sidecarFields, ...response.data });
@@ -107,16 +112,15 @@ export function registerApiRoutes(app: Express): void {
   // List PCG assets
   app.get('/api/ue/assets', async (req: Request, res: Response) => {
     try {
-      const client = getUEClient();
       const parsed = stringQuery(req.query.path, 'path');
       if (!parsed.ok) return res.status(400).json({ error: parsed.error });
       const path = parsed.value || '/Game/';
-      const response = await client.send('list_pcg_assets', { path });
-      if (response.ok) {
-        res.json(response.data);
-      } else {
-        res.status(500).json({ error: response.error });
-      }
+      // Through executeCommand, not a raw send: a real command should get the
+      // same cost-based timeout, retry policy and journalling from the
+      // dashboard as it does from a tool call. A second path to UE that obeys
+      // none of that is how the two disagree about what happened.
+      const data = await executeCommand<Record<string, unknown>>('list_pcg_assets', { path });
+      res.json(data ?? {});
     } catch (err) {
       res.status(500).json({ error: err instanceof Error ? err.message : 'Unknown error' });
     }
