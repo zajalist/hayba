@@ -388,3 +388,61 @@ Split accordingly:
 4. **D1.2 → D1.1 → D1.6** (see 08b) — release zips, then npm, then the
    installer that unites them. Independent of every other track.
 5. **R4** after R2 closes the render-handler hole (see 07).
+
+
+---
+
+## Track A progress — 2026-08-25
+
+**A0 — stop advertising what does not exist. DONE (`56c9c5d5`).**
+
+Verified the claim rather than trusting the earlier audit: `hayba_generate_moodboard`,
+`hayba_fetch_references` and `hayba_compare_clip_score` have zero implementations
+anywhere — not in C++, not in TS, not in the sidecar. The agent system prompt
+instructed every model to "always call" two of them at the start of a new scene
+task, so every such task opened with a failed call, and the executor prompt named
+the third as the way to verify success.
+
+Implementing them is A3 and is not a text edit. The prompts and both workflow
+skills now name only tools verified to exist, and state visual intent in words up
+front so the captured viewport has something to be judged against. Weaker than a
+CLIP score, and honest.
+
+`tools/prompt-tool-check.mjs` is the gate, in CI beside the capability and icon
+checks. It cross-checks every backticked tool name in `hayba.agents.json` and the
+workflow skills against commands declared in C++, described in `sidecar.json`, or
+registered in TS. Confirmed it catches an invented name rather than assuming so.
+It correctly does NOT flag `level_get_spatial_index`, which exists as a stub.
+
+**A6 — revive or delete the terrain pipeline. DELETED (`3d9f918a`).**
+
+`terrain-pipeline.ts` plans a positioned terrain node graph and nothing imported
+it but its own test; `layout-engine.ts` existed only for it, and
+`knowledge/archetype-store.ts` says in its own header it is "retained here so
+terrain-pipeline.ts compiles". ~700 lines plus a knowledge base, closed island.
+
+Deleted rather than wired, because wiring is not small and not the direction: it
+authors graphs for an external node-graph terrain tool, while this product
+consumes built heightmaps and has no graph executor. Its analyzer is also not a
+drop-in for `world_generate`, which already extracts exact nouns ("hemlock"
+searches hemlock) rather than resolving to a biome label. One revert away if a
+graph executor ever lands.
+
+The directory was doing three unrelated jobs. The live parts — the SQLite memory
+store behind the memory tools, and the SessionManager type stub — moved to
+`src/memory/`. What stays is research material, which is what the directory is
+honestly named for.
+
+### Flagged, not decided
+
+`src/gaea/transcripts/` holds 66 scraped third-party tutorial transcripts, 1.1 MB,
+referenced by no code. Given the standing rule about never framing this work as
+derived from that tool, a corpus of its tutorial transcripts sitting in the repo
+is worth a deliberate decision — keep as private research, move out of the repo,
+or delete. Not a call to make unilaterally, so it stands.
+
+### Next in Track A
+
+A1 (import unblock + format matrix) is the biggest unlock but needs #415 and the
+native format widening together, and the C++ half means a plugin rebuild. A2
+(`material_from_textures`) is the cheap win that makes texture acquisition useful.
