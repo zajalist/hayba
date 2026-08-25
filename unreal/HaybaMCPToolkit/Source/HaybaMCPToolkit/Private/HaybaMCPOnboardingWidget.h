@@ -6,7 +6,7 @@
 
 enum class EHaybaOnboardingScreen : uint8
 {
-    Splash, Hub, TCP, CapToken, PlanMode, VisualSidecar, AgentArchetypes, UITour, SampleScene, Done
+    Splash, Hub, TCP, CapToken, PlanMode, VisualSidecar, AgentArchetypes, UITour, Done
 };
 
 class SHaybaMCPOnboardingWidget : public SCompoundWidget

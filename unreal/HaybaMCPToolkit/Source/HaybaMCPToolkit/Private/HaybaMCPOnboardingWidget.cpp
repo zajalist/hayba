@@ -17,7 +17,6 @@ void SHaybaMCPOnboardingWidget::Construct(const FArguments& InArgs, TSharedRef<S
         { EHaybaOnboardingScreen::VisualSidecar, false },
         { EHaybaOnboardingScreen::AgentArchetypes, false },
         { EHaybaOnboardingScreen::UITour, false },
-        { EHaybaOnboardingScreen::SampleScene, false },
     };
 
     const bool bSkipSplash = InArgs._bSkipSplash;
@@ -119,13 +118,12 @@ void SHaybaMCPOnboardingWidget::ShowScreen(EHaybaOnboardingScreen Screen)
         case EHaybaOnboardingScreen::UITour:
             ScreenSwitcher->SetContent(BuildSubScreen(
                 NSLOCTEXT("Hayba", "UITourTitle", "UI Panels Tour"),
-                NSLOCTEXT("Hayba", "UITourDesc", "Window → Hayba opens any of the 7 panels: Chat, Tool Stream, Scene Map, Wireframe/Plan, Diff, Validation Report, Memory Inspector."),
-                EHaybaOnboardingScreen::SampleScene));
-            break;
-        case EHaybaOnboardingScreen::SampleScene:
-            ScreenSwitcher->SetContent(BuildSubScreen(
-                NSLOCTEXT("Hayba", "SampleTitle", "Import a Sample Scene (Optional)"),
-                NSLOCTEXT("Hayba", "SampleDesc", "Try a sample scene with pre-built terrain and PCG graphs to explore Hayba's capabilities. (Coming soon — see addons/samples.)"),
+                // Described by what each surface does rather than by a tab list.
+                // The old copy named "7 panels" when there were 11, and three of
+                // the names it used existed nowhere in the product -- a list in
+                // prose drifts the moment anyone renames a tab, so this one does
+                // not carry a list.
+                NSLOCTEXT("Hayba", "UITourDesc", "Window → Hayba opens the toolkit. One panel holds everything, with a sidebar to switch surface: talk to the agent, watch tool calls as they run, browse the scene it understands, review plans and diffs before they apply, and configure the connection."),
                 EHaybaOnboardingScreen::Done));
             break;
         case EHaybaOnboardingScreen::Done:
@@ -187,7 +185,6 @@ TSharedRef<SWidget> SHaybaMCPOnboardingWidget::BuildHubScreen()
     + SVerticalBox::Slot().AutoHeight().Padding(16, 4)
     [ BuildOptionalItem(NSLOCTEXT("Hayba", "UITour", "UI Panels Tour"), EHaybaOnboardingScreen::UITour) ]
     + SVerticalBox::Slot().AutoHeight().Padding(16, 4)
-    [ BuildOptionalItem(NSLOCTEXT("Hayba", "Sample", "Import a Sample Scene"), EHaybaOnboardingScreen::SampleScene) ]
 
     + SVerticalBox::Slot().AutoHeight().Padding(16, 16).HAlign(HAlign_Right)
     [
