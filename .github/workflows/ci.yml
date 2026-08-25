@@ -137,6 +137,14 @@ jobs:
         run: node tools/copy-assets.mjs --check
         working-directory: mcp-tools/hayba-mcp
 
+      # Docs and code can each be internally consistent and disagree with each
+      # other -- a defect no test catches, because nothing reads both. The
+      # README documented the MCP entry as `hayba-toolkit` while the tooling
+      # wrote `hayba`, so `doctor` told everyone who followed the README that
+      # their working install was unconfigured.
+      - name: Docs name real CLI commands, and do not prescribe an entry name
+        run: node tools/docs-command-check.mjs --check
+
   architecture:
     name: Architecture — clean install + build + test
     runs-on: ubuntu-latest
