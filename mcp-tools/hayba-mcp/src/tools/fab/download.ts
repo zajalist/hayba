@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { executeCommand } from '../tool-executor.js';
+import { fabUnavailable } from './unimplemented.js';
 import type { HaybaToolMeta } from '../hayba-tool-meta.js';
 
 export const meta: HaybaToolMeta = {
@@ -22,6 +22,5 @@ export async function handleFabDownload(params: FabDownloadParams) {
   if (!parsed.success) {
     return { content: [{ type: 'text' as const, text: 'Invalid params: ' + parsed.error.message }], isError: true };
   }
-  const data = await executeCommand('fab_download', parsed.data as Record<string, unknown>);
-  return { content: [{ type: 'text' as const, text: JSON.stringify(data, null, 2) }] };
+  return fabUnavailable('fab_download');
 }

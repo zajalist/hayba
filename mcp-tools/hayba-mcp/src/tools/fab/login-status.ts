@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { executeCommand } from '../tool-executor.js';
+import { fabUnavailable } from './unimplemented.js';
 import type { HaybaToolMeta } from '../hayba-tool-meta.js';
 
 export const meta: HaybaToolMeta = {
@@ -13,6 +13,5 @@ export const schema = z.object({});
 export type FabLoginStatusParams = z.infer<typeof schema>;
 
 export async function handleFabLoginStatus(_params: FabLoginStatusParams) {
-  const data = await executeCommand('fab_login_status', {});
-  return { content: [{ type: 'text' as const, text: JSON.stringify(data, null, 2) }] };
+  return fabUnavailable('fab_login_status');
 }

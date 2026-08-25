@@ -355,7 +355,13 @@ export const healthHandler: ToolHandler = async (args) => {
   const cfg = getConfigEntry(sessionId);
   let ueConnected = false;
   try {
-    await executeCommand('hayba_check_ue_status', {}, { timeout: 2000 });
+    // `editor_get_state` is the WIRE command. This used to send
+    // `hayba_check_ue_status`, which is the TypeScript tool's name and
+    // something no handler declares -- so the call always threw and
+    // `ue_connected` was reported false even with a healthy editor on the
+    // other end. A health check that is always unhealthy is worse than none:
+    // it sends people to debug a connection that was never broken.
+    await executeCommand('editor_get_state', {}, { timeout: 2000 });
     ueConnected = true;
   } catch {
     ueConnected = false;
