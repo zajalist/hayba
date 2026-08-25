@@ -730,10 +730,28 @@ Verified both directions afterwards, on two different handlers:
 A fix that refuses everything is not a fix, so the second half of each pair
 mattered as much as the first.
 
-### What remains of F10
+### The reads, and one that was already right
 
-Five label loops are left, all READS or UI: EditorHandler, StaticMeshHandler,
-CommandHandler, PIEHandler (two shapes) and the Validator panel's "jump to
-actor". They report the wrong actor rather than mutating one, so they are the
-same ambiguity with a smaller blast radius. `HaybaSceneQuery` is there for
-them; the PIE ones differ in shape and want reading before adopting.
+`editor_focus_actor`, `mesh_extract`, the PIE label resolver and the
+destructive-command snapshot now refuse an ambiguous label too. The snapshot
+one matters more than "read" suggests: it feeds the before/after diff a user
+approves in Plan Mode, so the wrong actor there describes a change to
+something that was never touched.
+
+`editor_focus_actor` and `mesh_extract` were label-ONLY and now accept a
+unique object name as well — strictly more useful, and consistent with every
+other resolver.
+
+Verified live on a third handler: an ambiguous label is refused and names both
+candidates; a unique one focuses and returns its transform.
+
+**PIEHandler's runtime resolver already did this correctly**, counting matches
+and erroring with "use actor_path from editor_pie_actor_list". The right
+behaviour existed as a local solution in one handler while every other
+resolver silently first-matched — which is exactly the "uniform ref semantics"
+F10 asks for, and worth noticing: the codebase knew the answer, in one place,
+and it never spread.
+
+Left alone deliberately: the Validator panel's "jump to actor". It has no
+error channel, and unlike a delete, selecting one of several is visible and
+reversible — the user sees what got selected.
