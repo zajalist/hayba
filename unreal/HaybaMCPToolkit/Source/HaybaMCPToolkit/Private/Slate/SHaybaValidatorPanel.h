@@ -47,6 +47,16 @@ struct FHaybaValidatorFinding
 class SHaybaValidatorPanel : public SCompoundWidget
 {
 public:
+    // Pure JSON helpers -- no widget state, no side effects. Public so the
+    // format they implement can be tested directly. The detail object's field
+    // was renamed from `context` to `data` once already without this parser
+    // being updated, and an empty context column is not a loud failure.
+
+    /** Parse one JSONL line into a finding. Returns nullptr on malformed input. */
+    static TSharedPtr<FHaybaValidatorFinding> ParseFindingLine(const FString& Line);
+    /** Round-trip a finding back to JSON, preserving anything in RawJson. */
+    static FString FindingToJson(const FHaybaValidatorFinding& F);
+
     SLATE_BEGIN_ARGS(SHaybaValidatorPanel) {}
     SLATE_END_ARGS()
 
@@ -103,8 +113,4 @@ private:
     /** Rewrites the JSONL file with the given findings, preserving order. */
     bool WriteAllFindings(const TArray<TSharedPtr<FHaybaValidatorFinding>>& Findings) const;
 
-    /** Parse one JSONL line into a finding. Returns nullptr on malformed input. */
-    static TSharedPtr<FHaybaValidatorFinding> ParseFindingLine(const FString& Line);
-    /** Round-trip a finding back to JSON, preserving anything in RawJson. */
-    static FString FindingToJson(const FHaybaValidatorFinding& F);
 };
