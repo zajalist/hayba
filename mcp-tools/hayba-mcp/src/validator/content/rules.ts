@@ -3,7 +3,8 @@
 // Every threshold is stated with its reason. "Too big" is not actionable; "4096
 // square uncompressed is 64 MB, and it is a UI icon" is.
 
-import type { ContentFinding, ContentRule, ContentRuleContext, MeshRow, TextureRow } from './types.js';
+import type { ContentRule, ContentRuleContext, MeshRow, TextureRow } from './types.js';
+import type { Finding } from '../finding.js';
 import type { Strictness } from '../config.js';
 import type { ContentThresholds } from './types.js';
 
@@ -53,8 +54,8 @@ function finding(
   hint: string,
   asset?: string,
   data?: Record<string, unknown>,
-): ContentFinding {
-  return { ruleId: rule.id, category: rule.category, severity: rule.severity, asset, message, hint, data };
+): Finding {
+  return { ruleId: rule.id, category: rule.category, severity: rule.severity, subject: asset, message, hint, data };
 }
 
 export const CONTENT_RULES: ContentRule[] = [
@@ -67,7 +68,7 @@ export const CONTENT_RULES: ContentRule[] = [
     title: 'A single texture is using an extreme amount of memory',
     needs: 'textures',
     evaluate: (ctx) => {
-      const out: ContentFinding[] = [];
+      const out: Finding[] = [];
       for (const t of textures(ctx)) {
         if (t.memory_kb < ctx.thresholds.textureMemoryErrorKb) continue;
         out.push(
@@ -91,7 +92,7 @@ export const CONTENT_RULES: ContentRule[] = [
     title: 'Texture is heavy for its role',
     needs: 'textures',
     evaluate: (ctx) => {
-      const out: ContentFinding[] = [];
+      const out: Finding[] = [];
       for (const t of textures(ctx)) {
         // The error rule owns anything above its threshold.
         if (t.memory_kb >= ctx.thresholds.textureMemoryErrorKb) continue;
@@ -117,7 +118,7 @@ export const CONTENT_RULES: ContentRule[] = [
     title: 'Compression does not match what the texture appears to be',
     needs: 'textures',
     evaluate: (ctx) => {
-      const out: ContentFinding[] = [];
+      const out: Finding[] = [];
       for (const t of textures(ctx)) {
         // The audit flags this itself by comparing the asset name against the
         // pixel format, so the judgement about intent already happened engine-side.
@@ -143,7 +144,7 @@ export const CONTENT_RULES: ContentRule[] = [
     title: 'Texture dimensions are not powers of two',
     needs: 'textures',
     evaluate: (ctx) => {
-      const out: ContentFinding[] = [];
+      const out: Finding[] = [];
       for (const t of textures(ctx)) {
         if (isPow2(t.size_x) && isPow2(t.size_y)) continue;
         out.push(
@@ -167,7 +168,7 @@ export const CONTENT_RULES: ContentRule[] = [
     title: 'Texture looks like UI but is not in the UI LOD group',
     needs: 'textures',
     evaluate: (ctx) => {
-      const out: ContentFinding[] = [];
+      const out: Finding[] = [];
       for (const t of textures(ctx)) {
         const looksUi = /(^|\/)(ui|hud|icon|menu)/i.test(t.path);
         if (!looksUi) continue;
@@ -195,7 +196,7 @@ export const CONTENT_RULES: ContentRule[] = [
     title: 'Heavy mesh has no LODs',
     needs: 'meshes',
     evaluate: (ctx) => {
-      const out: ContentFinding[] = [];
+      const out: Finding[] = [];
       for (const m of meshes(ctx)) {
         const noLods = m.missing_lods === true || m.lod_count <= 1;
         if (!noLods) continue;
@@ -222,7 +223,7 @@ export const CONTENT_RULES: ContentRule[] = [
     title: 'Mesh is triangle-heavy even with LODs',
     needs: 'meshes',
     evaluate: (ctx) => {
-      const out: ContentFinding[] = [];
+      const out: Finding[] = [];
       for (const m of meshes(ctx)) {
         if (m.tris_lod0 < ctx.thresholds.meshTriWarn) continue;
         if (m.lod_count <= 1) continue; // the missing-LOD rule owns that case
@@ -247,7 +248,7 @@ export const CONTENT_RULES: ContentRule[] = [
     title: 'Mesh has many material slots',
     needs: 'meshes',
     evaluate: (ctx) => {
-      const out: ContentFinding[] = [];
+      const out: Finding[] = [];
       for (const m of meshes(ctx)) {
         if (m.material_slot_count <= ctx.thresholds.materialSlotWarn) continue;
         out.push(
@@ -271,7 +272,7 @@ export const CONTENT_RULES: ContentRule[] = [
     title: 'Mesh is not referenced by anything',
     needs: 'meshes',
     evaluate: (ctx) => {
-      const out: ContentFinding[] = [];
+      const out: Finding[] = [];
       for (const m of meshes(ctx)) {
         if (m.referencer_count !== 0) continue;
         out.push(

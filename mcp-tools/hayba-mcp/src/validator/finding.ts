@@ -17,7 +17,6 @@
 import type { FixVector, ConstraintResult } from '../plumb/contracts.js';
 import type { RuleCategory } from './config.js';
 import type { ValidatorFinding } from './rules.js';
-import type { ContentFinding } from './content/types.js';
 
 export type Severity = 'error' | 'warning' | 'info';
 
@@ -93,18 +92,6 @@ export function fromValidatorFinding(f: ValidatorFinding): Finding {
     toolName: f.toolName,
     resolved: f.resolved,
     resolvedAt: f.resolvedAt,
-  };
-}
-
-export function fromContentFinding(f: ContentFinding): Finding {
-  return {
-    ruleId: f.ruleId,
-    category: f.category,
-    severity: f.severity,
-    message: f.message,
-    hint: f.hint,
-    subject: f.asset,
-    data: f.data,
   };
 }
 

@@ -5,7 +5,7 @@ import { getStrictness, type Strictness } from '../config.js';
 import { runCategoryRules } from '../run-category-rules.js';
 import { CONTENT_RULES, contentRulesById, resolveContentThresholds } from './rules.js';
 import type {
-  ContentFinding,
+  // ContentFinding is gone: content rules emit the shared Finding.
   ContentRuleContext,
   ContentSeverity,
   ContentSnapshot,

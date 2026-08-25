@@ -3,7 +3,6 @@ import {
   compareFindings,
   countBySeverity,
   fromConstraintResult,
-  fromContentFinding,
   fromValidatorFinding,
   type Finding,
 } from '../finding.js';
@@ -53,16 +52,6 @@ describe('adapters', () => {
     expect(f.resolved).toBe(true);
     expect(f.data).toEqual({ path: '/Game/Nope' });
     expect(f.refs).toEqual(['docs/pcg.md']);
-  });
-
-  it('maps the per-category subject field onto one name', () => {
-    const content = fromContentFinding({
-      ruleId: 'content_texture_memory', category: 'asset', severity: 'warning',
-      asset: '/Game/T_Rock', message: 'heavy', hint: 'compress it', data: { kb: 8192 },
-    });
-
-    expect(content.subject).toBe('/Game/T_Rock');
-    expect(content.category).toBe('asset');
   });
 
   it('keeps the sign of a PLUMB margin, so the direction survives', () => {

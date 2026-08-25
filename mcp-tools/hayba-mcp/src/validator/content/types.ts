@@ -5,6 +5,7 @@
 // over data that already exists and are unit-testable without an editor.
 
 import type { RuleCategory, Strictness } from '../config.js';
+import type { Finding, Severity } from '../finding.js';
 
 export interface TextureRow {
   path: string;
@@ -37,18 +38,8 @@ export interface ContentSnapshot {
   meshes_scanned?: number;
 }
 
-export type ContentSeverity = 'error' | 'warning' | 'info';
-
-export interface ContentFinding {
-  ruleId: string;
-  category: RuleCategory;
-  severity: ContentSeverity;
-  /** Asset the finding is about. */
-  asset?: string;
-  message: string;
-  hint: string;
-  data?: Record<string, unknown>;
-}
+/** Content findings are plain `Finding`s: the asset path goes in `subject`. */
+export type ContentSeverity = Severity;
 
 export interface ContentThresholds {
   /** Texture memory above this is worth a look, in KB. */
@@ -78,12 +69,12 @@ export interface ContentRule {
   /** Which part of the snapshot this rule needs. Rules whose data is absent are
    *  reported as skipped rather than silently passing. */
   needs: 'textures' | 'meshes';
-  evaluate: (ctx: ContentRuleContext) => ContentFinding[];
+  evaluate: (ctx: ContentRuleContext) => Finding[];
 }
 
 export interface ContentValidationResult {
   strictness: Strictness;
-  findings: ContentFinding[];
+  findings: Finding[];
   rules_evaluated: number;
   rules_skipped_no_data: string[];
   rules_disabled: string[];
