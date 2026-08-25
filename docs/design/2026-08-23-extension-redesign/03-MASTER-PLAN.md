@@ -689,3 +689,51 @@ erosion work as derived from that tool.
   are outward-facing releases, not code.
 - **D1.3** in-editor client auto-configurator, **D1.8** Fab listing.
 - The `website/assets` compression decision above.
+
+
+---
+
+## F10 — one checked actor lookup (2026-08-25)
+
+Called "a correctness bug, not just cleanliness" in the plan. It is worse than
+that: it was data loss, and it was reproducible.
+
+Actor labels are not unique in UE, and every resolver walked the world
+returning the first name-or-label match. Proven against a live editor before
+touching anything — two cubes labelled `HAYBA_DUP`, then `actor_delete`:
+
+    before: [('StaticMeshActor_2', 0.0), ('StaticMeshActor_3', 500.0)]
+    delete  -> {"deleted": true}
+    after : [('StaticMeshActor_3', 500.0)]
+
+An arbitrary actor destroyed, success reported, the caller none the wiser.
+
+`HaybaSceneQuery` is now the single lookup. The unique object name is checked
+first and wins outright, because it can only mean one thing; several label
+matches returns no actor and the candidate names, so "not found" and "cannot
+tell which" are different answers with different errors. The ambiguity message
+names the unique alternatives — "be more specific" without saying what to be
+specific WITH is not an instruction.
+
+Adopted by every mutating site: `HaybaActorOps` Delete/Transform, and 10 call
+sites across the ISM, Physics and Spline handlers. The thin pass-throughs that
+migration left behind had zero callers afterwards and were deleted rather than
+kept.
+
+Verified both directions afterwards, on two different handlers:
+
+    actor_delete   ambiguous -> refused, both actors survive
+                   unique    -> deleted cleanly
+    ism_add_instance ambiguous -> refused, names both candidates
+                     unique    -> {"instance_index": 0, "total_count": 1}
+
+A fix that refuses everything is not a fix, so the second half of each pair
+mattered as much as the first.
+
+### What remains of F10
+
+Five label loops are left, all READS or UI: EditorHandler, StaticMeshHandler,
+CommandHandler, PIEHandler (two shapes) and the Validator panel's "jump to
+actor". They report the wrong actor rather than mutating one, so they are the
+same ambiguity with a smaller blast radius. `HaybaSceneQuery` is there for
+them; the PIE ones differ in shape and want reading before adopting.
