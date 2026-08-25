@@ -212,3 +212,71 @@ is unaffected and green.
   location and will fail loudly if only one side moves.
 - Retire the `/sliver/*` route alias and the `hayba_sliver_*` tool aliases one
   release after this one ships.
+
+
+---
+
+## Step 6 C++ half — BUILT AND VERIFIED (2026-08-25)
+
+Editor closed (zero dirty packages), rebuilt, relaunched, checks run.
+
+**Build:** clean. Only pre-existing PCG deprecation warnings.
+
+**Check 1 — settings survive the class rename.** FAILED first, then fixed.
+
+The CoreRedirects did NOT carry the settings. Seeding `MaxSliverDepth=17`
+under the old section and reading the class back after the rebuild gave `8`,
+the default. The reason: a config UCLASS's values live in a section keyed by
+the class path, and the config system never consults CoreRedirects when
+resolving a section name. Nothing in `Runtime/Core` offers a section-rename
+mechanism either.
+
+`UHaybaRecipeSettings::MigrateLegacyConfigSection()` now adopts the old
+section explicitly, writes the values under the new name and clears the old
+one. Re-tested end to end: seeded `31337` / `AutoDebounced250` / `17` under
+the legacy section, and after the rebuild the class read back all three, with
+the ini rewritten under the new section and the old one gone. Survives a
+second restart, so the migration runs once and sticks.
+
+The redirects stay — they do cover asset references to the old class and
+enum, which is a separate job. The ini now documents what they do and do not
+do.
+
+**Check 2 — a half-migrated library.** Found a bug and fixed it.
+
+Reading both spec spellings means a directory can hold `X.recipe.json` AND
+`X.sliver.json` for one recipe. The plugin appends into a flat `TArray`, so
+every migrated recipe appeared TWICE in the panel. The real library on this
+machine was already in that state. The loader now skips an id it has already
+loaded, reading the current spelling first so first-wins is correct.
+
+The TypeScript loader could not duplicate (Map keyed by id) but picked its
+winner by `readdir` order, which is nobody's decision. It now sorts the
+current spelling first and claims ids explicitly.
+
+**Check 3 — verified by test, not by eye.** There is no editor-UI screenshot
+command, so `Hayba.Recipes.Loader.LegacySpecNames` covers it as a real UE
+automation test: a legacy-named spec loads, a half-migrated pair lists once
+with the current spelling winning, and two distinct ids still list as two.
+`Result={Success}`.
+
+The test was confirmed to actually catch the bug — removing the dedup made it
+fail with "Expected 'half-migrated recipe listed once' to be 1, but it was 2",
+then restoring it passed. An assertion never seen red proves nothing.
+
+**Full plugin suite:** 41 pass, 3 fail. None are recipe-related: two are
+NullRHI/commandlet artifacts (`RenderSafety.Policy`, `UI.Replace`) and one is
+a different plugin (`MetaSound.InputBoundary`). All three test files contain
+zero references to recipes or slivers, so the rename cannot have caused them.
+They are pre-existing and out of scope here.
+
+**Editor:** relaunched, MCP up, zero brush errors. The probe values were
+removed from the user's settings afterwards.
+
+### Still open
+
+- Move `%APPDATA%/Hayba/slivers` -> `.../recipes`. Both halves must move in
+  one commit with a one-time migration; `recipes/loader.test.ts` and the C++
+  path comment pin the current location.
+- Retire the `/sliver/*` route alias and the `hayba_sliver_*` tool aliases one
+  release after this ships.
