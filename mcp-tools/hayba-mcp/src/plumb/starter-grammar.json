@@ -1,52 +1,260 @@
 {
   "P_tunnel_native": {
     "id": "P_tunnel_native",
-    "lhs": { "kind": "tunnel", "when": { "builder": "native" } },
+    "lhs": {
+      "kind": "tunnel",
+      "when": {
+        "builder": "native"
+      }
+    },
     "rhs": [
-      { "emit": "shell", "role": "wall", "profile_curve": "arch", "thickness_by": "importance" },
-      { "emit": "asset", "role": "column", "along": "floor_edge", "spacing_m": 2.5, "alternate": true },
-      { "emit": "asset", "role": "vent", "at": "wall_mid" },
-      { "emit": "symbol", "kind": "shaft", "len": 5 },
-      { "emit": "scatter", "tag": "rubble" },
-      { "emit": "decal", "role": "crack", "along": "arch_crown" },
-      { "emit": "fill", "role": "sand", "at": "floor_low" }
+      {
+        "emit": "shell",
+        "role": "wall",
+        "profile_curve": "arch",
+        "thickness_by": "importance"
+      },
+      {
+        "emit": "asset",
+        "role": "column",
+        "along": "floor_edge",
+        "spacing_m": 2.5,
+        "alternate": true
+      },
+      {
+        "emit": "asset",
+        "role": "vent",
+        "at": "wall_mid"
+      },
+      {
+        "emit": "symbol",
+        "kind": "shaft",
+        "len": 5
+      },
+      {
+        "emit": "scatter",
+        "tag": "rubble"
+      },
+      {
+        "emit": "decal",
+        "role": "crack",
+        "along": "arch_crown"
+      },
+      {
+        "emit": "fill",
+        "role": "sand",
+        "at": "floor_low"
+      }
     ],
-    "guards": ["clearance_min_1p2", "count_per_m2", "grounded", "upright"],
+    "guards": [
+      "clearance_min_1p2",
+      "count_per_m2",
+      "grounded",
+      "upright"
+    ],
     "priority": 100
   },
   "P_shaft_straight": {
     "id": "P_shaft_straight",
-    "lhs": { "kind": "shaft" },
-    "rhs": [ { "emit": "shell", "role": "vent" } ],
-    "guards": ["no_straight_air_over_6m"],
+    "lhs": {
+      "kind": "shaft"
+    },
+    "rhs": [
+      {
+        "emit": "shell",
+        "role": "vent"
+      }
+    ],
+    "guards": [
+      "no_straight_air_over_6m"
+    ],
     "priority": 60
   },
   "P_shaft_bend": {
     "id": "P_shaft_bend",
-    "lhs": { "kind": "shaft" },
-    "rhs": [ { "emit": "shell", "role": "vent", "bend_at_m": 5 } ],
+    "lhs": {
+      "kind": "shaft"
+    },
+    "rhs": [
+      {
+        "emit": "shell",
+        "role": "vent",
+        "bend_at_m": 5
+      }
+    ],
     "guards": [],
     "priority": 10
   },
   "P_room_imperial": {
     "id": "P_room_imperial",
-    "lhs": { "kind": "room", "when": { "builder": "imperial" } },
+    "lhs": {
+      "kind": "room",
+      "when": {
+        "builder": "imperial"
+      }
+    },
     "rhs": [
-      { "emit": "shell", "role": "room", "profile_curve": "box", "thickness_by": "importance" },
-      { "emit": "scatter", "tag": "debris" },
-      { "emit": "fill", "role": "floor_detail", "at": "floor_low" }
+      {
+        "emit": "shell",
+        "role": "room",
+        "profile_curve": "box",
+        "thickness_by": "importance"
+      },
+      {
+        "emit": "scatter",
+        "tag": "debris"
+      },
+      {
+        "emit": "fill",
+        "role": "floor_detail",
+        "at": "floor_low"
+      }
     ],
-    "guards": ["grounded", "upright"],
+    "guards": [
+      "grounded",
+      "upright"
+    ],
     "priority": 100
   },
   "P_room_native": {
     "id": "P_room_native",
-    "lhs": { "kind": "room", "when": { "builder": "native" } },
+    "lhs": {
+      "kind": "room",
+      "when": {
+        "builder": "native"
+      }
+    },
     "rhs": [
-      { "emit": "shell", "role": "room", "profile_curve": "cavern", "thickness_by": "importance" },
-      { "emit": "scatter", "tag": "rubble" }
+      {
+        "emit": "shell",
+        "role": "room",
+        "profile_curve": "cavern",
+        "thickness_by": "importance"
+      },
+      {
+        "emit": "scatter",
+        "tag": "rubble"
+      }
     ],
-    "guards": ["grounded"],
+    "guards": [
+      "grounded"
+    ],
     "priority": 90
+  },
+  "P_interior_hall": {
+    "id": "P_interior_hall",
+    "lhs": {
+      "kind": "interior",
+      "when": {
+        "use": "hall"
+      }
+    },
+    "rhs": [
+      {
+        "emit": "shell",
+        "role": "room",
+        "profile_curve": "box",
+        "thickness_by": "importance"
+      },
+      {
+        "emit": "asset",
+        "role": "door",
+        "at": "wall_mid"
+      },
+      {
+        "emit": "asset",
+        "role": "sconce",
+        "along": "floor_edge",
+        "spacing_m": 4,
+        "alternate": true
+      },
+      {
+        "emit": "symbol",
+        "kind": "seating"
+      },
+      {
+        "emit": "scatter",
+        "tag": "clutter"
+      }
+    ],
+    "guards": [],
+    "priority": 100
+  },
+  "P_interior_store": {
+    "id": "P_interior_store",
+    "lhs": {
+      "kind": "interior",
+      "when": {
+        "use": "store"
+      }
+    },
+    "rhs": [
+      {
+        "emit": "shell",
+        "role": "room",
+        "profile_curve": "box",
+        "thickness_by": "importance"
+      },
+      {
+        "emit": "asset",
+        "role": "door",
+        "at": "wall_mid"
+      },
+      {
+        "emit": "asset",
+        "role": "shelf",
+        "along": "floor_edge",
+        "spacing_m": 2
+      },
+      {
+        "emit": "scatter",
+        "tag": "crate"
+      }
+    ],
+    "guards": [],
+    "priority": 100
+  },
+  "P_interior_default": {
+    "id": "P_interior_default",
+    "lhs": {
+      "kind": "interior"
+    },
+    "rhs": [
+      {
+        "emit": "shell",
+        "role": "room",
+        "profile_curve": "box",
+        "thickness_by": "importance"
+      },
+      {
+        "emit": "asset",
+        "role": "door",
+        "at": "wall_mid"
+      },
+      {
+        "emit": "scatter",
+        "tag": "clutter"
+      }
+    ],
+    "guards": [],
+    "priority": 10
+  },
+  "P_seating": {
+    "id": "P_seating",
+    "lhs": {
+      "kind": "seating"
+    },
+    "rhs": [
+      {
+        "emit": "asset",
+        "role": "table"
+      },
+      {
+        "emit": "asset",
+        "role": "chair"
+      }
+    ],
+    "guards": [],
+    "priority": 100
   }
 }
