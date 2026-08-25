@@ -534,3 +534,63 @@ tests when missing:
    built, tested, unreachable, and absent from `main` too.
 3. The Fab tools' honest-failure path, and the decision on whether they should
    remain in the catalogue at all.
+
+---
+
+## The merge, hunk by hunk — and a correction to the advice above (2026-08-25)
+
+The sizing above measured how much each side changed each FILE and concluded
+"this branch is the small side in seven of eight, so take theirs and re-apply
+ours." **Reading the actual hunks says something different, and in places the
+opposite.**
+
+Total file churn is not the same as conflicting content. `tools/index.ts` shows
++255/−105 on the hardening branch, which is why it was treated as the most
+dangerous file in the tree — but git auto-merges nearly all of it. **Its only
+conflict is a single tool-description string.** Meanwhile `RenderHandler.cpp`
+looked like theirs-dominant at +223/−279, and both of its conflict hunks are
+*ours-only*: our side has content, theirs is empty.
+
+### Per-file resolution
+
+| File | Hunks | Resolution |
+|---|---|---|
+| `tools/index.ts` | 1 | **Trivial.** One tool `description` string, reworded and reflowed. Pick either; ours names the return as a "PLACEMENT PLAN", which is more specific. |
+| `code-mode/list-tool-categories.ts` | 1 | **Cosmetic.** Same data; theirs reflowed it multi-line, ours is compact and carries a comment recording that `blueprint_add_event` was wrongly hidden from agents. Take ours, then diff the command arrays to confirm neither side added a command. |
+| `python-run-validator-wrap.ts` | 2 | **Combine, mechanically.** Ours renamed `context` → `data` and added `category`; theirs kept `context` but added `policy_code`, `matched_rule`, `retry_unchanged`. Our field names, their content. |
+| `validator/rules.ts` | 1 | **Take theirs.** Ours is empty; theirs adds a rule (`actor_position_drift_after_user_edit`). Adapt it to the collapsed `Finding` shape — `data`, not `context`. |
+| `handlers/HaybaMCPRenderHandler.cpp` | 2 | **Take ours.** Both hunks are ours-only. Ours holds the signal-timeout guard (do not read task-written fields after a timeout) and the PNG dimension check. |
+| `handlers/HaybaMCPPhysicsHandler.cpp` | 1 | **Take ours.** Ours is the ambiguity-checked `FindActorOrAmbiguityError`; theirs is the older first-match `FindActorByName`. |
+| `handlers/HaybaMCPDataAssetHandler.cpp` | 2 | **Genuinely both.** Ours makes a failed save truthful; theirs adds a bounded reflection readback (`ReflectPropertyValueBounded`). Neither subsumes the other. See the design question below. |
+| `HaybaMCPCommandHandler.cpp` | 3 | **Mostly theirs.** Two hunks are pure additions from their side (13 and 70 lines); the third is mixed. Keep our `UIBridgeHandler` extraction — taking theirs wholesale resurrects the three retired inline router commands and gives the router two paths to one handler. |
+
+So it is **four files taking ours or trivially either way, two taking theirs,
+and two needing real thought** — not "seven of eight take theirs".
+
+### The one real design question
+
+Unchanged from above: both branches took the merge base's honest save-reporting
+in opposite directions. Ours treats a failed save as a caveat on success
+(`ok:true`, `saved:false`, one plain-English note); theirs treats an unverified
+save as a failure and publishes a six-flag provenance chain. Recommendation
+stands — their rigour, our wire economy: compute the trustworthy verdict as
+they do, publish `ok` plus one `error` naming the link that broke.
+
+### What this changes about the queued follow-ups
+
+The three items listed as "must be re-checked after the merge" were deferred
+partly because `tools/index.ts` looked too dangerous to touch. It is not: one
+description-string conflict. **Registering `hayba_request_input` /
+`hayba_get_user_response` there, and the `python_run` validated-handler swap,
+are at low risk of being lost.** They still need verifying after the merge —
+anything can be dropped by a careless resolution — but the caution that
+deferred them was based on a number that did not mean what I took it to mean.
+
+### Method note
+
+Three readings of this merge have now been wrong: "the renames will collide"
+(they collide with nothing), "both sides are right, keep both" (true for one
+file of eight), and "take theirs, this branch is the small side" (backwards for
+three files). Each came from measuring something cheap — file names, line
+counts — instead of reading the conflicting text. The hunks took one script and
+about ten minutes.
