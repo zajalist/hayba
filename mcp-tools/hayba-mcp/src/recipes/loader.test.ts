@@ -129,11 +129,81 @@ describe('RecipeLoader', () => {
 
 describe('the on-disk library location', () => {
   it('is the directory the plugin also reads', async () => {
-    // HaybaSliverLoader.h scans %APPDATA%/Hayba/slivers. If this ever moves
-    // without the plugin moving with it, both halves point at different
-    // directories and the user's Recipes panel goes empty -- which is exactly
-    // what a blanket rename did before this test existed.
+    // HaybaRecipeLoader::DefaultUserRecipesDir returns the same path. If these
+    // two ever disagree, both halves point at different directories and the
+    // user's Recipes panel goes empty -- which is what a blanket rename did
+    // before this test existed.
     const { defaultUserRecipesDir } = await import('./loader.js');
-    expect(defaultUserRecipesDir().replace(/\\/g, '/')).toMatch(/\/Hayba\/slivers$/);
+    expect(defaultUserRecipesDir().replace(/\\/g, '/')).toMatch(/\/Hayba\/recipes$/);
+  });
+
+  it('knows where the library used to live', async () => {
+    const { legacyUserRecipesDir } = await import('./loader.js');
+    expect(legacyUserRecipesDir().replace(/\\/g, '/')).toMatch(/\/Hayba\/slivers$/);
+  });
+});
+
+describe('moving a pre-rename library', () => {
+  let root: string;
+  let legacyDir: string;
+  let bundled: string;
+
+  const spec = (over: Record<string, unknown> = {}) => JSON.stringify({
+    id: 'com.test.demo', version: '1.0.0', category: 'test', title: 'Demo',
+    description: '', author: 'test', params: [], executor: { kind: 'test.kind' },
+    determinism: { pure: true, declared_outputs: [], side_effects: [], reads: [], seed_param: null },
+    ...over,
+  });
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'hayba-recipe-move-'));
+    legacyDir = join(root, 'slivers');
+    bundled = join(root, 'bundled');
+    mkdirSync(legacyDir, { recursive: true });
+    mkdirSync(bundled, { recursive: true });
+  });
+
+  afterEach(() => rmSync(root, { recursive: true, force: true }));
+
+  it('moves the whole directory when the new one does not exist yet', async () => {
+    const { migrateLegacyLibrary } = await import('./loader.js');
+    writeFileSync(join(legacyDir, 'com.test.demo.sliver.json'), spec());
+    const target = join(root, 'recipes');
+
+    expect(migrateLegacyLibrary(legacyDir, target).moved).toBe(true);
+
+    // Moved, not copied: two live libraries would drift the moment either was
+    // edited, and nothing would say which one counted.
+    expect(existsSync(legacyDir)).toBe(false);
+    const loader = new RecipeLoader({ userDir: target, bundledDir: bundled });
+    loader.reload();
+    expect(loader.list().length).toBe(1);
+  });
+
+  it('fills in a partly-migrated library without overwriting', async () => {
+    const { migrateLegacyLibrary } = await import('./loader.js');
+    const target = join(root, 'recipes');
+    mkdirSync(target, { recursive: true });
+    // Already migrated, and edited since.
+    writeFileSync(join(target, 'com.test.demo.recipe.json'), spec({ title: 'Edited Since' }));
+    // Still sitting in the old directory.
+    writeFileSync(join(legacyDir, 'com.test.demo.recipe.json'), spec({ title: 'Stale' }));
+    writeFileSync(join(legacyDir, 'com.test.other.recipe.json'), spec({ id: 'com.test.other' }));
+
+    expect(migrateLegacyLibrary(legacyDir, target).moved).toBe(true);
+
+    const loader = new RecipeLoader({ userDir: target, bundledDir: bundled });
+    loader.reload();
+    // The edited copy wins; the stale one must not clobber it.
+    expect(loader.get('com.test.demo')?.title).toBe('Edited Since');
+    expect(loader.get('com.test.other')).toBeDefined();
+  });
+
+  it('does nothing when there is no old library', async () => {
+    const { migrateLegacyLibrary } = await import('./loader.js');
+    const target = join(root, 'recipes');
+
+    expect(migrateLegacyLibrary(join(root, 'nope'), target).moved).toBe(false);
+    expect(existsSync(target)).toBe(false);
   });
 });

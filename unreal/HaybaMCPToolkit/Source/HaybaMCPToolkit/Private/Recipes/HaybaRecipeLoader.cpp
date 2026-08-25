@@ -15,15 +15,76 @@ FString FHaybaRecipeLoader::DefaultUserRecipesDir()
 #if PLATFORM_WINDOWS
     FString Appdata = FPlatformMisc::GetEnvironmentVariable(TEXT("APPDATA"));
     if (Appdata.IsEmpty()) Appdata = FPaths::ProjectSavedDir();
-    // The directory keeps the old name deliberately -- the TS loader
-    // (recipes/loader.ts) reads the same path and is pinned to it by a test.
-    // Both halves move together, with a migration, or neither does.
+    return FPaths::Combine(Appdata, TEXT("Hayba"), TEXT("recipes"));
+#else
+    FString Home = FPlatformMisc::GetEnvironmentVariable(TEXT("HOME"));
+    if (Home.IsEmpty()) Home = FPaths::ProjectSavedDir();
+    return FPaths::Combine(Home, TEXT(".hayba"), TEXT("Hayba"), TEXT("recipes"));
+#endif
+}
+
+bool FHaybaRecipeLoader::IsRecipeSpecFile(const FString& Name)
+{
+    // Recipes were called slivers, and specs already on disk are named for
+    // that. Both spellings count as a spec.
+    return Name.EndsWith(TEXT(".recipe.json")) || Name.EndsWith(TEXT(".sliver.json"));
+}
+
+FString FHaybaRecipeLoader::LegacyUserRecipesDir()
+{
+#if PLATFORM_WINDOWS
+    FString Appdata = FPlatformMisc::GetEnvironmentVariable(TEXT("APPDATA"));
+    if (Appdata.IsEmpty()) Appdata = FPaths::ProjectSavedDir();
     return FPaths::Combine(Appdata, TEXT("Hayba"), TEXT("slivers"));
 #else
     FString Home = FPlatformMisc::GetEnvironmentVariable(TEXT("HOME"));
     if (Home.IsEmpty()) Home = FPaths::ProjectSavedDir();
     return FPaths::Combine(Home, TEXT(".hayba"), TEXT("Hayba"), TEXT("slivers"));
 #endif
+}
+
+bool FHaybaRecipeLoader::MigrateLegacyLibrary(const FString& LegacyDir, const FString& UserDir)
+{
+    // The MCP server reads this same directory and runs the same migration
+    // (recipes/loader.ts). Both are expected to race on startup, and losing
+    // the race is fine: the directory move is atomic, so the loser simply
+    // finds the destination already there and moves nothing.
+    //
+    // A move rather than a copy, deliberately -- two live libraries would
+    // drift the moment either was edited, and nothing would say which counted.
+    IFileManager& FM = IFileManager::Get();
+    if (!FM.DirectoryExists(*LegacyDir)) return false;
+    if (LegacyDir == UserDir) return false;
+
+    if (!FM.DirectoryExists(*UserDir))
+    {
+        if (FM.Move(*UserDir, *LegacyDir, /*bReplace*/false))
+        {
+            UE_LOG(LogTemp, Log, TEXT("HaybaRecipeLoader: moved the recipe library to %s"), *UserDir);
+            return true;
+        }
+        FM.MakeDirectory(*UserDir, /*Tree*/true);
+    }
+
+    // Destination exists (partly migrated, or the server got here first).
+    // Move over only what is missing; never overwrite something newer.
+    TArray<FString> Names;
+    FM.FindFiles(Names, *FPaths::Combine(LegacyDir, TEXT("*.json")), /*Files*/true, /*Dirs*/false);
+
+    int32 Moved = 0;
+    for (const FString& Name : Names)
+    {
+        if (!IsRecipeSpecFile(Name)) continue;
+        const FString To = FPaths::Combine(UserDir, Name);
+        if (FM.FileExists(*To)) continue;
+        if (FM.Move(*To, *FPaths::Combine(LegacyDir, Name), /*bReplace*/false)) ++Moved;
+    }
+
+    if (Moved > 0)
+    {
+        UE_LOG(LogTemp, Log, TEXT("HaybaRecipeLoader: moved %d recipe(s) to %s"), Moved, *UserDir);
+    }
+    return Moved > 0;
 }
 
 void FHaybaRecipeLoader::Refresh(const FString& UserDir)
@@ -33,8 +94,7 @@ void FHaybaRecipeLoader::Refresh(const FString& UserDir)
 
     if (!IFileManager::Get().DirectoryExists(*UserDir)) return;
 
-    // Recipes were called slivers, and specs already on disk are named for
-    // that. Both suffixes load; only the new one is written. Mirrors the same
+    // Both suffixes load; only the new one is written. Mirrors the same
     // decision in recipes/loader.ts so the two halves agree on what a spec is.
     TArray<FString> Files;
     IFileManager::Get().FindFiles(Files, *FPaths::Combine(UserDir, TEXT("*.recipe.json")), /*Files*/true, /*Dirs*/false);

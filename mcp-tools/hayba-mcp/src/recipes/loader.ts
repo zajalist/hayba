@@ -1,19 +1,19 @@
 // mcp-tools/hayba-mcp/src/recipes/loader.ts
 //
-// RecipeLoader — reads *.recipe.json from %APPDATA%/Hayba/slivers/
+// RecipeLoader — reads *.recipe.json from %APPDATA%/Hayba/recipes/
 // (userDir), seeding from the package's bundled specs (bundledDir) on
 // first run. Validates with parseRecipeSpec; bad files are skipped and
 // reported via errors() so the MCP server keeps booting.
 //
 // "install" writes a new spec to userDir and updates the in-memory map.
 
-import { readdirSync, readFileSync, writeFileSync, mkdirSync, existsSync, copyFileSync, statSync } from 'node:fs';
+import { readdirSync, readFileSync, writeFileSync, mkdirSync, existsSync, copyFileSync, statSync, renameSync } from 'node:fs';
 import { join } from 'node:path';
 import type { RecipeSpec } from './types.js';
 import { parseRecipeSpec } from './spec-schema.js';
 
 export interface RecipeLoaderOpts {
-  /** Absolute path to %APPDATA%/Hayba/slivers/ (or test override). */
+  /** Absolute path to %APPDATA%/Hayba/recipes/ (or test override). */
   userDir: string;
   /** Absolute path to the package's bundled specs (dist/recipes/specs/). */
   bundledDir: string;
@@ -127,15 +127,75 @@ function readSpecVersion(path: string): string | null {
   }
 }
 
-/** Default user dir resolver — %APPDATA%/Hayba/slivers on Windows,
- *  ~/.hayba/slivers elsewhere.
- *
- *  The directory still carries the old name on purpose. HaybaSliverLoader.h
- *  reads the same path, and a TypeScript-only release ships without a plugin
- *  rebuild -- renaming it here would point the two halves at different
- *  directories and empty the user's Recipes panel. It moves in the same
- *  commit that rebuilds the plugin, with a one-time migration. */
+/** Default user dir resolver — %APPDATA%/Hayba/recipes on Windows,
+ *  ~/.hayba/recipes elsewhere. */
 export function defaultUserRecipesDir(): string {
   const base = process.env.APPDATA ?? join(process.env.HOME ?? '.', '.hayba');
+  return join(base, 'Hayba', 'recipes');
+}
+
+/** Where the library lived before the rename. */
+export function legacyUserRecipesDir(): string {
+  const base = process.env.APPDATA ?? join(process.env.HOME ?? '.', '.hayba');
   return join(base, 'Hayba', 'slivers');
+}
+
+/**
+ * Move a pre-rename library to its new home, once.
+ *
+ * The plugin reads the same directory, so both halves have to agree on where
+ * it is -- point them at different paths and the user's Recipes panel goes
+ * empty. Both call this before reading, and it is safe to lose that race: the
+ * rename is atomic, so whichever process gets there first wins and the other
+ * simply finds the destination already present.
+ *
+ * A rename rather than a copy, deliberately. Two live copies would drift the
+ * moment anyone edited one of them, and "which of these two libraries is the
+ * real one" is a worse problem than the one this solves.
+ *
+ * Returns what it did, so a caller can log it rather than move a user's files
+ * in silence.
+ */
+export function migrateLegacyLibrary(
+  legacyDir: string,
+  userDir: string,
+): { moved: boolean; reason?: string } {
+  if (!existsSync(legacyDir)) return { moved: false, reason: 'no legacy library' };
+  if (legacyDir === userDir) return { moved: false, reason: 'same directory' };
+
+  if (!existsSync(userDir)) {
+    try {
+      renameSync(legacyDir, userDir);
+      return { moved: true };
+    } catch (e) {
+      // Cross-volume, or a permission problem. Fall through to per-file.
+      const reason = e instanceof Error ? e.message : String(e);
+      if (!existsSync(userDir)) mkdirSync(userDir, { recursive: true });
+      return moveSpecsIndividually(legacyDir, userDir, `rename failed: ${reason}`);
+    }
+  }
+
+  // Destination already exists -- a partly-migrated install, or the plugin got
+  // here first. Move over only what is missing; never overwrite.
+  return moveSpecsIndividually(legacyDir, userDir);
+}
+
+function moveSpecsIndividually(
+  legacyDir: string,
+  userDir: string,
+  note?: string,
+): { moved: boolean; reason?: string } {
+  let moved = 0;
+  for (const name of readdirSync(legacyDir)) {
+    if (!isSpecFile(name)) continue;
+    const to = join(userDir, name);
+    if (existsSync(to)) continue;
+    try {
+      renameSync(join(legacyDir, name), to);
+      moved += 1;
+    } catch {
+      // Leave it behind rather than risk half-writing someone's spec.
+    }
+  }
+  return { moved: moved > 0, reason: note };
 }

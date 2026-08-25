@@ -105,4 +105,72 @@ bool FHaybaRecipeLoaderLegacyNameTest::RunTest(const FString& Parameters)
     return true;
 }
 
+// ── The library directory moved too ─────────────────────────────────────────
+//
+// Both halves read this directory, so they have to agree on where it is and
+// both run the same migration. Losing that race must be harmless.
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FHaybaRecipeLoaderLibraryMoveTest,
+    "Hayba.Recipes.Loader.LibraryMove",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FHaybaRecipeLoaderLibraryMoveTest::RunTest(const FString& Parameters)
+{
+    // Whole-directory move when the destination is absent.
+    {
+        const FString Root = MakeTempDir();
+        const FString Legacy = FPaths::Combine(Root, TEXT("slivers"));
+        const FString Target = FPaths::Combine(Root, TEXT("recipes"));
+        IFileManager::Get().MakeDirectory(*Legacy, true);
+        Write(Legacy, TEXT("com.test.moved.sliver.json"), SpecJson(TEXT("com.test.moved"), TEXT("Moved")));
+
+        TestTrue(TEXT("migration reports a move"),
+            FHaybaRecipeLoader::MigrateLegacyLibrary(Legacy, Target));
+
+        // Moved, not copied -- two live libraries would drift.
+        TestFalse(TEXT("old directory is gone"), IFileManager::Get().DirectoryExists(*Legacy));
+
+        FHaybaRecipeLoader Loader;
+        Loader.Refresh(Target);
+        TestEqual(TEXT("spec survives the move"), Loader.List().Num(), 1);
+        IFileManager::Get().DeleteDirectory(*Root, false, true);
+    }
+
+    // Destination already populated: fill gaps, never overwrite.
+    {
+        const FString Root = MakeTempDir();
+        const FString Legacy = FPaths::Combine(Root, TEXT("slivers"));
+        const FString Target = FPaths::Combine(Root, TEXT("recipes"));
+        IFileManager::Get().MakeDirectory(*Legacy, true);
+        IFileManager::Get().MakeDirectory(*Target, true);
+        Write(Target, TEXT("com.test.dup.recipe.json"), SpecJson(TEXT("com.test.dup"), TEXT("Edited Since")));
+        Write(Legacy, TEXT("com.test.dup.recipe.json"), SpecJson(TEXT("com.test.dup"), TEXT("Stale")));
+        Write(Legacy, TEXT("com.test.extra.recipe.json"), SpecJson(TEXT("com.test.extra"), TEXT("Extra")));
+
+        FHaybaRecipeLoader::MigrateLegacyLibrary(Legacy, Target);
+
+        FHaybaRecipeLoader Loader;
+        Loader.Refresh(Target);
+        TestEqual(TEXT("both recipes present"), Loader.List().Num(), 2);
+        if (const FHaybaRecipeSpec* Dup = Loader.Find(TEXT("com.test.dup")))
+        {
+            TestEqual(TEXT("the edited copy is not clobbered"), Dup->Title, FString(TEXT("Edited Since")));
+        }
+        IFileManager::Get().DeleteDirectory(*Root, false, true);
+    }
+
+    // Nothing to migrate is not an error, and must not create the target.
+    {
+        const FString Root = MakeTempDir();
+        const FString Target = FPaths::Combine(Root, TEXT("recipes"));
+        TestFalse(TEXT("no legacy library, no move"),
+            FHaybaRecipeLoader::MigrateLegacyLibrary(FPaths::Combine(Root, TEXT("nope")), Target));
+        TestFalse(TEXT("target not created"), IFileManager::Get().DirectoryExists(*Target));
+        IFileManager::Get().DeleteDirectory(*Root, false, true);
+    }
+
+    return true;
+}
+
 #endif // WITH_EDITOR

@@ -5,7 +5,7 @@
 // for use by the MCP recipe tools.
 
 import { ExecutorRegistry } from './registry.js';
-import { RecipeLoader, defaultUserRecipesDir } from './loader.js';
+import { RecipeLoader, defaultUserRecipesDir, legacyUserRecipesDir, migrateLegacyLibrary } from './loader.js';
 import { RecipeRuntime } from './runtime.js';
 import { COMPOSITION_FRAME_TARGET_KIND, frameTargetExecutor } from './composition/frame_target.js';
 import { SCATTER_PCG_BIOME_KIND, pcgBiomeExecutor } from './scatter/pcg_biome.js';
@@ -34,6 +34,14 @@ export async function setupRecipeSystem(opts: SetupOpts = {}): Promise<RecipeSys
   registry.register(SCATTER_PCG_BIOME_KIND, pcgBiomeExecutor);
 
   const __dirname = dirname(fileURLToPath(import.meta.url));
+
+  // Only for the real library. A caller that names its own userDir (tests,
+  // and anything pointing at a scratch directory) gets exactly that.
+  if (!opts.userDir) {
+    const r = migrateLegacyLibrary(legacyUserRecipesDir(), defaultUserRecipesDir());
+    if (r.moved) console.warn('[recipes] moved the recipe library to its new home (Hayba/recipes)');
+  }
+
   const loader = new RecipeLoader({
     userDir: opts.userDir ?? defaultUserRecipesDir(),
     bundledDir: opts.bundledDir ?? resolve(__dirname, 'specs'),
