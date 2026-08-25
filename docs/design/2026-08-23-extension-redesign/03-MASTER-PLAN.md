@@ -459,7 +459,13 @@ tree, and I checked before building a fix for a problem that no longer exists.
 `asset-sources/shared.ts:68` is a full implementation: it walks the extracted
 directory, builds one `AssetImportTask` per file, runs them through
 `python_run`, and returns `ok:false` only when the script genuinely fails.
-#415 landed on this branch as `3b2d102e`.
+
+*(Correction, 2026-08-25: an earlier revision said "#415 landed on this branch
+as 3b2d102e". It did not — that commit is on
+`feat/crash-resilience-advisory-hardening` and is NOT an ancestor of this
+branch. The conclusion is unaffected, because it rests on reading the code in
+this worktree and on importing a glTF and an HDR through a build OF this
+branch, not on the commit's provenance. But the attribution was wrong.)*
 
 **"Native `asset_import` accepts only png/jpeg, wav, binary FBX
 (`HaybaMCPAssetHandler.cpp:784`)."** There is no format whitelist anywhere in

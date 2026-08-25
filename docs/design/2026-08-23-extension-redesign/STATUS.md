@@ -94,3 +94,54 @@ registration unification. Both are C++ that cannot be compile-verified in this
 worktree, and stacking more unverified C++ on an already-unverified style layer
 makes the eventual build problem larger rather than smaller. They should follow
 the compile, not precede it.
+
+
+---
+
+## Branch divergence — needs a decision before this lands (2026-08-25)
+
+Found while checking whether `test-editor-survival.ps1` exists for the R4
+reliability page. It does not exist on this branch, and tracing why turned up
+something larger.
+
+    branch point            f325ea06
+    on crash-resilience,
+      not in this branch    25 commits
+    on this branch,
+      not in crash-res.     83 commits
+    either merged to main?  no
+
+The 25 include real hardening, not just noise:
+
+    3b2d102e  harden typed asset_import against crafted native input (#415)
+    24ff49b1  a caught SEH fault jumped over the engine's world restore
+    c481d076  retire embedded Tier-3 authority (#411)
+    9de78453  broker host I/O outside Unreal Python (#412)
+    45f37c2d  cap generated engine workloads (#413)
+    be67efad  remove raw temp-file spill for oversized python_run output (#383)
+    534cb939  make mutation outcomes and callbacks truthful (#369 #370 #406)
+    7684fe81  bound embedded execution policy (#366 #392)
+
+Two consequences.
+
+**The reliability page cannot cite the survival suite yet.** R4's outline says
+`scripts/test-editor-survival.ps1` "already exists (1,652 lines)". It exists at
+`mcp-tools/hayba-mcp/scripts/`, is 706 lines, and lives on the OTHER branch.
+Publishing a reliability page whose centrepiece is "run our torture suite"
+against a script this branch does not contain would be the worst possible
+version of that document.
+
+**Someone has to decide how these two branches meet.** Neither is on main. The
+rework branch has 83 commits of product change; the other has crash hardening
+that this one has never been tested against. Merging is not mechanical — the
+rework renamed a plugin directory tree, moved handlers, and changed the
+validator's on-disk format, all of which the hardening commits predate.
+
+Not a call to make unattended: it decides what ships and what gets re-tested.
+
+### Also corrected
+
+An earlier note in 03-MASTER-PLAN said "#415 landed on this branch as
+3b2d102e". It did not. The A1 conclusion stands — it rests on reading this
+worktree's code and importing a glTF and an HDR through a build of THIS branch
+— but the attribution was wrong and is now marked as such.
