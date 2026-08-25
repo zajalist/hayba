@@ -973,7 +973,7 @@ export const PLUMB_DESCRIPTORS: ToolDescriptor[] = [
     handler: planBuildHandler,
     cost: 'high',
     returns:
-      '{ok, built:[{role,asset,instances}], skipped:[{kind,role,reason}], unbound:[role], grounded, ground_note?, errors:[]}',
+      '{ok, built:[{roles,asset,instances}], skipped:[{kind,role,reason}], unbound:[role], grounded, ground_note?, errors:[]}',
     schema: planBuildSchema.shape,
   },
 ];

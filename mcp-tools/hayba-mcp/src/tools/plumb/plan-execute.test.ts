@@ -38,7 +38,7 @@ describe('building a plan', () => {
     });
 
     expect(r.ok).toBe(true);
-    expect(r.built).toEqual([{ role: 'vent', asset: '/Game/SM_Vent', instances: 4 }]);
+    expect(r.built).toEqual([{ roles: ['vent'], asset: '/Game/SM_Vent', instances: 4 }]);
   });
 
   it('never guesses an asset for an unbound role', async () => {
@@ -158,5 +158,23 @@ describe('building a plan', () => {
 
     expect(r.ok).toBe(false);
     expect(r.errors[0]).toMatch(/no actor_id/);
+  });
+});
+
+describe('two roles sharing one mesh', () => {
+  it('names both, instead of attributing everything to the last one', async () => {
+    // A live run bound column, vent and rubble to the same cube and reported
+    // 14 instances of "rubble" — which reads as "no columns were placed".
+    const r = await planBuild({
+      plan: { items: [
+        item({ role: 'column', index: 0, meta: { emit: 'asset', along: 'floor_edge', spacing_m: 3 } }),
+        item({ role: 'vent', index: 1, meta: { emit: 'asset', at: 'wall_mid' } }),
+      ] },
+      bindings: { column: '/Game/SM_Cube', vent: '/Game/SM_Cube' },
+      room: ROOM,
+    });
+
+    expect(r.built).toHaveLength(1);
+    expect(r.built[0]!.roles).toEqual(['column', 'vent']);
   });
 });

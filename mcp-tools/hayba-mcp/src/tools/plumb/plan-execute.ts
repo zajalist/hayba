@@ -59,7 +59,10 @@ export type PlanBuildParams = z.infer<typeof schema>;
 
 export interface PlanBuildResult {
   ok: boolean;
-  built: Array<{ role: string; asset: string; instances: number }>;
+  /** One entry per MESH, listing every role that resolved to it. Two roles
+   *  bound to the same mesh share an ISM actor, and reporting only one of them
+   *  reads as "the other was never placed". */
+  built: Array<{ roles: string[]; asset: string; instances: number }>;
   /** Items deliberately not built, each with the reason. */
   skipped: Array<{ kind: string; role: string; reason: string }>;
   /** Roles the plan uses that the caller did not bind. */
@@ -79,7 +82,8 @@ export async function planBuild(params: PlanBuildParams): Promise<PlanBuildResul
 
   /** asset path → the points to place it at. */
   const byAsset = new Map<string, LayoutPoint[]>();
-  const roleOf = new Map<string, string>();
+  /** asset path → every role that bound to it, in first-seen order. */
+  const rolesOf = new Map<string, string[]>();
 
   for (const item of params.plan.items) {
     const label = item.role ?? item.tag ?? item.kind;
@@ -100,7 +104,9 @@ export async function planBuild(params: PlanBuildParams): Promise<PlanBuildResul
     }
 
     byAsset.set(asset, [...(byAsset.get(asset) ?? []), ...resolved.points]);
-    roleOf.set(asset, label);
+    const seen = rolesOf.get(asset) ?? [];
+    if (!seen.includes(label)) seen.push(label);
+    rolesOf.set(asset, seen);
   }
 
   // Ground every point in one trace, the same way world_generate does. A room
@@ -124,7 +130,7 @@ export async function planBuild(params: PlanBuildParams): Promise<PlanBuildResul
   if (params.dry_run) {
     return {
       ok: true, built: [...byAsset.entries()].map(([asset, pts]) => ({
-        role: roleOf.get(asset) ?? '?', asset, instances: pts.length,
+        roles: rolesOf.get(asset) ?? [], asset, instances: pts.length,
       })),
       skipped, unbound: [...unbound], grounded: !conform.unavailable,
       ...(conform.unavailable ? { ground_note: conform.unavailable } : {}),
@@ -133,7 +139,8 @@ export async function planBuild(params: PlanBuildParams): Promise<PlanBuildResul
   }
 
   for (const [asset, pts] of byAsset) {
-    const role = roleOf.get(asset) ?? 'item';
+    const roles = rolesOf.get(asset) ?? ['item'];
+    const role = roles.join('_');
     try {
       const created = await executeCommand<Record<string, unknown>>('ism_create_actor', {
         static_mesh_path: asset,
@@ -154,7 +161,7 @@ export async function planBuild(params: PlanBuildParams): Promise<PlanBuildResul
         });
         placed += (added?.added as number | undefined) ?? chunk.length;
       }
-      built.push({ role, asset, instances: placed });
+      built.push({ roles, asset, instances: placed });
     } catch (e) {
       errors.push(`${role}: ${e instanceof Error ? e.message : String(e)}`);
     }
