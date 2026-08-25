@@ -44,7 +44,9 @@ TArray<FString> FHaybaMCPStaticMeshHandler::GetCommands() const
         // Import hygiene: an imported mesh routinely arrives with no collision
         // and Nanite off, and nothing could fix either.
         TEXT("mesh_generate_collision"),
-        TEXT("mesh_set_nanite")
+        TEXT("mesh_set_nanite"),
+        TEXT("mesh_build_lods"),
+        TEXT("mesh_generate_uvs")
     };
 }
 
@@ -125,6 +127,135 @@ static FHaybaHandlerResult MeshGetInfo(const TSharedPtr<FJsonObject>& P)
 
     return FHaybaHandlerResult::Ok(Out);
 }
+
+#if WITH_EDITOR
+/** Does any LOD have zero UV channels?
+ *
+ *  Rebuilding such a mesh trips check(NumUVs>0) during lightmap-UV setup,
+ *  which is not catchable -- the editor dies. Every command here that
+ *  triggers a rebuild asks this first.
+ */
+static bool HasZeroUVLod(const UStaticMesh* Mesh, int32& OutBadLod)
+{
+    if (const FStaticMeshRenderData* RD = Mesh ? Mesh->GetRenderData() : nullptr)
+    {
+        for (int32 LOD = 0; LOD < RD->LODResources.Num(); ++LOD)
+        {
+            if (RD->LODResources[LOD].GetNumTexCoords() == 0)
+            {
+                OutBadLod = LOD;
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+/**
+ * Generate reduction LODs for a static mesh.
+ *
+ * An imported mesh usually arrives with a single LOD, so it renders at full
+ * density at every distance. `mesh_set_lod` could only configure an LOD that
+ * already existed; nothing could create one.
+ */
+static FHaybaHandlerResult MeshBuildLods(const TSharedPtr<FJsonObject>& P)
+{
+    FHaybaParamReader R(P, TEXT("mesh_build_lods"));
+    const FString Path = R.RequiredString(TEXT("path"));
+    const int32 LodCount = R.OptionalIntInRange(TEXT("lod_count"), 3, 1, 8);
+    const double Falloff = R.OptionalNumberInRange(TEXT("reduction_falloff"), 0.5, 0.05, 0.95);
+    if (R.HasErrors()) return FHaybaHandlerResult::Err(R.ErrorMessage());
+
+    UStaticMesh* Mesh = Cast<UStaticMesh>(FSoftObjectPath(Path).TryLoad());
+    if (!Mesh)
+        return FHaybaHandlerResult::Err(FString::Printf(TEXT("mesh_build_lods: failed to load %s"), *Path));
+
+    int32 BadLod = INDEX_NONE;
+    if (HasZeroUVLod(Mesh, BadLod))
+        return FHaybaHandlerResult::Err(FString::Printf(
+            TEXT("mesh_build_lods: LOD %d has no UV channels; building LODs rebuilds the mesh and would ")
+            TEXT("crash the editor (check(NumUVs>0)). Run mesh_generate_uvs first."), BadLod));
+
+    UStaticMeshEditorSubsystem* Sub = GEditor
+        ? GEditor->GetEditorSubsystem<UStaticMeshEditorSubsystem>() : nullptr;
+    if (!Sub) return FHaybaHandlerResult::Err(TEXT("mesh_build_lods: StaticMeshEditorSubsystem unavailable"));
+
+    const int32 Before = Mesh->GetNumLODs();
+
+    FStaticMeshReductionOptions Options;
+    Options.bAutoComputeLODScreenSize = true;
+    double Percent = 1.0;
+    for (int32 i = 0; i < LodCount; ++i)
+    {
+        FStaticMeshReductionSettings Setting;
+        Setting.PercentTriangles = static_cast<float>(Percent);
+        Setting.ScreenSize = static_cast<float>(FMath::Max(0.01, 1.0 - (i * (1.0 / LodCount))));
+        Options.ReductionSettings.Add(Setting);
+        Percent *= Falloff;   // LOD0 full, each subsequent one a fraction
+    }
+
+    Sub->SetLods(Mesh, Options);
+
+    // Read the count back off the asset. The request is not evidence.
+    const int32 After = Mesh->GetNumLODs();
+    auto Out = MakeShared<FJsonObject>();
+    Out->SetStringField(TEXT("path"), Path);
+    Out->SetNumberField(TEXT("lod_count_before"), Before);
+    Out->SetNumberField(TEXT("lod_count"), After);
+    Out->SetNumberField(TEXT("requested_lods"), LodCount);
+    Out->SetBoolField(TEXT("changed"), After != Before);
+    Out->SetBoolField(TEXT("verified"), After == LodCount);
+    if (After != LodCount)
+    {
+        Out->SetStringField(TEXT("note"), FString::Printf(
+            TEXT("asked for %d LODs, the mesh now has %d; the reducer can decline when a mesh is too small to simplify"),
+            LodCount, After));
+    }
+    return FHaybaHandlerResult::Ok(Out);
+}
+
+/**
+ * Turn on lightmap-UV generation and rebuild.
+ *
+ * The prerequisite for LOD work and for anything baked. Reads the channel
+ * count back so "it worked" is a measurement rather than an assumption.
+ */
+static FHaybaHandlerResult MeshGenerateUVs(const TSharedPtr<FJsonObject>& P)
+{
+    FHaybaParamReader R(P, TEXT("mesh_generate_uvs"));
+    const FString Path = R.RequiredString(TEXT("path"));
+    if (R.HasErrors()) return FHaybaHandlerResult::Err(R.ErrorMessage());
+
+    UStaticMesh* Mesh = Cast<UStaticMesh>(FSoftObjectPath(Path).TryLoad());
+    if (!Mesh)
+        return FHaybaHandlerResult::Err(FString::Printf(TEXT("mesh_generate_uvs: failed to load %s"), *Path));
+
+    UStaticMeshEditorSubsystem* Sub = GEditor
+        ? GEditor->GetEditorSubsystem<UStaticMeshEditorSubsystem>() : nullptr;
+    if (!Sub) return FHaybaHandlerResult::Err(TEXT("mesh_generate_uvs: StaticMeshEditorSubsystem unavailable"));
+
+    const int32 Before = Sub->GetNumUVChannels(Mesh, 0);
+
+    // A mesh with NO UVs at all cannot have lightmap UVs computed from
+    // nothing -- the generator unwraps an existing channel. Add one first.
+    if (Before == 0 && !Sub->AddUVChannel(Mesh, 0))
+        return FHaybaHandlerResult::Err(
+            TEXT("mesh_generate_uvs: the mesh has no UV channels and one could not be added"));
+
+    if (!Sub->SetGenerateLightmapUVs(Mesh, true))
+        return FHaybaHandlerResult::Err(TEXT("mesh_generate_uvs: SetGenerateLightmapUVs was refused"));
+
+    const int32 After = Sub->GetNumUVChannels(Mesh, 0);
+    auto Out = MakeShared<FJsonObject>();
+    Out->SetStringField(TEXT("path"), Path);
+    Out->SetNumberField(TEXT("uv_channels_before"), Before);
+    Out->SetNumberField(TEXT("uv_channels"), After);
+    Out->SetBoolField(TEXT("generate_lightmap_uvs"), true);
+    Out->SetBoolField(TEXT("changed"), After != Before || Before == 0);
+    Out->SetBoolField(TEXT("verified"), After > 0);
+    return FHaybaHandlerResult::Ok(Out);
+}
+#endif // WITH_EDITOR
 
 #if WITH_EDITOR
 /**
@@ -742,6 +873,8 @@ FHaybaHandlerResult FHaybaMCPStaticMeshHandler::Handle(const FString& Cmd, const
     if (Cmd == TEXT("mesh_set_lod"))  return MeshSetLOD(Params);
     if (Cmd == TEXT("mesh_generate_collision")) return MeshGenerateCollision(Params);
     if (Cmd == TEXT("mesh_set_nanite"))         return MeshSetNanite(Params);
+    if (Cmd == TEXT("mesh_build_lods"))         return MeshBuildLods(Params);
+    if (Cmd == TEXT("mesh_generate_uvs"))       return MeshGenerateUVs(Params);
     if (Cmd == TEXT("mesh_list"))     return MeshList(Params);
     if (Cmd == TEXT("mesh_extract"))         return MeshExtract(Params, /*bStatsOnly=*/false);
     if (Cmd == TEXT("mesh_topology_stats"))  return MeshExtract(Params, /*bStatsOnly=*/true);
