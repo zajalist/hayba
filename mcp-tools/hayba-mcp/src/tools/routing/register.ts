@@ -30,6 +30,7 @@ import { recipeListHandler, recipeListSchema } from '../recipe/list.js';
 import { recipeGetHandler,  recipeGetSchema  } from '../recipe/get.js';
 import { recipeRunHandler,  recipeRunSchema  } from '../recipe/run.js';
 import { recipeImportHandler, recipeImportSchema } from '../recipe/import.js';
+import { recipeStartersHandler, recipeStartersSchema } from '../recipe/starters.js';
 import { setupDagSystem, type DagSystem } from '../../dag/index.js';
 import { dagStatusHandler, dagStatusSchema } from '../dag/status.js';
 import { dagRecordHandler, dagRecordSchema } from '../dag/record.js';
@@ -297,6 +298,17 @@ export async function registerDeferredRouting(
     'Deprecated alias for hayba_recipe_list. Recipes were formerly called slivers; use the new name.',
     recipeListSchema,
     (args: { category?: string; namespace?: string }) => recipeListHandler(args, { loader: recipes.loader }),
+  );
+
+  defer(
+    'recipe',
+    'hayba_recipe_starters',
+    'List the bundled starter Recipes the user does not have, and install them '
+    + 'when asked. Starters are NOT installed automatically: seeding the Library '
+    + 'is the user\'s choice, and a fresh install is meant to show its teaching '
+    + 'empty state rather than arrive full.',
+    recipeStartersSchema,
+    (args: { install?: boolean }) => recipeStartersHandler(args, { loader: recipes.loader }),
   );
 
   defer(

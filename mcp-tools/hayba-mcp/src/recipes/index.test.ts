@@ -24,7 +24,7 @@ describe('setupRecipeSystem', () => {
     expect(sys.loader).toBeDefined();
   });
 
-  it('seeds the bundled frame_target spec into userDir when bundledDir contains it', async () => {
+  it('installs the bundled frame_target spec only when asked, then runs it', async () => {
     const { copyFileSync, mkdirSync } = await import('node:fs');
     const { resolve } = await import('node:path');
     mkdirSync(bundledDir, { recursive: true });
@@ -33,6 +33,11 @@ describe('setupRecipeSystem', () => {
       join(bundledDir, 'com.hayba.composition.frame_target.recipe.json'),
     );
     const sys = await setupRecipeSystem({ userDir, bundledDir, maxDepth: 4 });
+    // Boot does NOT install starters any more -- "the optional seed choice
+    // must be explicit" -- so the library is empty until asked.
+    expect(sys.loader.get('com.hayba.composition.frame_target')).toBeUndefined();
+
+    await sys.loader.seedStarterRecipes();
     expect(sys.loader.get('com.hayba.composition.frame_target')).toBeDefined();
 
     const r = await sys.runtime.runRecipe('com.hayba.composition.frame_target', { target: '/Game/X.X' });

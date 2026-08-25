@@ -112,6 +112,40 @@ FHaybaHandlerResult FHaybaMCPUIBridgeHandler::HandleCapturePanel(const TSharedPt
         FSlateApplication::Get().Tick();
     }
 
+    // Optional: switch to a view within the destination. Without this the
+    // capture always lands on whichever section the panel was last on, so a
+    // suite can only ever photograph one view per destination.
+    if (P.IsValid() && P->HasField(TEXT("section")))
+    {
+        const FString Want = R.OptionalString(TEXT("section"), TEXT("")).ToLower();
+        static const TMap<FString, EHaybaSection> ByName = {
+            { TEXT("chat"),       EHaybaSection::Chat       },
+            { TEXT("mcp"),        EHaybaSection::MCP        },
+            { TEXT("recipes"),    EHaybaSection::Recipes    },
+            { TEXT("toolstream"), EHaybaSection::ToolStream },
+            { TEXT("scenemap"),   EHaybaSection::SceneMap   },
+            { TEXT("plan"),       EHaybaSection::Plan       },
+            { TEXT("diff"),       EHaybaSection::Diff       },
+            { TEXT("validation"), EHaybaSection::Validation },
+            { TEXT("memory"),     EHaybaSection::Memory     },
+            { TEXT("lessons"),    EHaybaSection::Lessons    },
+            { TEXT("settings"),   EHaybaSection::Settings   },
+        };
+        const EHaybaSection* Found = ByName.Find(Want);
+        if (!Found)
+            return FHaybaHandlerResult::Err(FString::Printf(
+                TEXT("ui_capture_panel: unknown section '%s'; expected one of ")
+                TEXT("chat, mcp, recipes, toolstream, scenemap, plan, diff, ")
+                TEXT("validation, memory, lessons, settings"), *Want));
+
+        // ShowSection selects whichever destination owns the view, so this
+        // works whether or not `panel` was also given -- and a section that
+        // disagrees with the panel resolves in favour of the section, which is
+        // the more specific request.
+        Panel->ShowSection(*Found);
+        FSlateApplication::Get().Tick();
+    }
+
     TArray<FColor> Pixels;
     FIntVector Size(0, 0, 0);
     if (!FSlateApplication::Get().TakeScreenshot(Panel.ToSharedRef(), Pixels, Size)

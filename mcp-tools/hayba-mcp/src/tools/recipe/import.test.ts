@@ -27,6 +27,9 @@ describe('hayba_recipe_import', () => {
     userDir = mkdtempSync(join(tmpdir(), 'hayba-sl-imp-u-'));
     srcDir  = mkdtempSync(join(tmpdir(), 'hayba-sl-imp-s-'));
     sys = await setupRecipeSystem({ userDir, bundledDir: 'src/recipes/specs', maxDepth: 4 });
+    // Starters are no longer installed at boot -- the IA makes seeding
+    // the user's choice -- so a test that needs one in the library asks.
+    await sys.loader.seedStarterRecipes();
   });
   afterEach(() => {
     rmSync(userDir, { recursive: true, force: true });

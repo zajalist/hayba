@@ -1,9 +1,17 @@
 // mcp-tools/hayba-mcp/src/recipes/loader.ts
 //
 // RecipeLoader — reads *.recipe.json from %APPDATA%/Hayba/recipes/
-// (userDir), seeding from the package's bundled specs (bundledDir) on
-// first run. Validates with parseRecipeSpec; bad files are skipped and
+// (userDir). Validates with parseRecipeSpec; bad files are skipped and
 // reported via errors() so the MCP server keeps booting.
+//
+// Bundled starter specs are NOT installed automatically. The IA calls that a
+// choice -- "the optional seed choice must be explicit" -- and a library that
+// fills itself also destroys the teaching empty state a fresh install is
+// supposed to show. Call seedStarterRecipes() when the user asks for them;
+// availableStarters() reports what is on offer.
+//
+// Updates to specs the user ALREADY has still happen automatically on reload.
+// That is maintenance of their library, not an addition to it.
 //
 // "install" writes a new spec to userDir and updates the in-memory map.
 
@@ -49,7 +57,9 @@ export class RecipeLoader {
   /** Seed (idempotent) then full reload from userDir. Call at startup or after import. */
   async reload(): Promise<void> {
     this.ensureDir(this.userDir);
-    this.seedFromBundled();
+    // Updates only. Installing a starter the user never asked for -- or
+    // re-installing one they deleted -- is not this method's business.
+    this.updateInstalledFromBundled();
     this.specs.clear();
     this.loadErrors = [];
     if (!existsSync(this.userDir)) return;
@@ -100,20 +110,53 @@ export class RecipeLoader {
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   }
 
-  private seedFromBundled(): void {
-    if (!existsSync(this.bundledDir)) return;
-    if (!statSync(this.bundledDir).isDirectory()) return;
-    for (const name of readdirSync(this.bundledDir)) {
-      if (!isSpecFile(name)) continue;
-      const source = join(this.bundledDir, name);
+  /** Bundled specs the user does not have installed.
+   *
+   *  What a "seed the Library?" prompt should offer, and what the Library's
+   *  empty state can mention. Empty array when nothing is bundled. */
+  availableStarters(): string[] {
+    return this.bundledSpecNames().filter(
+      name => !existsSync(join(this.userDir, name)),
+    );
+  }
+
+  /** Install the bundled starters the user does not have. Their decision.
+   *
+   *  Returns the ids installed. Does not touch specs already present: this is
+   *  additive only, so re-running it after the user has edited a starter
+   *  cannot overwrite their edit. */
+  async seedStarterRecipes(): Promise<string[]> {
+    this.ensureDir(this.userDir);
+    const installed: string[] = [];
+    for (const name of this.availableStarters()) {
+      copyFileSync(join(this.bundledDir, name), join(this.userDir, name));
+      installed.push(name);
+    }
+    if (installed.length) await this.reload();
+    return installed;
+  }
+
+  /** Bring specs the user ALREADY has up to the bundled version.
+   *
+   *  Deliberately does not install anything new. A recipe the user deleted
+   *  stays deleted -- the old combined method silently reinstalled it on the
+   *  next launch, which reads as the library ignoring them. */
+  private updateInstalledFromBundled(): void {
+    for (const name of this.bundledSpecNames()) {
       const target = join(this.userDir, name);
-      // Absent → seed. Present → re-seed only when the bundled spec's
-      // version differs from the installed copy, so shipped updates to
-      // core recipes reach existing installs. A corrupt installed file
-      // (version unreadable) is also re-seeded, self-healing it.
-      if (existsSync(target) && readSpecVersion(target) === readSpecVersion(source)) continue;
+      if (!existsSync(target)) continue;   // not installed: not ours to add
+      const source = join(this.bundledDir, name);
+      // Same version → nothing to do. A corrupt installed file reads as null
+      // and so differs from any real version, which self-heals it.
+      if (readSpecVersion(target) === readSpecVersion(source)) continue;
       copyFileSync(source, target);
     }
+  }
+
+  private bundledSpecNames(): string[] {
+    if (!existsSync(this.bundledDir)) return [];
+    if (!statSync(this.bundledDir).isDirectory()) return [];
+    return readdirSync(this.bundledDir).filter(isSpecFile);
   }
 }
 

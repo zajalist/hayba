@@ -1,5 +1,6 @@
 // SRecipesPanel.cpp
 #include "Recipes/SRecipesPanel.h"
+#include "HaybaMCPStyle.h"
 
 #include "DesktopPlatformModule.h"
 #include "DirectoryWatcherModule.h"
@@ -139,6 +140,12 @@ void SRecipesPanel::Construct(const FArguments& InArgs)
             .Orientation(Orient_Vertical)
             + SSplitter::Slot().Value(0.34f)
             [
+                // Overlay so the message sits over the list rather than
+                // replacing it: the column headers stay, which keeps the panel
+                // recognisable as a table that happens to be empty.
+                SNew(SOverlay)
+                + SOverlay::Slot()
+                [
                 SAssignNew(ListView, SListView<TSharedPtr<FHaybaRecipeSpec>>)
                 .ListItemsSource(&FilteredItems)
                 .OnGenerateRow(this, &SRecipesPanel::OnGenerateRow)
@@ -153,6 +160,44 @@ void SRecipesPanel::Construct(const FArguments& InArgs)
                     + SHeaderRow::Column(ColVersion)
                       .DefaultLabel(FText::FromString(TEXT("Version"))).FillWidth(0.2f)
                 )
+                ]
+                // An empty table with headers and nothing else reads as
+                // broken. Say which of the two empty states this is, and what
+                // to do about it.
+                + SOverlay::Slot()
+                .HAlign(HAlign_Center).VAlign(VAlign_Center)
+                [
+                    SNew(SBox)
+                    .Visibility_Lambda([this]()
+                    {
+                        return FilteredItems.Num() == 0 ? EVisibility::HitTestInvisible
+                                                        : EVisibility::Collapsed;
+                    })
+                    .Padding(FMargin(24.f, 12.f))
+                    [
+                        SNew(STextBlock)
+                        .Justification(ETextJustify::Center)
+                        .AutoWrapText(true)
+                        .ColorAndOpacity(FSlateColor(
+                            FHaybaMCPStyle::Colour("Hayba.Color.Text.Secondary")))
+                        .Text_Lambda([this]()
+                        {
+                            // A filter matching nothing is not the same as
+                            // having no recipes, and the useful next step
+                            // differs.
+                            const bool bFiltered =
+                                !SearchText.TrimStartAndEnd().IsEmpty()
+                                || !CategoryFilter.IsEmpty();
+                            if (bFiltered && AllItems.Num() > 0)
+                            {
+                                return NSLOCTEXT("Hayba", "RecipesNoMatch",
+                                    "No recipes match this search.\nClear the filter to see the rest.");
+                            }
+                            return NSLOCTEXT("Hayba", "RecipesEmpty",
+                                "No recipes yet.\n\nRun any edit, then capture it from Activity with Save as Recipe.\nOr ask the agent for hayba_recipe_starters to install the bundled ones.");
+                        })
+                    ]
+                ]
             ]
             + SSplitter::Slot().Value(0.66f)
             [

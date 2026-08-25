@@ -18,6 +18,9 @@ describe('recipe HTTP routes', () => {
   beforeEach(async () => {
     userDir = mkdtempSync(join(tmpdir(), 'hayba-sl-http-'));
     sys = await setupRecipeSystem({ userDir, bundledDir: 'src/recipes/specs', maxDepth: 4 });
+    // Starters are no longer installed at boot -- the IA makes seeding
+    // the user's choice -- so a test that needs one in the library asks.
+    await sys.loader.seedStarterRecipes();
     const app = express();
     app.set('query parser', 'simple');
     app.use(express.json({ limit: '1mb', strict: true }));

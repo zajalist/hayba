@@ -6587,6 +6587,12 @@
           "type": "string",
           "required": false,
           "description": "Optional destination to switch to before capturing: world, library, rules, activity, chat or settings. Omit to shoot the current screen."
+        },
+        {
+          "name": "section",
+          "type": "string",
+          "required": false,
+          "description": "Optional view within the destination to switch to before capturing: chat, mcp, recipes, toolstream, scenemap, plan, diff, validation, memory, lessons, settings."
         }
       ],
       "returns": {
