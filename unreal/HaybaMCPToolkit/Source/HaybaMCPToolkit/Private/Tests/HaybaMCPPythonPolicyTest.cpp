@@ -56,7 +56,10 @@ bool FHaybaMCPPythonFatalPolicyTest::RunTest(const FString& Parameters)
         { TEXT("list_view.set_list_items(items + items)"), TEXT("HCR-UI-001") },
         { TEXT("list_view.set_editor_property('list_items', items)"), TEXT("HCR-UI-001") },
         { TEXT("from THREADING import Thread as Worker\nWorker(target=cb).start()"), TEXT("HCR-LIFE-001") },
-        { TEXT("from TIME import SLEEP as pause\npause(5)"), TEXT("HCR-TIME-001") },
+        // Sleeping BLOCKS the game thread; it does not tamper with the
+        // deadline. Every sleep rule in the table is HCR-BLOCK-001, and no
+        // HCR-TIME-001 rule matches a sleep import.
+        { TEXT("from TIME import SLEEP as pause\npause(5)"), TEXT("HCR-BLOCK-001") },
         { TEXT("import os as process\nprocess._exit(1)"), TEXT("HCR-EXIT-001") },
         { TEXT("import os as process\nprocess.abort()"), TEXT("HCR-EXIT-001") },
         { TEXT("import os as process\nprocess.kill(process.getpid(), 9)"), TEXT("HCR-EXIT-001") },
@@ -88,7 +91,8 @@ bool FHaybaMCPPythonFatalPolicyTest::RunTest(const FString& Parameters)
         { TEXT("import sys\nsys.modules['__main__']._hb_deadline = 999999999"), TEXT("HCR-TIME-001") },
         { TEXT("import inspect\ninspect.currentframe().f_back.f_locals['_hb_deadline'] = 999999999"), TEXT("HCR-TIME-001") },
         { TEXT("import builtins\nbuiltins.print = print"), TEXT("HCR-DYNAMIC-001") },
-        { TEXT("import time as clock\nclock.sleep(5)"), TEXT("HCR-TIME-001") },
+        // Same: aliasing the module does not change what sleeping does.
+        { TEXT("import time as clock\nclock.sleep(5)"), TEXT("HCR-BLOCK-001") },
         { TEXT("import threading as workers\nworkers.Thread(target=cb).start()"), TEXT("HCR-LIFE-001") },
         { TEXT("from unreal import EditorLoadingAndSavingUtils as Loader\nLoader.load_map('/Game/X')"), TEXT("HCR-WORLD-001") },
         { TEXT("client.connect(('::1', 52350))"), TEXT("HCR-BLOCK-001") },
