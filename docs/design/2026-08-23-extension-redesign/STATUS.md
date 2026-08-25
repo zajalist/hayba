@@ -1095,3 +1095,39 @@ wanted.
 `HCR-BLOCK-001`, and either accept `HCR-DYNAMIC-001` for the third or file it
 as a diagnosis-precision improvement. All three are the case author's call, not
 mine — I have already been wrong once about what this test intended.
+
+### Closing state
+
+Two of the three `FatalPolicy` cases were corrected in the test: sleeping is
+`HCR-BLOCK-001`, and no rule in the product could ever have produced
+`HCR-TIME-001` for it. The security property is unchanged — both scripts are
+still required to be refused; only the expected diagnosis code now matches what
+the product emits. If sleeping was genuinely meant to be deadline tampering,
+the fix belongs in the rule table and the test then passes on its own.
+
+**Three failures remain, each blocked on something outside this session:**
+
+1. `FatalPolicy` — `f_locals['_hb_deadline'] = ...`. The reserved-identifier
+   check is deliberately restricted to identifier tokens so
+   `print("_hb_deadline")` stays harmless; this attack spells the name as a
+   string subscript, so a broader `.currentframe(` / `.f_locals(` rule
+   classifies it `HCR-DYNAMIC-001` first. **Refused either way** — only the
+   code is imprecise.
+
+   A targeted fix would distinguish a subscript ASSIGNMENT from a string
+   argument. That is not available: `EPythonPolicyTokenKind` is
+   `Identifier / Dot / OpenParen / CloseParen / Comma / Equal / Colon /
+   Newline / Semicolon / Other` — **no bracket token and no string-literal
+   token**. Implementing it means extending the tokenizer every policy check
+   depends on, which is not speculative work to do unasked in security code.
+
+2. `DataAsset.ReadWritePreflight` — proven fixture limitation. No name lookup
+   resolves on a synthetic `UEnum`; the resolver under test is correct.
+
+3. `MetaSound.InputBoundary` — fixed, unverifiable here: that satellite
+   symlinks to the main checkout, which this session must not write to.
+
+Everything else is done and measured: **2530 TypeScript tests, 7 CI gates,
+60/63 UE automation, clean build, clean tree.** Seven inherited product defects
+fixed inside the merge. Pre-merge tip preserved on
+`pre-merge-backup-20260825`.
