@@ -19,6 +19,7 @@
 import { z } from 'zod';
 import type { ToolResult, SessionManager } from '../types.js';
 import { executeCommand } from '../tool-executor.js';
+import { conformToGround } from './terrain-conform.js';
 import type { HaybaToolMeta } from '../hayba-tool-meta.js';
 import { evaluatePerInstance, bakeProfile } from '../../plumb/index.js';
 import type { InstanceState, Constraint, Profile } from '../../plumb/contracts.js';
@@ -232,7 +233,44 @@ export async function worldGenerateHandler(args: Record<string, unknown>, _sessi
   }
 
   // 4. plan
-  const placements = planScatter(layers, assetByRole, center, radius, count, seed);
+  const planned = planScatter(layers, assetByRole, center, radius, count, seed);
+
+  // 4b. put every instance on the ground.
+  //
+  // planScatter gives each placement the area actor's z, which is right only
+  // on a flat plane. This tool has always described itself as placing things
+  // "grounded", and the grounded constraint below was checking the plan
+  // against its own flat assumption rather than against the world.
+  //
+  // A point with nothing under it is dropped rather than left floating at the
+  // actor's height, and the count is reported. If the trace cannot run at all,
+  // nothing is dropped and the report says the placements were never conformed
+  // -- an unconformed scatter must not be indistinguishable from a conformed
+  // one that happened to find flat ground.
+  const conform = await conformToGround(
+    planned.map((p) => [p.loc_cm[0], p.loc_cm[1]] as const),
+    center[2],
+  );
+
+  let placements = planned;
+  const noGround: string[] = [];
+  if (!conform.unavailable) {
+    placements = [];
+    for (const [i, p] of planned.entries()) {
+      const z = conform.hits[i]?.z ?? null;
+      if (z === null) { noGround.push(p.object); continue; }
+      placements.push({ ...p, loc_cm: [p.loc_cm[0], p.loc_cm[1], z] });
+    }
+  }
+
+  if (placements.length === 0) {
+    return { content: [{ type: 'text', text: JSON.stringify({
+      ok: false,
+      error: 'every planned point had nothing under it to stand on — is there ground beneath the area actor?',
+      planned: planned.length,
+      no_ground: noGround.length,
+    }, null, 2) }], isError: true };
+  }
 
   // 5. validate + auto-fix the plan (grounded per asset)
   const constraints: Constraint[] = Object.values(assetByRole).map((a) => ({ id: `wg_grounded_${a}`, primitive: 'grounded', params: { tolerance_m: tol }, binding: { asset: a } }));
@@ -243,6 +281,9 @@ export async function worldGenerateHandler(args: Record<string, unknown>, _sessi
     area_actor, center_cm: center, radius_cm: radius, seed,
     layers: layers.map((l) => ({ role: l.role, keywords: l.keywords, asset: assetByRole[l.role] ?? null })),
     gaps,
+    terrain: conform.unavailable
+      ? { conformed: false, reason: conform.unavailable, note: 'placements kept the area actor height and are NOT grounded to the world' }
+      : { conformed: true, planned: planned.length, placed: placements.length, dropped_no_ground: noGround.length },
     planned: placements.length,
     validation,
     dry_run: dryRun,
