@@ -882,3 +882,38 @@ token-level check at `HaybaMCPPythonHandler.cpp:1516` before the substring
 table at line 100 can classify it `HCR-BLOCK-001`. That is a precedence bug in
 their policy engine, not a merge conflict — two layers disagreeing about the
 same input.
+
+### `Python.FatalPolicy`: two checks with interleaved precedence (not a reorder)
+
+Root-caused, attempted, reverted. Recording it so the next attempt starts from
+the real shape of the problem.
+
+`FindFatalPythonPattern` consults two things:
+
+1. `FindReservedPythonRuntimeAccess` — bare reserved tokens (`builtins`,
+   `__builtins__`, `__main__`), returning `HCR-DYNAMIC-001`.
+2. `FatalPythonRules()` — a specific substring/alias-expanded table.
+
+(1) runs first, so it shadows any table rule whose pattern starts with a
+reserved token: `builtins.input(` is `HCR-BLOCK-001` in the table and was
+reported as `HCR-DYNAMIC-001`.
+
+**The obvious fix does not work.** Moving (1) after the table fixes
+`builtins.input(` and breaks two others in the opposite direction:
+
+    from TIME import SLEEP as pause / pause(5)   expected HCR-TIME-001, got HCR-BLOCK-001
+    import time as clock / clock.sleep(5)        expected HCR-TIME-001, got HCR-BLOCK-001
+
+Those alias-expand to `time.sleep(`, which the table matches at its *first*
+entry (`HCR-BLOCK-001`) before any deadline-tampering rule can claim them. So
+the table's own internal order matters too, and the current behaviour depends
+on (1) running first for some inputs and the table running first for others.
+Net of the reorder: same failure count, different cases. A lateral move, so it
+was reverted.
+
+**What it actually needs:** precedence expressed per-rule rather than by
+position — e.g. rank matches by specificity (longest matched pattern wins) and
+let deadline rules outrank blocking rules for the same call. Both checks
+already agree the script is refused; only the reported policy code differs, so
+this is a diagnosis-quality bug, not a safety hole. Worth fixing properly, not
+worth another blind swap.
