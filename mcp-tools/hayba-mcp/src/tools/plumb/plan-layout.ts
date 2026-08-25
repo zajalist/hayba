@@ -69,6 +69,51 @@ export function perimeterPoints(
   return alternate ? out.filter((_, i) => i % 2 === 0) : out;
 }
 
+/**
+ * A run of wall segments around the rectangle, laid end to end.
+ *
+ * A shell does not have to mean generated geometry: a wall is a row of wall
+ * meshes. Segments are spaced by the mesh's own length so they butt rather
+ * than overlap or gap, and each is turned to run ALONG its wall rather than
+ * facing across it -- a wall piece rotated the wrong way is the difference
+ * between a room and a row of billboards.
+ *
+ * Corners are left as they fall: segments meet at the corner and may overlap
+ * by up to half a segment. Modelling a corner piece needs a corner mesh, which
+ * is a separate binding and a separate decision.
+ */
+export function wallSegments(fp: RoomFootprint, segmentLength_m: number): LayoutPoint[] {
+  const seg = Math.max(0.1, segmentLength_m) * M;
+  const halfW = (fp.w / 2) * M;
+  const halfH = (fp.h / 2) * M;
+  const [cx, cy, cz] = fp.center_cm;
+
+  const walls: Array<{ from: [number, number]; to: [number, number]; yaw: number }> = [
+    { from: [cx - halfW, cy - halfH], to: [cx + halfW, cy - halfH], yaw: 0 },
+    { from: [cx + halfW, cy - halfH], to: [cx + halfW, cy + halfH], yaw: 90 },
+    { from: [cx + halfW, cy + halfH], to: [cx - halfW, cy + halfH], yaw: 180 },
+    { from: [cx - halfW, cy + halfH], to: [cx - halfW, cy - halfH], yaw: 270 },
+  ];
+
+  const out: LayoutPoint[] = [];
+  for (const wall of walls) {
+    const dx = wall.to[0] - wall.from[0];
+    const dy = wall.to[1] - wall.from[1];
+    const len = Math.hypot(dx, dy);
+    const n = Math.max(1, Math.round(len / seg));
+    for (let i = 0; i < n; i++) {
+      // Centre of the i-th segment, so a run is centred on the wall.
+      const t = (i + 0.5) / n;
+      out.push({ loc_cm: [wall.from[0] + dx * t, wall.from[1] + dy * t, cz], yaw_deg: wall.yaw });
+    }
+  }
+  return out;
+}
+
+/** Profiles a straight run of segments can honestly stand in for. An arch or a
+ *  cavern is a curved section; squaring it off is a different room. */
+export const SEGMENTABLE_PROFILES: ReadonlySet<string> = new Set(['box']);
+
 /** One point at the middle of each wall, facing in. */
 export function wallMidpoints(fp: RoomFootprint): LayoutPoint[] {
   const halfW = (fp.w / 2) * M;

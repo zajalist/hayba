@@ -55,17 +55,55 @@ describe('building a plan', () => {
     expect(executeCommandMock).not.toHaveBeenCalled();
   });
 
-  it('says why it will not build a shell', async () => {
+  it('builds a box shell as a run of wall segments', async () => {
+    executeCommandMock.mockImplementation(async (cmd: string) => {
+      if (cmd === 'mesh_get_info') return { bounds: { min: { x: -100 }, max: { x: 100 } } };
+      if (cmd === 'ism_create_actor') return { actor_id: 'ISM_1' };
+      if (cmd === 'ism_add_instances') return { added: 10 };
+      return {};
+    });
+
     const r = await planBuild({
-      plan: { items: [item({ kind: 'shell', role: 'wall', meta: { emit: 'shell', role: 'wall' } })] },
+      plan: { items: [item({ kind: 'shell', role: 'wall', meta: { emit: 'shell', profile_curve: 'box' } })] },
       bindings: { wall: '/Game/SM_Wall' },
       room: ROOM,
     });
 
-    // A shell is generated geometry. Placing a mesh called "wall" at the room
-    // centre would look like it worked and be wrong.
-    expect(r.skipped[0]!.reason).toMatch(/generated geometry/);
+    // 2m segments (from the mesh bounds) around a 6x4 room.
+    expect(r.built).toHaveLength(1);
+    expect(r.skipped).toEqual([]);
+  });
+
+  it('refuses to square off a curved profile', async () => {
+    const r = await planBuild({
+      plan: { items: [item({ kind: 'shell', role: 'wall', meta: { emit: 'shell', profile_curve: 'arch' } })] },
+      bindings: { wall: '/Game/SM_Wall' },
+      room: ROOM,
+    });
+
+    // A run of straight pieces standing in for an arch is a different room.
+    expect(r.skipped[0]!.reason).toMatch(/curved/);
     expect(r.built).toEqual([]);
+  });
+
+  it('says when it had to assume a wall spacing', async () => {
+    executeCommandMock.mockImplementation(async (cmd: string) => {
+      if (cmd === 'mesh_get_info') throw new Error('no such mesh');
+      if (cmd === 'ism_create_actor') return { actor_id: 'ISM_1' };
+      if (cmd === 'ism_add_instances') return { added: 8 };
+      return {};
+    });
+
+    const r = await planBuild({
+      plan: { items: [item({ kind: 'shell', role: 'wall', meta: { emit: 'shell' } })] },
+      bindings: { wall: '/Game/SM_Wall' },
+      room: ROOM,
+    });
+
+    // Still builds — a stated assumption beats refusing to make the room — but
+    // the assumption is stated rather than silently baked in.
+    expect(r.built).toHaveLength(1);
+    expect(r.notes?.join(' ')).toMatch(/could not read the mesh bounds/);
   });
 
   it('says why it will not hang a decal on an arch that does not exist', async () => {

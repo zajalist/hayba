@@ -5,18 +5,24 @@
 // by hand. This closes that, for the parts that can honestly be closed.
 //
 // What it builds: `asset` and `scatter` emits, laid out on the room's own
-// footprint and grounded by the same trace world_generate uses.
+// footprint and grounded by the same trace world_generate uses -- and `shell`,
+// once it turned out a wall need not mean generated geometry. A wall is a row
+// of wall meshes, and the segment length comes from the bound mesh's own
+// bounds so the pieces butt rather than overlap.
 //
-// What it refuses: `shell`, `fill`, and anything anchored to a shell feature.
-// Building a wall means generating geometry, and a crack decal placed at floor
-// height because there is no arch to hang it on is worse than an honest gap.
+// What it still refuses: `fill`, a curved shell profile, and anything anchored
+// to a shell feature. A crack decal placed at floor height because there is no
+// arch to hang it on is worse than an honest gap.
 
 import { z } from 'zod';
 import type { ToolHandler } from '../types.js';
 import type { HaybaToolMeta } from '../hayba-tool-meta.js';
 import { executeCommand } from '../tool-executor.js';
 import { conformToGround } from '../world/terrain-conform.js';
-import { pointsFor, type LayoutPoint, type RoomFootprint } from './plan-layout.js';
+import {
+  pointsFor, wallSegments, SEGMENTABLE_PROFILES,
+  type LayoutPoint, type RoomFootprint,
+} from './plan-layout.js';
 
 export const meta: HaybaToolMeta = {
   cost: 'high',
@@ -25,12 +31,28 @@ export const meta: HaybaToolMeta = {
   not_when: 'you only want to see the plan — plumb_grammar_expand already returns it',
 };
 
-/** Emits that describe geometry rather than placed props. */
+/** Emits with nothing to place. `shell` is handled separately: it CAN be
+ *  built, as a run of wall segments, when a mesh is bound and the profile is
+ *  straight-sided. */
 const NOT_BUILDABLE: Record<string, string> = {
-  shell: 'a shell is generated geometry (walls, arches); there is no mesh to place',
   fill: 'a fill is volumetric; there is no mesh to place',
   decal: 'a decal needs a surface on a shell that is not built',
 };
+
+/** Length of a mesh along its X axis, in metres — the run spacing for a wall.
+ *  Falls back to 2m when bounds cannot be read, because a wrong-but-stated
+ *  spacing beats refusing to build the room. */
+async function segmentLengthM(asset: string): Promise<{ len: number; assumed: boolean }> {
+  try {
+    const info = await executeCommand<Record<string, unknown>>('mesh_get_info', { path: asset });
+    const b = info?.bounds as { min?: Record<string, number>; max?: Record<string, number> } | undefined;
+    if (b?.min && b?.max && typeof b.min.x === 'number' && typeof b.max.x === 'number') {
+      const cm = Math.abs(b.max.x - b.min.x);
+      if (cm > 1) return { len: cm / 100, assumed: false };
+    }
+  } catch { /* fall through to the stated default */ }
+  return { len: 2, assumed: true };
+}
 
 export const schema = z.object({
   plan: z.object({
@@ -69,6 +91,9 @@ export interface PlanBuildResult {
   unbound: string[];
   grounded: boolean;
   ground_note?: string;
+  /** Things worth saying that are not failures — e.g. a wall spacing that had
+   *  to be assumed because the mesh bounds could not be read. */
+  notes?: string[];
   errors: string[];
   dry_run?: true;
 }
@@ -85,6 +110,8 @@ export async function planBuild(params: PlanBuildParams): Promise<PlanBuildResul
   /** asset path → every role that bound to it, in first-seen order. */
   const rolesOf = new Map<string, string[]>();
 
+  const notes: string[] = [];
+
   for (const item of params.plan.items) {
     const label = item.role ?? item.tag ?? item.kind;
 
@@ -94,16 +121,36 @@ export async function planBuild(params: PlanBuildParams): Promise<PlanBuildResul
     const asset = params.bindings[label];
     if (!asset) { unbound.add(label); continue; }
 
-    const resolved = pointsFor(item.meta, fp, {
-      scatterCount: params.scatter_count ?? 8,
-      seed: (params.seed ?? 1337) + item.index,
-    });
-    if (resolved.unresolved) {
-      skipped.push({ kind: item.kind, role: label, reason: resolved.unresolved });
-      continue;
+    let points: LayoutPoint[];
+    if (item.kind === 'shell') {
+      const profile = String(item.meta.profile_curve ?? 'box');
+      if (!SEGMENTABLE_PROFILES.has(profile)) {
+        // An arch or a cavern is a curved section. Squaring it off with
+        // straight wall pieces is not the room that was asked for.
+        skipped.push({
+          kind: item.kind, role: label,
+          reason: `profile "${profile}" is curved; a run of straight wall segments would be a different room`,
+        });
+        continue;
+      }
+      const seg = await segmentLengthM(asset);
+      if (seg.assumed) {
+        notes.push(`${label}: could not read the mesh bounds, so wall segments are spaced at ${seg.len}m`);
+      }
+      points = wallSegments(fp, seg.len);
+    } else {
+      const resolved = pointsFor(item.meta, fp, {
+        scatterCount: params.scatter_count ?? 8,
+        seed: (params.seed ?? 1337) + item.index,
+      });
+      if (resolved.unresolved) {
+        skipped.push({ kind: item.kind, role: label, reason: resolved.unresolved });
+        continue;
+      }
+      points = resolved.points;
     }
 
-    byAsset.set(asset, [...(byAsset.get(asset) ?? []), ...resolved.points]);
+    byAsset.set(asset, [...(byAsset.get(asset) ?? []), ...points]);
     const seen = rolesOf.get(asset) ?? [];
     if (!seen.includes(label)) seen.push(label);
     rolesOf.set(asset, seen);
@@ -134,6 +181,7 @@ export async function planBuild(params: PlanBuildParams): Promise<PlanBuildResul
       })),
       skipped, unbound: [...unbound], grounded: !conform.unavailable,
       ...(conform.unavailable ? { ground_note: conform.unavailable } : {}),
+      ...(notes.length ? { notes } : {}),
       errors, dry_run: true,
     };
   }
@@ -174,6 +222,7 @@ export async function planBuild(params: PlanBuildParams): Promise<PlanBuildResul
     unbound: [...unbound],
     grounded: !conform.unavailable,
     ...(conform.unavailable ? { ground_note: conform.unavailable } : {}),
+    ...(notes.length ? { notes } : {}),
     errors,
   };
 }

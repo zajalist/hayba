@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   perimeterPoints, wallMidpoints, interiorPoints, anchorOf, pointsFor,
+  wallSegments, SEGMENTABLE_PROFILES,
   type RoomFootprint,
 } from './plan-layout.js';
 
@@ -108,5 +109,44 @@ describe('resolving a real grammar item', () => {
   it('puts a vent at each wall middle', () => {
     const r = pointsFor({ emit: 'asset', role: 'vent', at: 'wall_mid' }, room);
     expect(r.points).toHaveLength(4);
+  });
+});
+
+describe('wall segment runs', () => {
+  it('covers every wall with pieces the length of the mesh', () => {
+    // 6m x 4m room, 2m segments: 3 per long wall, 2 per short = 10.
+    const segs = wallSegments(room, 2);
+    expect(segs).toHaveLength(10);
+  });
+
+  it('turns each piece to run along its wall, not across it', () => {
+    // A wall piece rotated the wrong way is a billboard, not a wall.
+    const yaws = wallSegments(room, 2).map((s) => s.yaw_deg);
+    expect(new Set(yaws)).toEqual(new Set([0, 90, 180, 270]));
+  });
+
+  it('centres the run on the wall rather than starting at a corner', () => {
+    const segs = wallSegments(room, 2);
+    const south = segs.filter((s) => s.yaw_deg === 0).map((s) => s.loc_cm[0]).sort((a, b) => a - b);
+    // 3 pieces across 6m: centres at -200, 0, 200 — not -300, -100, 100.
+    expect(south).toEqual([-200, 0, 200]);
+  });
+
+  it('always puts at least one piece on a wall shorter than a segment', () => {
+    const tiny: RoomFootprint = { w: 1, h: 1, center_cm: [0, 0, 0] };
+    expect(wallSegments(tiny, 5)).toHaveLength(4);
+  });
+
+  it('scales the run with the room', () => {
+    const big: RoomFootprint = { w: 40, h: 40, center_cm: [0, 0, 0] };
+    expect(wallSegments(big, 2).length).toBeGreaterThan(wallSegments(room, 2).length);
+  });
+
+  it('only claims straight-sided profiles', () => {
+    // An arch or a cavern is a curved section; squaring it off is a different
+    // room, so the executor refuses rather than approximating.
+    expect(SEGMENTABLE_PROFILES.has('box')).toBe(true);
+    expect(SEGMENTABLE_PROFILES.has('arch')).toBe(false);
+    expect(SEGMENTABLE_PROFILES.has('cavern')).toBe(false);
   });
 });

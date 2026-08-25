@@ -968,7 +968,7 @@ export const PLUMB_DESCRIPTORS: ToolDescriptor[] = [
   {
     name: 'plumb_plan_build',
     description:
-      'Build the placeable parts of a plan from plumb_grammar_expand. Lays each item out on the room footprint you give it — a column run spaced along the floor edge, a vent at each wall middle, scatter inside — grounds every point with a line trace, and places one Instanced Static Mesh actor per bound mesh. Roles are bound by YOU via `bindings`; an unbound role is reported, never guessed at, because picking a mesh whose name looked close is how a colonnade ends up made of barrels. Shells, fills and decals are NOT built and say why: a shell is generated geometry, and a decal needs a surface that does not exist yet. Use dry_run to see the layout before anything spawns.',
+      'Build the placeable parts of a plan from plumb_grammar_expand. Lays each item out on the room footprint you give it — a column run spaced along the floor edge, a vent at each wall middle, scatter inside — grounds every point with a line trace, and places one Instanced Static Mesh actor per bound mesh. Roles are bound by YOU via `bindings`; an unbound role is reported, never guessed at, because picking a mesh whose name looked close is how a colonnade ends up made of barrels. A box-profile shell IS built, as a run of wall segments spaced by the length of the bound mesh. A CURVED profile (arch, cavern) is refused rather than squared off, and fills and decals are not built — each says why. Use dry_run to see the layout before anything spawns.',
     meta: planBuildMeta,
     handler: planBuildHandler,
     cost: 'high',
