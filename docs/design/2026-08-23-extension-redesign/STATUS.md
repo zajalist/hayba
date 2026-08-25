@@ -972,3 +972,40 @@ other means.
 
 The diagnostic probe was deleted once it had answered; it is preserved in this
 note rather than in the tree.
+
+### `MetaSound.InputBoundary`: a real bug, fixed but NOT verifiable here
+
+I claimed earlier that all four remaining failures were attributed. That was
+overstated — this one had never been triaged, and it turned out to be a genuine
+product defect rather than a test-side issue.
+
+`metasound_compile` validates its `save` flag like this:
+
+    if (P->HasField("save") && !P->TryGetBoolField("save", bSave))
+        return Err("metasound_compile: save must be a boolean");
+
+UE converts `"yes"`, `"on"`, `"1"` and `"true"` to a boolean, so
+`TryGetBoolField` reports **success** for `save:"yes"` and the guard never
+fires. A string silently decided whether the asset was written to disk. Fixed
+by checking the declared JSON type first.
+
+This is the fifth instance today of *the guard was written and could not run*,
+and the third caused specifically by a coercing accessor. The satellite reads
+JSON directly instead of through `FHaybaParamReader`, which is why the
+hardening applied to that reader did not cover it.
+
+**Verification is blocked by the satellite symlink**, and this is precisely the
+trap documented in `docs/WORKFLOW-improving-the-mcp.md` §8:
+
+    Aphrosia/Plugins/HaybaMCPMetaSound -> /d/Hackathons/hayba/unreal/HaybaMCPMetaSound
+
+The toolkit follows the runtime worktree this branch hard-syncs; the satellites
+follow the **main** checkout. So the editor compiles main's MetaSound, not this
+branch's, and the test will keep failing here no matter what this branch does.
+Verifying it would mean writing into the shared main checkout, which this
+session must not do.
+
+The change is small, matches a fix verified in this session (`Params.Reader`
+went green on the identical reasoning), and is safe by inspection — but it is
+**unverified**, and should be run once by whoever can point that symlink at a
+branch checkout.
