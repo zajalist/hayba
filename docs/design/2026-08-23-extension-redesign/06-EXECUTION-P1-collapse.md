@@ -116,3 +116,60 @@ That check needs a live editor, so it belongs with the next in-editor session
 - Running a Recipe produces a verdict without being asked.
 - Finding history survives the migration.
 - "Sliver" is gone from the vocabulary.
+
+
+---
+
+## Status — 2026-08-24
+
+Steps 1–7 landed; the TypeScript half of P1 is complete. 2134 tests, tsc clean.
+
+| Step | Commit |
+|---|---|
+| 1. Unified `Finding` + adapters | `e91ee9b2` |
+| 2. Producers migrated (ui → content → tool rules) | `eb873d80`, `8a84a10e`, `3e39d465` |
+| 3. Dead rules deleted | `9f59b92b` |
+| 4. History migrates on read | `ec6354a6` |
+| 5. `ValidatorFinding` deleted | `ec6354a6` |
+| 6. slivers → Recipes (TS half) | `3826fd2a`, `db196208`, `907999b7` |
+| 7. Recipes emit verdicts | `43a7162a` |
+
+Definition of done, checked rather than assumed:
+
+- One verdict type. The only mentions of the other four are the comment in
+  `finding.ts` recording why they existed.
+- The Rules surface lists only checks that run — enforced by a test.
+- Running a Recipe produces a verdict without being asked.
+- Finding history survives the migration (three tests, including that the
+  timestamp/record-id survives).
+- "Sliver" survives only in documented compatibility shims.
+
+### Two holes found while doing the work, both fixed
+
+**`checkRecipeRequires` had no callers.** A recipe could declare requirements
+and nothing ever checked them — A4 was worse than "no triggering moment", it
+was "no trigger at all".
+
+**Requirements were never validated at define time.** `evaluate()` skips a
+constraint whose primitive it does not recognise, on the stated assumption
+that define-time validation rejected it. `validateRecipeRequires` existed and
+only its own test called it, so a spec with a nonsense primitive loaded
+cleanly and was then reported SATISFIED while checking nothing. Same shape as
+the four catalogued-but-dead validator rules. `parseRecipeSpec` now runs it.
+
+### What is left: the C++ half of step 6
+
+Not started — it needs a full rebuild (class renames change layout, so Live
+Coding cannot patch it) and the editor was running.
+
+- `Private/Slivers/` → `Private/Recipes/`, ~20 files
+- `SSliversPanel` → `SRecipesPanel`, `HaybaSliverClient/Loader/Types`
+- `UHaybaSliverSettings` is a **config UCLASS** — renaming it orphans its
+  `[/Script/HaybaMCPToolkit.HaybaSliverSettings]` section in
+  `EditorPerProjectUserSettings.ini` and silently drops the user's configured
+  `McpHttpBaseUrl` and `MaxSliverDepth`. Needs `[CoreRedirects]` class +
+  property entries, shipped in plugin `Config/`, and verified by launching
+  rather than assumed.
+- Then `%APPDATA%/Hayba/slivers` → `.../recipes` with a one-time migration,
+  moving both halves together, and the `/sliver/*` route alias can retire a
+  release later.
