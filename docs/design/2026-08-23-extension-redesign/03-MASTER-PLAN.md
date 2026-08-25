@@ -788,3 +788,30 @@ no DataAsset assets at all. The change compiles and is two lines, but the happy
 path is unexercised — if `SaveLoadedAsset` ever returns false on a successful
 save, `data_set` would now fail where it used to succeed. Worth one live check
 the next time a real DataAsset exists.
+
+
+---
+
+## F14 — checked, and mostly already done (2026-08-25)
+
+Flagged as "best value-per-effort in either codebase". Most of it no longer
+applies.
+
+**The orphaned dirs are gone.** `unreal/` holds exactly the three real plugins;
+there is no `HaybaMCPNiagara/` or `HaybaMCPSequencer/` residue left to delete.
+
+**Registration is already unified.** Satellites self-register through
+`FHaybaMCPModule::RegisterExternalHandler`, and both GAS and MetaSound use
+`LoadModuleChecked` — with a comment explaining that it guarantees the core
+router exists first, regardless of module load order. That is the right
+pattern and it is already in place.
+
+**One thing was worth changing.** `RegisterExternalHandler` silently no-opped
+when the router did not exist. Nothing reaches that today, but a dropped
+handler means every command it declares simply does not exist with nothing to
+explain why — and a future caller that skips `LoadModuleChecked` would get
+exactly that. It now logs an error naming the domain and what to do.
+
+Verified after: no drop logged at startup, and `metasound_create` answers
+"missing package_path" rather than "unknown command" — a parameter error
+proves the handler is registered without mutating anything.
