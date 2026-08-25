@@ -619,3 +619,73 @@ instead of returning an empty plan that reads as "this produces nothing".
    advisory planner an agent reads and acts on?
 2. What belongs in an interior production — doors and furniture zones, or
    room subdivision first?
+
+
+---
+
+## Track D progress — 2026-08-25
+
+**D1.6 `doctor` — DONE.** `hayba-cli doctor [--project <x.uproject>]` checks
+the four things that break and says what to do about each. Building it was the
+easy half; running it against a real install caught two false positives in my
+own checks, both from asserting a rule I had assumed rather than read:
+
+- The dependency check read the `.uproject` for five plugin names taken from
+  this plan's prose. Three were wrong, and the `.uproject` is the wrong source
+  anyway — it lists only hand-toggled plugins, while UE enables a plugin's
+  DECLARED dependencies itself. It called PCG "not enabled" on an install that
+  had been running PCG commands all day. It now reads the declared list from
+  the `.uplugin` and infers from something stronger: UE refuses to load a
+  plugin whose dependencies are missing, so a reachable editor proves they
+  resolved.
+- The version check compared two numbers that never shared a scheme (plugin
+  0.3.0, npm 1.0.0), so it flagged skew on every healthy install.
+
+Also fixed on the way: the CLI entry guard only matched the compiled
+`cli/index.js`, so running from source did nothing and exited 0 — reading as
+"it worked" rather than "it never started".
+
+**D1.7 version-skew handshake — DONE.** `HAYBA_PROTOCOL_VERSION`, one number
+both halves speak, reported over the wire in `editor_get_state`. Not a product
+version: the bump rule is written into both files — bump only when the wire
+breaks an older peer, never for an added command, optional parameter or
+response field. Silence counts as a mismatch, because only a plugin predating
+the field is silent. The advice names WHICH side is behind, since "update
+Hayba" is useless when there are two things to update and one is wrong.
+
+**D1.5 README front door — DONE.** The badge said UE 5.7 while the `.uplugin`
+says 5.8.0; "100+ tools across 30+ domains" was uncheckable where the generated
+inventory says 239 commands across 35 handlers. The quick start implied three
+tidy steps; it is two artifacts that must meet, with no prebuilt plugin
+release, so it now says building from source is the real path today and adds
+the missing step — run `doctor` and find out whether it worked.
+
+### D2 measurement (measure before rewriting)
+
+    pack        2.32 GiB
+    loose       15.61 MiB across 3702 objects
+    prunable    0
+
+Loose objects and prunable garbage are already clean, so the 2.32 GiB is
+**reachable history**, not the unreachable garbage a previous cleanup found.
+That means `gc` will not touch it and any real reduction is `filter-repo` —
+which breaks every clone and this repo owns tags that must survive. Not a
+maintenance task; a decision, on evidence.
+
+`website/assets` is 53 MB, dominated by `Gaea/` (16 JPEGs, several ~3 MB) and
+`PCGex/` (a 5.7 MB PNG). Checked: **every one is referenced** by two live
+gallery pages, so there is nothing orphaned to delete. Reducing it means lossy
+recompression of showcase imagery, which is a judgement about how the work
+looks, not a cleanup.
+
+Also checked and NOT an issue: `website/gaea/` is a page for a separate Gaea
+MCP integration (`zajalist/gaea_mcp`) that drives Gaea's own graph. It is
+accurately named and unrelated to the standing rule about never framing the
+erosion work as derived from that tool.
+
+### Still open in Track D
+
+- **D1.1 / D1.2** — publishing the npm package and prebuilt plugin zips. Both
+  are outward-facing releases, not code.
+- **D1.3** in-editor client auto-configurator, **D1.8** Fab listing.
+- The `website/assets` compression decision above.
