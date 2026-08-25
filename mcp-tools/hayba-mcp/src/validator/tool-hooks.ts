@@ -222,7 +222,16 @@ export function danglingLifetimeRegistration(script: string): string | null {
  *  Matches any `<name>.connect(("127.0.0.1"|"localhost", PORT))` where
  *  PORT is in the UE plugin range 52342..52350. */
 export function isSelfSocketScript(script: string): boolean {
-  const re = /\.\s*connect\s*\(\s*\(\s*['"](?:127\.0\.0\.1|localhost)['"]\s*,\s*(\d+)/gi;
+  // Two idioms, both deadlocking, both common:
+  //
+  //   s.connect(("127.0.0.1", 52342))            <- socket method
+  //   socket.create_connection(("127.0.0.1", 52342))  <- the one-liner
+  //
+  // Only the first was matched. The second is arguably the MORE likely thing
+  // an agent writes, and it reached the game thread unrefused while
+  // docs/RELIABILITY.md said the pattern was refused outright. Found by
+  // running the guard rather than by reading it.
+  const re = /(?:\.\s*connect|\bcreate_connection)\s*\(\s*\(\s*['"](?:127\.0\.0\.1|localhost|0\.0\.0\.0)['"]\s*,\s*(\d+)/gi;
   let m: RegExpExecArray | null;
   while ((m = re.exec(script)) !== null) {
     const port = Number(m[1]);

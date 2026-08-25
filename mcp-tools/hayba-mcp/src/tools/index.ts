@@ -24,6 +24,7 @@ import { errorResult, okResult } from './tool-result.js';
 import { listToolCategoriesHandler, meta as listMeta } from './code-mode/list-tool-categories.js';
 import { getToolSignatureHandler, meta as sigMeta } from './code-mode/get-tool-signature.js';
 import { pythonRunHandler, meta as pyMeta } from './python/python-run.js';
+import { makeValidatedPythonRunHandler } from './python-run-validator-wrap.js';
 
 // ── New UE-domain tool handlers ───────────────────────────────────────────────
 import { actorSpawnHandler, meta as actorSpawnMeta } from './actor/actor-spawn.js';
@@ -3518,6 +3519,9 @@ const ueStatusMeta: HaybaToolMeta = {
  * registry entries. `wireSchema` preserves the two compatibility aliases while
  * `schema` remains the canonical signature shown to agents.
  */
+/** Built once: the factory resolves a scratch directory per call site. */
+const validatedPythonRun = makeValidatedPythonRunHandler();
+
 export const CODE_MODE_DESCRIPTORS: ToolDescriptor[] = [
   defineTool({
     name: 'list_tool_categories',
@@ -3575,7 +3579,18 @@ export const CODE_MODE_DESCRIPTORS: ToolDescriptor[] = [
     },
     cost: 'high',
     returns: '{ok, tier, stdout, stderr}',
-    handler: async (params, session) => pythonRunHandler(params as Record<string, unknown>, session),
+    // The VALIDATED handler, not the bare one. It refuses two script
+    // patterns before execution: opening a TCP socket to the plugin's own
+    // port (deadlocks the game thread) and registering an engine-lifetime
+    // callback (#283/#284 — the Python callable is collected and the next
+    // broadcast crashes the editor with an access violation).
+    //
+    // This wrapper existed, was tested, and was wired to nothing, so neither
+    // guard ran. The post-condition validator rule fires only AFTER the call,
+    // which for a deadlock or an access violation is too late to matter --
+    // while docs/RELIABILITY.md told readers these patterns were "refused
+    // outright".
+    handler: async (params, session) => validatedPythonRun(params as Record<string, unknown>, session),
   }),
 ];
 
