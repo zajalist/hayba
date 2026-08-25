@@ -20,6 +20,19 @@ All notable changes to Hayba MCP Toolkit are documented here. Format based on [K
   - A generic reserved-token check ran before the specific Python policy table
     and shadowed it, so `builtins.input(` was reported as a dynamic-execution
     risk instead of a blocking-call one.
+  - `ui_mutate_tree replace` left discarded widgets owned by the WidgetTree.
+    `RemoveWidget` detaches from the parent without changing the Outer, and
+    UMG's compiler enumerates by ownership rather than walking from the root —
+    so it visited a widget with no GUID entry and ensured ("Widget [...] was
+    added but did not get a GUID"), while the handler's own invariant check
+    separately refused the next operation with "temporary/trash source names
+    leaked into the tree". Discarded widgets and their subtrees now move to the
+    transient package, which frees the authoring name and removes the object
+    from the tree.
+  - `metasound_compile` accepted `save: "yes"` as a boolean. UE converts
+    "yes", "on" and "1" to true, so the guard's `TryGetBoolField` call reported
+    success and the check never fired — a string decided whether the asset was
+    written to disk.
   - A module merely *named* inside a string literal was refused as a dynamic
     import: `module_name = 'importlib.util'` was rejected although it does
     nothing. Policy rules can now match code outside quoted spans, which keeps

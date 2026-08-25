@@ -1009,3 +1009,47 @@ The change is small, matches a fix verified in this session (`Params.Reader`
 went green on the identical reasoning), and is safe by inspection — but it is
 **unverified**, and should be run once by whoever can point that symlink at a
 branch checkout.
+
+### `UI.Replace`: FIXED — it was ownership, not names
+
+Red for the whole session, with three attempted fixes reverted. The cause was
+none of the three things guessed at.
+
+`WidgetTree->RemoveWidget()` detaches a widget from its PARENT. It does not
+change the widget's `Outer`. So a discarded widget stayed **owned by the
+WidgetTree**, and UMG's compiler enumerates by ownership rather than by walking
+from the root -- it therefore visited an object with no entry in
+`WidgetVariableNameToGuidMap` and fired
+
+    Widget [HaybaMCP_Replaced_0] was added but did not get a GUID
+
+while this handler's own invariant check separately refused the next operation
+with "temporary/trash source names leaked into the tree".
+
+A probe settled it in one build cycle by asking the engine directly:
+
+    before   GetAllWidgets:                    RootCanvas ProbeTarget
+             GetObjectsWithOuter(WidgetTree):  RootCanvas HaybaMCP_ReplacementStagingRollback_0 ProbeTarget
+             owned widgets with NO guid:       HaybaMCP_ReplacementStagingRollback_0 (bIsVariable=false)
+
+    after    GetObjectsWithOuter(WidgetTree):  RootCanvas ProbeTarget
+             owned widgets with NO guid:       <none>
+             replace ok=true
+
+Absent from the walk, present in the ownership. Two sites leaked -- the
+rollback path and the success path -- and both now move the discarded object to
+the transient package, which frees the authoring name AND removes it from the
+tree.
+
+The existing code was half-right and said so: "RemoveWidget detaches the root
+but does not destroy the UObject subtree". It acted on descendant *names*, and
+renaming within the same Outer does not change ownership.
+
+`bIsVariable=false` on the leaked object also confirms the second reverted
+attempt (clearing that flag) could never have worked -- the engine's ensure
+does not consult it, as its source shows.
+
+**Why it took four attempts:** the first three reasoned from the symptom. The
+probe asked the engine and answered it outright, including disproving my own
+hypothesis. Same technique settled the enum question. When a fix is guessed
+twice, stop guessing and measure.
