@@ -1,6 +1,11 @@
 #include "HaybaMCPStaticMeshHandler.h"
 #include "HaybaSceneQuery.h"
 #include "HaybaMCPParams.h"
+#if WITH_EDITOR
+#include "StaticMeshEditorSubsystem.h"
+#include "StaticMeshEditorSubsystemHelpers.h"
+#include "Editor.h"
+#endif
 
 #include "Engine/StaticMesh.h"
 #include "StaticMeshResources.h"
@@ -35,7 +40,11 @@ TArray<FString> FHaybaMCPStaticMeshHandler::GetCommands() const
         TEXT("mesh_list"),
         TEXT("mesh_extract"),
         TEXT("mesh_topology_stats"),
-        TEXT("mesh_list_dynamic")
+        TEXT("mesh_list_dynamic"),
+        // Import hygiene: an imported mesh routinely arrives with no collision
+        // and Nanite off, and nothing could fix either.
+        TEXT("mesh_generate_collision"),
+        TEXT("mesh_set_nanite")
     };
 }
 
@@ -116,6 +125,142 @@ static FHaybaHandlerResult MeshGetInfo(const TSharedPtr<FJsonObject>& P)
 
     return FHaybaHandlerResult::Ok(Out);
 }
+
+#if WITH_EDITOR
+/**
+ * Generate simple or convex collision for a static mesh.
+ *
+ * An imported mesh routinely arrives with none, which makes it unusable for
+ * gameplay and is invisible until something falls through it. Nothing in the
+ * toolkit could add collision before this.
+ *
+ * Reports the collision count BEFORE and AFTER. A mutation that only says
+ * "ok" cannot be distinguished from one that did nothing, and this is exactly
+ * the case where doing nothing looks like success.
+ */
+static FHaybaHandlerResult MeshGenerateCollision(const TSharedPtr<FJsonObject>& P)
+{
+    FHaybaParamReader R(P, TEXT("mesh_generate_collision"));
+    const FString Path = R.RequiredString(TEXT("path"));
+    const FString Shape = R.OptionalString(TEXT("shape"), TEXT("box"));
+    const int32 HullCount = R.OptionalIntInRange(TEXT("hull_count"), 4, 1, 64);
+    const int32 MaxHullVerts = R.OptionalIntInRange(TEXT("max_hull_verts"), 16, 6, 64);
+    const int32 HullPrecision = R.OptionalIntInRange(TEXT("hull_precision"), 100000, 10000, 1000000);
+    const bool bReplace = R.OptionalBool(TEXT("replace_existing"), false);
+    if (R.HasErrors()) return FHaybaHandlerResult::Err(R.ErrorMessage());
+
+    UStaticMesh* Mesh = Cast<UStaticMesh>(FSoftObjectPath(Path).TryLoad());
+    if (!Mesh)
+        return FHaybaHandlerResult::Err(FString::Printf(
+            TEXT("mesh_generate_collision: failed to load %s"), *Path));
+
+    UStaticMeshEditorSubsystem* Sub = GEditor
+        ? GEditor->GetEditorSubsystem<UStaticMeshEditorSubsystem>() : nullptr;
+    if (!Sub)
+        return FHaybaHandlerResult::Err(
+            TEXT("mesh_generate_collision: StaticMeshEditorSubsystem unavailable"));
+
+    const int32 Before = Sub->GetSimpleCollisionCount(Mesh);
+    if (Before > 0 && !bReplace)
+    {
+        auto Out = MakeShared<FJsonObject>();
+        Out->SetStringField(TEXT("path"), Path);
+        Out->SetNumberField(TEXT("collision_count"), Before);
+        Out->SetBoolField(TEXT("changed"), false);
+        Out->SetStringField(TEXT("note"),
+            TEXT("mesh already has simple collision; pass replace_existing=true to regenerate"));
+        return FHaybaHandlerResult::Ok(Out);
+    }
+
+    const FString ShapeLower = Shape.ToLower();
+    bool bOk = false;
+    if (ShapeLower == TEXT("convex"))
+    {
+        bOk = Sub->SetConvexDecompositionCollisions(Mesh, HullCount, MaxHullVerts, HullPrecision);
+    }
+    else
+    {
+        EScriptCollisionShapeType ShapeType;
+        if      (ShapeLower == TEXT("box"))     ShapeType = EScriptCollisionShapeType::Box;
+        else if (ShapeLower == TEXT("sphere"))  ShapeType = EScriptCollisionShapeType::Sphere;
+        else if (ShapeLower == TEXT("capsule")) ShapeType = EScriptCollisionShapeType::Capsule;
+        else if (ShapeLower == TEXT("ndop10"))  ShapeType = EScriptCollisionShapeType::NDOP10_Z;
+        else if (ShapeLower == TEXT("ndop18"))  ShapeType = EScriptCollisionShapeType::NDOP18;
+        else if (ShapeLower == TEXT("ndop26"))  ShapeType = EScriptCollisionShapeType::NDOP26;
+        else
+            return FHaybaHandlerResult::Err(FString::Printf(
+                TEXT("mesh_generate_collision: unknown shape '%s'; expected box, sphere, capsule, ndop10, ndop18, ndop26 or convex"),
+                *Shape));
+        bOk = Sub->AddSimpleCollisions(Mesh, ShapeType) != INDEX_NONE;
+    }
+
+    const int32 After = Sub->GetSimpleCollisionCount(Mesh);
+    if (!bOk || After <= Before)
+    {
+        return FHaybaHandlerResult::Err(FString::Printf(
+            TEXT("mesh_generate_collision: '%s' produced no new collision on %s (count stayed %d). ")
+            TEXT("A degenerate or open mesh can defeat convex decomposition; try shape=box."),
+            *Shape, *Path, After));
+    }
+
+    auto Out = MakeShared<FJsonObject>();
+    Out->SetStringField(TEXT("path"), Path);
+    Out->SetStringField(TEXT("shape"), ShapeLower);
+    Out->SetNumberField(TEXT("collision_count_before"), Before);
+    Out->SetNumberField(TEXT("collision_count"), After);
+    Out->SetBoolField(TEXT("changed"), true);
+    Out->SetBoolField(TEXT("verified"), true);
+    return FHaybaHandlerResult::Ok(Out);
+}
+
+/**
+ * Enable or disable Nanite on a static mesh, and read the flag back.
+ *
+ * `landscape_set_nanite` existed; the static-mesh counterpart did not, so
+ * imported geometry could never be switched to the renderer UE5 expects for
+ * dense meshes.
+ */
+static FHaybaHandlerResult MeshSetNanite(const TSharedPtr<FJsonObject>& P)
+{
+    FHaybaParamReader R(P, TEXT("mesh_set_nanite"));
+    const FString Path = R.RequiredString(TEXT("path"));
+    const bool bEnable = R.RequiredBool(TEXT("enable"));
+    if (R.HasErrors()) return FHaybaHandlerResult::Err(R.ErrorMessage());
+
+    UStaticMesh* Mesh = Cast<UStaticMesh>(FSoftObjectPath(Path).TryLoad());
+    if (!Mesh)
+        return FHaybaHandlerResult::Err(FString::Printf(
+            TEXT("mesh_set_nanite: failed to load %s"), *Path));
+
+    UStaticMeshEditorSubsystem* Sub = GEditor
+        ? GEditor->GetEditorSubsystem<UStaticMeshEditorSubsystem>() : nullptr;
+    if (!Sub)
+        return FHaybaHandlerResult::Err(TEXT("mesh_set_nanite: StaticMeshEditorSubsystem unavailable"));
+
+    const bool bWas = Mesh->NaniteSettings.bEnabled;
+    FMeshNaniteSettings Settings = Mesh->NaniteSettings;
+    Settings.bEnabled = bEnable;
+    Sub->SetNaniteSettings(Mesh, Settings, /*bApplyChanges*/ true);
+
+    // Read the flag back off the asset rather than repeating the request: a
+    // build can decline, and "we asked for it" is not evidence it happened.
+    const bool bNow = Mesh->NaniteSettings.bEnabled;
+
+    auto Out = MakeShared<FJsonObject>();
+    Out->SetStringField(TEXT("path"), Path);
+    Out->SetBoolField(TEXT("requested"), bEnable);
+    Out->SetBoolField(TEXT("nanite_enabled"), bNow);
+    Out->SetBoolField(TEXT("changed"), bWas != bNow);
+    Out->SetBoolField(TEXT("verified"), bNow == bEnable);
+    if (bNow != bEnable)
+    {
+        Out->SetStringField(TEXT("error"),
+            TEXT("mesh_set_nanite: the setting did not take; inspect the mesh build settings"));
+        Out->SetBoolField(TEXT("ok"), false);
+    }
+    return FHaybaHandlerResult::Ok(Out);
+}
+#endif // WITH_EDITOR
 
 static FHaybaHandlerResult MeshSetLOD(const TSharedPtr<FJsonObject>& P)
 {
@@ -585,6 +730,8 @@ FHaybaHandlerResult FHaybaMCPStaticMeshHandler::Handle(const FString& Cmd, const
 {
     if (Cmd == TEXT("mesh_get_info")) return MeshGetInfo(Params);
     if (Cmd == TEXT("mesh_set_lod"))  return MeshSetLOD(Params);
+    if (Cmd == TEXT("mesh_generate_collision")) return MeshGenerateCollision(Params);
+    if (Cmd == TEXT("mesh_set_nanite"))         return MeshSetNanite(Params);
     if (Cmd == TEXT("mesh_list"))     return MeshList(Params);
     if (Cmd == TEXT("mesh_extract"))         return MeshExtract(Params, /*bStatsOnly=*/false);
     if (Cmd == TEXT("mesh_topology_stats"))  return MeshExtract(Params, /*bStatsOnly=*/true);

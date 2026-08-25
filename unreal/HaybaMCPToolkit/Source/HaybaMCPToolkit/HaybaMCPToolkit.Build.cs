@@ -82,6 +82,9 @@ public class HaybaMCPToolkit : ModuleRules
                 "UMGEditor",
                 "AutomationController",
                 "AudioEditor",
+                // UStaticMeshEditorSubsystem: simple/convex collision
+                // generation and Nanite settings for imported meshes.
+                "StaticMeshEditor",
             });
         }
 
