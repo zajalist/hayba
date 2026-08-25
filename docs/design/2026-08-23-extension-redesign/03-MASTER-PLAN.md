@@ -815,3 +815,48 @@ exactly that. It now logs an error naming the domain and what to do.
 Verified after: no drop logged at startup, and `metasound_create` answers
 "missing package_path" rather than "unknown command" — a parameter error
 proves the handler is registered without mutating anything.
+
+
+---
+
+## F12 — the precondition is real; the work needs a consumer (2026-08-25)
+
+F12 asserts "the TCP reservation machinery already supports it". Checked, and
+it does — but not for the reason the plan implies, and the answer overturns a
+recorded belief.
+
+A late response used to CRASH: a command outran the client's timeout, the
+client disconnected, and the completion lambda wrote to a freed connection.
+That was recorded as a live hazard with the advice "keep every command under
+the client timeout".
+
+It is fixed, and the guard is specific:
+
+- the read loop sets `Conn->bAlive = false` rather than tearing down, so an
+  in-flight task sees a flag and not a dangling pointer;
+- the socket is owned by a shared ref held by both the read loop and any queued
+  game-thread task, so it outlives whichever finishes last;
+- `SendMessage` re-checks liveness **under `SendMutex`**, closing the race
+  between a task's own guard and the read loop flagging the client dead a
+  moment later.
+
+So deferred completion is no longer blocked on crash-safety, and the stored
+note saying otherwise has been corrected.
+
+### Why F12 is not implemented here
+
+`FHaybaHandlerResult` is `Ok`/`Err`. Adding `Deferred` is the easy half; the
+hard half is that a deferred handler needs the request's id and connection to
+answer later, which the router holds. Doing that without changing `Handle()`'s
+signature across all 35 handlers means a current-request context the handler
+can claim during dispatch — real design, not a keyword.
+
+And it would be scaffolding. The only sensible first consumer is
+`render_camera`, whose conversion is the command-contract change deliberately
+left for a decision (see the async-conversions audit). Landing `Deferred` with
+nothing using it produces exactly the unused capability this branch has spent
+its time deleting — `checkRecipeRequires`, the CLIP tokenizer, the room grammar
+that shipped to nobody.
+
+**Do them together or not at all.** The precondition is now verified, which is
+the part that was genuinely unknown.
