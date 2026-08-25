@@ -1131,3 +1131,70 @@ Everything else is done and measured: **2530 TypeScript tests, 7 CI gates,
 60/63 UE automation, clean build, clean tree.** Seven inherited product defects
 fixed inside the merge. Pre-merge tip preserved on
 `pre-merge-backup-20260825`.
+
+---
+
+## Import hygiene, and five ways to be unreachable (2026-08-25)
+
+A5's provider-independent half shipped: `mesh_generate_collision`,
+`mesh_generate_uvs`, `mesh_build_lods`, `mesh_set_nanite`. Before these, an
+asset arriving through `asset_import`, `hayba_sketchfab_download` or
+`hayba_polyhaven_*` landed with whatever LODs, collision and UVs it shipped
+with and nothing in the toolkit could change any of it.
+
+Each reports a before/after pair so a caller can tell a real change from a
+no-op, and `mesh_build_lods` refuses a mesh with a zero-UV LOD because building
+LODs rebuilds the mesh and trips `check(NumUVs>0)` — an uncatchable engine
+assert. The error names the fix.
+
+### The part worth keeping
+
+The C++ was correct and live-verified early. It then took **five** further
+fixes before an agent could use it, each invisible from the layer below:
+
+| layer | what was missing |
+|---|---|
+| declared in C++ | — correct from the start |
+| sidecar descriptor | absent → no tool generated |
+| `returns` schema | absent → `get_tool_signature` threw |
+| `agent_callable` / `has_ts_wrapper` | absent → still no tool generated |
+| listed in `list_tool_categories` | absent → callable but undiscoverable |
+
+Raw TCP worked at every stage, which is why it kept looking finished.
+"It works" was true five times before "an agent can find and use it" was.
+
+### The gate that missed it, and now does not
+
+`capability-inventory --check` reported "everything else reachable" while all
+four were unreachable, because it asked whether a command was **described**
+rather than whether a tool was **generated**. `generateLegacyDescriptors` only
+builds one when `agent_callable === true && has_ts_wrapper === false`, so a
+descriptor with full params, returns and notes but no flags produces nothing.
+
+Fixed, and verified by reproducing the original mistake:
+
+    drift: 1 command(s) ... an agent cannot reach these at all: mesh_build_lods
+
+The first attempt at that fix produced two false positives (`asset_browse`,
+`wizard_chat`), which would have been worse than the gap — the gate's own
+comment says a false "unreachable" cries wolf and gets it switched off. Both
+were answerable from the sidecar's own declarations. The attempt also exposed a
+latent flaw: the TS-reference scan matched wire names while tools are named
+`hayba_<command>`, so the fallback could never have matched; it had simply
+never been reached before.
+
+The mirrored rule is self-invalidating — the gate re-reads `isLegacyTarget` and
+fails loudly if its shape changes, rather than drifting silently.
+
+### The same defect, inverted
+
+An audit of everything `list_tool_categories` advertises found the mirror
+image: `wp_load_cell` and `level_get_spatial_index` were offered as
+capabilities while the sidecar marks both `agent_callable: false`.
+`level_get_spatial_index`'s own note says the flag exists "so it does not
+appear as capability an agent can spend [tokens on]" — and the catalogue was
+doing exactly that. Both removed; both still invocable and still honest if
+called directly.
+
+The full audit is otherwise clean: **145 advertised commands, none undeclared,
+none non-callable.**
