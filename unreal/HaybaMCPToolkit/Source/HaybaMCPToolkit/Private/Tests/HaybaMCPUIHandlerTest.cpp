@@ -115,6 +115,12 @@ bool FHaybaMCPUIReplacePreservesChildrenTest::RunTest(const FString& Parameters)
     WBP->WidgetVariableNameToGuidMap.Add(TEXT("ActionButton"), OriginalGuid);
     WBP->WidgetVariableNameToGuidMap.Add(TEXT("ActionVisual"), OverlayGuid);
     WBP->WidgetVariableNameToGuidMap.Add(TEXT("ActionLabel"), LabelGuid);
+    // CollisionTarget needs one too. ConstructWidget leaves bIsVariable true,
+    // and UMG.s compiler ensures on a variable widget with no GUID entry
+    // ('Widget [CollisionTarget] was added but did not get a GUID'), so the
+    // fixture itself failed the test it was setting up -- the handler under
+    // test never touched this widget.
+    WBP->WidgetVariableNameToGuidMap.Add(TEXT("CollisionTarget"), FGuid::NewGuid());
 
     TSharedPtr<FJsonObject> Replace = MakeShared<FJsonObject>();
     Replace->SetStringField(TEXT("widget_blueprint_path"), ObjectPath);
