@@ -107,6 +107,7 @@ Two language boundaries, one protocol. The TCP envelope on `:52342` (auto-fallba
 
 - **[CONTEXT.md](CONTEXT.md)** — domain glossary + repo philosophy (read this first)
 - **[Capabilities](docs/CAPABILITIES.md)** — every command, generated from the source that declares them
+- **[Reliability](docs/RELIABILITY.md)** — what happens when an agent-driven command goes wrong, and what is not covered
 - **[Architecture](docs/ARCHITECTURE.md)** — language boundaries, the TCP seam, data flows
 - **[Getting started](docs/getting-started.md)** — local dev setup and first run
 - **[Wiki](docs/wiki/)** — guides, tool reference, troubleshooting
