@@ -31,6 +31,20 @@ namespace
         const TCHAR* PolicyCode;
         const TCHAR* Reason;
         const TCHAR* Alternative;
+        /**
+         * Match only the alias-expanded CALL stream, never the compact source.
+         *
+         * The compact stream keeps string contents on purpose, so a policy can
+         * catch a property write spelled as a string. For a rule whose danger
+         * is a call, that same behaviour rejects a script that merely NAMES the
+         * module in a string -- `module_name = 'importlib.util'` does nothing
+         * and was refused. Calls still match through the lexical stream, so
+         * opting out here costs no coverage.
+         *
+         * HCR-TIME-001 has always behaved this way; it was hardcoded by policy
+         * code at the match site instead of declared per rule.
+         */
+        bool bLexicalOnly = false;
     };
 
     const TArray<FFatalPythonRule>& FatalPythonRules()
@@ -151,7 +165,7 @@ namespace
             { TEXT("eval("), TEXT("HCR-DYNAMIC-001"), TEXT("can construct and execute a crash primitive that source preflight cannot inspect"), TEXT("write the intended expression directly without dynamic evaluation") },
             { TEXT("compile("), TEXT("HCR-DYNAMIC-001"), TEXT("can hide code from the non-bypassable crash preflight"), TEXT("submit the intended operations as ordinary source") },
             { TEXT("__import__("), TEXT("HCR-DYNAMIC-001"), TEXT("can dynamically import crash/process primitives hidden from preflight"), TEXT("use ordinary imports so policy can inspect the module") },
-            { TEXT("importlib."), TEXT("HCR-DYNAMIC-001"), TEXT("can dynamically import crash/process primitives hidden from preflight"), TEXT("use ordinary imports so policy can inspect the module") },
+            { TEXT("importlib."), TEXT("HCR-DYNAMIC-001"), TEXT("can dynamically import crash/process primitives hidden from preflight"), TEXT("use ordinary imports so policy can inspect the module"), /*bLexicalOnly*/ true },
             { TEXT("getattr("), TEXT("HCR-DYNAMIC-001"), TEXT("can construct a fatal attribute lookup that source preflight cannot identify"), TEXT("call the intended inspected API directly by name") },
             { TEXT(".__getattribute__("), TEXT("HCR-DYNAMIC-001"), TEXT("can construct a fatal attribute lookup while bypassing getattr policy"), TEXT("call the intended inspected API directly by name") },
             { TEXT("operator.attrgetter("), TEXT("HCR-DYNAMIC-001"), TEXT("can construct a fatal attribute lookup from a runtime string"), TEXT("call the intended inspected API directly by name") },
@@ -1688,7 +1702,8 @@ namespace
             // using it here would reject print("sys.settrace(None)") even
             // though no instrumentation access is executable.
             const bool bDeadlineRule = FCString::Strcmp(Rule.PolicyCode, TEXT("HCR-TIME-001")) == 0;
-            if ((!bDeadlineRule && CompactContainsPolicyPattern(Compact, Rule.Pattern))
+            const bool bLexicalOnly = Rule.bLexicalOnly || bDeadlineRule;
+            if ((!bLexicalOnly && CompactContainsPolicyPattern(Compact, Rule.Pattern))
                 || CompactContainsPolicyPattern(AliasExpandedCalls, Rule.Pattern))
             {
                 OutPattern = Rule.Pattern;
