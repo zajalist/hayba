@@ -755,3 +755,36 @@ and it never spread.
 Left alone deliberately: the Validator panel's "jump to actor". It has no
 error channel, and unlike a delete, selecting one of several is visible and
 reversible — the user sees what got selected.
+
+
+---
+
+## F11 — the saves, surveyed (2026-08-25)
+
+The plan says "44 stray MarkPackageDirty and 18 unverified saves converge".
+Counted, and the shape is different from that.
+
+**Saves are mostly checked already.** Of the `SavePackage` sites, the ones that
+matter capture the result and error on failure. One genuine offender:
+`data_set` called `UEditorAssetLibrary::SaveLoadedAsset`, discarded the return,
+and returned `ok:true` regardless. A save fails for ordinary reasons — the file
+is read-only, or wants a source-control checkout — and the caller was told the
+property had been persisted when it existed only in memory and would be gone at
+the next editor restart. Fixed: the result is checked, and the error says the
+value WAS set in memory and why the save failed, because "failed" without that
+distinction sends someone looking in the wrong place.
+
+**The 50 `MarkPackageDirty` calls are mostly correct, not stray.** Marking
+dirty and leaving the save to the user is a legitimate editor pattern, and this
+codebase has a specific reason to prefer it: saving inline during an import
+burst has crashed UE here before. Converging all of them behind a
+`HaybaMutation::SaveAsset` that saves would be a behaviour change dressed as a
+refactor. What is worth converging is the message and the verification, not the
+decision to save.
+
+**Not verified live.** `data_set` needs a DataAsset subclass with an editable
+UPROPERTY to exercise; a base `UDataAsset` exposes none, and this project has
+no DataAsset assets at all. The change compiles and is two lines, but the happy
+path is unexercised — if `SaveLoadedAsset` ever returns false on a successful
+save, `data_set` would now fail where it used to succeed. Worth one live check
+the next time a real DataAsset exists.
