@@ -99,6 +99,39 @@ for (const file of walk(ROOT)) {
   });
 }
 
+
+// ------------------------------------------------- numeric claims in RELIABILITY
+// RELIABILITY.md is a public page asserting specific counts, and its handler
+// count had already drifted once. Prose cannot be checked mechanically, but a
+// number can, and a number is what goes stale: nobody rereads a reliability
+// page when they add a handler.
+{
+  const relPath = join(ROOT, 'docs', 'RELIABILITY.md');
+  if (existsSync(relPath)) {
+    const rel = readFileSync(relPath, 'utf8');
+    const modulePath = join(
+      ROOT, 'unreal', 'HaybaMCPToolkit', 'Source', 'HaybaMCPToolkit',
+      'Private', 'HaybaMCPModule.cpp',
+    );
+    if (existsSync(modulePath)) {
+      const mod = readFileSync(modulePath, 'utf8');
+      const actual = (mod.match(/CommandHandler->RegisterHandler\(MakeShared</g) ?? []).length;
+      const claimed = rel.match(/the (\d+) registered by the core\s+module/);
+      if (!claimed) {
+        problems.push(
+          'docs/RELIABILITY.md: the core-module handler-count sentence changed shape — ' +
+            'update this check along with it, or the number stops being verified',
+        );
+      } else if (Number(claimed[1]) !== actual) {
+        problems.push(
+          `docs/RELIABILITY.md: claims ${claimed[1]} handlers registered by the core ` +
+            `module; HaybaMCPModule.cpp registers ${actual}`,
+        );
+      }
+    }
+  }
+}
+
 if (problems.length > 0) {
   console.error('docs and CLI disagree:\n');
   for (const p of problems) console.error(`  ${p}`);
