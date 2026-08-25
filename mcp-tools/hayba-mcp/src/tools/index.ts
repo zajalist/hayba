@@ -65,6 +65,7 @@ import { memoryPruneHandler, meta as memoryPruneMeta } from './memory/prune.js';
 // ── Material instance-layer tool handlers ───────────────────────────────────
 import { materialCreateHandler, meta as materialCreateMeta } from './material/material-create.js';
 import { materialFromTexturesHandler, meta as materialFromTexturesMeta, schema as materialFromTexturesSchema } from './material/material-from-textures.js';
+import { assetFindByLookHandler, meta as assetFindByLookMeta, schema as assetFindByLookSchema } from './visual/asset-find-by-look.js';
 import {
   materialCreateInstanceHandler,
   meta as materialCreateInstanceMeta,
@@ -2680,6 +2681,18 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
   // Know what breaks before breaking it. These handlers were implemented in C++
   // and had no wrapper, so an agent could delete or rename an asset but could
   // not first ask what depended on it.
+  {
+    name: 'asset_find_by_look',
+    description:
+      'Find the asset that LOOKS like a description, when its name does not say so. asset_search matches words against names, so it finds a mossy boulder only if someone typed "moss" into the name; this embeds your phrase and each candidate thumbnail with CLIP and ranks by visual similarity. USE_WHEN: you know what you want to see and not what it is called. NOT_WHEN: you already know the name or path — asset_search is far cheaper. Returns what it ranked and, separately, what it could not look at; an asset with no thumbnail is reported unscored rather than scored zero. Needs the visual sidecar; says so plainly when it is not there.',
+    meta: assetFindByLookMeta,
+    handler: assetFindByLookHandler,
+    cost: 'high',
+    returns:
+      '{ok, intent, ranked:[{path,name,score}], unscored:[{path,reason}], candidates_considered, truncated?, unavailable?}',
+    niche: ASSETGRAPH,
+    schema: assetFindByLookSchema.shape,
+  },
   {
     name: 'asset_get_referencers',
     description:
