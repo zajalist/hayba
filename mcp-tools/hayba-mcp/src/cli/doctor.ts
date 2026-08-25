@@ -1,3 +1,5 @@
+import { checkProtocol, HAYBA_PROTOCOL_VERSION } from '../protocol-version.js';
+
 // `hayba-cli doctor` — answer "why isn't this working" before anyone has to ask.
 //
 // Install is two artifacts that update independently: this npm server, and a
@@ -44,6 +46,9 @@ export interface DoctorFacts {
   serverVersion: string;
   /** Plugin version the editor reported over the wire, when it answered. */
   reportedPluginVersion: string | null;
+  /** Protocol version the editor reported. Null when it is old enough not to
+   *  have the field, which is itself a mismatch. */
+  reportedProtocolVersion: number | null;
 }
 
 function checkPlugin(f: DoctorFacts): CheckResult {
@@ -121,28 +126,33 @@ function checkEditor(f: DoctorFacts): CheckResult {
 }
 
 function checkVersions(f: DoctorFacts): CheckResult {
-  if (!f.editorReachable || !f.reportedPluginVersion) {
+  if (!f.editorReachable) {
     return {
       name: 'versions',
       status: 'unknown',
-      detail: 'not checked — the editor did not report a plugin version',
+      detail: 'not checked — the editor is not running',
     };
   }
 
-  // Reported, NOT compared. The two halves have never shared a numbering
-  // scheme -- the plugin is on 0.3.0 while the npm package is on 1.0.0 -- so
-  // an equality test flags every healthy install as skewed. It did exactly
-  // that the first time this ran.
-  //
-  // Real skew detection needs something both halves agree to speak: a protocol
-  // or compatibility version bumped only on a breaking wire change. That does
-  // not exist yet (Track D1.7). Until it does, printing both numbers lets a
-  // person judge, and claims nothing this cannot know.
+  // Judged on the PROTOCOL version, never on the two product versions: those
+  // have never shared a scheme (plugin 0.3.0, server 1.0.0), so comparing them
+  // flags every healthy install. The protocol number exists precisely so this
+  // question has an answer.
+  const compat = checkProtocol(f.reportedProtocolVersion);
+  const products = `server ${f.serverVersion}, plugin ${f.reportedPluginVersion ?? 'unreported'}`;
+
+  if (compat.compatible) {
+    return {
+      name: 'versions',
+      status: 'ok',
+      detail: `protocol v${HAYBA_PROTOCOL_VERSION} on both (${products})`,
+    };
+  }
   return {
     name: 'versions',
-    status: 'ok',
-    detail: `server ${f.serverVersion}, plugin ${f.reportedPluginVersion} `
-      + '(separate schemes — not comparable; a shared protocol version would make skew detectable)',
+    status: 'problem',
+    detail: products,
+    fix: compat.advice,
   };
 }
 

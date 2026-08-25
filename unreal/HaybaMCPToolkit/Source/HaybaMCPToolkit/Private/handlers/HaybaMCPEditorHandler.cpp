@@ -1,5 +1,6 @@
 #include "HaybaMCPEditorHandler.h"
 #include "Interfaces/IPluginManager.h"
+#include "HaybaMCPProtocol.h"
 #include "HaybaEditorOps.h"
 #include "HaybaMCPCaptureActor.h"
 #include "Editor.h"
@@ -214,6 +215,11 @@ FHaybaHandlerResult FHaybaMCPEditorHandler::GetState(const TSharedPtr<FJsonObjec
     {
         Out->SetStringField(TEXT("plugin_version"), Self->GetDescriptor().VersionName);
     }
+
+    // The number that actually decides whether these two can talk. plugin_version
+    // above is a product version and is NOT comparable with the server's --
+    // they have never shared a scheme. See HaybaMCPProtocol.h for when to bump.
+    Out->SetNumberField(TEXT("protocol_version"), HAYBA_PROTOCOL_VERSION);
 
     Out->SetStringField(TEXT("map"), World ? World->GetPathName() : FString());
     Out->SetBoolField(TEXT("pie_running"), GEditor->IsPlaySessionInProgress());

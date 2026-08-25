@@ -11,6 +11,7 @@ const healthy: DoctorFacts = {
   port: 52342,
   serverVersion: '1.0.0',
   reportedPluginVersion: '1.0.0',
+  reportedProtocolVersion: 1,
 };
 
 const facts = (over: Partial<DoctorFacts> = {}): DoctorFacts => ({ ...healthy, ...over });
@@ -77,23 +78,37 @@ describe('dependencies', () => {
 });
 
 describe('versions', () => {
-  it('reports both without calling a healthy install broken', () => {
-    // The plugin and the npm package have never shared a numbering scheme, so
-    // an equality test flags every install as skewed. The first live run of
-    // this tool did exactly that against a working setup.
-    const r = byName(facts({ serverVersion: '1.0.0', reportedPluginVersion: '0.3.0' }));
+  it('passes when both speak the same protocol, whatever the product numbers say', () => {
+    // The plugin is on 0.3.0 and the npm package on 1.0.0. Comparing THOSE
+    // flags every healthy install, which is how this check first behaved.
+    const r = byName(facts({
+      serverVersion: '1.0.0', reportedPluginVersion: '0.3.0', reportedProtocolVersion: 1,
+    }));
 
     expect(r['versions']!.status).toBe('ok');
-    expect(r['versions']!.detail).toMatch(/server 1\.0\.0, plugin 0\.3\.0/);
+    expect(r['versions']!.detail).toMatch(/protocol v1 on both/);
+    expect(r['versions']!.detail).toMatch(/plugin 0\.3\.0/);
   });
 
-  it('says why it cannot judge, rather than staying quiet about it', () => {
-    const r = byName(facts({ serverVersion: '1.0.0', reportedPluginVersion: '0.3.0' }));
-    expect(r['versions']!.detail).toMatch(/shared protocol version/);
+  it('says which side is behind, not just that they differ', () => {
+    // "Update Hayba" is useless when there are two things to update and only
+    // one of them is wrong.
+    const behind = byName(facts({ reportedProtocolVersion: 0 }));
+    expect(behind['versions']!.status).toBe('problem');
+    expect(behind['versions']!.fix).toMatch(/Update the plugin/);
+
+    const ahead = byName(facts({ reportedProtocolVersion: 99 }));
+    expect(ahead['versions']!.fix).toMatch(/Update the npm server/);
   });
 
-  it('says nothing at all when the editor did not report one', () => {
-    const r = byName(facts({ reportedPluginVersion: null }));
+  it('treats silence as a mismatch, because only an old plugin is silent', () => {
+    const r = byName(facts({ reportedProtocolVersion: null }));
+    expect(r['versions']!.status).toBe('problem');
+    expect(r['versions']!.fix).toMatch(/predates this check/);
+  });
+
+  it('says nothing when the editor is not running', () => {
+    const r = byName(facts({ editorReachable: false }));
     expect(r['versions']!.status).toBe('unknown');
   });
 });

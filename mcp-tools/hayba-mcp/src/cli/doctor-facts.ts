@@ -79,6 +79,7 @@ export function readServerVersion(here: string): string {
 export interface ProbeResult {
   reachable: boolean;
   pluginVersion: string | null;
+  protocolVersion: number | null;
 }
 
 /**
@@ -93,10 +94,14 @@ export async function probeEditor(
 ): Promise<ProbeResult> {
   try {
     const data = await send('editor_get_state', {});
-    const v = (data as { plugin_version?: string; version?: string } | undefined);
-    return { reachable: true, pluginVersion: v?.plugin_version ?? v?.version ?? null };
+    const v = (data as { plugin_version?: string; version?: string; protocol_version?: number } | undefined);
+    return {
+      reachable: true,
+      pluginVersion: v?.plugin_version ?? v?.version ?? null,
+      protocolVersion: typeof v?.protocol_version === 'number' ? v.protocol_version : null,
+    };
   } catch {
-    return { reachable: false, pluginVersion: null };
+    return { reachable: false, pluginVersion: null, protocolVersion: null };
   }
 }
 
@@ -118,5 +123,6 @@ export async function gatherFacts(opts: {
     port: opts.port,
     serverVersion: readServerVersion(opts.here),
     reportedPluginVersion: probe.pluginVersion,
+    reportedProtocolVersion: probe.protocolVersion,
   };
 }
