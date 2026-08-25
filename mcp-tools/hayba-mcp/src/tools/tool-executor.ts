@@ -2,6 +2,7 @@ import type { HaybaToolCost } from './hayba-tool-meta.js';
 import type { TcpResponse } from '../tcp-client.js';
 import { getToolMeta } from './tool-meta-registry.js';
 import { isHeavyOp, HEAVY_OP_TIMEOUT_MS } from './heavy-ops.js';
+import { isUnknownCommand, explainUnknownCommand } from './version-skew.js';
 
 export type UeToolErrorCode = 'transport' | 'timeout' | 'plan_gate' | 'tool_disabled' | 'ue_error' | 'editor_busy';
 
@@ -238,6 +239,42 @@ export function setDefaultSender(s: Sender): void {
   DEFAULT_SENDER = s;
 }
 
+/**
+ * The editor's protocol version, remembered after the first look.
+ *
+ * This is consulted only when a command has already failed as unknown, so it
+ * must not add a round-trip to the healthy path -- and must not add one to
+ * every failure either. `null` means "not asked yet"; once asked, the answer
+ * (including "it did not say") is kept.
+ */
+let cachedPeerProtocol: { value: number | null } | null = null;
+
+/** Forget the cached handshake. Called on transport loss, and by tests. */
+export function resetPeerProtocol(): void {
+  cachedPeerProtocol = null;
+}
+
+async function peerProtocolVersion(sender: Sender): Promise<number | null> {
+  if (cachedPeerProtocol) return cachedPeerProtocol.value;
+  try {
+    // `editor_get_state` is the WIRE command. An earlier version of this used
+    // `hayba_check_ue_status`, which is the TypeScript tool name and not
+    // something the plugin routes -- so the probe always failed, the version
+    // came back null, and every unknown command was reported as a version gap
+    // on a perfectly healthy install. Exactly the false positive this module
+    // is written to avoid, shipped inside the module that avoids it.
+    const resp = await sender('editor_get_state', {}, 5000);
+    const data = (resp.ok ? resp.data : undefined) as { protocol_version?: unknown } | undefined;
+    const v = typeof data?.protocol_version === 'number' ? data.protocol_version : null;
+    cachedPeerProtocol = { value: v };
+    return v;
+  } catch {
+    // A status probe that fails tells us nothing about versions, and this is
+    // already an error path. Do not cache a failure as an answer.
+    return null;
+  }
+}
+
 export async function executeCommand<T = Record<string, unknown>>(
   cmd: string,
   params: Record<string, unknown> = {},
@@ -277,7 +314,21 @@ export async function executeCommand<T = Record<string, unknown>>(
 
   if (resp.ok) return (resp.data ?? {}) as T;
   const code = mapUeCode(resp.code);
-  throw new UeToolError(resp.error ?? 'unknown UE error', { code, uePayload: resp });
+  const ueMessage = resp.error ?? 'unknown UE error';
+
+  // An unknown command is the symptom a version gap actually presents as. Left
+  // alone it reads as a bug in that one command, and the install mismatch that
+  // caused it is never mentioned.
+  if (isUnknownCommand(ueMessage)) {
+    const peer = await peerProtocolVersion(sender);
+    const explained = explainUnknownCommand(cmd, ueMessage, peer);
+    throw new UeToolError(explained.message, {
+      code,
+      uePayload: resp,
+    });
+  }
+
+  throw new UeToolError(ueMessage, { code, uePayload: resp });
 }
 
 /** In-memory test adapter. Each registered command name maps to a function
