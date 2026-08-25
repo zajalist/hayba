@@ -120,6 +120,14 @@ jobs:
       - name: Prompts name only tools that exist
         run: node tools/prompt-tool-check.mjs --check
 
+      # FHaybaMCPStyle::Colour returns MAGENTA for an unknown token, on purpose
+      # -- on cool dark chrome a missing token returning black or white looks
+      # like a design choice and ships unnoticed. But magenta is only loud to
+      # someone who opens that panel, in that state. A typo'd token compiles,
+      # links, runs, and is wrong.
+      - name: Style tokens referenced actually exist
+        run: node tools/style-token-check.mjs --check
+
       # tsc copies no data files, so the packaged server needs these copied
       # alongside it. The copy list used to be a one-line `node -e` in
       # package.json naming src/slivers/specs; renaming that directory broke
