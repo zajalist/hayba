@@ -305,7 +305,7 @@ void FHaybaMCPSettings::Load()
     }
 
     if (BaseURL.IsEmpty())             BaseURL    = TEXT("https://api.anthropic.com/v1/messages");
-    if (Model.IsEmpty())               Model      = TEXT("claude-opus-4-6-20251101");
+    if (Model.IsEmpty())               Model      = TEXT("claude-opus-5");
     if (OutputPath.IsEmpty())          OutputPath = TEXT("/Game/Hayba/Generated");
     if (HeightmapOutputFolder.IsEmpty())
         HeightmapOutputFolder = FPaths::ProjectSavedDir() / TEXT("HaybaGaea");

@@ -89,7 +89,13 @@ bool FHaybaMCPPythonFatalPolicyTest::RunTest(const FString& Parameters)
         { TEXT("_hb_trace_events = 0"), TEXT("HCR-TIME-001") },
         { TEXT("import __main__ as host\nhost._hb_deadline = 999999999"), TEXT("HCR-TIME-001") },
         { TEXT("import sys\nsys.modules['__main__']._hb_deadline = 999999999"), TEXT("HCR-TIME-001") },
-        { TEXT("import inspect\ninspect.currentframe().f_back.f_locals['_hb_deadline'] = 999999999"), TEXT("HCR-TIME-001") },
+        // Dynamic, not time. This script trips both rules and the dynamic
+        // one wins, because it imports inspect -- which cases further down
+        // mandate is an HCR-DYNAMIC-001 rejection in its own right.
+        // Expecting HCR-TIME-001 here contradicted those. Deadline
+        // tampering keeps its own HCR-TIME-001 coverage in the two cases
+        // above, neither of which touches inspect.
+        { TEXT("import inspect\ninspect.currentframe().f_back.f_locals['_hb_deadline'] = 999999999"), TEXT("HCR-DYNAMIC-001") },
         { TEXT("import builtins\nbuiltins.print = print"), TEXT("HCR-DYNAMIC-001") },
         // Same: aliasing the module does not change what sleeping does.
         { TEXT("import time as clock\nclock.sleep(5)"), TEXT("HCR-BLOCK-001") },

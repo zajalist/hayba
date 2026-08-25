@@ -126,8 +126,14 @@ bool FHaybaMCPRenderSafetyPolicyTest::RunTest(const FString& Parameters)
     {
         TestFalse(TEXT("NullRHI is refused before any allocation"),
             FLease::TryAcquire(TEXT("policy_test"), 5, LeaseError).IsValid());
+        // Either refusal is correct here. CheckRenderCapability tests
+        // FApp::CanEverRender() before GUsingNullRHI, and -nullrhi makes
+        // CanEverRender() false -- so this branch actually reports the
+        // render-capability refusal, not the RHI one. Pinning a single message
+        // asserted on a string this path never produces.
         TestTrue(TEXT("NullRHI refusal explains the evidence boundary"),
-            LeaseError.Contains(TEXT("real initialized RHI")));
+            LeaseError.Contains(TEXT("real initialized RHI"))
+            || LeaseError.Contains(TEXT("without render capability")));
     }
     else
     {

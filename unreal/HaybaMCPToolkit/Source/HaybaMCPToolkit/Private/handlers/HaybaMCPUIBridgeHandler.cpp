@@ -83,6 +83,35 @@ FHaybaHandlerResult FHaybaMCPUIBridgeHandler::HandleCapturePanel(const TSharedPt
         return FHaybaHandlerResult::Err(
             TEXT("ui_capture_panel: the Hayba dock is not open; open it from the toolbar first"));
 
+    // Optional: switch to a destination first. Names match the sidebar, not
+    // the enum -- the IA calls these "five intent-named sections" and a test
+    // asking for "activity" should not have to know the C++ spelling.
+    if (P.IsValid() && P->HasField(TEXT("panel")))
+    {
+        const FString Want = R.OptionalString(TEXT("panel"), TEXT("")).ToLower();
+        static const TMap<FString, EHaybaPanel> ByName = {
+            { TEXT("world"),    EHaybaPanel::World    },
+            { TEXT("library"),  EHaybaPanel::Library  },
+            { TEXT("rules"),    EHaybaPanel::Rules    },
+            { TEXT("activity"), EHaybaPanel::Activity },
+            { TEXT("chat"),     EHaybaPanel::Chat     },
+            { TEXT("settings"), EHaybaPanel::Settings },
+        };
+        const EHaybaPanel* Found = ByName.Find(Want);
+        if (!Found)
+            return FHaybaHandlerResult::Err(FString::Printf(
+                TEXT("ui_capture_panel: unknown panel '%s'; expected one of ")
+                TEXT("world, library, rules, activity, chat, settings"), *Want));
+
+        Panel->ShowPanel(*Found);
+
+        // Slate lays out on tick, so the freshly-swapped content is not yet
+        // measured. Without this the capture returns the PREVIOUS panel's
+        // pixels and every shot in the suite is off by one -- which looks like
+        // a passing suite of plausible images.
+        FSlateApplication::Get().Tick();
+    }
+
     TArray<FColor> Pixels;
     FIntVector Size(0, 0, 0);
     if (!FSlateApplication::Get().TakeScreenshot(Panel.ToSharedRef(), Pixels, Size)

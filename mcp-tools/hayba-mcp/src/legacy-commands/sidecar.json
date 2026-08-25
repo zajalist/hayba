@@ -1,6 +1,6 @@
 {
   "$schema": "./sidecar.schema.json",
-  "_doc": "Hand-authored sidecar for UE-side commands routed through HaybaMCPLegacyHandler::Handle (see unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/handlers/HaybaMCPLegacyHandler.cpp). This file is the single source of truth for: (a) the parameter docs surfaced by get_tool_signature for legacy commands that have no TS Zod registration, and (b) the allowlist that hayba_invoke consults when called with via:'ue_legacy'. INVARIANTS (enforced by scripts/check-legacy-wrappers.ts and CI): every dispatch-table command in the .cpp MUST have an entry here (including aliases); every entry with has_ts_wrapper:true MUST have a corresponding executeCommand('<name>', ...) or dispatch('<name>', ...) call somewhere under src/tools/**; every entry with has_ts_wrapper:false MUST NOT have such a call. To add a new legacy command: register it in the .cpp dispatch table, add an entry here (with aliases array if any), set has_ts_wrapper to whatever's true, run `npm run lint:legacy-wrappers`. Marking agent_callable:false hides it from hayba_invoke via:'ue_legacy' while still letting get_tool_signature document it (e.g. ping, wizard_chat \u2014 internal/diagnostic).",
+  "_doc": "Hand-authored sidecar for UE-side commands routed through HaybaMCPLegacyHandler::Handle (see unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/handlers/HaybaMCPLegacyHandler.cpp). This file is the single source of truth for: (a) the parameter docs surfaced by get_tool_signature for legacy commands that have no TS Zod registration, and (b) the allowlist that hayba_invoke consults when called with via:'ue_legacy'. INVARIANTS (enforced by scripts/check-legacy-wrappers.ts and CI): every dispatch-table command in the .cpp MUST have an entry here (including aliases); every entry with has_ts_wrapper:true MUST have a corresponding executeCommand('<name>', ...) or dispatch('<name>', ...) call somewhere under src/tools/**; every entry with has_ts_wrapper:false MUST NOT have such a call. To add a new legacy command: register it in the .cpp dispatch table, add an entry here (with aliases array if any), set has_ts_wrapper to whatever's true, run `npm run lint:legacy-wrappers`. Marking agent_callable:false hides it from hayba_invoke via:'ue_legacy' while still letting get_tool_signature document it (e.g. ping, wizard_chat — internal/diagnostic).",
   "version": 1,
   "commands": {
     "mesh_extract": {
@@ -29,7 +29,7 @@
           "name": "path",
           "type": "string",
           "required": false,
-          "description": "UStaticMesh asset path (/Game/...) \u2014 alternative source (render data: counts + bounds + optional arrays)"
+          "description": "UStaticMesh asset path (/Game/...) — alternative source (render data: counts + bounds + optional arrays)"
         },
         {
           "name": "lod",
@@ -212,7 +212,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Enumerate every UDynamicMeshComponent in the editor level with tri/vert/material counts \u2014 replaces the hand-rolled 'loop all actors -> DynamicMeshComponent -> tris' python_run for inspecting PCG/grammar output. Pair with mesh_topology_stats(actor_label=...) for a full weld/manifold verdict on a specific one."
+      "notes": "Enumerate every UDynamicMeshComponent in the editor level with tri/vert/material counts — replaces the hand-rolled 'loop all actors -> DynamicMeshComponent -> tris' python_run for inspecting PCG/grammar output. Pair with mesh_topology_stats(actor_label=...) for a full weld/manifold verdict on a specific one."
     },
     "object_get_property": {
       "aliases": [],
@@ -251,7 +251,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Generic reflection read on any loadable UObject \u2014 replaces get_editor_property python_run pokes. Values are UE ExportText strings. PARAMS: `path` (object/asset path) + optional `names` \u2014 NOT widget_blueprint_path/widget_name; those belong to the ui_* tools. To reach a widget's slot, pass the slot's full object path as `path`."
+      "notes": "Generic reflection read on any loadable UObject — replaces get_editor_property python_run pokes. Values are UE ExportText strings. PARAMS: `path` (object/asset path) + optional `names` — NOT widget_blueprint_path/widget_name; those belong to the ui_* tools. To reach a widget's slot, pass the slot's full object path as `path`."
     },
     "object_set_property": {
       "aliases": [],
@@ -294,7 +294,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Generic reflection write on any loadable UObject (Modify + PostEditChange + MarkPackageDirty) \u2014 replaces set_editor_property python_run pokes. PARAMS: `path` (object/asset path) + `properties` (name\u2192value map) \u2014 NOT widget_blueprint_path/widget_name/property; those belong to the ui_* tools. For textures prefer texture_set_settings; for material nodes prefer the material_* tools."
+      "notes": "Generic reflection write on any loadable UObject (Modify + PostEditChange + MarkPackageDirty) — replaces set_editor_property python_run pokes. PARAMS: `path` (object/asset path) + `properties` (name→value map) — NOT widget_blueprint_path/widget_name/property; those belong to the ui_* tools. For textures prefer texture_set_settings; for material nodes prefer the material_* tools."
     },
     "test_list": {
       "aliases": [],
@@ -310,7 +310,7 @@
           "name": "filter",
           "type": "string",
           "required": false,
-          "description": "Alias of filter_pattern \u2014 substring filter on display name or full path. Accepted because it is the spelling callers reach for; it used to be silently ignored and the call returned all ~7000 engine tests."
+          "description": "Alias of filter_pattern — substring filter on display name or full path. Accepted because it is the spelling callers reach for; it used to be silently ignored and the call returned all ~7000 engine tests."
         },
         {
           "name": "category",
@@ -498,7 +498,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "JOB ENVELOPE (async, non-freezing): invokes UnrealBuildTool.exe on a background thread and returns { job_id, status:'running' } IMMEDIATELY \u2014 never blocks the editor (the old version blocked the game thread up to 5min). Poll build_status { job_id } for { status:'done', exit_code, output (log tail) }, or watch hayba_journal_tail for live build_job:<id> progress."
+      "notes": "JOB ENVELOPE (async, non-freezing): invokes UnrealBuildTool.exe on a background thread and returns { job_id, status:'running' } IMMEDIATELY — never blocks the editor (the old version blocked the game thread up to 5min). Poll build_status { job_id } for { status:'done', exit_code, output (log tail) }, or watch hayba_journal_tail for live build_job:<id> progress."
     },
     "build_cook": {
       "aliases": [],
@@ -694,7 +694,7 @@
       },
       "agent_callable": false,
       "has_ts_wrapper": false,
-      "notes": "Diagnostic ping used by sidecar discovery handshake. Not exposed to agents via hayba_invoke \u2014 call check_ue_status instead."
+      "notes": "Diagnostic ping used by sidecar discovery handshake. Not exposed to agents via hayba_invoke — call check_ue_status instead."
     },
     "list_node_classes": {
       "aliases": [
@@ -987,7 +987,7 @@
           {
             "name": "errors",
             "type": "array",
-            "description": "Present when created:false \u2014 same shape as validate_graph errors"
+            "description": "Present when created:false — same shape as validate_graph errors"
           }
         ]
       },
@@ -1070,7 +1070,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": true,
-      "notes": "Wrapped by hayba_validate_pcg_graph (src/tools/validate-pcg-graph.ts). Pure validation \u2014 does not touch UE world state."
+      "notes": "Wrapped by hayba_validate_pcg_graph (src/tools/validate-pcg-graph.ts). Pure validation — does not touch UE world state."
     },
     "pcg_validate_graph": {
       "aliases": [
@@ -1128,7 +1128,7 @@
           {
             "name": "componentsExecuted",
             "type": "number",
-            "description": "Count of PCGComponents in the world that reference this graph and were triggered. ZERO means the graph runs no instances \u2014 verify HISM counts before claiming success (see verify-by-viewport skill)."
+            "description": "Count of PCGComponents in the world that reference this graph and were triggered. ZERO means the graph runs no instances — verify HISM counts before claiming success (see verify-by-viewport skill)."
           },
           {
             "name": "note",
@@ -1139,7 +1139,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": true,
-      "notes": "Wrapped by hayba_execute_pcg_graph (src/tools/execute-pcg-graph.ts). Game-thread marshaled. Returning success:true with componentsExecuted>0 is NOT proof that instances were placed \u2014 see the 2026-05-23 PCG/landscape postmortem."
+      "notes": "Wrapped by hayba_execute_pcg_graph (src/tools/execute-pcg-graph.ts). Game-thread marshaled. Returning success:true with componentsExecuted>0 is NOT proof that instances were placed — see the 2026-05-23 PCG/landscape postmortem."
     },
     "pcg_execute_graph": {
       "aliases": [
@@ -1214,7 +1214,7 @@
       },
       "agent_callable": false,
       "has_ts_wrapper": false,
-      "notes": "Hardcoded wizard-style chat for the in-editor panel. Not useful from agents \u2014 use hayba_initiate_infrastructure_brainstorm instead."
+      "notes": "Hardcoded wizard-style chat for the in-editor panel. Not useful from agents — use hayba_initiate_infrastructure_brainstorm instead."
     },
     "import_landscape": {
       "aliases": [
@@ -1339,7 +1339,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": true,
-      "notes": "Alias of import_landscape \u2014 the name discoverable in list_tool_categories under the 'pcg' domain. Wrapped by hayba_import_landscape (src/tools/index.ts uses this exact name as the dispatch target). See PR #229 for the game-thread marshal fix."
+      "notes": "Alias of import_landscape — the name discoverable in list_tool_categories under the 'pcg' domain. Wrapped by hayba_import_landscape (src/tools/index.ts uses this exact name as the dispatch target). See PR #229 for the game-thread marshal fix."
     },
     "read_node_output": {
       "aliases": [
@@ -1386,7 +1386,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "STALE-READ WARNING: reads a possibly-STALE inspection CACHE, not live post-cook data. point_count can report 0 (or a prior run's numbers) while the cook actually produced real instances \u2014 do NOT treat point_count:0 here as ground truth. GROUND TRUTH for instance counts is `pcg_cook_and_wait` result.ism[] (with result.freshness.changed proving this cook). Returns zero counts if the graph has not been executed. FOLLOW-UP (C++): make this read live post-cook data or return an explicit {stale:true} flag."
+      "notes": "STALE-READ WARNING: reads a possibly-STALE inspection CACHE, not live post-cook data. point_count can report 0 (or a prior run's numbers) while the cook actually produced real instances — do NOT treat point_count:0 here as ground truth. GROUND TRUTH for instance counts is `pcg_cook_and_wait` result.ism[] (with result.freshness.changed proving this cook). Returns zero counts if the graph has not been executed. FOLLOW-UP (C++): make this read live post-cook data or return an explicit {stale:true} flag."
     },
     "pcg_read_node_output": {
       "aliases": [
@@ -1428,7 +1428,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Alias of read_node_output. STALE-READ WARNING: reads a possibly-STALE inspection cache, not live post-cook data \u2014 point_count:0 here is NOT ground truth. Use `pcg_cook_and_wait` result.ism[] for authoritative instance counts."
+      "notes": "Alias of read_node_output. STALE-READ WARNING: reads a possibly-STALE inspection cache, not live post-cook data — point_count:0 here is NOT ground truth. Use `pcg_cook_and_wait` result.ism[] for authoritative instance counts."
     },
     "describe_assets": {
       "aliases": [
@@ -1565,7 +1565,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": true,
-      "notes": "Alias of describe_assets \u2014 the agent-friendly name surfaced as the hayba_asset_browse routing tool."
+      "notes": "Alias of describe_assets — the agent-friendly name surfaced as the hayba_asset_browse routing tool."
     },
     "actor_get_properties": {
       "aliases": [],
@@ -1588,7 +1588,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Reflect every property on an actor with its current value. The discovery step before actor_set_properties \u2014 property names must match the UPROPERTY exactly, and this is how you learn them instead of guessing."
+      "notes": "Reflect every property on an actor with its current value. The discovery step before actor_set_properties — property names must match the UPROPERTY exactly, and this is how you learn them instead of guessing."
     },
     "actor_set_properties": {
       "aliases": [],
@@ -1673,7 +1673,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Call a BlueprintCallable UFunction on an actor by name, with arguments. The escape hatch for behaviour no dedicated tool exposes \u2014 powerful and unvalidated, so it is gated by Plan Mode."
+      "notes": "Call a BlueprintCallable UFunction on an actor by name, with arguments. The escape hatch for behaviour no dedicated tool exposes — powerful and unvalidated, so it is gated by Plan Mode."
     },
     "actor_duplicate": {
       "aliases": [],
@@ -1767,7 +1767,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Show or hide an actor in the level. This is editor/runtime visibility only \u2014 the actor still exists, still ticks and still collides."
+      "notes": "Show or hide an actor in the level. This is editor/runtime visibility only — the actor still exists, still ticks and still collides."
     },
     "actor_snap_to_socket": {
       "aliases": [],
@@ -1851,7 +1851,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Create a spline actor at a location. The spline starts empty \u2014 add its shape with spline_add_point. Splines drive roads, rivers, fences, cable runs and PCG spline samplers."
+      "notes": "Create a spline actor at a location. The spline starts empty — add its shape with spline_add_point. Splines drive roads, rivers, fences, cable runs and PCG spline samplers."
     },
     "spline_add_point": {
       "aliases": [],
@@ -1917,7 +1917,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Move an existing spline point to a new location, addressed by index. Use spline_get_info first to see the current points \u2014 an out-of-range index fails rather than appending."
+      "notes": "Move an existing spline point to a new location, addressed by index. Use spline_get_info first to see the current points — an out-of-range index fails rather than appending."
     },
     "spline_remove_point": {
       "aliases": [],
@@ -1976,7 +1976,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Read a spline's point count, total length and every point's position. The read half of spline editing \u2014 call it before set/remove so indices refer to what you think they do."
+      "notes": "Read a spline's point count, total length and every point's position. The read half of spline editing — call it before set/remove so indices refer to what you think they do."
     },
     "ism_create_actor": {
       "aliases": [],
@@ -2013,7 +2013,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": true,
-      "notes": "Spawn an actor whose root is an InstancedStaticMesh component named \"ISM\". This is the container ism_add_instances fills \u2014 create it once, then add instances in bulk rather than spawning an actor per item."
+      "notes": "Spawn an actor whose root is an InstancedStaticMesh component named \"ISM\". This is the container ism_add_instances fills — create it once, then add instances in bulk rather than spawning an actor per item."
     },
     "ism_add_instance": {
       "aliases": [],
@@ -2046,7 +2046,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Add ONE instance to an InstancedStaticMesh actor. For more than a handful use ism_add_instances instead \u2014 a per-instance round trip is the slow way to build a forest."
+      "notes": "Add ONE instance to an InstancedStaticMesh actor. For more than a handful use ism_add_instances instead — a per-instance round trip is the slow way to build a forest."
     },
     "ism_add_instances": {
       "aliases": [],
@@ -2187,7 +2187,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Add a component of a given class to a Blueprint's component tree. Changes are staged \u2014 blueprint_compile applies them, and nothing takes effect in the level until it does."
+      "notes": "Add a component of a given class to a Blueprint's component tree. Changes are staged — blueprint_compile applies them, and nothing takes effect in the level until it does."
     },
     "blueprint_add_variable": {
       "aliases": [],
@@ -2243,7 +2243,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Compile a Blueprint and report errors. Every blueprint_* edit is staged until this runs, so call it before expecting a change to exist \u2014 and read `errors`, because a failed compile leaves the old class in place."
+      "notes": "Compile a Blueprint and report errors. Every blueprint_* edit is staged until this runs, so call it before expecting a change to exist — and read `errors`, because a failed compile leaves the old class in place."
     },
     "blueprint_set_defaults": {
       "aliases": [],
@@ -2568,7 +2568,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Create a new empty level asset. Does not open it \u2014 follow with level_load to switch the editor to it."
+      "notes": "Create a new empty level asset. Does not open it — follow with level_load to switch the editor to it."
     },
     "level_save": {
       "aliases": [],
@@ -2614,7 +2614,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Open a level in the editor, replacing the current one. UNSAVED CHANGES IN THE CURRENT LEVEL ARE AT RISK \u2014 call level_save first."
+      "notes": "Open a level in the editor, replacing the current one. UNSAVED CHANGES IN THE CURRENT LEVEL ARE AT RISK — call level_save first."
     },
     "level_list": {
       "aliases": [],
@@ -2759,7 +2759,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": true,
-      "notes": "Find assets by path, name substring or class, optionally with thumbnails. The general 'what exists in this project' query \u2014 start here when you need an asset path and only know roughly what it is."
+      "notes": "Find assets by path, name substring or class, optionally with thumbnails. The general 'what exists in this project' query — start here when you need an asset path and only know roughly what it is."
     },
     "asset_get_info": {
       "aliases": [],
@@ -2933,13 +2933,13 @@
           "name": "look_at",
           "type": "array",
           "required": false,
-          "description": "BEST way to aim the camera: a world point [x,y,z] to face. The orientation is computed in C++ (correct pitch+yaw, roll always 0 \u2014 the horizon never tilts). Use this instead of rotation whenever you know what you want the camera pointed at; you do NOT compute any angles yourself. Takes precedence over rotation."
+          "description": "BEST way to aim the camera: a world point [x,y,z] to face. The orientation is computed in C++ (correct pitch+yaw, roll always 0 — the horizon never tilts). Use this instead of rotation whenever you know what you want the camera pointed at; you do NOT compute any angles yourself. Takes precedence over rotation."
         },
         {
           "name": "rotation",
           "type": "object",
           "required": false,
-          "description": "Manual orientation (only if you are not using look_at). PREFERRED form: object {pitch, yaw, roll} in degrees \u2014 unambiguous. yaw = heading (about the vertical/Z axis, the value you usually want); pitch = look up(+)/down(-); roll = horizon tilt and defaults to 0 (omit it \u2014 a non-zero roll is what makes the viewport 'look angled'). Array form is accepted as [pitch, yaw, roll] but its 3rd element (roll) is IGNORED so the camera never tilts by accident \u2014 do NOT pass [x,y,z] euler here, index 2 is roll, not yaw."
+          "description": "Manual orientation (only if you are not using look_at). PREFERRED form: object {pitch, yaw, roll} in degrees — unambiguous. yaw = heading (about the vertical/Z axis, the value you usually want); pitch = look up(+)/down(-); roll = horizon tilt and defaults to 0 (omit it — a non-zero roll is what makes the viewport 'look angled'). Array form is accepted as [pitch, yaw, roll] but its 3rd element (roll) is IGNORED so the camera never tilts by accident — do NOT pass [x,y,z] euler here, index 2 is roll, not yaw."
         }
       ],
       "returns": {
@@ -2981,7 +2981,7 @@
           "name": "direction",
           "type": "array",
           "required": false,
-          "description": "Optional [x,y,z] view direction (camera\u2192actor). Default is a 3/4 front-right-above view. Need not be normalized."
+          "description": "Optional [x,y,z] view direction (camera→actor). Default is a 3/4 front-right-above view. Need not be normalized."
         }
       ],
       "returns": {
@@ -3005,7 +3005,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Frame an actor in the editor viewport by label \u2014 computes camera position from the actor's bounds and aims at its centre, entirely in C++. Roll is always 0 so the view never tilts. This is the correct 'framing tool'; do NOT hand-compute camera angles in python_run."
+      "notes": "Frame an actor in the editor viewport by label — computes camera position from the actor's bounds and aims at its centre, entirely in C++. Roll is always 0 so the view never tilts. This is the correct 'framing tool'; do NOT hand-compute camera angles in python_run."
     },
     "editor_save_all_and_quit": {
       "aliases": [],
@@ -3065,7 +3065,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Run an editor console command (stat unit, r.* toggles, LiveCoding.Compile, etc). Arbitrary console access, so it is gated by Plan Mode. Effects are reported by the console, not returned \u2014 check editor_get_output_log."
+      "notes": "Run an editor console command (stat unit, r.* toggles, LiveCoding.Compile, etc). Arbitrary console access, so it is gated by Plan Mode. Effects are reported by the console, not returned — check editor_get_output_log."
     },
     "editor_get_output_log": {
       "aliases": [],
@@ -3103,7 +3103,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Read the editor's output log, filtered by severity or regex and paged with since_line. The first thing to check when a command reported success but nothing happened \u2014 UE logs the real reason here."
+      "notes": "Read the editor's output log, filtered by severity or regex and paged with since_line. The first thing to check when a command reported success but nothing happened — UE logs the real reason here."
     },
     "editor_stop_pie": {
       "aliases": [],
@@ -3205,7 +3205,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Report one actor's attachment parent, its attached children and its asset references. Answers 'what would move or break if I reparent or delete this' \u2014 it is not an inventory, use actor_list for that."
+      "notes": "Report one actor's attachment parent, its attached children and its asset references. Answers 'what would move or break if I reparent or delete this' — it is not an inventory, use actor_list for that."
     },
     "editor_pie_screenshot": {
       "aliases": [],
@@ -3282,13 +3282,13 @@
           "name": "x",
           "type": "number",
           "required": false,
-          "description": "target x, ABSOLUTE desktop px by default (what editor_pie_widget_tree reports) \u2014 see coordinate_space. Optional for scroll: positions the cursor before the wheel."
+          "description": "target x, ABSOLUTE desktop px by default (what editor_pie_widget_tree reports) — see coordinate_space. Optional for scroll: positions the cursor before the wheel."
         },
         {
           "name": "y",
           "type": "number",
           "required": false,
-          "description": "target y, ABSOLUTE desktop px by default (what editor_pie_widget_tree reports) \u2014 see coordinate_space. Optional for scroll: positions the cursor before the wheel."
+          "description": "target y, ABSOLUTE desktop px by default (what editor_pie_widget_tree reports) — see coordinate_space. Optional for scroll: positions the cursor before the wheel."
         },
         {
           "name": "coordinate_space",
@@ -3333,7 +3333,7 @@
           {
             "name": "cursor_delta_x",
             "type": "number",
-            "description": "FPointerEvent::GetCursorDelta of the last move dispatched. ZERO means no widget that tracks movement can have responded \u2014 that is a harness result, not a widget result."
+            "description": "FPointerEvent::GetCursorDelta of the last move dispatched. ZERO means no widget that tracks movement can have responded — that is a harness result, not a widget result."
           },
           {
             "name": "cursor_delta_y",
@@ -3353,7 +3353,7 @@
           {
             "name": "captor_after_press",
             "type": "string",
-            "description": "drag only \u2014 who took capture in answer to the press."
+            "description": "drag only — who took capture in answer to the press."
           },
           {
             "name": "pressed_buttons",
@@ -3363,7 +3363,7 @@
           {
             "name": "handled_by",
             "type": "string",
-            "description": "scroll only \u2014 slate | game_viewport | nothing."
+            "description": "scroll only — slate | game_viewport | nothing."
           }
         ]
       },
@@ -3482,7 +3482,7 @@
           {
             "name": "saved_dir",
             "type": "string",
-            "description": "Where the editor log lives \u2014 the first place to look when a command claims success"
+            "description": "Where the editor log lives — the first place to look when a command claims success"
           },
           {
             "name": "engine_version",
@@ -3554,7 +3554,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Reads UGeneralProjectSettings \u2014 the identity fields shown on the Project Settings > Description page \u2014 plus the editor startup map. Read-only; use project_set_settings to change any of them. Fields that were never filled in come back as empty strings, not as missing keys."
+      "notes": "Reads UGeneralProjectSettings — the identity fields shown on the Project Settings > Description page — plus the editor startup map. Read-only; use project_set_settings to change any of them. Fields that were never filled in come back as empty strings, not as missing keys."
     },
     "project_set_settings": {
       "aliases": [],
@@ -3635,7 +3635,7 @@
           {
             "name": "updated",
             "type": "array",
-            "description": "Named mode: exactly which fields were written. Check it \u2014 a field this command does not recognise is not reported per-key."
+            "description": "Named mode: exactly which fields were written. Check it — a field this command does not recognise is not reported per-key."
           },
           {
             "name": "section",
@@ -3651,7 +3651,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Writes project identity settings to the ini files, in two modes: pass section+key+value to write any ini key directly, or pass any of the named fields to write DefaultGame.ini. It flushes to disk immediately \u2014 this edits config the whole team shares, so prefer project_get_settings first. Values are strings in both modes."
+      "notes": "Writes project identity settings to the ini files, in two modes: pass section+key+value to write any ini key directly, or pass any of the named fields to write DefaultGame.ini. It flushes to disk immediately — this edits config the whole team shares, so prefer project_get_settings first. Values are strings in both modes."
     },
     "project_list_plugins": {
       "aliases": [],
@@ -3673,7 +3673,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Every ENABLED plugin, engine and project alike, with its version and category. This is the reliable way to answer 'is Water/PCG/Niagara available here' before calling a domain that needs one \u2014 a capability probe against reality rather than an assumption. Disabled plugins are not listed at all."
+      "notes": "Every ENABLED plugin, engine and project alike, with its version and category. This is the reliable way to answer 'is Water/PCG/Niagara available here' before calling a domain that needs one — a capability probe against reality rather than an assumption. Disabled plugins are not listed at all."
     },
     "mesh_get_info": {
       "aliases": [],
@@ -3770,7 +3770,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Sets a LOD's screen size (and optionally its reduction target) on a static mesh, then rebuilds it. Editor-only, and it modifies the asset \u2014 save it afterwards. It REFUSES a mesh with any zero-UV LOD, because the rebuild would hit an engine assert and take the editor down with it; that refusal is a real limit of the asset, not a bug in this command."
+      "notes": "Sets a LOD's screen size (and optionally its reduction target) on a static mesh, then rebuilds it. Editor-only, and it modifies the asset — save it afterwards. It REFUSES a mesh with any zero-UV LOD, because the rebuild would hit an engine assert and take the editor down with it; that refusal is a real limit of the asset, not a bug in this command."
     },
     "mesh_list": {
       "aliases": [],
@@ -3799,7 +3799,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Enumerate static meshes from the asset registry without loading any of them \u2014 the cheap way to find something to place or inspect. Always pass path_prefix on a real project unless you actually want engine content in the results. Exact subclasses only, so a mesh subclass is not listed."
+      "notes": "Enumerate static meshes from the asset registry without loading any of them — the cheap way to find something to place or inspect. Always pass path_prefix on a real project unless you actually want engine content in the results. Exact subclasses only, so a mesh subclass is not listed."
     },
     "audio_list": {
       "aliases": [],
@@ -3828,7 +3828,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Enumerate USoundBase assets (waves, cues, MetaSound sources) from the asset registry, including subclasses, without loading them. Duration and sample rate come from registry tags, so they are present for most assets but not guaranteed \u2014 a missing key means untagged, not zero."
+      "notes": "Enumerate USoundBase assets (waves, cues, MetaSound sources) from the asset registry, including subclasses, without loading them. Duration and sample rate come from registry tags, so they are present for most assets but not guaranteed — a missing key means untagged, not zero."
     },
     "audio_play": {
       "aliases": [],
@@ -3928,7 +3928,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Sets the transient primary volume on the main audio device \u2014 the master bus, and only that. Use audio_asset_create/set/save with SoundClass and SoundMix assets for category routing. The change is transient and does not persist."
+      "notes": "Sets the transient primary volume on the main audio device — the master bus, and only that. Use audio_asset_create/set/save with SoundClass and SoundMix assets for category routing. The change is transient and does not persist."
     },
     "audio_asset_create": {
       "aliases": [],
@@ -4491,7 +4491,7 @@
           "name": "channels",
           "type": "array",
           "required": false,
-          "description": "Reported back as channels_applied. Defaults to [\"all\"]. Currently descriptive only \u2014 the same overlay is enabled whatever you pass."
+          "description": "Reported back as channels_applied. Defaults to [\"all\"]. Currently descriptive only — the same overlay is enabled whatever you pass."
         }
       ],
       "returns": {
@@ -4537,7 +4537,7 @@
           "name": "net_dormancy",
           "type": "string",
           "required": false,
-          "description": "Awake | Initial | DormantAll. DORM_Never and DORM_DormantPartial cannot be expressed \u2014 an unrecognised value is rejected and nothing is written."
+          "description": "Awake | Initial | DormantAll. DORM_Never and DORM_DormantPartial cannot be expressed — an unrecognised value is rejected and nothing is written."
         },
         {
           "name": "replicated_components",
@@ -4582,7 +4582,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Sets replication flags on one actor in the editor world and marks its level dirty \u2014 this edits the LEVEL, so the change persists only if the level is saved, and it is not something to try on a map someone is working in. Every parameter is validated before anything is written, so a rejected request leaves the actor untouched."
+      "notes": "Sets replication flags on one actor in the editor world and marks its level dirty — this edits the LEVEL, so the change persists only if the level is saved, and it is not something to try on a map someone is working in. Every parameter is validated before anything is written, so a rejected request leaves the actor untouched."
     },
     "input_create_action": {
       "aliases": [],
@@ -4627,7 +4627,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Creates an Enhanced Input UInputAction \u2014 the 'what the player did' half of the system, independent of which key does it. Pick value_type by the shape of the input: Boolean for a press, Axis1D for a trigger, Axis2D for a stick. The asset is created dirty and unsaved; call asset_save to keep it. An existing name is an explicit error, because letting the engine ask would raise a modal dialog and hang every queued command."
+      "notes": "Creates an Enhanced Input UInputAction — the 'what the player did' half of the system, independent of which key does it. Pick value_type by the shape of the input: Boolean for a press, Axis1D for a trigger, Axis2D for a stick. The asset is created dirty and unsaved; call asset_save to keep it. An existing name is an explicit error, because letting the engine ask would raise a modal dialog and hang every queued command."
     },
     "input_create_mapping": {
       "aliases": [],
@@ -4662,7 +4662,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Creates an empty UInputMappingContext \u2014 the 'which keys, in this situation' half of Enhanced Input. A context is what gets pushed and popped as the player moves between menus, driving and walking. Fill it with input_add_mapping. Created dirty and unsaved; asset_save to keep it."
+      "notes": "Creates an empty UInputMappingContext — the 'which keys, in this situation' half of Enhanced Input. A context is what gets pushed and popped as the player moves between menus, driving and walking. Fill it with input_add_mapping. Created dirty and unsaved; asset_save to keep it."
     },
     "input_add_mapping": {
       "aliases": [],
@@ -4718,13 +4718,13 @@
           {
             "name": "unresolved_classes",
             "type": "array",
-            "description": "Names that matched no modifier/trigger class. The binding is still made \u2014 check this before believing a modifier applied."
+            "description": "Names that matched no modifier/trigger class. The binding is still made — check this before believing a modifier applied."
           }
         ]
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Binds a key to an action inside a mapping context, optionally with modifiers and triggers. A modifier or trigger class name it cannot resolve is reported under unresolved_classes rather than silently skipped \u2014 so a reply listing fewer modifiers than you asked for is telling you something. Marks the context dirty; asset_save to keep it."
+      "notes": "Binds a key to an action inside a mapping context, optionally with modifiers and triggers. A modifier or trigger class name it cannot resolve is reported under unresolved_classes rather than silently skipped — so a reply listing fewer modifiers than you asked for is telling you something. Marks the context dirty; asset_save to keep it."
     },
     "bt_get_info": {
       "aliases": [],
@@ -4752,7 +4752,7 @@
           {
             "name": "nodes",
             "type": "array",
-            "description": "guid, name, class, parent_guid, children \u2014 the guid is derived from the node's object path, so it is stable across calls"
+            "description": "guid, name, class, parent_guid, children — the guid is derived from the node's object path, so it is stable across calls"
           },
           {
             "name": "blackboard_keys",
@@ -4778,7 +4778,7 @@
           "name": "node_kind",
           "type": "string",
           "required": true,
-          "description": "composite | task | decorator | service. Checked against the class \u2014 asking for a composite and naming a task class is an error, not a guess."
+          "description": "composite | task | decorator | service. Checked against the class — asking for a composite and naming a task class is an error, not a guess."
         },
         {
           "name": "node_class_name",
@@ -4824,7 +4824,7 @@
           "name": "parent_guid",
           "type": "string",
           "required": true,
-          "description": "Must be a composite \u2014 only composites take children"
+          "description": "Must be a composite — only composites take children"
         },
         {
           "name": "child_guid",
@@ -4870,7 +4870,7 @@
           {
             "name": "warnings",
             "type": "array",
-            "description": "e.g. \"Behavior tree has no blackboard asset\" \u2014 a tree that compiles clean can still be one that cannot run"
+            "description": "e.g. \"Behavior tree has no blackboard asset\" — a tree that compiles clean can still be one that cannot run"
           }
         ]
       },
@@ -4914,7 +4914,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Reads an animation blueprint's state machines, their states and transitions, and its variables. Call it before any of the anim_blueprint_* writers: they address a state machine BY NAME, and this is the only way to learn the names \u2014 a freshly created anim blueprint has none at all."
+      "notes": "Reads an animation blueprint's state machines, their states and transitions, and its variables. Call it before any of the anim_blueprint_* writers: they address a state machine BY NAME, and this is the only way to learn the names — a freshly created anim blueprint has none at all."
     },
     "anim_blueprint_add_state": {
       "aliases": [],
@@ -4929,7 +4929,7 @@
           "name": "state_machine_name",
           "type": "string",
           "required": true,
-          "description": "From anim_blueprint_get_info. This command does not create state machines \u2014 only states inside one that exists."
+          "description": "From anim_blueprint_get_info. This command does not create state machines — only states inside one that exists."
         },
         {
           "name": "new_state_name",
@@ -4953,7 +4953,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Adds a state to an existing state machine in an animation blueprint. It cannot create the state machine itself \u2014 that still needs the AnimGraph editor \u2014 so on a blueprint with none it answers 'state machine not found', which is a missing prerequisite rather than a bad request. Compile with anim_blueprint_compile afterwards."
+      "notes": "Adds a state to an existing state machine in an animation blueprint. It cannot create the state machine itself — that still needs the AnimGraph editor — so on a blueprint with none it answers 'state machine not found', which is a missing prerequisite rather than a bad request. Compile with anim_blueprint_compile afterwards."
     },
     "anim_blueprint_add_transition": {
       "aliases": [],
@@ -4978,7 +4978,7 @@
           "name": "state_machine_name",
           "type": "string",
           "required": false,
-          "description": "Optional \u2014 without it the states are searched for across every state machine, which is ambiguous if two share a state name"
+          "description": "Optional — without it the states are searched for across every state machine, which is ambiguous if two share a state name"
         }
       ],
       "returns": {
@@ -5001,7 +5001,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Wires one state to another. The transition is created with no rule, which means it is always taken \u2014 pair it with anim_blueprint_set_condition unless you actually want an unconditional transition. Pass state_machine_name when two state machines might share a state name."
+      "notes": "Wires one state to another. The transition is created with no rule, which means it is always taken — pair it with anim_blueprint_set_condition unless you actually want an unconditional transition. Pass state_machine_name when two state machines might share a state name."
     },
     "anim_blueprint_set_condition": {
       "aliases": [],
@@ -5090,7 +5090,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Compiles an ANIMATION blueprint (ABP) \u2014 the animation state-machine asset, not an ordinary class. Reports the compiler errors and warnings. Every anim_blueprint_* write leaves the asset needing this, and an uncompiled ABP keeps running its previously generated class, so state-machine edits look like they did nothing."
+      "notes": "Compiles an ANIMATION blueprint (ABP) — the animation state-machine asset, not an ordinary class. Reports the compiler errors and warnings. Every anim_blueprint_* write leaves the asset needing this, and an uncompiled ABP keeps running its previously generated class, so state-machine edits look like they did nothing."
     },
     "physics_set_simulate": {
       "aliases": [],
@@ -5124,7 +5124,7 @@
           {
             "name": "simulating",
             "type": "boolean",
-            "description": "Read back off the component after the write, not echoed \u2014 a component that refused to simulate reports false here"
+            "description": "Read back off the component after the write, not echoed — a component that refused to simulate reports false here"
           }
         ]
       },
@@ -5214,13 +5214,13 @@
           {
             "name": "linear_velocity",
             "type": "object",
-            "description": "{x,y,z} read off the body after the impulse \u2014 an observable to compare against what you asked for"
+            "description": "{x,y,z} read off the body after the impulse — an observable to compare against what you asked for"
           }
         ]
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Applies an impulse to a primitive component in the editor world and reports the resulting linear velocity. A component that is not simulating physics discards an impulse silently, so that case is REFUSED with a message naming the fix rather than answering applied:true \u2014 the old reply was true of the call and false of the world. Turn simulation on with physics_set_simulate first."
+      "notes": "Applies an impulse to a primitive component in the editor world and reports the resulting linear velocity. A component that is not simulating physics discards an impulse silently, so that case is REFUSED with a message naming the fix rather than answering applied:true — the old reply was true of the call and false of the world. Turn simulation on with physics_set_simulate first."
     },
     "wp_get_cells": {
       "aliases": [],
@@ -5252,7 +5252,7 @@
           {
             "name": "cell_source",
             "type": "string",
-            "description": "Always \"computed_grid\" \u2014 see the note"
+            "description": "Always \"computed_grid\" — see the note"
           },
           {
             "name": "grid_size_cm",
@@ -5263,7 +5263,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "A spatial summary of where actors are: it bins every actor in the editor world onto a fixed 512m grid and reports per-bin counts and the classes that dominate each. These are NOT the World Partition runtime cells \u2014 cell ids and bounds will not match the partition's own, which is why the reply says cell_source. Requires World Partition to be enabled on the map; use it to find the busy regions before deciding where to look."
+      "notes": "A spatial summary of where actors are: it bins every actor in the editor world onto a fixed 512m grid and reports per-bin counts and the classes that dominate each. These are NOT the World Partition runtime cells — cell ids and bounds will not match the partition's own, which is why the reply says cell_source. Requires World Partition to be enabled on the map; use it to find the busy regions before deciding where to look."
     },
     "wp_load_cell": {
       "aliases": [],
@@ -5273,7 +5273,7 @@
           "name": "cell_id",
           "type": "string",
           "required": false,
-          "description": "Accepted and ignored \u2014 the command cannot load anything"
+          "description": "Accepted and ignored — the command cannot load anything"
         }
       ],
       "returns": {
@@ -5281,7 +5281,7 @@
       },
       "agent_callable": false,
       "has_ts_wrapper": false,
-      "notes": "NOT IMPLEMENTED, and it says so rather than pretending: World Partition cell loading is interactive-only in the editor, so every call returns an error naming that limit. It previously returned ok with loaded:false, which let a caller loop over cells and conclude the world was loaded. agent_callable:false \u2014 an honest error is still a command that can never succeed, and the catalogue should not offer it."
+      "notes": "NOT IMPLEMENTED, and it says so rather than pretending: World Partition cell loading is interactive-only in the editor, so every call returns an error naming that limit. It previously returned ok with loaded:false, which let a caller loop over cells and conclude the world was loaded. agent_callable:false — an honest error is still a command that can never succeed, and the catalogue should not offer it."
     },
     "wp_get_streaming_state": {
       "aliases": [],
@@ -5298,13 +5298,13 @@
           {
             "name": "streaming_sources",
             "type": "string",
-            "description": "Always \"not_enumerated\" \u2014 sources are not counted here, and the field says so rather than reporting a zero that would read as measured"
+            "description": "Always \"not_enumerated\" — sources are not counted here, and the field says so rather than reporting a zero that would read as measured"
           }
         ]
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Answers one question honestly: does the current editor world use World Partition. It previously also reported a hard-coded source_count of 0 \u2014 a field named for a measurement that always answers zero reads as \"measured, none found\", so it now names itself not_enumerated instead of inventing a number."
+      "notes": "Answers one question honestly: does the current editor world use World Partition. It previously also reported a hard-coded source_count of 0 — a field named for a measurement that always answers zero reads as \"measured, none found\", so it now names itself not_enumerated instead of inventing a number."
     },
     "editor_get_performance_stats": {
       "aliases": [],
@@ -5336,7 +5336,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Editor frame timing: average fps, frame time, and the two thread times. These are whole-editor averages, not a profile of one operation \u2014 an idle editor with a compile running reads badly and that is not a scene problem. The thread times are cycle counters converted through FPlatformTime::ToMilliseconds; they were previously emitted RAW under _ms names, so every reading of those two fields used to be wrong by the platform cycle factor."
+      "notes": "Editor frame timing: average fps, frame time, and the two thread times. These are whole-editor averages, not a profile of one operation — an idle editor with a compile running reads badly and that is not a scene problem. The thread times are cycle counters converted through FPlatformTime::ToMilliseconds; they were previously emitted RAW under _ms names, so every reading of those two fields used to be wrong by the platform cycle factor."
     },
     "editor_live_compile": {
       "aliases": [],
@@ -5348,7 +5348,7 @@
           {
             "name": "compile_requested",
             "type": "boolean",
-            "description": "The trigger was issued. NOT that the compile succeeded \u2014 the outcome never comes back through this call."
+            "description": "The trigger was issued. NOT that the compile succeeded — the outcome never comes back through this call."
           },
           {
             "name": "result_source",
@@ -5364,7 +5364,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Triggers a Live Coding compile of the running editor. It is asynchronous: poll the editor log for 'Live coding succeeded' or 'LogLiveCoding: Error', matching on a COUNT of terminal lines rather than presence, because earlier runs are still in the file. Compile ERRORS are not in the editor log at all \u2014 they are in UnrealBuildTool\\Log.txt. A brand-new handler CLASS still needs a full editor restart; Live Coding cannot register one."
+      "notes": "Triggers a Live Coding compile of the running editor. It is asynchronous: poll the editor log for 'Live coding succeeded' or 'LogLiveCoding: Error', matching on a COUNT of terminal lines rather than presence, because earlier runs are still in the file. Compile ERRORS are not in the editor log at all — they are in UnrealBuildTool\\Log.txt. A brand-new handler CLASS still needs a full editor restart; Live Coding cannot register one."
     },
     "editor_set_viewport_mode": {
       "aliases": [],
@@ -5388,7 +5388,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Switches the active editor viewport's view mode \u2014 wireframe to read geometry density, shader_complexity to find expensive materials, unlit to judge albedo without lighting. This changes what a HUMAN is looking at and does not change back on its own, so put it back to lit when you are done rather than leaving someone else's viewport in wireframe."
+      "notes": "Switches the active editor viewport's view mode — wireframe to read geometry density, shader_complexity to find expensive materials, unlit to judge albedo without lighting. This changes what a HUMAN is looking at and does not change back on its own, so put it back to lit when you are done rather than leaving someone else's viewport in wireframe."
     },
     "placement_validate": {
       "aliases": [],
@@ -5404,7 +5404,7 @@
           "name": "location",
           "type": "array",
           "required": false,
-          "description": "[x,y,z] of the intended placement. A short array is an error, not a silent zero \u2014 a 2-element location once made this report a clean spot at the origin."
+          "description": "[x,y,z] of the intended placement. A short array is an error, not a silent zero — a 2-element location once made this report a clean spot at the origin."
         },
         {
           "name": "rotation",
@@ -5436,7 +5436,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Asks whether an actor of this class would collide with anything if spawned at this transform, WITHOUT spawning it. Use it before actor_spawn when placing into a populated scene \u2014 cheaper than spawning, checking, and deleting. It answers about overlap only: it does not tell you whether the spot makes sense, is on navmesh, or is inside geometry."
+      "notes": "Asks whether an actor of this class would collide with anything if spawned at this transform, WITHOUT spawning it. Use it before actor_spawn when placing into a populated scene — cheaper than spawning, checking, and deleting. It answers about overlap only: it does not tell you whether the spot makes sense, is on navmesh, or is inside geometry."
     },
     "blueprint_add_function": {
       "aliases": [],
@@ -5452,7 +5452,7 @@
           "name": "function_name",
           "type": "string",
           "required": true,
-          "description": "A name already used by this blueprint is NOT rejected \u2014 see the note"
+          "description": "A name already used by this blueprint is NOT rejected — see the note"
         }
       ],
       "returns": {
@@ -5476,7 +5476,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Adds an empty function graph to a blueprint and recompiles. Check compiled_clean, not just ok: adding a function whose name is already taken SUCCEEDS and leaves the blueprint broken with 'Found more than one function with the same name' \u2014 verified live. The reply reports the compiler's verdict, but the operation is not rolled back, so a duplicate name costs you a manual repair."
+      "notes": "Adds an empty function graph to a blueprint and recompiles. Check compiled_clean, not just ok: adding a function whose name is already taken SUCCEEDS and leaves the blueprint broken with 'Found more than one function with the same name' — verified live. The reply reports the compiler's verdict, but the operation is not rolled back, so a duplicate name costs you a manual repair."
     },
     "blueprint_document": {
       "aliases": [],
@@ -5501,7 +5501,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Renders a blueprint's EVENT GRAPH as pseudo-English \u2014 a fast way to see what a blueprint reacts to without opening it. It covers events only: user-defined function graphs do not appear, so a blueprint documented as three bare events may still have functions. Use blueprint_get_info for structure."
+      "notes": "Renders a blueprint's EVENT GRAPH as pseudo-English — a fast way to see what a blueprint reacts to without opening it. It covers events only: user-defined function graphs do not appear, so a blueprint documented as three bare events may still have functions. Use blueprint_get_info for structure."
     },
     "blueprint_inspect_graph": {
       "aliases": [],
@@ -5719,7 +5719,7 @@
       },
       "agent_callable": false,
       "has_ts_wrapper": false,
-      "notes": "NOT IMPLEMENTED \u2014 returns status:\"deferred\" pointing at scene_export, for every call. Documented here so get_tool_signature can explain it, but agent_callable:false so it does not appear as capability an agent can spend a turn discovering is empty. Use scene_export, or wp_get_cells for a spatial summary."
+      "notes": "NOT IMPLEMENTED — returns status:\"deferred\" pointing at scene_export, for every call. Documented here so get_tool_signature can explain it, but agent_callable:false so it does not appear as capability an agent can spend a turn discovering is empty. Use scene_export, or wp_get_cells for a spatial summary."
     },
     "level_set_bookmark": {
       "aliases": [],
@@ -5749,7 +5749,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Stores a named camera position in the current level so it can be returned to later. Bookmarks live in the LEVEL, so this dirties the map and persists only if the level is saved \u2014 do not use it as scratch state on a map someone else is working in. NOT VERIFIED LIVE: described from the handler source, because verifying it means dirtying a real level."
+      "notes": "Stores a named camera position in the current level so it can be returned to later. Bookmarks live in the LEVEL, so this dirties the map and persists only if the level is saved — do not use it as scratch state on a map someone else is working in. NOT VERIFIED LIVE: described from the handler source, because verifying it means dirtying a real level."
     },
     "level_goto_bookmark": {
       "aliases": [],
@@ -5767,7 +5767,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Moves the editor viewport to a stored bookmark. This changes what a human is looking at, so it is not a neutral read \u2014 prefer editor_set_camera when you just need a viewpoint for a capture. NOT VERIFIED LIVE: described from the handler source."
+      "notes": "Moves the editor viewport to a stored bookmark. This changes what a human is looking at, so it is not a neutral read — prefer editor_set_camera when you just need a viewpoint for a capture. NOT VERIFIED LIVE: described from the handler source."
     },
     "gas_create_ability": {
       "aliases": [],
@@ -5791,7 +5791,7 @@
           {
             "name": "path",
             "type": "string",
-            "description": "Full object path of the created ability blueprint \u2014 read it, given the path contracts differ between create commands"
+            "description": "Full object path of the created ability blueprint — read it, given the path contracts differ between create commands"
           },
           {
             "name": "name",
@@ -5801,7 +5801,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Creates a UGameplayAbility blueprint. Lives in the optional HaybaMCPGAS satellite plugin, which auto-disables when the engine's GameplayAbilities plugin is off \u2014 so an Unknown command here means the satellite is not installed in this project, not that the command is missing. The ability is created empty; grant it to an actor with gas_grant_ability."
+      "notes": "Creates a UGameplayAbility blueprint. Lives in the optional HaybaMCPGAS satellite plugin, which auto-disables when the engine's GameplayAbilities plugin is off — so an Unknown command here means the satellite is not installed in this project, not that the command is missing. The ability is created empty; grant it to an actor with gas_grant_ability."
     },
     "gas_create_effect": {
       "aliases": [],
@@ -5852,7 +5852,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Creates a UGameplayEffect blueprint \u2014 the data asset that changes attributes, the unit GAS actually applies. duration_policy decides whether it fires once (Instant), ticks for a while (HasDuration) or persists until removed (Infinite). Part of the optional HaybaMCPGAS satellite."
+      "notes": "Creates a UGameplayEffect blueprint — the data asset that changes attributes, the unit GAS actually applies. duration_policy decides whether it fires once (Instant), ticks for a while (HasDuration) or persists until removed (Infinite). Part of the optional HaybaMCPGAS satellite."
     },
     "gas_grant_ability": {
       "aliases": [],
@@ -5862,7 +5862,7 @@
           "name": "actor_path",
           "type": "string",
           "required": true,
-          "description": "Must own a UAbilitySystemComponent \u2014 a plain actor is refused by name"
+          "description": "Must own a UAbilitySystemComponent — a plain actor is refused by name"
         },
         {
           "name": "ability_path",
@@ -5894,7 +5894,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Grants an ability to an actor's ability system component. It refuses an actor with no UAbilitySystemComponent rather than silently doing nothing, and refuses an uncompiled ability blueprint (no class default object) \u2014 both verified live. Grants made in the editor world are editor state, not gameplay state."
+      "notes": "Grants an ability to an actor's ability system component. It refuses an actor with no UAbilitySystemComponent rather than silently doing nothing, and refuses an uncompiled ability blueprint (no class default object) — both verified live. Grants made in the editor world are editor state, not gameplay state."
     },
     "gas_apply_effect": {
       "aliases": [],
@@ -5958,7 +5958,7 @@
           {
             "name": "capped",
             "type": "boolean",
-            "description": "True when the list was cut short \u2014 it says so rather than letting count disagree silently"
+            "description": "True when the list was cut short — it says so rather than letting count disagree silently"
           }
         ]
       },
@@ -5988,7 +5988,7 @@
           {
             "name": "path",
             "type": "string",
-            "description": "Where the asset ACTUALLY landed \u2014 check it against where you meant"
+            "description": "Where the asset ACTUALLY landed — check it against where you meant"
           },
           {
             "name": "class",
@@ -6205,14 +6205,14 @@
           "type": "number",
           "required": false,
           "default": 0,
-          "description": "Float comparison slack \u2014 an exact match on a simulated float is rarely what you want"
+          "description": "Float comparison slack — an exact match on a simulated float is rarely what you want"
         },
         {
           "name": "timeout_ms",
           "type": "number",
           "required": false,
           "default": 2000,
-          "description": "Accepted for signature compatibility. It does NOT make the call wait \u2014 see the note."
+          "description": "Accepted for signature compatibility. It does NOT make the call wait — see the note."
         }
       ],
       "returns": {
@@ -6231,7 +6231,7 @@
           {
             "name": "observed_value_last",
             "type": "any",
-            "description": "What was actually read, when it did not match \u2014 compare this against what you expected"
+            "description": "What was actually read, when it did not match — compare this against what you expected"
           },
           {
             "name": "polling",
@@ -6251,7 +6251,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Assert a UPROPERTY on a PIE actor holds a value. It is ONE OBSERVATION, not a wait: a command handler runs on the game thread, so it cannot advance the world, and a property it watches can never change while it blocks \u2014 an earlier version that pumped the ticker to fake waiting is what crashed the editor. So a false `matched` with `polling:true` means 'not yet', and the caller loops. Read observed_value_last before assuming the property is wrong; it is often the expectation that is."
+      "notes": "Assert a UPROPERTY on a PIE actor holds a value. It is ONE OBSERVATION, not a wait: a command handler runs on the game thread, so it cannot advance the world, and a property it watches can never change while it blocks — an earlier version that pumped the ticker to fake waiting is what crashed the editor. So a false `matched` with `polling:true` means 'not yet', and the caller loops. Read observed_value_last before assuming the property is wrong; it is often the expectation that is."
     },
     "editor_pie_wait_for": {
       "aliases": [],
@@ -6289,7 +6289,7 @@
           "type": "number",
           "required": false,
           "default": 2000,
-          "description": "Accepted, but this call does not block \u2014 see the note"
+          "description": "Accepted, but this call does not block — see the note"
         }
       ],
       "returns": {
@@ -6324,7 +6324,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "The polling half of a PIE wait: one observation of a property, with `polling:true` when the condition is not met yet, so the caller can loop until it is or until it gives up. It does NOT block for you \u2014 the handler occupies the game thread it would need to advance, which is the reason the previous blocking version had to be removed. Same shape as editor_pie_assert; use this name when you intend to loop and that one when you intend a single check."
+      "notes": "The polling half of a PIE wait: one observation of a property, with `polling:true` when the condition is not met yet, so the caller can loop until it is or until it gives up. It does NOT block for you — the handler occupies the game thread it would need to advance, which is the reason the previous blocking version had to be removed. Same shape as editor_pie_assert; use this name when you intend to loop and that one when you intend a single check."
     },
     "mesh_generate_collision": {
       "aliases": [],
@@ -6581,6 +6581,12 @@
           "type": "string",
           "required": true,
           "description": "Absolute output path for the PNG. Relative paths are refused: they resolve into the Unreal install tree."
+        },
+        {
+          "name": "panel",
+          "type": "string",
+          "required": false,
+          "description": "Optional destination to switch to before capturing: world, library, rules, activity, chat or settings. Omit to shoot the current screen."
         }
       ],
       "returns": {

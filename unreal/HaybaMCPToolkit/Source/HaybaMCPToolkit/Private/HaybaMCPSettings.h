@@ -31,7 +31,7 @@ public:
     // in the vault via Get/SetProviderKey. Treat as sensitive: never log/journal.
     FString ApiKey;
     FString BaseURL = TEXT("https://api.anthropic.com/v1/messages");
-    FString Model = TEXT("claude-opus-4-6-20251101");
+    FString Model = TEXT("claude-opus-5");
 
     // BYOK — id of the currently-selected provider (matches a catalog entry id).
     // The vault stores one encrypted key per provider id; this picks which one

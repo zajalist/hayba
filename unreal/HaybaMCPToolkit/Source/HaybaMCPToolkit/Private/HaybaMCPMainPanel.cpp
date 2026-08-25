@@ -129,28 +129,44 @@ void SHaybaMCPMainPanel::Construct(const FArguments& InArgs, FHaybaMCPModule* In
             SNew(SOverlay)
             + SOverlay::Slot()
             [
-                // SSplitter lets the user drag the sidebar boundary. We track
-                // the resulting sidebar width via Tick on the sidebar wrapper
-                // and drive IsSidebarCompact() from that, so dragging it
-                // narrow → labels collapse to icons.
-                SNew(SSplitter)
-                .Orientation(Orient_Horizontal)
-                .PhysicalSplitterHandleSize(2.f)
-                .HitDetectionSplitterHandleSize(6.f)
-                + SSplitter::Slot()
-                .Value(0.16f).MinSize(40.f)
+                SNew(SVerticalBox)
+                // The compact header: logo, title, and the Settings gear.
+                // BuildHeader() was written and never called, so none of it
+                // rendered -- the dock went straight to the splitter. The IA
+                // assumes it exists ("a resizable left sidebar and a compact
+                // header ... the redesign preserves that spatial contract"),
+                // and the gear has nowhere else to live.
+                + SVerticalBox::Slot().AutoHeight()
+                [ BuildHeader() ]
+                + SVerticalBox::Slot().FillHeight(1.f)
                 [
-                    SAssignNew(SidebarWrapper, SBorder)
-                    .BorderImage(FAppStyle::Get().GetBrush("Brushes.Header"))
-                    .Padding(FMargin(0, 6))
-                    [ BuildSidebar() ]
-                ]
-                + SSplitter::Slot()
-                .Value(0.84f)
-                [
-                    SAssignNew(ContentArea, SBox)
-                    .Padding(FMargin(10.f, 8.f))
-                    [ BuildPanelContent(EHaybaSection::Chat) ]
+                    // SSplitter lets the user drag the sidebar boundary. We track
+                    // the resulting sidebar width via Tick on the sidebar wrapper
+                    // and drive IsSidebarCompact() from that, so dragging it
+                    // narrow → labels collapse to icons.
+                    SNew(SSplitter)
+                    .Orientation(Orient_Horizontal)
+                    .PhysicalSplitterHandleSize(2.f)
+                    .HitDetectionSplitterHandleSize(6.f)
+                    + SSplitter::Slot()
+                    .Value(0.16f).MinSize(40.f)
+                    [
+                        SAssignNew(SidebarWrapper, SBorder)
+                        .BorderImage(FAppStyle::Get().GetBrush("Brushes.Header"))
+                        .Padding(FMargin(0, 6))
+                        [ BuildSidebar() ]
+                    ]
+                    + SSplitter::Slot()
+                    .Value(0.84f)
+                    [
+                        SAssignNew(ContentArea, SBox)
+                        .Padding(FMargin(10.f, 8.f))
+                        // CurrentSection, not a literal. This said Chat, which
+                        // silently overrode the default and left the sidebar
+                        // highlighting one destination while the content showed
+                        // another.
+                        [ BuildPanelContent(CurrentSection) ]
+                    ]
                 ]
             ]
             // Watermark — tiny logo + version, bottom-right, low opacity.
@@ -293,15 +309,39 @@ TSharedRef<SWidget> SHaybaMCPMainPanel::BuildSidebarItem(EHaybaPanel Panel, cons
         return FOptionalSize(20.f);
     };
 
+    // Which destination is current. Nothing marked the active item at all --
+    // five identical icons, no way to tell where you were. The IA is explicit:
+    // "Ochre is reserved for meaning: active destination, pending approval,
+    // unsaved capture, or a rule needing attention."
+    auto IsActive = [this, Panel]() { return CurrentPanel == Panel; };
+
     return SNew(SButton)
         .ButtonStyle(FAppStyle::Get(), "HoverHintOnly")
-        .ContentPadding(FMargin(4.f, 5.f))
+        .ContentPadding(FMargin(0.f, 5.f))
         .HAlign(HAlign_Fill)
         .ToolTipText(Label)
         .OnClicked(this, &SHaybaMCPMainPanel::OnSidebarClick, Panel)
         [
             SNew(SHorizontalBox)
+            // A 2px ochre rail down the left edge of the active item. Carries
+            // the selection at any sidebar width, including compact, where a
+            // label tint would have nothing to tint.
+            + SHorizontalBox::Slot().AutoWidth()
+            [
+                SNew(SBox).WidthOverride(2.f)
+                [
+                    SNew(SImage)
+                    .Image(FAppStyle::Get().GetBrush("WhiteBrush"))
+                    .ColorAndOpacity_Lambda([IsActive]()
+                    {
+                        return IsActive()
+                            ? FSlateColor(FHaybaMCPStyle::Colour("Hayba.Color.Accent.Ochre"))
+                            : FSlateColor(FLinearColor::Transparent);
+                    })
+                ]
+            ]
             + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).HAlign(HAlign_Center)
+            .Padding(4.f, 0.f, 0.f, 0.f)
             [
                 SNew(SBox)
                 .WidthOverride_Lambda(IconSize)
@@ -313,6 +353,14 @@ TSharedRef<SWidget> SHaybaMCPMainPanel::BuildSidebarItem(EHaybaPanel Panel, cons
                 SNew(STextBlock)
                 .TextStyle(&FAppStyle::Get().GetWidgetStyle<FTextBlockStyle>("NormalText"))
                 .Text(Label)
+                // The active label reads primary, the rest secondary -- the
+                // rail does the marking, this does the ranking.
+                .ColorAndOpacity_Lambda([IsActive]()
+                {
+                    return IsActive()
+                        ? FSlateColor(FHaybaMCPStyle::Colour("Hayba.Color.Text.Primary"))
+                        : FSlateColor(FHaybaMCPStyle::Colour("Hayba.Color.Text.Secondary"));
+                })
                 .Visibility_Lambda([this]()
                 {
                     return IsSidebarCompact() ? EVisibility::Collapsed : EVisibility::Visible;
