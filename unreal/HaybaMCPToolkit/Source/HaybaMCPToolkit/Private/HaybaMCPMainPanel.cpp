@@ -30,43 +30,85 @@
 
 namespace
 {
+    // Destination labels: the five nouns plus the gear. The old tab names live
+    // on as section labels below.
     FText PanelLabel(EHaybaPanel P)
     {
         switch (P)
         {
-            case EHaybaPanel::Chat:       return NSLOCTEXT("Hayba", "Tab.Chat",       "Chat");
-            case EHaybaPanel::MCP:        return NSLOCTEXT("Hayba", "Tab.MCP",        "MCP");
-            case EHaybaPanel::Slivers:    return NSLOCTEXT("Hayba", "Tab.Slivers",    "Slivers");
-            case EHaybaPanel::ToolStream: return NSLOCTEXT("Hayba", "Tab.ToolStream", "Tool Stream");
-            case EHaybaPanel::SceneMap:   return NSLOCTEXT("Hayba", "Tab.SceneMap",   "Scene Map");
-            case EHaybaPanel::Plan:       return NSLOCTEXT("Hayba", "Tab.Plan",       "Plan");
-            case EHaybaPanel::Diff:       return NSLOCTEXT("Hayba", "Tab.Diff",       "Diff");
-            case EHaybaPanel::Validation: return NSLOCTEXT("Hayba", "Tab.Validation", "Validation");
-            case EHaybaPanel::Memory:     return NSLOCTEXT("Hayba", "Tab.Library",     "Library");
-            case EHaybaPanel::Lessons:    return NSLOCTEXT("Hayba", "Tab.Lessons",     "Lessons");
-            case EHaybaPanel::Settings:   return NSLOCTEXT("Hayba", "Tab.Settings",   "Settings");
+            case EHaybaPanel::World:    return NSLOCTEXT("Hayba", "Nav.World",    "World");
+            case EHaybaPanel::Library:  return NSLOCTEXT("Hayba", "Nav.Library",  "Library");
+            case EHaybaPanel::Rules:    return NSLOCTEXT("Hayba", "Nav.Rules",    "Rules");
+            case EHaybaPanel::Activity: return NSLOCTEXT("Hayba", "Nav.Activity", "Activity");
+            case EHaybaPanel::Chat:     return NSLOCTEXT("Hayba", "Nav.Chat",     "Chat");
+            case EHaybaPanel::Settings: return NSLOCTEXT("Hayba", "Nav.Settings", "Settings");
         }
         return FText::GetEmpty();
     }
 
+    // The enum name, the label and the icon key now agree. They previously
+    // disagreed badly enough that Memory drew the Library icon while Lessons
+    // drew Memory's.
     FName PanelIcon(EHaybaPanel P)
     {
         switch (P)
         {
-            case EHaybaPanel::Chat:       return TEXT("Hayba.Icon.Chat");
-            case EHaybaPanel::MCP:        return TEXT("Hayba.Icon.MCP");
-            case EHaybaPanel::Slivers:    return TEXT("Hayba.Icon.Slivers");
-            case EHaybaPanel::ToolStream: return TEXT("Hayba.Icon.ToolStream");
-            case EHaybaPanel::SceneMap:   return TEXT("Hayba.Icon.SceneMap");
-            case EHaybaPanel::Plan:       return TEXT("Hayba.Icon.Plan");
-            case EHaybaPanel::Diff:       return TEXT("Hayba.Icon.Diff");
-            case EHaybaPanel::Validation: return TEXT("Hayba.Icon.Validation");
-            case EHaybaPanel::Memory:     return TEXT("Hayba.Icon.Library"); // Library — custom icon
-            case EHaybaPanel::Lessons:    return TEXT("Hayba.Icon.Memory");
-            case EHaybaPanel::Settings:   return TEXT("Hayba.Icon.Settings");
+            case EHaybaPanel::World:    return TEXT("Hayba.Icon.World");
+            case EHaybaPanel::Library:  return TEXT("Hayba.Icon.Library");
+            case EHaybaPanel::Rules:    return TEXT("Hayba.Icon.Rules");
+            case EHaybaPanel::Activity: return TEXT("Hayba.Icon.Activity");
+            case EHaybaPanel::Chat:     return TEXT("Hayba.Icon.Chat");
+            case EHaybaPanel::Settings: return TEXT("Hayba.Icon.Settings");
         }
         return NAME_None;
     }
+
+    FText SectionLabel(EHaybaSection S)
+    {
+        switch (S)
+        {
+            case EHaybaSection::Chat:       return NSLOCTEXT("Hayba", "Sec.Chat",       "Chat");
+            case EHaybaSection::MCP:        return NSLOCTEXT("Hayba", "Sec.MCP",        "Tools");
+            case EHaybaSection::Slivers:    return NSLOCTEXT("Hayba", "Sec.Recipes",    "Recipes");
+            case EHaybaSection::ToolStream: return NSLOCTEXT("Hayba", "Sec.Stream",     "Live");
+            case EHaybaSection::SceneMap:   return NSLOCTEXT("Hayba", "Sec.SceneMap",   "Map");
+            case EHaybaSection::Plan:       return NSLOCTEXT("Hayba", "Sec.Plan",       "Plans");
+            case EHaybaSection::Diff:       return NSLOCTEXT("Hayba", "Sec.Diff",       "Changes");
+            case EHaybaSection::Validation: return NSLOCTEXT("Hayba", "Sec.Validation", "Verdicts");
+            case EHaybaSection::Memory:     return NSLOCTEXT("Hayba", "Sec.Profiles",   "Profiles");
+            case EHaybaSection::Lessons:    return NSLOCTEXT("Hayba", "Sec.Lessons",    "Lessons");
+            case EHaybaSection::Settings:   return NSLOCTEXT("Hayba", "Sec.Settings",   "Connection");
+        }
+        return FText::GetEmpty();
+    }
+}
+
+// Which views each destination owns. Every one of the eleven sections appears
+// exactly once, so this moves navigation without hiding anything: the three
+// "what is the agent doing" tabs become Activity's views, the two "what must be
+// true" tabs become Rules', and so on.
+TArray<EHaybaSection> SHaybaMCPMainPanel::SectionsFor(EHaybaPanel Panel)
+{
+    switch (Panel)
+    {
+        case EHaybaPanel::World:    return { EHaybaSection::SceneMap };
+        case EHaybaPanel::Library:  return { EHaybaSection::Memory, EHaybaSection::Slivers };
+        case EHaybaPanel::Rules:    return { EHaybaSection::Validation, EHaybaSection::Lessons };
+        case EHaybaPanel::Activity: return { EHaybaSection::ToolStream, EHaybaSection::Plan, EHaybaSection::Diff };
+        case EHaybaPanel::Chat:     return { EHaybaSection::Chat };
+        case EHaybaPanel::Settings: return { EHaybaSection::Settings, EHaybaSection::MCP };
+    }
+    return {};
+}
+
+EHaybaPanel SHaybaMCPMainPanel::PanelForSection(EHaybaSection Section)
+{
+    for (EHaybaPanel P : { EHaybaPanel::World, EHaybaPanel::Library, EHaybaPanel::Rules,
+                           EHaybaPanel::Activity, EHaybaPanel::Chat, EHaybaPanel::Settings })
+    {
+        if (SectionsFor(P).Contains(Section)) return P;
+    }
+    return EHaybaPanel::Chat;
 }
 
 void SHaybaMCPMainPanel::Construct(const FArguments& InArgs, FHaybaMCPModule* InModule)
@@ -104,7 +146,7 @@ void SHaybaMCPMainPanel::Construct(const FArguments& InArgs, FHaybaMCPModule* In
                 [
                     SAssignNew(ContentArea, SBox)
                     .Padding(FMargin(10.f, 8.f))
-                    [ BuildPanelContent(EHaybaPanel::Chat) ]
+                    [ BuildPanelContent(EHaybaSection::Chat) ]
                 ]
             ]
             // Watermark — tiny logo + version, bottom-right, low opacity.
@@ -173,14 +215,13 @@ TSharedRef<SWidget> SHaybaMCPMainPanel::BuildSidebar()
 {
     SAssignNew(Sidebar, SVerticalBox);
 
-    // Chat is always the first sidebar item and the default active view.
-    TArray<EHaybaPanel> Items;
-    Items.Add(EHaybaPanel::Chat);
-    Items.Append({
-        EHaybaPanel::MCP, EHaybaPanel::Slivers, EHaybaPanel::ToolStream, EHaybaPanel::SceneMap,
-        EHaybaPanel::Plan, EHaybaPanel::Diff, EHaybaPanel::Validation,
-        EHaybaPanel::Memory, EHaybaPanel::Lessons, EHaybaPanel::Settings,
-    });
+    // Five destinations plus the gear, ordered the way the work flows: ask,
+    // watch it happen, check it against the rules, look at the world it
+    // changed, reach for what to place next.
+    TArray<EHaybaPanel> Items = {
+        EHaybaPanel::Chat, EHaybaPanel::Activity, EHaybaPanel::Rules,
+        EHaybaPanel::World, EHaybaPanel::Library, EHaybaPanel::Settings,
+    };
     for (EHaybaPanel P : Items)
     {
         Sidebar->AddSlot().AutoHeight().Padding(FMargin(4.f, 1.f))
@@ -251,20 +292,88 @@ FReply SHaybaMCPMainPanel::OnSidebarClick(EHaybaPanel Panel)
 
 void SHaybaMCPMainPanel::ShowPanel(EHaybaPanel Panel)
 {
+    const TArray<EHaybaSection> Sections = SectionsFor(Panel);
+    if (Sections.Num() == 0) return;
+
+    // Returning to a destination lands on the view you left it on, not on its
+    // first one -- switching to Chat and back should not lose your place in
+    // Activity.
+    const EHaybaSection Target = Sections.Contains(CurrentSection) ? CurrentSection : Sections[0];
     CurrentPanel = Panel;
+    ShowSection(Target);
+}
+
+void SHaybaMCPMainPanel::ShowSection(EHaybaSection Section)
+{
+    CurrentSection = Section;
+    CurrentPanel = PanelForSection(Section);
     if (!ContentArea.IsValid()) return;
 
-    // Cache-on-first-build: heavy widgets (CEF for Scene Map, Memory SQLite
-    // hookups) keep their state across tab switches instead of re-initializing.
-    if (TSharedRef<SWidget>* Cached = PanelCache.Find(Panel))
+    // Cache-on-first-build: heavy widgets (CEF for the Map, the Library's file
+    // reads) keep their state across switches instead of re-initializing.
+    TSharedRef<SWidget> Content = SNullWidget::NullWidget;
+    if (TSharedRef<SWidget>* Cached = PanelCache.Find(Section))
     {
-        ContentArea->SetContent(*Cached);
-        if (TFunction<void()>* Hook = PanelRefreshHook.Find(Panel)) (*Hook)();
+        Content = *Cached;
+        if (TFunction<void()>* Hook = PanelRefreshHook.Find(Section)) (*Hook)();
+    }
+    else
+    {
+        Content = BuildPanelContent(Section);
+        PanelCache.Add(Section, Content);
+    }
+
+    // A destination with one view needs no tab strip; showing a single tab
+    // would be chrome that explains nothing.
+    const TArray<EHaybaSection> Siblings = SectionsFor(CurrentPanel);
+    if (Siblings.Num() <= 1)
+    {
+        ContentArea->SetContent(Content);
         return;
     }
-    TSharedRef<SWidget> Content = BuildPanelContent(Panel);
-    PanelCache.Add(Panel, Content);
-    ContentArea->SetContent(Content);
+
+    ContentArea->SetContent(
+        SNew(SVerticalBox)
+        + SVerticalBox::Slot().AutoHeight()
+        [ BuildSectionTabs(CurrentPanel) ]
+        + SVerticalBox::Slot().FillHeight(1.f)
+        [ Content ]
+    );
+}
+
+FReply SHaybaMCPMainPanel::OnSectionClick(EHaybaSection Section)
+{
+    ShowSection(Section);
+    return FReply::Handled();
+}
+
+TSharedRef<SWidget> SHaybaMCPMainPanel::BuildSectionTabs(EHaybaPanel Panel)
+{
+    TSharedRef<SHorizontalBox> Row = SNew(SHorizontalBox);
+    for (EHaybaSection S : SectionsFor(Panel))
+    {
+        const bool bActive = (S == CurrentSection);
+        Row->AddSlot().AutoWidth().Padding(FMargin(0.f, 0.f, 6.f, 0.f))
+        [
+            SNew(SButton)
+            .ButtonStyle(FAppStyle::Get(), "SimpleButton")
+            .OnClicked(this, &SHaybaMCPMainPanel::OnSectionClick, S)
+            .ContentPadding(FMargin(10.f, 4.f))
+            [
+                SNew(STextBlock)
+                .Text(SectionLabel(S))
+                .TextStyle(&FHaybaMCPStyle::Get().GetWidgetStyle<FTextBlockStyle>("Hayba.Text.TabLabel"))
+                // Ochre marks the active view, which is one of the four things
+                // that token is reserved for.
+                .ColorAndOpacity(FSlateColor(FHaybaMCPStyle::Colour(
+                    bActive ? "Hayba.Color.Accent.Ochre" : "Hayba.Color.Text.Muted")))
+            ]
+        ];
+    }
+    return SNew(SBorder)
+        .BorderImage(FAppStyle::GetBrush("NoBorder"))
+        .Padding(FMargin(10.f, 6.f, 10.f, 2.f))
+        [ Row ];
 }
 
 void SHaybaMCPMainPanel::ShowOnboardingFromSplash()
@@ -274,9 +383,9 @@ void SHaybaMCPMainPanel::ShowOnboardingFromSplash()
     ContentArea->SetContent(SNew(SHaybaMCPOnboardingWidget, DummyOwner));
 }
 
-TSharedRef<SWidget> SHaybaMCPMainPanel::BuildPanelContent(EHaybaPanel Panel)
+TSharedRef<SWidget> SHaybaMCPMainPanel::BuildPanelContent(EHaybaSection Section)
 {
-    auto Heading = [this, Panel](const FText& Sub)
+    auto Heading = [this, Section](const FText& Sub)
     {
         // Compact, single-row heading: panel name + muted subtitle inline.
         // Sized to match Details / Outliner section headers.
@@ -285,41 +394,41 @@ TSharedRef<SWidget> SHaybaMCPMainPanel::BuildPanelContent(EHaybaPanel Panel)
             [
                 SNew(STextBlock)
                 .TextStyle(&FAppStyle::Get().GetWidgetStyle<FTextBlockStyle>("DetailsView.CategoryTextStyle"))
-                .Text(PanelLabel(Panel))
+                .Text(SectionLabel(Section))
             ]
             + SHorizontalBox::Slot().FillWidth(1.f).VAlign(VAlign_Center).Padding(10.f, 0.f, 0.f, 0.f)
             [
                 SNew(STextBlock)
-                .ColorAndOpacity(FSlateColor(FLinearColor(0.55f, 0.57f, 0.65f)))
+                .ColorAndOpacity(FSlateColor(FHaybaMCPStyle::Colour("Hayba.Color.Text.Muted")))
                 .Text(Sub)
             ];
     };
 
     TSharedPtr<SWidget> Body;
     FText Subtitle;
-    switch (Panel)
+    switch (Section)
     {
-        case EHaybaPanel::Chat:
+        case EHaybaSection::Chat:
             Subtitle = NSLOCTEXT("Hayba", "Chat.Sub", "Talk to your AI in the editor.");
             // No accent stripe, no wrapping border — the Chat panel owns its
             // own layout and matches UE5's flat panel aesthetic.
             Body = SNew(SHaybaMCPChatPanel, Module).MainPanel(this);
             break;
-        case EHaybaPanel::MCP:
+        case EHaybaSection::MCP:
             Subtitle = NSLOCTEXT("Hayba", "MCP.Sub", "Pick which tools your AI agent can see.");
             Body = SNew(SHaybaMCPCapabilitiesPanel).Module(Module);
             break;
-        case EHaybaPanel::Slivers:
+        case EHaybaSection::Slivers:
         {
             Subtitle = NSLOCTEXT("Hayba", "Slivers.Sub",
                 "Deterministic abstractions — pick a sliver, set its parameters, run it.");
             auto Panel2 = SNew(SSliversPanel);
             // Re-shown from cache → re-scan the installed slivers directory.
-            PanelRefreshHook.Add(EHaybaPanel::Slivers, [Panel2]() { Panel2->Refresh(); });
+            PanelRefreshHook.Add(EHaybaSection::Slivers, [Panel2]() { Panel2->Refresh(); });
             Body = Panel2;
             break;
         }
-        case EHaybaPanel::ToolStream:
+        case EHaybaSection::ToolStream:
         {
             Subtitle = NSLOCTEXT("Hayba", "Stream.Sub", "Live trace of every tool call.");
             auto Panel2 = SNew(SHaybaMCPToolStreamPanel);
@@ -327,7 +436,7 @@ TSharedRef<SWidget> SHaybaMCPMainPanel::BuildPanelContent(EHaybaPanel Panel)
             Body = Panel2;
             break;
         }
-        case EHaybaPanel::SceneMap:
+        case EHaybaSection::SceneMap:
         {
             Subtitle = NSLOCTEXT("Hayba", "Map.Sub",
                 "Cognitive map of the level — cells labelled by dominant content. Click to select, drag to pan, wheel to zoom.");
@@ -363,7 +472,7 @@ TSharedRef<SWidget> SHaybaMCPMainPanel::BuildPanelContent(EHaybaPanel Panel)
                 GetCount  = [N]() { return N->GetCellCount(); };
             }
             // Re-shown from cache → re-scan the world.
-            PanelRefreshHook.Add(EHaybaPanel::SceneMap, DoRefresh);
+            PanelRefreshHook.Add(EHaybaSection::SceneMap, DoRefresh);
 
             Body = SNew(SVerticalBox)
                 + SVerticalBox::Slot().AutoHeight().Padding(4.f, 4.f, 4.f, 4.f)
@@ -421,7 +530,7 @@ TSharedRef<SWidget> SHaybaMCPMainPanel::BuildPanelContent(EHaybaPanel Panel)
                 ];
             break;
         }
-        case EHaybaPanel::Plan:
+        case EHaybaSection::Plan:
         {
             Subtitle = NSLOCTEXT("Hayba", "Plan.Sub", "AI-proposed plan steps before destructive actions.");
             auto Panel2 = SNew(SHaybaMCPPlanPanel);
@@ -429,7 +538,7 @@ TSharedRef<SWidget> SHaybaMCPMainPanel::BuildPanelContent(EHaybaPanel Panel)
             Body = Panel2;
             break;
         }
-        case EHaybaPanel::Diff:
+        case EHaybaSection::Diff:
         {
             Subtitle = NSLOCTEXT("Hayba", "Diff.Sub", "Before / after for every destructive op.");
             auto Panel2 = SNew(SHaybaMCPDiffPanel);
@@ -437,17 +546,17 @@ TSharedRef<SWidget> SHaybaMCPMainPanel::BuildPanelContent(EHaybaPanel Panel)
             Body = Panel2;
             break;
         }
-        case EHaybaPanel::Validation:
+        case EHaybaSection::Validation:
         {
             Subtitle = NSLOCTEXT("Hayba", "Val.Sub",
                 "Runtime validator: post-condition findings and AI-floppy hints. Findings persist in .scratch/validator-history.jsonl.");
             auto Panel2 = SNew(SHaybaValidatorPanel);
             // Re-shown from cache → re-read the JSONL file.
-            PanelRefreshHook.Add(EHaybaPanel::Validation, [Panel2]() { Panel2->Refresh(); });
+            PanelRefreshHook.Add(EHaybaSection::Validation, [Panel2]() { Panel2->Refresh(); });
             Body = Panel2;
             break;
         }
-        case EHaybaPanel::Memory:
+        case EHaybaSection::Memory:
         {
             Subtitle = NSLOCTEXT("Hayba", "Lib.Sub", "Semantic Library — every profiled asset, its masks/constraints, and Open-in-Studio.");
             auto Panel2 = SNew(SHaybaMCPMemoryPanel);
@@ -455,13 +564,13 @@ TSharedRef<SWidget> SHaybaMCPMainPanel::BuildPanelContent(EHaybaPanel Panel)
             Body = Panel2;
             break;
         }
-        case EHaybaPanel::Lessons:
+        case EHaybaSection::Lessons:
         {
             Subtitle = NSLOCTEXT("Hayba", "Lessons.Sub", "Accumulated [[slug]] lessons that explain why constraints exist.");
             Body = SNew(SHaybaLessonsPanel);
             break;
         }
-        case EHaybaPanel::Settings:
+        case EHaybaSection::Settings:
         {
             Subtitle = NSLOCTEXT("Hayba", "Settings.Sub", "Configuration for connection, AI backend, sidecar, plan mode, and onboarding.");
             Body = SNew(SHaybaMCPSettingsPanel).MainPanel(this);

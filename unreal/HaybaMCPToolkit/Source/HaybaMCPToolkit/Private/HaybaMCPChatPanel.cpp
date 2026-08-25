@@ -57,7 +57,7 @@ namespace
 
     void OpenSettings(SHaybaMCPMainPanel* Main)
     {
-        if (Main) Main->ShowPanel(EHaybaPanel::Settings);
+        if (Main) Main->ShowSection(EHaybaSection::Settings);
         else      Toast(LOCTEXT("Footer.OpenSettings", "Open the Settings tab from the sidebar."));
     }
 }
@@ -1147,7 +1147,7 @@ void SHaybaMCPChatPanel::HandlePlanRequest(const FHaybaChatPlanRequest& Plan)
 
     // Route the user to the Plan tab so the Approve/Reject bar is in front of
     // them. This does not approve anything.
-    if (MainPanel) MainPanel->ShowPanel(EHaybaPanel::Plan);
+    if (MainPanel) MainPanel->ShowSection(EHaybaSection::Plan);
 
     Toast(LOCTEXT("PlanPause", "Action needs approval — review it in the Plan tab."));
 }
@@ -1167,7 +1167,7 @@ void SHaybaMCPChatPanel::HandlePlanApproved()
     BeginInProgressBubble();
     AgentClient->ApproveAndResume();
 
-    if (MainPanel) MainPanel->ShowPanel(EHaybaPanel::Chat);
+    if (MainPanel) MainPanel->ShowSection(EHaybaSection::Chat);
 }
 
 void SHaybaMCPChatPanel::HandlePlanRejected()
