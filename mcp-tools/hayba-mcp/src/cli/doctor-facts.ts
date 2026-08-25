@@ -2,8 +2,10 @@
 // judgement in doctor.ts stays testable without a UE install or a network.
 
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import type { DoctorFacts } from './doctor.js';
+import { CLIENT_SPECS } from './configure.js';
+import { configPathFor } from './configure-facts.js';
 
 /** Find HaybaMCPToolkit under <project>/Plugins, at any nesting depth of one. */
 export function findPluginDir(projectPath: string): string | null {
@@ -110,9 +112,14 @@ export async function gatherFacts(opts: {
   port: number;
   here: string;
   send: (cmd: string, params: Record<string, unknown>) => Promise<unknown>;
+  /** Where to look for client configs. Defaults to the cwd, which is where a
+   *  user running `doctor` on their project almost always is. */
+  projectRoot?: string;
 }): Promise<DoctorFacts> {
   const pluginDir = opts.projectPath ? findPluginDir(opts.projectPath) : null;
   const probe = await probeEditor(opts.send);
+  const clientSearchRoot = resolve(opts.projectRoot ?? process.cwd());
+  const clients = findConfiguredClients(clientSearchRoot);
   return {
     projectPath: opts.projectPath,
     pluginDir,
@@ -124,5 +131,37 @@ export async function gatherFacts(opts: {
     serverVersion: readServerVersion(opts.here),
     reportedPluginVersion: probe.pluginVersion,
     reportedProtocolVersion: probe.protocolVersion,
+    configuredClients: clients.configured,
+    detectedClients: clients.detected,
+    clientSearchRoot,
   };
+}
+
+/** Which detected clients already name this server in their config. */
+export function findConfiguredClients(projectRoot: string): {
+  configured: string[];
+  detected: string[];
+} {
+  // Imported lazily-ish at module scope is fine here -- both are pure-ish and
+  // cheap, and doctor must keep working when none of this exists.
+  const detected: string[] = [];
+  const configured: string[] = [];
+  try {
+    for (const spec of CLIENT_SPECS) {
+      const path = configPathFor(spec, projectRoot);
+      if (!existsSync(path)) continue;
+      detected.push(spec.id);
+      try {
+        const j = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
+        const map = j[spec.serversKey];
+        if (typeof map === 'object' && map !== null && 'hayba' in map) {
+          configured.push(spec.id);
+        }
+      } catch {
+        // A config we cannot parse is a config we cannot vouch for. It counts
+        // as detected but not configured, which is the honest answer.
+      }
+    }
+  } catch { /* never let diagnosis fail because diagnosis failed */ }
+  return { configured, detected };
 }

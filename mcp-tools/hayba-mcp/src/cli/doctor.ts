@@ -49,6 +49,15 @@ export interface DoctorFacts {
   /** Protocol version the editor reported. Null when it is old enough not to
    *  have the field, which is itself a mismatch. */
   reportedProtocolVersion: number | null;
+  /** Clients whose config already names this server. */
+  configuredClients: string[];
+  /** Clients detected on this machine, configured or not. */
+  detectedClients: string[];
+  /** The directory the client search actually looked in. Reported verbatim:
+   *  project-scoped configs live next to a project, so running doctor from
+   *  the wrong directory looks exactly like a missing config, and naming the
+   *  path is the difference between a 5-second fix and a bug report. */
+  clientSearchRoot: string;
 }
 
 function checkPlugin(f: DoctorFacts): CheckResult {
@@ -156,8 +165,54 @@ function checkVersions(f: DoctorFacts): CheckResult {
   };
 }
 
+/**
+ * Is any editor actually pointed at this server?
+ *
+ * The other four checks can all pass while nothing works, because they only
+ * examine the UE half. If no client config names this server, the user's
+ * experience is an assistant that simply has no Hayba tools — with no error
+ * anywhere, because nothing failed. Nothing was ever asked to start.
+ *
+ * This is the failure `hayba-cli configure` exists to prevent, so the fix is
+ * a command rather than a paragraph about where the JSON lives.
+ */
+function checkClientConfigured(f: DoctorFacts): CheckResult {
+  if (f.configuredClients.length > 0) {
+    return {
+      name: 'client configured',
+      status: 'ok',
+      detail: f.configuredClients.join(', '),
+    };
+  }
+  if (f.detectedClients.length === 0) {
+    return {
+      name: 'client configured',
+      status: 'unknown',
+      detail: `no MCP client config found — searched ${f.clientSearchRoot} for project-scoped configs, and this machine's user config`,
+      fix: 'if that is the wrong directory, re-run from your project root; otherwise name a client: hayba-cli configure --client claude-code',
+    };
+  }
+  return {
+    name: 'client configured',
+    status: 'problem',
+    detail:
+      `found ${f.detectedClients.join(', ')} (searched ${f.clientSearchRoot} for ` +
+      `project-scoped configs, plus this machine's user config), but none has an ` +
+      'entry for this server — the assistant will show no Hayba tools, and report no error',
+    fix: `run: hayba-cli configure --project ${f.clientSearchRoot}`,
+  };
+}
+
 export function diagnose(f: DoctorFacts): CheckResult[] {
-  return [checkPlugin(f), checkDependencies(f), checkEditor(f), checkVersions(f)];
+  // Client check first: it is the only one that can be true while the editor
+  // is perfectly healthy, and the only one whose failure is completely silent.
+  return [
+    checkClientConfigured(f),
+    checkPlugin(f),
+    checkDependencies(f),
+    checkEditor(f),
+    checkVersions(f),
+  ];
 }
 
 /** Exit code: 0 when nothing is broken. `unknown` is not failure — it means a

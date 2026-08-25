@@ -12,6 +12,9 @@ const healthy: DoctorFacts = {
   serverVersion: '1.0.0',
   reportedPluginVersion: '1.0.0',
   reportedProtocolVersion: 1,
+  configuredClients: ['claude-code'],
+  detectedClients: ['claude-code'],
+  clientSearchRoot: 'D:/Proj',
 };
 
 const facts = (over: Partial<DoctorFacts> = {}): DoctorFacts => ({ ...healthy, ...over });
@@ -139,5 +142,67 @@ describe('the report', () => {
   it('ends by saying whether anything needs doing', () => {
     expect(formatReport(diagnose(healthy))).toMatch(/Everything checked out/);
     expect(formatReport(diagnose(facts({ editorReachable: false })))).toMatch(/needs fixing/);
+  });
+});
+
+describe('client configuration', () => {
+  it('is ok when a client already names this server', () => {
+    expect(byName(facts())['client configured']?.status).toBe('ok');
+  });
+
+  it('is a PROBLEM when clients exist but none is configured', () => {
+    const r = byName(facts({ configuredClients: [], detectedClients: ['cursor', 'vscode'] }))[
+      'client configured'
+    ];
+    expect(r?.status).toBe('problem');
+    expect(r?.fix).toContain('hayba-cli configure');
+  });
+
+  it('says the failure is silent, because that is the whole difficulty', () => {
+    // Someone reading this report has an assistant showing no Hayba tools and
+    // no error anywhere. The detail has to name that experience, or they will
+    // keep looking for a stack trace that does not exist.
+    const r = byName(facts({ configuredClients: [], detectedClients: ['cursor'] }))[
+      'client configured'
+    ];
+    expect(r?.detail).toContain('no error');
+  });
+
+  it('names the directory it searched, in both failure modes', () => {
+    // Running doctor from the wrong directory is indistinguishable from a
+    // missing config unless the report says where it looked.
+    const none = byName(facts({ configuredClients: [], detectedClients: [], clientSearchRoot: 'D:/Wrong' }))[
+      'client configured'
+    ];
+    expect(none?.detail).toContain('D:/Wrong');
+    const some = byName(facts({ configuredClients: [], detectedClients: ['cursor'], clientSearchRoot: 'D:/Wrong' }))[
+      'client configured'
+    ];
+    expect(some?.detail).toContain('D:/Wrong');
+    expect(some?.fix).toContain('D:/Wrong');
+  });
+
+  it('is UNKNOWN, not a problem, when no client is detected at all', () => {
+    // Running doctor from the wrong directory is not a broken install.
+    const r = byName(facts({ configuredClients: [], detectedClients: [] }))['client configured'];
+    expect(r?.status).toBe('unknown');
+    expect(r?.fix).toContain('--client');
+  });
+
+  it('catches the failure every other check declares healthy', () => {
+    // This is the case that justifies the check existing: plugin present,
+    // dependencies fine, editor answering, versions matched -- and the user
+    // still has nothing, because no client was ever told to start the server.
+    const f = facts({ configuredClients: [], detectedClients: ['claude-code'] });
+    const results = diagnose(f);
+    const others = results.filter((r) => r.name !== 'client configured');
+    expect(others.every((r) => r.status === 'ok')).toBe(true);
+    expect(exitCodeFor(results)).not.toBe(0);
+  });
+
+  it('is reported first', () => {
+    // It is the cheapest to fix and the most likely to be the answer, so it
+    // should not be the fifth thing someone reads.
+    expect(diagnose(facts())[0]?.name).toBe('client configured');
   });
 });
