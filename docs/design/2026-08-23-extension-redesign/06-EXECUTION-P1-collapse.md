@@ -173,3 +173,42 @@ Coding cannot patch it) and the editor was running.
 - Then `%APPDATA%/Hayba/slivers` → `.../recipes` with a one-time migration,
   moving both halves together, and the `/sliver/*` route alias can retire a
   release later.
+
+
+### C++ half of step 6 — written, NOT COMPILED (`9361d128`, `20c52bb3`)
+
+28 files renamed, `Private|Public/Slivers` → `Recipes`, every identifier and
+user-visible string with them.
+
+`Config/DefaultHaybaMCPToolkit.ini` carries class, enum and property
+redirects for `UHaybaSliverSettings` → `UHaybaRecipeSettings`. File name and
+entry format were taken from a shipped engine plugin
+(`Engine/Plugins/2D/Paper2D/Config/DefaultPaper2D.ini`) rather than from
+memory, because getting the location wrong fails silently — the section is
+simply never found and the user's settings revert to defaults.
+
+Fixed a bug the rename exposed rather than caused: `RecipeFilePath` returned
+only the new suffix, so a recipe installed before the rename would show in the
+list and then fail to export or delete. It now resolves whichever spelling is
+on disk, and the delete prompt names the real file.
+
+**Before this can ship, someone must:**
+
+1. Close the editor (class renames change layout — Live Coding cannot patch
+   them) and run a full rebuild.
+2. Launch, and confirm a previously-configured `McpHttpBaseUrl` still reads
+   back. That is the only way to know the CoreRedirects actually took; a
+   silent revert to defaults is what failure looks like.
+3. Confirm the Recipes panel still lists a recipe installed under the old
+   `.sliver.json` name, and that export and delete both find it.
+
+Until then the plugin build on this branch is unverified. The TypeScript side
+is unaffected and green.
+
+### Still open after step 6
+
+- Move `%APPDATA%/Hayba/slivers` → `.../recipes`. Both halves must move in one
+  commit, with a one-time migration; `recipes/loader.test.ts` pins the current
+  location and will fail loudly if only one side moves.
+- Retire the `/sliver/*` route alias and the `hayba_sliver_*` tool aliases one
+  release after this one ships.
