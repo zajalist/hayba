@@ -53,8 +53,17 @@ export class RecipeLoader {
     this.specs.clear();
     this.loadErrors = [];
     if (!existsSync(this.userDir)) return;
-    for (const name of readdirSync(this.userDir)) {
-      if (!isSpecFile(name)) continue;
+
+    // A library part-way through the rename holds both spellings of the same
+    // recipe. The map would keep whichever readdir happened to return last,
+    // which is not a decision anyone made -- so read the current spelling
+    // first and let it win explicitly.
+    const names = readdirSync(this.userDir)
+      .filter(isSpecFile)
+      .sort((a, b) => Number(a.endsWith(LEGACY_SUFFIX)) - Number(b.endsWith(LEGACY_SUFFIX)));
+
+    const claimed = new Set<string>();
+    for (const name of names) {
       const fullPath = join(this.userDir, name);
       try {
         const raw = readFileSync(fullPath, 'utf8');
@@ -64,6 +73,8 @@ export class RecipeLoader {
           this.loadErrors.push(`${name}: ${parsed.reason}`);
           continue;
         }
+        if (claimed.has(parsed.spec.id)) continue;
+        claimed.add(parsed.spec.id);
         this.specs.set(parsed.spec.id, parsed.spec);
       } catch (e) {
         this.loadErrors.push(`${name}: ${e instanceof Error ? e.message : String(e)}`);

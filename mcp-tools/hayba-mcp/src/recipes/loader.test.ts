@@ -73,6 +73,22 @@ describe('RecipeLoader', () => {
     expect(loader.errors()[0]).toMatch(/bad\.recipe\.json/);
   });
 
+  it('lists a half-migrated recipe once, preferring the current spelling', () => {
+    // A real library mid-rename holds both spellings of the same recipe.
+    // Without a rule the map keeps whichever readdir returned last, which is
+    // nobody's decision.
+    writeFileSync(join(userDir, 'com.test.demo.sliver.json'),
+      JSON.stringify({ ...validSpec, title: 'Old Name' }));
+    writeFileSync(join(userDir, 'com.test.demo.recipe.json'),
+      JSON.stringify({ ...validSpec, title: 'Current Name' }));
+
+    const loader = new RecipeLoader({ userDir, bundledDir });
+    loader.reload();
+
+    expect(loader.list().length).toBe(1);
+    expect(loader.list()[0]!.title).toBe('Current Name');
+  });
+
   it('still loads specs named the old way', () => {
     // Recipes were called slivers. A user upgrading has a directory full of
     // *.sliver.json and must not find their recipes gone.

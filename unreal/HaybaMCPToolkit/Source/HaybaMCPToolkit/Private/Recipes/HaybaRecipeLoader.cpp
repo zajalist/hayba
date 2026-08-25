@@ -60,6 +60,15 @@ void FHaybaRecipeLoader::Refresh(const FString& UserDir)
         if (!ParseHaybaRecipeSpec(Obj.ToSharedRef(), Spec, Err))
         { LoadErrors.Add(FString::Printf(TEXT("%s: %s"), *Name, *Err)); continue; }
 
+        // A library part-way through the rename holds both X.recipe.json and
+        // X.sliver.json for the same recipe, and Specs is a flat array -- so
+        // without this the panel lists every migrated recipe twice. The new
+        // spelling is read first, so first-wins is the precedence we want.
+        if (Specs.ContainsByPredicate([&Spec](const FHaybaRecipeSpec& S){ return S.Id == Spec.Id; }))
+        {
+            continue;
+        }
+
         Specs.Add(MoveTemp(Spec));
     }
 }
