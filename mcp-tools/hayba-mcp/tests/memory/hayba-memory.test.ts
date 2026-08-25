@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { HaybaMemory } from '../../../src/gaea/memory/hayba-memory.js';
+import { HaybaMemory } from '../../src/memory/hayba-memory.js';
 
 describe('HaybaMemory', () => {
   it('writes and queries shared blocks', () => {

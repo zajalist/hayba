@@ -1656,7 +1656,7 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
   },
 
   // ── Agent memory domain (issue #355) ──────────────────────────────────────
-  // Wraps HaybaMemory (src/gaea/memory/hayba-memory.ts), a SQLite-backed store
+  // Wraps HaybaMemory (src/memory/hayba-memory.ts), a SQLite-backed store
   // of small text blocks an agent writes and later recalls. Was fully
   // implemented, tested only by its own excluded test, and reachable by
   // nothing — see the issue for why it is being surfaced now.

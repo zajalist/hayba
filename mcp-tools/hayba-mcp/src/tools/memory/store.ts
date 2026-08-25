@@ -1,12 +1,12 @@
 // Lazy singleton wiring for the agent memory store (issue #355).
 //
-// HaybaMemory (src/gaea/memory/hayba-memory.ts) is a plain class with no
+// HaybaMemory (src/memory/hayba-memory.ts) is a plain class with no
 // opinion on where its DB file lives or when it's opened — this module is
 // the one place that decides both, so every memory_* tool shares one
 // connection instead of racing to open the file.
 import { mkdirSync, existsSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { HaybaMemory } from '../../gaea/memory/hayba-memory.js';
+import { HaybaMemory } from '../../memory/hayba-memory.js';
 import { config } from '../../config.js';
 
 let instance: HaybaMemory | null = null;

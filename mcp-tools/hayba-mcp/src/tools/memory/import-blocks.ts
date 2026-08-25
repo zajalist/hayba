@@ -3,7 +3,7 @@ import type { ToolHandler } from '../types.js';
 import type { HaybaToolMeta } from '../hayba-tool-meta.js';
 import { errorResult, okResult } from '../tool-result.js';
 import { getMemoryStore } from './store.js';
-import type { MemoryBlock, MemoryExport } from '../../gaea/memory/hayba-memory.js';
+import type { MemoryBlock, MemoryExport } from '../../memory/hayba-memory.js';
 
 export const meta: HaybaToolMeta = {
   cost: 'low',

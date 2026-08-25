@@ -1,4 +1,4 @@
-import type { SessionManager } from '../gaea/session.js';
+import type { SessionManager } from '../memory/session.js';
 import type { ToolResult } from './types.js';
 import type { HaybaConventions, PresetName } from '../conventions.js';
 import { getPreset, readConventions, writeGlobalConventions, writeProjectConventions } from '../conventions.js';
