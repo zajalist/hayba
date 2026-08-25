@@ -13,8 +13,8 @@ The number below is the one with a definition: commands declared in a
 | What | Count |
 |---|---|
 | Handler classes declaring commands | **35** |
-| Commands declared in C++ | **239** |
-| Commands described in `sidecar.json` | 154 |
+| Commands declared in C++ | **243** |
+| Commands described in `sidecar.json` | 158 |
 | …of those, marked agent-callable | 150 |
 
 _Every declared command is either described in `sidecar.json` or wrapped in TS._
@@ -153,7 +153,7 @@ registration list. Satellite-module handlers register themselves via
 | `legacy` | FHaybaMCPLegacyHandler | 22 | yes |
 | `level` | FHaybaMCPLevelHandler | 8 | yes |
 | `material` | FHaybaMCPMaterialHandler | 20 | yes |
-| `mesh` | FHaybaMCPStaticMeshHandler | 6 | yes |
+| `mesh` | FHaybaMCPStaticMeshHandler | 10 | yes |
 | `metasound` | FHaybaMCPMetaSoundHandler | 7 | **no** |
 | `net` | FHaybaMCPNetworkHandler | 2 | yes |
 | `perf` | FHaybaMCPPerfHandler | 3 | yes |
