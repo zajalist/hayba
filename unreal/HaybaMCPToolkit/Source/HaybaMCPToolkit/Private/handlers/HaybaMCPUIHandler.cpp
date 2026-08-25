@@ -2315,6 +2315,21 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleMutateTree(const TSharedPtr<FJsonO
             {
                 WBP->WidgetVariableNameToGuidMap.Remove(DescendantName);
             }
+
+            // The outgoing widget has just had its GUID taken away -- either
+            // moved to the replacement (preserve_guid) or dropped outright. It
+            // is still a UObject holding bIsVariable = true, and if anything
+            // keeps it reachable from the widget tree, UMG's compiler ensures:
+            //
+            //   Ensure condition failed:
+            //     WidgetBP->WidgetVariableNameToGuidMap.Contains(Widget->GetFName())
+            //   Widget [HaybaMCP_Replaced_0] was added but did not get a GUID
+            //
+            // Clearing the flag makes the invariant hold by construction rather
+            // than depending on RemoveWidget having detached every reference.
+            // A widget nobody can name is not a variable.
+            Widget->bIsVariable = false;
+
             WBP->WidgetTree->RemoveWidget(Widget);
             if (!bPreserveChildren && OldPanel)
             {
