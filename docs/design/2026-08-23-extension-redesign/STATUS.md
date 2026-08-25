@@ -216,10 +216,10 @@ was unearned, and planning around it would have been planning around nothing.
 |---|---|---|
 | `handlers/HaybaMCPDataAssetHandler.cpp` | 2 | 80 |
 | `handlers/HaybaMCPRenderHandler.cpp` | 2 | 58 |
-| `HaybaMCPCommandHandler.cpp` | 3 | ~150 |
+| `HaybaMCPCommandHandler.cpp` | 3 | 160 |
 | `handlers/HaybaMCPPhysicsHandler.cpp` | 1 | 15 |
-| `validator/rules.ts` | 1 | — |
-| `tools/index.ts`, `code-mode/list-tool-categories.ts`, `python-run-validator-wrap.ts` | 4 | — |
+| `validator/rules.ts` | 1 | 9 |
+| `tools/index.ts`, `code-mode/list-tool-categories.ts`, `python-run-validator-wrap.ts` | 4 | 124 |
 
 These are **not** either/or conflicts. In almost every case both branches
 independently improved the *same* code path, and the merge needs both edits
