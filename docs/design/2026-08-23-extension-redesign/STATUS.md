@@ -358,3 +358,78 @@ confident, each wrong: "not mechanical, the renames will collide" (renames
 collide with nothing), "both sides are right, keep both edits" (unverified),
 and "both branches independently found the same bug" (the base already had the
 fix). The numbers took one command and settle all three.
+
+---
+
+## Built, tested, unreachable — a survey (2026-08-25)
+
+Four separate defects today had the same shape: a capability written,
+reviewed, tested, and never wired to anything. `checkProtocol` reached only
+`doctor`. `checkRecipeRequires` had zero callers. A working room grammar
+shipped as a test fixture. So rather than keep tripping over these, I looked
+for the rest: exported symbols with no production reference anywhere.
+
+**The first pass was wrong and reported 202.** It excluded a symbol's own file
+on the theory that a local use does not prove an external caller — which
+misclassifies every helper called by an exported entry point in the same file.
+`searchNodes` and `connectWithBackoff` are both entirely reachable and both
+appeared in that list. Counting same-file references cut it to 34.
+
+Of those 34, most are legitimate: deliberate test seams, and per-domain
+constant lists consumed by name. Two findings are real.
+
+### 1. The retry guard was copied by hand across a dozen files — now pinned
+
+`executeCommand` retries once on transport failure unless the command is in
+`NON_IDEMPOTENT`, because re-firing a spawn executes it twice. That master set
+is hand-maintained, and each tool domain *separately* exports its own
+`*_NON_IDEMPOTENT` list which the master only cites in a comment:
+
+    // Foliage-domain factory tools (Wave 3 Task 2) — see foliage-py-tools.ts
+    // FOLIAGE_NON_IDEMPOTENT (asset-create / append / delete).
+    'foliage_type_create',
+
+Eleven domain lists, all with tests, none with a production caller — the truth
+copied by hand and nothing checking the copy. Add a command to a domain list,
+forget the master, and it becomes retry-eligible: on a flaky connection the
+actor spawns twice, and the second call succeeds, so nothing reports an error.
+
+No drift exists today. `non-idempotent-coverage.test.ts` now pins it, and was
+verified by deleting `foliage_scatter_paint` from the master and watching the
+failure name the command that would be double-executed. It is a test rather
+than a runtime import because the domain modules sit downstream of the
+executor; importing them back to fix a bookkeeping problem is the wrong
+direction for a cycle.
+
+### 2. Two shipped tools are unreachable — a regression that predates this branch
+
+`hayba_request_input` and `hayba_get_user_response` (issue #11, PR #113 — the
+Plan tab's approve / choose_one / choose_many / text / form / progress prompt
+system) exist in `tools/prompts/`, carry full `when` / `not_when` metadata, and
+have 9 tests each.
+
+**Nothing registers them.** No agent can call either one. The feature is
+unreachable from the product.
+
+The original commit added 40 lines to `tools/index.ts` doing exactly this
+registration. Those lines did not survive the repo restructure, and
+`origin/main` does not have them either — so this is not something this branch
+broke, and fixing it fixes it for everyone.
+
+**Deliberately not fixed here.** `tools/index.ts` is the file where the
+crash-hardening branch has +255/−105, and the recommended resolution for it is
+to take that branch's version and re-apply this branch's smaller edits. A
+registration added now is precisely the kind of small edit that gets dropped in
+that merge — the work done, then silently lost, which is worse than the current
+honest gap.
+
+**So it is queued as merge follow-up work**, and needs re-checking after the
+merge lands: add two `defineTool` descriptors for the handlers already exported
+from `tools/prompts/hayba-request-input.ts` and
+`tools/prompts/hayba-get-user-response.ts`. The handlers need no changes.
+
+### Worth noticing about the method
+
+Nothing here was findable by running the code or by reading a test. Both
+defects are absences — a call that does not happen — and a green suite is
+exactly what an absence looks like from inside the suite.
