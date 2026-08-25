@@ -2,8 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { RULES, rulesById, rulesForTool, type ValidatorRule } from '../rules.js';
 
 describe('rules catalog', () => {
-  it('seeds at least 10 rules', () => {
-    expect(RULES.length).toBeGreaterThanOrEqual(10);
+  // The floor is here to catch an accidental truncation of the catalogue, not
+  // to assert a target size. It was 10 while four rules had no evaluator; the
+  // useful guarantee is the one below -- every rule that is listed can fire.
+  it('seeds a non-empty rule catalogue', () => {
+    expect(RULES.length).toBeGreaterThanOrEqual(7);
   });
 
   it('each rule has every required field', () => {
@@ -26,30 +29,27 @@ describe('rules catalog', () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
-  it('contains the five canonical Section F rule ids', () => {
-    const ids = new Set(RULES.map(r => r.id));
-    for (const required of [
-      'pcg_zero_instances_after_execute',
-      'pcg_surface_source_not_landscape',
-      'unreal_landscape_placeholder',
-      'tcp_socket_to_self_in_python_run',
-      'actor_position_drift_after_user_edit',
-    ]) {
-      expect(ids.has(required)).toBe(true);
-    }
-  });
+  // These tests used to assert that ten specific rule ids were present,
+  // including four that had no evaluator and could never fire. That pinned the
+  // dishonesty in place: the Configure panel listed checks the product would
+  // never run, and the suite defended it.
+  //
+  // The inverted assertion is the useful one. A rule that cannot fire must not
+  // be catalogued, because the catalogue is what users read as a promise.
+  it('every catalogued rule can actually fire', async () => {
+    const { installToolHooks } = await import('../tool-hooks.js');
+    installToolHooks();
 
-  it('contains the five other AI-floppy postmortem rules', () => {
-    const ids = new Set(RULES.map(r => r.id));
-    for (const required of [
-      'pcg_execute_no_component_in_world',
-      'pcg_asset_not_found',
-      'landscape_import_no_landscape_in_world',
-      'actor_spawn_class_not_found',
-      'asset_browse_describe_assets_missing',
-    ]) {
-      expect(ids.has(required)).toBe(true);
-    }
+    // dangling_lifetime_callback_in_python_run is enforced before execution in
+    // tools/python-run-validator-wrap.ts rather than through an evaluator, so
+    // it is live without one.
+    const ENFORCED_ELSEWHERE = new Set(['dangling_lifetime_callback_in_python_run']);
+
+    const dead = RULES
+      .filter(r => !r.evaluate && !ENFORCED_ELSEWHERE.has(r.id))
+      .map(r => r.id);
+
+    expect(dead).toEqual([]);
   });
 
   it('rulesForTool returns all rules whose after_tool matches', () => {

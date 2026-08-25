@@ -76,22 +76,6 @@ export const RULES: ValidatorRule[] = [
     trigger: { after_tool: ['pcg_execute_graph', 'hayba_execute_pcg_graph'] },
   },
   {
-    id: 'pcg_surface_source_not_landscape',
-    severity: 'warning',
-    message: 'Surface Sampler source is not an ALandscape — likely no points generated',
-    hint: 'PCG Surface Sampler defaults to sampling the actor type set in its Settings. When the source is a generic StaticMeshActor or volume, the sampler usually produces 0 points. Set the source to `Landscape` (or a tagged landscape proxy) and re-execute.',
-    refs: ['[[pcg-surface-sampler-needs-landscape]]'],
-    trigger: 'manual',
-  },
-  {
-    id: 'unreal_landscape_placeholder',
-    severity: 'info',
-    message: 'World contains placeholder landscape (default flat 0,0,0)',
-    hint: 'A LandscapeProxy exists but appears to be the editor default (no heightmap imported, zero-elevation). Most PCG workflows need a sculpted or imported landscape — use `landscape_import` to bring in heightmap+masks.',
-    refs: ['[[landscape-placeholder-detection]]'],
-    trigger: 'manual',
-  },
-  {
     id: 'tcp_socket_to_self_in_python_run',
     severity: 'error',
     message: 'python_run script opens a TCP socket to the UE plugin port (would deadlock)',
@@ -105,14 +89,6 @@ export const RULES: ValidatorRule[] = [
     message: 'python_run script registers an engine-lifetime callback that would dangle and crash the editor',
     hint: 'register_slate_post/pre_tick_callback, register_python_shutdown_callback and register_post_engine_init_callback bind a Python callable into an engine-lifetime delegate. From a one-shot python_run the callable is garbage-collected as soon as the call returns, so the next engine broadcast dereferences freed memory and crashes the editor with a native access violation (#283/#284). Do the work inline, or keep the callable on a module-global and pass allow_unsafe=true.',
     refs: ['[[python-run-no-dangling-delegate]]'],
-    trigger: 'manual',
-  },
-  {
-    id: 'actor_position_drift_after_user_edit',
-    severity: 'warning',
-    message: 'Actor position differs from the last recorded value (user may have moved it)',
-    hint: 'The actor at this label has been moved in the editor between MCP-driven updates. If you continue, your transform will overwrite the user\'s edit. Re-fetch with actor_list before applying transforms, or coordinate with the user.',
-    refs: ['[[actor-position-drift]]'],
     trigger: 'manual',
   },
 
@@ -140,14 +116,6 @@ export const RULES: ValidatorRule[] = [
     hint: 'The import handler reported ok=true but no `unreal.LandscapeProxy` actor is present in the editor world. Check the editor output log filtered by `LogHaybaMCPImporter` for the underlying error.',
     refs: ['[[landscape-import-silent-failure]]'],
     trigger: { after_tool: 'landscape_import' },
-  },
-  {
-    id: 'actor_spawn_class_not_found',
-    severity: 'error',
-    message: 'actor_spawn could not resolve the requested class path',
-    hint: 'The class name or asset path passed to actor_spawn did not match a known UClass. Use the fully qualified path (e.g. `/Game/MyContent/BP_Foo.BP_Foo_C`) or a registered short name. Browse with hayba_asset_browse.',
-    refs: ['[[actor-spawn-class-resolution]]'],
-    trigger: 'manual',
   },
   {
     id: 'asset_browse_describe_assets_missing',
