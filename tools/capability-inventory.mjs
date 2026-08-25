@@ -154,22 +154,74 @@ function tsReferenced() {
       if (!entry.name.endsWith('.ts')) continue;
       if (entry.name.endsWith('.test.ts')) continue; // tests name dead commands on purpose
       const src = readFileSync(p, 'utf-8');
-      for (const m of src.matchAll(/['"`]([a-z][a-z0-9_]{2,})['"`]/g)) seen.add(m[1]);
+      for (const m of src.matchAll(/['"`]([a-z][a-z0-9_]{2,})['"`]/g)) {
+        seen.add(m[1]);
+        // Tools are conventionally named hayba_<command>; the wire name is
+        // what we are asked about, so record both spellings.
+        if (m[1].startsWith('hayba_')) seen.add(m[1].slice('hayba_'.length));
+      }
     }
   };
   walk(SRC);
   return seen;
 }
 
+/**
+ * The rule that decides whether a sidecar entry becomes an agent tool.
+ *
+ * Mirrors `isLegacyTarget` in legacy-tool-factory.ts. Duplicated because this
+ * script reads source rather than a build -- so the duplication is checked
+ * against the original below instead of being trusted.
+ */
+function generatesATool(entry) {
+  return entry && typeof entry === 'object'
+    && entry.agent_callable === true
+    && entry.has_ts_wrapper === false;
+}
+
+/** Fail loudly if the factory's rule no longer matches the one above. */
+function assertLegacyRuleUnchanged() {
+  const factory = join(ROOT, 'mcp-tools/hayba-mcp/src/tools/legacy-tool-factory.ts');
+  if (!existsSync(factory)) return;
+  const src = readFileSync(factory, 'utf-8');
+  const m = src.match(/export function isLegacyTarget\([^)]*\)[^{]*\{([\s\S]*?)\n\}/);
+  if (!m) {
+    console.error('capability-inventory: could not find isLegacyTarget — this gate mirrors '
+      + 'its rule and can no longer verify the copy. Update generatesATool().');
+    process.exit(1);
+  }
+  const body = m[1].replace(/\s+/g, ' ');
+  const expected = 'return entry.agent_callable === true && entry.has_ts_wrapper === false;';
+  if (!body.includes(expected.replace(/\s+/g, ' '))) {
+    console.error('capability-inventory: isLegacyTarget changed shape:\n  ' + body.trim()
+      + '\nThis gate mirrors it in generatesATool() — update both together.');
+    process.exit(1);
+  }
+}
+
 function sidecarCommands() {
   if (!existsSync(SIDECAR)) return null;
+  assertLegacyRuleUnchanged();
   const raw = JSON.parse(readFileSync(SIDECAR, 'utf-8'));
   const cmds = raw.commands ?? raw;
   const all = new Set(Object.keys(cmds));
+  // Described AND actually generated. A descriptor missing the flags is
+  // documentation an agent cannot invoke.
+  const generated = new Set(
+    Object.entries(cmds).filter(([, v]) => generatesATool(v)).map(([k]) => k)
+  );
+  // A hand-written TS tool covers these; the factory deliberately skips them.
+  const tsWrapped = new Set(
+    Object.entries(cmds).filter(([, v]) => v && v.has_ts_wrapper === true).map(([k]) => k)
+  );
+  // Declared NOT to be an agent tool. Not drift -- a decision.
+  const notForAgents = new Set(
+    Object.entries(cmds).filter(([, v]) => v && v.agent_callable === false).map(([k]) => k)
+  );
   const callable = new Set(
     Object.entries(cmds).filter(([, v]) => v && typeof v === 'object' && v.agent_callable).map(([k]) => k)
   );
-  return { all, callable };
+  return { all, callable, generated, tsWrapped, notForAgents };
 }
 
 function renderMarkdown(declared, registered, sidecar, allDeclared,
@@ -262,8 +314,20 @@ function main() {
   const tsSeen = tsReferenced();
   const undescribed = sidecar ? [...allDeclared].filter(c => !sidecar.all.has(c)).sort() : [];
   // The gate's real question: can an agent reach this at all?
+  //
+  // Being described is NOT enough. generateLegacyDescriptors only builds a tool
+  // when agent_callable is true and has_ts_wrapper is false, so an entry with
+  // full params and returns but no flags produces no tool. Four commands
+  // shipped in exactly that state and this gate called them reachable.
+  const notGenerated = sidecar
+    ? [...allDeclared].filter(c =>
+        !sidecar.generated.has(c)        // no legacy tool generated
+        && !sidecar.tsWrapped.has(c)     // and no hand-written wrapper declared
+        && !sidecar.notForAgents.has(c)  // and not declared non-agent by design
+      ).sort()
+    : [];
   const unreachableAll = sidecar
-    ? undescribed.filter(c => !(tsSeen && tsSeen.has(c))).sort()
+    ? notGenerated.filter(c => !(tsSeen && tsSeen.has(c))).sort()
     : [];
   const unreachable = unreachableAll.filter(c => !INTENTIONALLY_UNREACHABLE.has(c));
   const deliberate = unreachableAll.filter(c => INTENTIONALLY_UNREACHABLE.has(c));
