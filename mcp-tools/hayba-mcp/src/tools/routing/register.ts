@@ -279,34 +279,70 @@ export async function registerDeferredRouting(
     console.warn(`[recipes] load error: ${err}`);
   }
 
+  // Recipes were called slivers. The old names stay registered for one
+  // release so an agent mid-conversation, or a saved workflow, does not break
+  // on a vocabulary change -- they dispatch to the same handlers and say in
+  // their description which name to use instead.
   defer(
-    'sliver',
-    'hayba_sliver_list',
+    'recipe',
+    'hayba_recipe_list',
     'List installed Recipes (deterministic abstractions). Optional category or namespace filter.',
     recipeListSchema,
     (args: { category?: string; namespace?: string }) => recipeListHandler(args, { loader: recipes.loader }),
   );
 
   defer(
-    'sliver',
-    'hayba_sliver_get',
+    'recipe',
+    'hayba_sliver_list',
+    'Deprecated alias for hayba_recipe_list. Recipes were formerly called slivers; use the new name.',
+    recipeListSchema,
+    (args: { category?: string; namespace?: string }) => recipeListHandler(args, { loader: recipes.loader }),
+  );
+
+  defer(
+    'recipe',
+    'hayba_recipe_get',
     'Get the full spec (params + determinism + executor) of an installed recipe by id.',
     recipeGetSchema,
     (args: { id: string }) => recipeGetHandler(args, { loader: recipes.loader }),
   );
 
   defer(
-    'sliver',
-    'hayba_sliver_run',
+    'recipe',
+    'hayba_sliver_get',
+    'Deprecated alias for hayba_recipe_get. Recipes were formerly called slivers; use the new name.',
+    recipeGetSchema,
+    (args: { id: string }) => recipeGetHandler(args, { loader: recipes.loader }),
+  );
+
+  defer(
+    'recipe',
+    'hayba_recipe_run',
     'Execute a recipe with concrete parameter values. Returns outputs + declared side_effects + durationMs.',
     recipeRunSchema,
     (args: { id: string; params: Record<string, unknown> }) => recipeRunHandler(args, { runtime: recipes.runtime }),
   );
 
   defer(
-    'sliver',
-    'hayba_sliver_import',
+    'recipe',
+    'hayba_sliver_run',
+    'Deprecated alias for hayba_recipe_run. Recipes were formerly called slivers; use the new name.',
+    recipeRunSchema,
+    (args: { id: string; params: Record<string, unknown> }) => recipeRunHandler(args, { runtime: recipes.runtime }),
+  );
+
+  defer(
+    'recipe',
+    'hayba_recipe_import',
     'Install a recipe from a local file path or an http(s) URL into the user recipe library.',
+    recipeImportSchema,
+    (args: { source: string }) => recipeImportHandler(args, { loader: recipes.loader }),
+  );
+
+  defer(
+    'recipe',
+    'hayba_sliver_import',
+    'Deprecated alias for hayba_recipe_import. Recipes were formerly called slivers; use the new name.',
     recipeImportSchema,
     (args: { source: string }) => recipeImportHandler(args, { loader: recipes.loader }),
   );
