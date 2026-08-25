@@ -225,10 +225,7 @@ These are **not** either/or conflicts. In almost every case both branches
 independently improved the *same* code path, and the merge needs both edits
 kept, not one chosen:
 
-- **DataAssetHandler** — the hardening branch made a discarded save result
-  truthful (`ok:true` regardless of whether the save actually succeeded); this
-  branch changed the same block's output shape. Both are right. The resolution
-  is this branch's shape carrying that branch's honesty.
+- **DataAssetHandler** — *corrected below; this is not a "keep both" case.*
 - **RenderHandler** — that branch added timeout-safety (do not read
   task-written fields after a signal timeout; the task owns the shared ref) and
   PNG dimension verification. This branch touched the same function. Dropping
@@ -254,3 +251,110 @@ the merged result, and only then treat R4's reliability claims as citable.
 
 Still a decision, not a task — it decides what ships and what gets re-tested.
 But it is now a decision with a number attached.
+
+
+### Correction: the DataAsset conflict is a design choice, not a merge
+
+Written above as "both sides improved the same path, keep both edits". That is
+wrong, and so was my first attempt at correcting it (which claimed both
+branches independently found the same bug — they did not; `git show f325ea06`
+has the fix already). What actually happened:
+
+**The merge base already reported the save honestly.** `saved:false` plus a
+plain-English `save_note` was there before either branch. The two branches then
+took that same starting point in opposite directions, which is why this
+conflicts and why neither side can simply absorb the other.
+
+*This branch* kept the base's shape — a failed save is a caveat on a success:
+
+    Out->SetBoolField("saved", bSaved);          // Ok(), even when false
+    if (!bSaved) Out->SetStringField("save_note",
+        "created in memory but NOT written to disk — call asset_save, or "
+        "create into an existing content folder");
+
+*The hardening branch* escalated it — an unverified save became a failure, with
+the whole provenance chain published alongside the verdict:
+
+    const bool bOutcomeTrustworthy = bDirtyMarked && bPreSaveReResolved
+        && bSaveAttempted && bSaved && bTargetReResolved && bDirtyKnown;
+    Out->SetBoolField("ok", bOutcomeTrustworthy);
+    // plus dirty_marked, pre_save_re_resolved, save_attempted, saved,
+    //      target_re_resolved, dirty_known as separate wire fields
+
+Neither is a superset. They disagree about the question an MCP reply answers:
+
+|  | this branch | hardening branch |
+|---|---|---|
+| unverified save | `ok:true`, `saved:false`, one plain-English note | `ok:false`, "unknown outcome" |
+| wire cost | 2 fields | 8 fields, every call |
+| caller must | read one note | interpret six booleans |
+
+**Recommendation, not a decision.** Take the hardening branch's *rigour* and
+this branch's *wire economy*: compute `bOutcomeTrustworthy` exactly as it does
+— that chain catches real failure modes this branch misses, notably an asset
+that re-resolves to something else between save and reply — but publish `ok`
+plus one `error` naming **which** link broke, not all six booleans. Six
+internal step-flags on every successful call is the token cost of a debugging
+session charged to every caller forever, and the failing link is the only one
+anybody reads.
+
+The general lesson for the rest of the merge — earned the hard way, by getting
+this entry wrong twice in a row: **read the merge base before characterising a
+conflict.** Both of my earlier readings were confident and wrong, in opposite
+directions, because I diffed the two branches against each other and never
+against what they started from. A conflict tells you two sides changed the same
+lines; it says nothing about whether they were fixing the same thing, fixing
+different things, or diverging from a fix that was already there. The base is
+the only thing that distinguishes those, and it is one `git show` away.
+
+Applied to the remaining six conflicts: none of them have been read against
+`f325ea06` yet, so the "both sides are right, keep both" characterisation above
+should be treated as unverified for every file except this one.
+
+### All eight, read against the base
+
+Done properly this time — `git diff f325ea06..each-side` per file, rather than
+diffing the branches against each other:
+
+| file | this branch | hardening branch |
+|---|---|---|
+| `handlers/HaybaMCPDataAssetHandler.cpp` | +19 / −1 | **+1620 / −91** |
+| `HaybaMCPCommandHandler.cpp` | +29 / −172 | **+575 / −105** |
+| `handlers/HaybaMCPRenderHandler.cpp` | +10 / −4 | **+223 / −279** |
+| `tools/index.ts` | +43 / −5 | **+255 / −105** |
+| `code-mode/list-tool-categories.ts` | +5 / −4 | **+213 / −37** |
+| `tools/python-run-validator-wrap.ts` | +4 / −2 | +34 / −15 |
+| `handlers/HaybaMCPPhysicsHandler.cpp` | +20 / −9 | +10 / −22 |
+| `validator/rules.ts` | **+16 / −46** | +10 / −13 |
+
+Every file is BOTH-CHANGED, so none can be resolved mechanically. But the shape
+of the table is the finding, and it inverts the obvious approach.
+
+**In seven of eight conflicting files, this branch's changes are the small
+ones.** DataAssetHandler is the extreme case: 20 lines here against 1,711
+there — roughly **eighty-five to one**. The instinct when merging someone else
+into your own feature branch is to favour your side and re-apply theirs. Here
+that instinct is precisely backwards: `--ours` on these files would discard the
+overwhelming majority of the hardening work, and it would *compile*, and the
+test suite would stay green, because what it deletes is defensive code for
+failure modes the tests do not produce.
+
+**So the merge direction should be: take the hardening branch's version of
+these eight files, then re-apply this branch's much smaller edits on top.** The
+one file where that reverses is `validator/rules.ts`, where this branch is the
+larger change (−46 lines, from collapsing the five finding shapes into one).
+
+`HaybaMCPCommandHandler.cpp` needs care in either direction: this branch's
+−172 is mostly the *deletion* of the inline `ui_memory_set` / `ui_tool_stream`
+router special-cases, which moved to a real `UIBridgeHandler`. Taking theirs
+wholesale would resurrect three retired inline commands and give the router two
+paths to the same handler. That one is genuinely hand-work: keep the extraction,
+port their edits into the extracted handler.
+
+### Why this was worth measuring rather than assuming
+
+Three characterisations of this merge were written before this table, each
+confident, each wrong: "not mechanical, the renames will collide" (renames
+collide with nothing), "both sides are right, keep both edits" (unverified),
+and "both branches independently found the same bug" (the base already had the
+fix). The numbers took one command and settle all three.
