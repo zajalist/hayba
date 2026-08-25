@@ -473,3 +473,64 @@ either it earns a consumer or it should go, and right now it is neither.
 Nothing here is deleted. Deleting a superseded factory is safe but churns files
 during a pending merge for no behavioural gain, and the two findings that
 matter are recorded above rather than tidied away.
+
+---
+
+## Correctness pass (2026-08-25) — eight defects, one shape
+
+Every one of these returned success while doing the wrong thing, or claimed a
+protection that was not running. None threw. None failed a test. A green suite
+is what each of them looked like from the inside.
+
+| # | Defect | How it presented |
+|---|---|---|
+| 1 | `python_run`'s two pre-execution crash guards were wired to nothing | the guards existed, were tested, and never ran; only a post-condition rule was live, which reports *after* the deadlock |
+| 2 | The self-socket detector matched one idiom of two | `socket.create_connection(...)` — the likelier one — passed straight through |
+| 3 | `net_set_replication` resolved by label, first match, then **wrote** | reconfigured an arbitrary actor on a duplicated label, reported ok |
+| 4 | `editor_pie_assert` accepted a path **suffix**, first match | asserted against an unrelated actor — a false pass in a test harness |
+| 5 | Copilot health check called a non-existent command | `ue_connected` always false, with a healthy editor on the other end |
+| 6 | Four Fab tools call commands no handler has ever declared | advertised in the catalogue, `Unknown command` on every call |
+| 7 | A misspelled optional parameter was silently dropped | `rotaton` accepted; actor spawned at default rotation; ok returned |
+| 8 | `effects` derived from idempotency, not mutation | 29 mutating tools sat outside the evidence contract; no legacy tool ever got the validation nudge |
+
+Six were found by comparing two artifacts that should agree — code against
+docs, TypeScript against C++, declaration against implementation — not by
+running anything. The other two were found by running the thing and looking at
+what came back.
+
+### What is now gated
+
+Three checks were added, each verified by breaking what it guards:
+
+- `docs-command-check` — docs name real CLI subcommands; no doc prescribes the
+  MCP entry name without saying the name is arbitrary; the handler count in
+  RELIABILITY matches the C++ (and fails loudly if the sentence is reworded so
+  the number stops being checked).
+- `declared-command-check` — all 228 commands a handler declares are
+  implemented. Two dispatch without naming themselves and are allowlisted with
+  the verified reason.
+- `non-idempotent-coverage.test.ts` — every per-domain retry list is contained
+  in the master set, so a command added to one and forgotten in the other
+  cannot become retry-eligible.
+
+### Checked and clean
+
+Worth recording so nobody re-runs them: catalogue health (473 descriptors — no
+duplicate names, no missing `returns`, no blank descriptions); every local
+actor-resolution helper in the handlers (the two that guessed are fixed, the
+rest resolve on unique identifiers or already count matches); and
+`registerPyTool` does **not** bypass the evidence contract, which was a
+hypothesis worth disproving.
+
+### Must be re-checked after the branch merge
+
+All three touch files where the crash-hardening branch has large changes, so
+"take theirs and re-apply ours" can drop them silently — they compile and pass
+tests when missing:
+
+1. `python_run` must still be registered against the **validated** handler
+   (`tools/index.ts`), or defect 1 returns.
+2. `hayba_request_input` / `hayba_get_user_response` still need registering —
+   built, tested, unreachable, and absent from `main` too.
+3. The Fab tools' honest-failure path, and the decision on whether they should
+   remain in the catalogue at all.
