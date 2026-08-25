@@ -2,6 +2,7 @@
 #include "Json.h"
 #include "Editor.h"
 #include "EngineUtils.h"
+#include "HaybaSceneQuery.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
 #include "GameFramework/Actor.h"
@@ -16,21 +17,40 @@ namespace
         return GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
     }
 
-    static AActor* FindActorByPath(UWorld* World, const FString& PathOrName)
+    // Resolution order matters. Object name and path name are UNIQUE within a
+    // level, so a first match on either is the only match. An actor LABEL is
+    // not unique -- Unreal happily gives two actors the same one -- so a first
+    // match on a label picks an arbitrary actor.
+    //
+    // This helper used to treat all three the same and return the first hit,
+    // and `net_set_replication` (a mutation: SetReplicates, bAlwaysRelevant,
+    // NetDormancy) resolved through it. On a duplicated label it changed the
+    // replication of an arbitrary actor and reported success. docs/RELIABILITY
+    // said the remaining first-match sites were "reads and UI" and that "the
+    // destructive paths refuse"; this one was neither.
+    static AActor* FindActorByPath(UWorld* World, const FString& PathOrName, FString& OutError)
     {
+        OutError.Reset();
         if (!World) return nullptr;
+
+        // Unique identifiers first: an exact hit here needs no disambiguation.
         for (TActorIterator<AActor> It(World); It; ++It)
         {
             AActor* A = *It;
             if (!A) continue;
-            if (A->GetName() == PathOrName ||
-                A->GetActorLabel() == PathOrName ||
-                A->GetPathName() == PathOrName)
-            {
+            if (A->GetName() == PathOrName || A->GetPathName() == PathOrName)
                 return A;
-            }
         }
-        return nullptr;
+
+        // Fall back to the label, which must be checked for ambiguity.
+        const HaybaSceneQuery::FActorLookup Hit = HaybaSceneQuery::FindActor(World, PathOrName);
+        if (Hit.IsAmbiguous())
+        {
+            OutError = HaybaSceneQuery::AmbiguousError(
+                TEXT("net_set_replication"), PathOrName, Hit.Candidates);
+            return nullptr;
+        }
+        return Hit.Actor;
     }
 
     static UActorComponent* FindComponentByPath(AActor* Actor, const FString& CompPath)
@@ -131,7 +151,10 @@ FHaybaHandlerResult FHaybaMCPNetworkHandler::Handle(const FString& Cmd, const TS
         if (!P->TryGetBoolField(TEXT("replicate"), bReplicate))
             return FHaybaHandlerResult::Err(TEXT("net_set_replication: missing replicate"));
 
-        AActor* Actor = FindActorByPath(World, ActorPath);
+        FString LookupError;
+        AActor* Actor = FindActorByPath(World, ActorPath, LookupError);
+        if (!LookupError.IsEmpty())
+            return FHaybaHandlerResult::Err(LookupError);
         if (!Actor)
             return FHaybaHandlerResult::Err(FString::Printf(TEXT("net_set_replication: actor not found: %s"), *ActorPath));
 

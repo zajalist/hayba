@@ -63,9 +63,18 @@ This section is the reason to believe the rest.
 - **Some engine asserts are unrecoverable by design.** A structured-exception
   guard catches faults at the dispatch seam. It does not make a `check()`
   failure deep in the engine survivable, and nothing claims it does.
-- **Five actor-lookup sites still take the first match.** They are reads and
-  UI, so they report the wrong actor rather than destroying one. The
-  destructive paths refuse.
+- **Three actor-lookup sites still take the first match, and they are reads
+  and UI.** Object names and path names are unique within a level, so a first
+  match on either is the only match. Only a *label* is ambiguous, and this
+  count covers label lookups alone.
+
+  This entry previously said five sites, and that "the destructive paths
+  refuse". One of them did not. `net_set_replication` resolved its target by
+  label and then wrote to it — `SetReplicates`, `bAlwaysRelevant`,
+  `NetDormancy` — so on a duplicated label it reconfigured an arbitrary actor
+  and reported success: the exact bug this page says is closed. It now refuses,
+  naming the candidates, like every other destructive path. The claim was
+  false when written and is true now.
 - **Coverage is one editor, one project.** Everything on this page was verified
   against a live Unreal 5.8 editor on Windows. No claim here has been exercised
   on macOS or Linux, at studio scale, or with multiple concurrent agents.
