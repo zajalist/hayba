@@ -22,7 +22,8 @@ Each line:
   "message": "PCG graph executed but produced 0 instances in the world",
   "hint": "The graph ran (componentsExecuted > 0) but no HISM/ISM instances exist...",
   "refs": ["[[pcg-surface-sampler-needs-landscape]]"],
-  "context": {
+  "category": "pcg",
+  "data": {
     "graph": "/Game/MyGraph",
     "componentsExecuted": 1,
     "instances": 0
@@ -33,11 +34,16 @@ Each line:
 }
 ```
 
-Required fields: `ruleId`, `severity`, `message`, `hint`, `timestamp`, `toolName`.
+Required fields: `ruleId`, `category`, `severity`, `message`, `hint`,
+`timestamp`, `toolName`.
 
 Optional fields:
 - `refs: string[]` — memory slugs the finding cross-references.
-- `context: object` — rule-specific payload. The UE plugin looks at:
+- `subject: string` — what the finding is about: a widget name, an asset path,
+  an actor label. Absent when the finding is about the call rather than a thing.
+- `measurement: object` — a signed margin and unit for checks that measured
+  something, plus a fix vector for spatial ones.
+- `data: object` — rule-specific payload. The UE plugin looks at:
   - `actor_label` / `actorLabel` and `actor_id` / `actorId` for the
     "Jump to actor" button.
   - `graph` (PCG asset path) for context display.
@@ -45,6 +51,17 @@ Optional fields:
 - `resolved: boolean` — `true` once the user dismisses the finding via the
   plugin UI or the `validator_resolve` MCP tool.
 - `resolvedAt: string (ISO)` — set when `resolved` becomes true.
+
+## A note on `data` vs `context`
+
+This field was called `context` before the verdict collapse, which unified five
+finding shapes into one. Records already on disk keep the old spelling and are
+adapted when read, so nobody loses their history; new records are written as
+`data`. The plugin panel reads this file directly and understands both.
+
+The wire format is a separate thing: `validator_history` and the `validator`
+block appended to tool responses still emit a `context` key, built explicitly
+from `data`.
 
 ## Round-tripping
 

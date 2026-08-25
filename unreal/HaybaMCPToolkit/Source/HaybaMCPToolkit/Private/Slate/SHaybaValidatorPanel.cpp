@@ -382,8 +382,17 @@ TSharedPtr<FHaybaValidatorFinding> SHaybaValidatorPanel::ParseFindingLine(const 
             if (V.IsValid() && V->Type == EJson::String) F->Refs.Add(V->AsString());
     }
 
+    // The verdict collapse renamed this field from "context" to "data" on disk
+    // (one Finding shape across the whole product). This panel reads the JSONL
+    // itself rather than going through the server, so it has to know both:
+    // "data" for anything written since, "context" for records already on a
+    // user's machine.
     const TSharedPtr<FJsonObject>* Ctx = nullptr;
-    if (Obj->TryGetObjectField(TEXT("context"), Ctx) && Ctx->IsValid())
+    if (!Obj->TryGetObjectField(TEXT("data"), Ctx))
+    {
+        Obj->TryGetObjectField(TEXT("context"), Ctx);
+    }
+    if (Ctx && Ctx->IsValid())
     {
         FString S;
         if ((*Ctx)->TryGetStringField(TEXT("actor_label"), S)) F->ActorLabel = S;

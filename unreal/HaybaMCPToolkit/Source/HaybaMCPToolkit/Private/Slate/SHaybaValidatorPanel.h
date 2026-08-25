@@ -1,6 +1,8 @@
 // SHaybaValidatorPanel.h — runtime validator history browser.
 //
 // Reads `.scratch/validator-history.jsonl` (written by the MCP server) and
+// understands both field spellings for a finding's detail object: `data`
+// since the verdict collapse, `context` for older records.
 // renders it as a filterable table. Per-row actions dismiss findings (writes
 // resolved:true back to disk), jump to the linked actor, and re-run the rule.
 //
