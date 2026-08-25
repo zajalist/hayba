@@ -125,6 +125,16 @@ private:
     FReply OnNewConversation();
     TSharedRef<SWidget> BuildRecentSessionsMenu();
 
+    /** Save the current conversation and begin an empty one. The IA asks for
+     *  a new session to be explicit, so this is a command rather than a side
+     *  effect of opening the panel. */
+    void StartNewSession();
+
+    /** Save the current conversation and reopen a stored one. Takes the id by
+     *  value: it is bound into a menu delegate that outlives the summary list
+     *  it came from. */
+    void OpenSession(FString SessionId);
+
     // ── Per-row affordances ───────────────────────────────────────────────
     FReply OnCopyMessage(int32 MessageIndex);
     TSharedPtr<SWidget> BuildMessageContextMenu(int32 MessageIndex);

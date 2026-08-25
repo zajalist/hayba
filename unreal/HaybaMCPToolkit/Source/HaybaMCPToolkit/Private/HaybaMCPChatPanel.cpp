@@ -6,6 +6,7 @@
 // focused on conversation, input, footer status, and per-message affordances.
 //
 #include "HaybaMCPChatPanel.h"
+#include "HaybaMCPChatSessionStore.h"
 #include "HaybaMCPStyle.h"
 #include "HaybaMCPModule.h"
 #include "HaybaMCPMainPanel.h"
@@ -190,16 +191,82 @@ TSharedRef<SWidget> SHaybaMCPChatPanel::BuildToolbar()
 
 TSharedRef<SWidget> SHaybaMCPChatPanel::BuildRecentSessionsMenu()
 {
-    // Recent sessions list is gated on the disk-persistence work (Q8-b),
-    // which lives in the module. Until that lands, surface a clear placeholder
-    // so users understand the affordance exists.
     FMenuBuilder Menu(true, nullptr);
+
+    // "A new session is explicit" -- so it is a command here, not something
+    // that happens to you when you open the panel.
     Menu.AddMenuEntry(
-        LOCTEXT("RecentEmpty", "Recent conversations — coming soon"),
-        LOCTEXT("RecentEmptyTT", "Session persistence (Q8-b) lands in a follow-up commit."),
+        LOCTEXT("NewSession", "New conversation"),
+        LOCTEXT("NewSessionTT", "Start a fresh conversation. The current one is saved and stays in this list."),
         FSlateIcon(),
-        FUIAction(FExecuteAction(), FCanExecuteAction::CreateLambda([](){ return false; })));
+        FUIAction(FExecuteAction::CreateSP(this, &SHaybaMCPChatPanel::StartNewSession)));
+
+    const TArray<HaybaChatSessions::FSummary> Recent = HaybaChatSessions::List();
+    if (Recent.Num() == 0)
+    {
+        Menu.BeginSection(NAME_None, LOCTEXT("RecentHeader", "Recent"));
+        // An empty list is a fact about this user, not a missing feature. It
+        // says what to do, rather than promising a screen that does not exist.
+        Menu.AddMenuEntry(
+            LOCTEXT("RecentEmpty", "No saved conversations yet"),
+            LOCTEXT("RecentEmptyTT", "Send a message and this conversation will be saved here."),
+            FSlateIcon(),
+            FUIAction(FExecuteAction(), FCanExecuteAction::CreateLambda([](){ return false; })));
+        Menu.EndSection();
+        return Menu.MakeWidget();
+    }
+
+    Menu.BeginSection(NAME_None, LOCTEXT("RecentHeader", "Recent"));
+    for (const HaybaChatSessions::FSummary& S : Recent)
+    {
+        // The goal is the first thing the user said. It can be a paragraph, so
+        // it is trimmed for the menu; the full text is in the tooltip.
+        FString Label = S.Goal.IsEmpty() ? TEXT("(untitled)") : S.Goal;
+        Label.ReplaceInline(TEXT("\n"), TEXT(" "));
+        if (Label.Len() > 48) Label = Label.Left(48) + TEXT("…");
+
+        const FString Id = S.SessionId;
+        const bool bIsCurrent = (Id == Session.SessionId);
+
+        Menu.AddMenuEntry(
+            FText::FromString(bIsCurrent ? Label + TEXT("  (current)") : Label),
+            FText::FromString(FString::Printf(TEXT("%s\n\n%d message(s), saved %s"),
+                S.Goal.IsEmpty() ? TEXT("(untitled)") : *S.Goal,
+                S.MessageCount,
+                *S.SavedAt.ToString())),
+            FSlateIcon(),
+            FUIAction(
+                FExecuteAction::CreateSP(this, &SHaybaMCPChatPanel::OpenSession, Id),
+                // Reopening the conversation you are already in would discard
+                // anything unsent for no gain.
+                FCanExecuteAction::CreateLambda([bIsCurrent](){ return !bIsCurrent; })));
+    }
+    Menu.EndSection();
     return Menu.MakeWidget();
+}
+
+void SHaybaMCPChatPanel::StartNewSession()
+{
+    // Save first. Starting a new conversation must never be the thing that
+    // loses the old one.
+    HaybaChatSessions::Save(Session);
+
+    Session = FHaybaMCPWizardSession();
+    Session.SessionId = FGuid::NewGuid().ToString(EGuidFormats::Digits);
+    RebuildChat();
+}
+
+void SHaybaMCPChatPanel::OpenSession(FString SessionId)
+{
+    HaybaChatSessions::Save(Session);
+
+    FHaybaMCPWizardSession Loaded;
+    // A failed load leaves the current conversation alone. Clearing the panel
+    // because a file was unreadable would turn one lost session into two.
+    if (!HaybaChatSessions::Load(SessionId, Loaded)) return;
+
+    Session = MoveTemp(Loaded);
+    RebuildChat();
 }
 
 // ── Chat scroll ───────────────────────────────────────────────────────────
@@ -748,6 +815,11 @@ FReply SHaybaMCPChatPanel::OnSendCurrentInput()
     // First user message names the conversation (title dropdown / recents).
     if (Session.Goal.IsEmpty()) Session.Goal = Text;
 
+    // Persist on send rather than on close. The editor can be killed or crash,
+    // and a session that only survives a clean shutdown loses exactly the
+    // conversations worth keeping.
+    HaybaChatSessions::Save(Session);
+
     // Streaming agent path (Task 8). The legacy single-POST pipeline
     // (InitializeSession / SendToMCP / OnClaudeResponse) is retained below but
     // no longer wired — see the "Legacy send pipeline" section.
@@ -1205,6 +1277,10 @@ void SHaybaMCPChatPanel::HandleStreamDone(const FHaybaChatDone& Done)
     }
     const FString DoneTag = Done.bCancelled ? TEXT("[stopped]") : TEXT("");
     FinalizeInProgressBubble(DoneTag);
+
+    // Save again now the reply has landed. Saving only on send would store
+    // every question and none of the answers.
+    HaybaChatSessions::Save(Session);
 }
 
 void SHaybaMCPChatPanel::HandleStreamError(const FHaybaChatError& Error)
