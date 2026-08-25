@@ -144,7 +144,12 @@ const DOMAINS: ReadonlyArray<{ domain: string; command_count: number; commands: 
   { domain: 'input', command_count: 3, commands: ['input_create_action', 'input_create_mapping', 'input_add_mapping'] },
   { domain: 'ui', command_count: 3, commands: ['ui_create_widget', 'ui_add_element', 'ui_query'] },
   { domain: 'net', command_count: 2, commands: ['net_debug', 'net_set_replication'] },
-  { domain: 'mesh', command_count: 3, commands: ['mesh_get_info', 'mesh_set_lod', 'mesh_list'] },
+  // Import hygiene (mesh_generate_collision / _uvs, mesh_build_lods,
+  // mesh_set_nanite) is listed because Code Mode discovers capabilities HERE:
+  // a command can be declared, described, flagged and generated as a tool, and
+  // still be invisible to an agent that starts from list_tool_categories.
+  { domain: 'mesh', command_count: 7, commands: ['mesh_get_info', 'mesh_set_lod', 'mesh_list',
+    'mesh_generate_collision', 'mesh_generate_uvs', 'mesh_build_lods', 'mesh_set_nanite'] },
   { domain: 'texture', command_count: 3, commands: ['texture_get_info', 'texture_set_compression', 'texture_list'] },
   { domain: 'data', command_count: 3, commands: ['data_create', 'data_get', 'data_set'] },
   {
