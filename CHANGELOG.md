@@ -78,6 +78,32 @@ All notable changes to Hayba MCP Toolkit are documented here. Format based on [K
 - `asset_registry_query` now uses a native, read-only AssetRegistry handler instead of blocked dynamic Python reflection, with deterministic bounded pagination, strict input checks, and fail-closed response validation.
 
 ### Added
+- **Import hygiene for static meshes.** An asset arriving through
+  `asset_import`, `hayba_sketchfab_download` or `hayba_polyhaven_*` landed with
+  whatever LODs, collision and UVs it shipped with, and nothing in the toolkit
+  could fix any of it — an imported mesh with no collision is unusable for
+  gameplay and the fact is invisible until something falls through it. Four
+  commands close that:
+  - `mesh_generate_collision` — box, sphere, capsule, ndop or convex
+    decomposition. Declines when the mesh already has collision unless
+    `replace_existing` is set, and refuses an unrecognised shape rather than
+    reporting success.
+  - `mesh_build_lods` — generates reduction LODs with a configurable falloff.
+    `mesh_set_lod` could only configure an LOD that already existed.
+  - `mesh_generate_uvs` — adds a UV channel when the mesh has none and enables
+    lightmap-UV generation.
+  - `mesh_set_nanite` — the static-mesh counterpart to `landscape_set_nanite`,
+    which had none.
+
+  Each reports a before/after pair (`collision_count_before` →
+  `collision_count`, `lod_count_before` → `lod_count`, `uv_channels_before` →
+  `uv_channels`) so a caller can distinguish a real change from a no-op, and
+  `mesh_build_lods` says so when the reducer declines to simplify a small mesh.
+
+  `mesh_build_lods` refuses a mesh with a zero-UV LOD: building LODs rebuilds
+  the mesh, and that trips `check(NumUVs>0)` in the engine — an uncatchable
+  assert that kills the editor. The error tells you to run `mesh_generate_uvs`
+  first.
 - `hayba-cli configure` writes this server's entry into the MCP config of every
   client it detects — Claude Code, Cursor, VS Code, Claude Desktop — replacing
   the hand-edited JSON step that fails silently when the absolute path is

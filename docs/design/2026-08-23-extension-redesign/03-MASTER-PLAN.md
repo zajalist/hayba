@@ -877,14 +877,31 @@ is provider-independent: *"import hygiene — LOD, collision, UVs, Nanite prep �
 is the part that decides whether output is usable."* That claim is checkable
 today, and it holds. Sharpened, with what exists:
 
-| hygiene item | can we OBSERVE it? | can we APPLY it? |
-|---|---|---|
-| LOD | yes — `mesh_audit` reports `lod_count`, `missing_lods`, `tris_lod0`; `mesh_get_lods` reads them | **no** — `mesh_set_lod` configures an LOD that already exists (screen size, optional reduction) and refuses `lod_index >= GetNumSourceModels()`. Nothing generates one. |
-| UVs | partially — `mesh_set_lod` refuses when any LOD has zero UV channels, because rebuilding would hit `check(NumUVs>0)`, an uncatchable engine assert | **no** — no UV or lightmap-UV generation |
-| collision | no | **no** — `physics_set_collision_profile` sets an actor's collision *profile*; nothing generates collision *geometry* (simple primitives, convex decomposition) |
-| Nanite | no | **no** for static meshes — `landscape_set_nanite` exists, its static-mesh counterpart does not |
+| hygiene item | observe | apply | status |
+|---|---|---|---|
+| LOD | `mesh_audit` (`lod_count`, `missing_lods`), `mesh_get_lods` | **`mesh_build_lods`** — reduction LODs, configurable falloff | DONE |
+| UVs | `mesh_set_lod` refuses a zero-UV LOD | **`mesh_generate_uvs`** — adds a channel when absent, enables lightmap UVs | DONE |
+| collision | `mesh_generate_collision` reports the count | **`mesh_generate_collision`** — box/sphere/capsule/ndop/convex | DONE |
+| Nanite | `mesh_set_nanite` reads the flag back | **`mesh_set_nanite`** | DONE |
 
-So of the four, we can partially observe two and apply none.
+**Originally: partially observe two, apply none. Now: all four, both ways.**
+Built and verified live 2026-08-25.
+
+Each reports a before/after pair (`collision_count_before` -> `collision_count`,
+`lod_count_before` -> `lod_count`, `uv_channels_before` -> `uv_channels`) so a
+caller can tell a real change from a no-op, and `mesh_build_lods` says so
+explicitly when the reducer declines to simplify a small mesh.
+
+The ordering constraint is enforced rather than documented: `mesh_build_lods`
+refuses when any LOD has zero UV channels, because building LODs rebuilds the
+mesh and that trips `check(NumUVs>0)` in StaticMesh.cpp — an uncatchable assert
+that kills the editor. The error names the fix.
+
+Two of this branch's own gates caught defects in this work before it shipped:
+`capability-inventory --check` found all four **unreachable by any agent** (no
+sidecar descriptor — the Fab pattern, reproduced two turns after removing Fab
+for it), and the signature test found the descriptors missing their `returns`
+schema, so an agent asking what a command returns would have hit an exception.
 
 ### Why this matters beyond A5
 
@@ -894,11 +911,11 @@ project through `asset_import`, `hayba_sketchfab_download` or
 with, and nothing in the toolkit can fix any of it. A 3D-generation provider
 would simply be one more source of meshes with the same problem.
 
-That reframes the sequencing: the import-hygiene work is worth doing on its own
-merits, is not blocked on the licence, and would make an eventual A5
-integration a thin adapter rather than the whole feature. Conversely, choosing
-a provider first buys a `create -> poll -> import` pipeline that lands assets
-nobody can finish.
+That reframed the sequencing, and the hygiene work went first. It was worth
+doing on its own merits, was not blocked on the licence, and an A5 integration
+is now a thin adapter onto tooling that can finish the meshes it lands —
+rather than the whole feature. Choosing a provider first would have bought a
+`create -> poll -> import` pipeline delivering assets nobody could finish.
 
 ### Still needs a decision
 
