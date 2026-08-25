@@ -446,3 +446,58 @@ or delete. Not a call to make unilaterally, so it stands.
 A1 (import unblock + format matrix) is the biggest unlock but needs #415 and the
 native format widening together, and the C++ half means a plugin rebuild. A2
 (`material_from_textures`) is the cheap win that makes texture acquisition useful.
+
+
+---
+
+## A1 correction — the blockage is gone, and the audit had gone stale (2026-08-25)
+
+A1 said asset import was dead in two ways. Both are false against the current
+tree, and I checked before building a fix for a problem that no longer exists.
+
+**"`importIntoUe()` always returns `ok:false`, gated on #415."** It does not.
+`asset-sources/shared.ts:68` is a full implementation: it walks the extracted
+directory, builds one `AssetImportTask` per file, runs them through
+`python_run`, and returns `ok:false` only when the script genuinely fails.
+#415 landed on this branch as `3b2d102e`.
+
+**"Native `asset_import` accepts only png/jpeg, wav, binary FBX
+(`HaybaMCPAssetHandler.cpp:784`)."** There is no format whitelist anywhere in
+the plugin. `AssetImport` hands the file to `ImportAssetsAutomated` and lets
+UE pick a factory by extension. Line 784 is now `asset_move` — the file was
+rewritten by #415, so the citation no longer points at what it described.
+
+**Verified against the live editor rather than by reading.** A hand-authored
+minimal glTF 2.0 (one triangle, embedded buffer) and a hand-authored Radiance
+`.hdr` were imported through `asset_import`:
+
+    probe_triangle.gltf -> StaticMesh
+    probe_sky.hdr       -> TextureCube
+
+Both are the correct asset types — UE recognised the HDR as a cubemap, which
+is what an IBL/sky source should become. Neither was written to disk, and the
+probe assets were removed.
+
+So the connector pipeline's import step is not blocked, and the format matrix
+does not need widening. **A1 is closed.**
+
+### What this says about the audit
+
+Two of A1's three claims were precise, file-and-line specific, and wrong,
+because the tree moved under them. The same was true of A0's `level_get_
+spatial_index` note and of A6's line references. The audit documents are worth
+keeping as a record of reasoning, but every item should be re-verified against
+the tree before work starts, not treated as a work order.
+
+### What is actually left in Track A
+
+- **A3** — CLIP-based intent-to-asset matching. The sidecar already serves
+  CLIP; asset selection still uses text-only BM25/Ollama. This is also what
+  would let the three deleted prompt tools come back honestly.
+- **A4** — `world_generate` terrain conform. Still real: flat z, no raycast.
+- **A5** — 3D generation posture. Unstarted; a licensing decision first.
+- **A7** — interiors via the PLUMB room grammar. Unwired.
+
+End-to-end proof of the connector path still wants one real download through
+ambientCG, which hits an external API and writes to the project — worth doing
+deliberately rather than as a side effect of a check.
