@@ -1,5 +1,4 @@
 #include "HaybaMCPModule.h"
-#include "Async/Async.h"
 #include "HaybaMCPMainPanel.h"
 #include "Studio/SHaybaSemanticStudio.h"
 #include "HaybaMCPPlanOverlay.h"
@@ -60,9 +59,11 @@
 #include "handlers/HaybaMCPRenderHandler.h"
 #include "HaybaMCPCaptureActor.h"
 #include "HaybaMCPSettings.h"
+#include "HaybaMCPRenderSafety.h"
 #include "Json.h"
 #include "HAL/PlatformProcess.h"
 #include "HAL/PlatformMisc.h"
+#include "HAL/IConsoleManager.h"
 #include "Misc/Paths.h"
 #include "Misc/FileHelper.h"
 #include "HAL/FileManager.h"
@@ -144,6 +145,14 @@ void FHaybaMCPModule::StartupModule()
 {
     PluginBaseDir = IPluginManager::Get().FindPlugin(TEXT("HaybaMCPToolkit"))->GetBaseDir();
     UE_LOG(LogHaybaMCP, Log, TEXT("HaybaMCPToolkit module started. Base dir: %s"), *PluginBaseDir);
+
+    FString RenderLifecycleError;
+    if (!HaybaRenderSafety::Initialize(RenderLifecycleError))
+    {
+        // Fail closed: StartTcpServer remains available for non-render tools,
+        // while every render lease will refuse until a clean editor restart.
+        UE_LOG(LogHaybaMCP, Error, TEXT("Render lifecycle initialization refused: %s"), *RenderLifecycleError);
+    }
 
     FHaybaMCPStyle::Initialize();
     FHaybaMCPSettings::Get().Load();
@@ -233,13 +242,18 @@ void FHaybaMCPModule::StartupModule()
             UE_LOG(LogHaybaMCP, Warning,
                 TEXT("Optional command domains unavailable — satellite plugin(s) disabled: %s. Enable the plugin (and its backing engine plugin) to use these commands."),
                 *List);
-            AsyncTask(ENamedThreads::GameThread, [List]()
+            // StartupModule is normally entered on the game thread. Keep the
+            // notification synchronous there: queueing a lambda whose call
+            // operator lives in this DLL lets a hot unload strand executable
+            // plugin code in the task graph. An exotic off-thread startup
+            // still gets the durable log above and simply skips Slate.
+            if (IsInGameThread())
             {
                 FNotificationInfo Info(FText::FromString(FString::Printf(
                     TEXT("Hayba MCP: optional command domains disabled — %s. Enable the matching plugins to use them."), *List)));
                 Info.ExpireDuration = 8.f;
                 FSlateNotificationManager::Get().AddNotification(Info);
-            });
+            }
         }
     }
 
@@ -277,7 +291,7 @@ void FHaybaMCPModule::StartupModule()
         .SetGroup(ToolsGroup)
         .SetIcon(FSlateIcon(FHaybaMCPStyle::GetStyleSetName(), "Hayba.Icon.Toolkit"));
 
-    IConsoleManager::Get().RegisterConsoleCommand(
+    OpenToolkitConsoleCommand = IConsoleManager::Get().RegisterConsoleCommand(
         TEXT("Hayba.MCP.Open"),
         TEXT("Opens the Hayba MCP Toolkit"),
         FConsoleCommandDelegate::CreateLambda([]()
@@ -293,7 +307,7 @@ void FHaybaMCPModule::StartupModule()
         .SetGroup(ToolsGroup)
         .SetIcon(FSlateIcon(FHaybaMCPStyle::GetStyleSetName(), "Hayba.Icon.Toolkit"));
 
-    IConsoleManager::Get().RegisterConsoleCommand(
+    OpenStudioConsoleCommand = IConsoleManager::Get().RegisterConsoleCommand(
         TEXT("Hayba.Studio.Open"),
         TEXT("Opens the Hayba Semantic Studio. Optional arg: an asset path to target."),
         FConsoleCommandWithArgsDelegate::CreateLambda([](const TArray<FString>& Args)
@@ -312,7 +326,7 @@ void FHaybaMCPModule::StartupModule()
     );
 
     // "Open with Hayba" content-browser action — registered once ToolMenus is up.
-    UToolMenus::RegisterStartupCallback(
+    StudioMenuStartupHandle = UToolMenus::RegisterStartupCallback(
         FSimpleMulticastDelegate::FDelegate::CreateRaw(this, &FHaybaMCPModule::RegisterStudioContentMenu));
 
     // Green/red plan-mode viewport overlay (reads .scratch/verdicts.json).
@@ -322,25 +336,14 @@ void FHaybaMCPModule::StartupModule()
     // Auto-open the panel on first run (Setup sidebar item handles onboarding inline).
     if (!FHaybaMCPSettings::Get().bHasSeenOnboarding && GEditor)
     {
-        GEditor->GetTimerManager()->SetTimerForNextTick(FTimerDelegate::CreateLambda([]()
-        {
-            FGlobalTabmanager::Get()->TryInvokeTab(FHaybaMCPModule::TabMain);
-        }));
+        AutoOpenTimerHandle = GEditor->GetTimerManager()->SetTimerForNextTick(
+            FTimerDelegate::CreateRaw(this, &FHaybaMCPModule::OpenOnboardingTab));
     }
 
     // Add Plan Mode toggle to the level-editor toolbar.
-    UToolMenus::RegisterStartupCallback(FSimpleMulticastDelegate::FDelegate::CreateLambda([]()
-    {
-        if (UToolMenu* Menu = UToolMenus::Get()->ExtendMenu("LevelEditor.LevelEditorToolBar.PlayToolBar"))
-        {
-            FToolMenuSection& Section = Menu->FindOrAddSection("HaybaMCP");
-            Section.AddEntry(FToolMenuEntry::InitWidget(
-                "HaybaPlanMode",
-                SNew(SHaybaMCPPlanModeWidget),
-                FText::GetEmpty(),
-                true));
-        }
-    }));
+    PlanModeMenuStartupHandle = UToolMenus::RegisterStartupCallback(
+        FSimpleMulticastDelegate::FDelegate::CreateRaw(
+            this, &FHaybaMCPModule::RegisterPlanModeToolbar));
 
     // Recipes live as a page inside the main toolkit panel (EHaybaPanel::Recipes).
     // Only the param-widget factory registry needs module-level init.
@@ -350,6 +353,43 @@ void FHaybaMCPModule::StartupModule()
 
 void FHaybaMCPModule::ShutdownModule()
 {
+    FString ActiveRender;
+    if (!HaybaRenderSafety::BeginShutdown(ActiveRender))
+    {
+        UE_LOG(LogHaybaMCP, Error,
+            TEXT("Module shutdown began while render command '%s' was still in flight; new render work is now refused while TCP teardown drains the active request."),
+            *ActiveRender);
+    }
+
+    // Every engine-owned callback below executes code from this DLL. Revoke
+    // them before any UI/server teardown so a hot unload cannot leave a timer,
+    // console command, or ToolMenus startup callback pointing at plugin code.
+    if (GEditor && AutoOpenTimerHandle.IsValid())
+    {
+        GEditor->GetTimerManager()->ClearTimer(AutoOpenTimerHandle);
+    }
+    AutoOpenTimerHandle.Invalidate();
+    if (OpenToolkitConsoleCommand)
+    {
+        IConsoleManager::Get().UnregisterConsoleObject(OpenToolkitConsoleCommand, false);
+        OpenToolkitConsoleCommand = nullptr;
+    }
+    if (OpenStudioConsoleCommand)
+    {
+        IConsoleManager::Get().UnregisterConsoleObject(OpenStudioConsoleCommand, false);
+        OpenStudioConsoleCommand = nullptr;
+    }
+    if (StudioMenuStartupHandle.IsValid())
+    {
+        UToolMenus::UnRegisterStartupCallback(StudioMenuStartupHandle);
+        StudioMenuStartupHandle.Reset();
+    }
+    if (PlanModeMenuStartupHandle.IsValid())
+    {
+        UToolMenus::UnRegisterStartupCallback(PlanModeMenuStartupHandle);
+        PlanModeMenuStartupHandle.Reset();
+    }
+
     // Ticker lambdas execute plugin code. Remove/fail an in-flight test job
     // before module unload so no callback can jump into an unloaded DLL.
     FHaybaMCPTestHandler::ShutdownActiveRun();
@@ -357,12 +397,20 @@ void FHaybaMCPModule::ShutdownModule()
     if (PlanOverlay) { PlanOverlay->Unregister(); PlanOverlay.Reset(); }
     TM->UnregisterNomadTabSpawner(TabMain);
     TM->UnregisterNomadTabSpawner(TabStudio);
-    UToolMenus::UnRegisterStartupCallback(this);
     UToolMenus::UnregisterOwner(this);
     StopTcpServer();
     StopMCPServer();
     FHaybaMCPStyle::Shutdown();
     UE_LOG(LogHaybaMCP, Log, TEXT("HaybaMCPToolkit module shut down."));
+}
+
+TSharedPtr<FJsonObject> FHaybaMCPModule::GetTcpTransportLimits() const
+{
+    if (TcpServer.IsValid() && TcpServer->IsRunning())
+    {
+        return TcpServer->GetTransportLimitsSnapshot();
+    }
+    return nullptr;
 }
 
 bool FHaybaMCPModule::StartTcpServer()
@@ -668,6 +716,9 @@ void FHaybaMCPModule::RegisterStudioContentMenu()
     UToolMenus* ToolMenus = UToolMenus::Get();
     if (!ToolMenus) return;
 
+    // Every entry/delegate installed in this scope is tagged with the module
+    // instance and removed by UnregisterOwner(this) during hot unload.
+    FToolMenuOwnerScoped OwnerScoped(this);
     UToolMenu* Menu = ToolMenus->ExtendMenu("ContentBrowser.AssetContextMenu.StaticMesh");
     if (!Menu) return;
 
@@ -691,6 +742,32 @@ void FHaybaMCPModule::RegisterStudioContentMenu()
     );
 }
 
+void FHaybaMCPModule::RegisterPlanModeToolbar()
+{
+    UToolMenus* ToolMenus = UToolMenus::Get();
+    if (!ToolMenus) return;
+
+    FToolMenuOwnerScoped OwnerScoped(this);
+    if (UToolMenu* Menu = ToolMenus->ExtendMenu("LevelEditor.LevelEditorToolBar.PlayToolBar"))
+    {
+        FToolMenuSection& Section = Menu->FindOrAddSection("HaybaMCP");
+        Section.AddEntry(FToolMenuEntry::InitWidget(
+            "HaybaPlanMode",
+            SNew(SHaybaMCPPlanModeWidget),
+            FText::GetEmpty(),
+            true));
+    }
+}
+
+void FHaybaMCPModule::OpenOnboardingTab()
+{
+    // SetTimerForNextTick has fired, so this handle no longer owns a pending
+    // callback. Keeping that state exact makes ShutdownModule's cancellation
+    // branch deterministic on both sides of the tick.
+    AutoOpenTimerHandle.Invalidate();
+    FGlobalTabmanager::Get()->TryInvokeTab(TabMain);
+}
+
 void FHaybaMCPModule::RecordToolCall(const FString& ToolName, const FString& ParamsJson, const FString& ResultJson)
 {
     FHaybaToolCallRecord Rec;
@@ -708,12 +785,19 @@ void FHaybaMCPModule::RecordToolCall(const FString& ToolName, const FString& Par
         }
     }
 
-    // Marshal to GameThread before firing so Slate subscribers don't have to
-    // worry about thread-safety in their handlers.
-    AsyncTask(ENamedThreads::GameThread, [this, Rec]()
+    // Production command dispatch already runs on the game-thread ticker. Fire
+    // synchronously there so module shutdown can never leave a raw-this plugin
+    // lambda queued in the task graph. An unexpected off-thread caller still
+    // gets durable, locked history above, but may not touch Slate subscribers.
+    if (IsInGameThread())
     {
         OnToolCallRecorded.Broadcast(Rec);
-    });
+    }
+    else
+    {
+        UE_LOG(LogHaybaMCP, Warning,
+            TEXT("Recorded Tool Stream history off the game thread; skipped live subscriber broadcast."));
+    }
 }
 
 TArray<FHaybaToolCallRecord> FHaybaMCPModule::SnapshotToolCalls() const

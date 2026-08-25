@@ -233,7 +233,7 @@ void SHaybaMCPCapabilitiesPanel::BuildCatalog()
         {
             { TEXT("list_tool_categories"), TEXT("Domain overview the agent calls first.") },
             { TEXT("get_tool_signature"),   TEXT("Returns the JSON schema for a specific tool.") },
-            { TEXT("python_run"),           TEXT("Sandboxed Python escape hatch (tier 1/2/3 safety).") },
+            { TEXT("python_run"),           TEXT("Constrained embedded Unreal Python; Tier-3 host I/O is always refused. This is not process isolation (#392/#414).") },
         });
 
     AddCategory(LOCTEXT("Cat.Actor", "Actor"),

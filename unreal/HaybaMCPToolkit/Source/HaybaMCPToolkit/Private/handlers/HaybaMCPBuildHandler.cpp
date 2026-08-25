@@ -20,6 +20,7 @@
 #include "HaybaMCPBuildHandler.h"
 #include "HaybaMCPSecurityManager.h"
 #include "HaybaMCPJobRegistry.h"
+#include "HaybaMCPSecretRedaction.h"
 
 #include "Async/Async.h"
 #include "HAL/PlatformProcess.h"
@@ -229,7 +230,10 @@ namespace
     {
         const FString JobId = FHaybaMCPJobRegistry::Get().AllocateJob(OpName);
 
-        UE_LOG(LogHaybaMCPBuild, Log, TEXT("[%s] launching job %s: %s %s"), *OpName, *JobId, *URL, *Params);
+        const FString SafeURL = HaybaMCPSecretRedaction::RedactTextForLog(URL, 2048);
+        const FString SafeParams = HaybaMCPSecretRedaction::RedactTextForLog(Params, 4096);
+        UE_LOG(LogHaybaMCPBuild, Log, TEXT("[%s] launching job %s: %s %s"),
+            *OpName, *JobId, *SafeURL, *SafeParams);
         JournalProgress(JobId, TEXT("launch"),
             FString::Printf(TEXT("%s | %s %s"), *OpName, *URL, *Params));
 
@@ -241,7 +245,8 @@ namespace
                     // Trim chunk for journal sanity.
                     const FString Short = Chunk.Len() > 1024 ? Chunk.Right(1024) : Chunk;
                     JournalProgress(JobId, TEXT("stdout"), Short);
-                    UE_LOG(LogHaybaMCPBuild, Verbose, TEXT("[%s] %s"), *OpName, *Short);
+                    const FString SafeShort = HaybaMCPSecretRedaction::RedactTextForLog(Short, 1024);
+                    UE_LOG(LogHaybaMCPBuild, Verbose, TEXT("[%s] %s"), *OpName, *SafeShort);
                 });
 
             const int32 ExitCode = R.bLaunched ? R.ExitCode : -1;

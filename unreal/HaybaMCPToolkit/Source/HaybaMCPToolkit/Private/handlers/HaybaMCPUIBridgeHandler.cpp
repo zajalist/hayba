@@ -1,4 +1,5 @@
 #include "HaybaMCPUIBridgeHandler.h"
+#include "HaybaMCPSecretRedaction.h"
 
 #include "HaybaMCPModule.h"
 #include "HaybaMCPMemoryPanel.h"
@@ -64,6 +65,30 @@ FHaybaHandlerResult FHaybaMCPUIBridgeHandler::HandleToolStream(const TSharedPtr<
     P->TryGetStringField(TEXT("tool"), TName);
     P->TryGetStringField(TEXT("params"), PStr);
     P->TryGetStringField(TEXT("result"), RStr);
+
+    // This route is normally called by the Node mirror AFTER its own final
+    // redaction boundary -- but it is also reachable over raw TCP, so a direct
+    // client can put a credential straight into native Tool Stream history.
+    // Redact the two dynamic fields again at this native observability
+    // boundary; the exact markers are idempotent, so the ordinary Node path is
+    // unchanged.
+    //
+    // Came from the crash-hardening branch, where it lived in the router's
+    // inline ui_tool_stream case. That case moved here, so this moved with it.
+    {
+        TSharedPtr<FJsonObject> MirrorText = MakeShared<FJsonObject>();
+        MirrorText->SetStringField(TEXT("params"), PStr);
+        MirrorText->SetStringField(TEXT("result"), RStr);
+        const HaybaMCPSecretRedaction::FResult SafeMirror =
+            HaybaMCPSecretRedaction::Redact(MirrorText);
+        if (!SafeMirror.Value.IsValid() ||
+            !SafeMirror.Value->TryGetStringField(TEXT("params"), PStr) ||
+            !SafeMirror.Value->TryGetStringField(TEXT("result"), RStr))
+        {
+            PStr = TEXT("[TRUNCATED:nodes]");
+            RStr = TEXT("[TRUNCATED:nodes]");
+        }
+    }
 
     if (FHaybaMCPModule* M = FModuleManager::GetModulePtr<FHaybaMCPModule>("HaybaMCPToolkit"))
     {

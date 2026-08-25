@@ -24,6 +24,49 @@ param(
 $ErrorActionPreference = 'Stop'
 $MaxFrameBytes = 1MB
 
+$Clock = [Diagnostics.Stopwatch]::StartNew()
+
+function Get-DiagnosticHash([object]$Value) {
+    $text = if ($null -eq $Value) { '' } else { [string]$Value }
+    if ($text.Length -gt 4096) { $text = $text.Substring(0, 4096) }
+    $bytes = [Text.Encoding]::UTF8.GetBytes($text)
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try { return ([BitConverter]::ToString($sha.ComputeHash($bytes))).Replace('-', '').ToLowerInvariant() }
+    finally { $sha.Dispose() }
+}
+
+function Get-RemainingTimeoutMs([string]$Operation) {
+    $remaining = $TimeoutMs - [int]$Clock.ElapsedMilliseconds
+    if ($remaining -le 0) {
+        throw "$Operation exceeded the absolute ${TimeoutMs}ms command deadline"
+    }
+    return $remaining
+}
+
+function Wait-IoTask([System.Threading.Tasks.Task]$Task, [string]$Operation) {
+    $remaining = Get-RemainingTimeoutMs $Operation
+    if (-not $Task.Wait($remaining)) {
+        throw "$Operation exceeded the absolute ${TimeoutMs}ms command deadline"
+    }
+    return $Task.GetAwaiter().GetResult()
+}
+
+function Read-ExactAsync(
+    [System.Net.Sockets.NetworkStream]$Stream,
+    [byte[]]$Buffer,
+    [int]$Offset,
+    [int]$Count,
+    [string]$Operation
+) {
+    $read = 0
+    while ($read -lt $Count) {
+        $task = $Stream.ReadAsync($Buffer, $Offset + $read, $Count - $read)
+        $count = Wait-IoTask $task $Operation
+        if ($count -le 0) { throw "Connection closed before $Operation completed" }
+        $read += $count
+    }
+}
+
 try {
     $paramsObject = $ParamsJson | ConvertFrom-Json -AsHashtable
     if ($null -eq $paramsObject -or $paramsObject -isnot [hashtable]) {
@@ -31,14 +74,13 @@ try {
     }
 
     $client = [System.Net.Sockets.TcpClient]::new()
-    $client.SendTimeout = $TimeoutMs
-    $client.ReceiveTimeout = $TimeoutMs
-    $client.Connect('127.0.0.1', $Port)
     try {
+        Wait-IoTask ($client.ConnectAsync('127.0.0.1', $Port)) 'connect' | Out-Null
         $stream = $client.GetStream()
+        $requestId = 'probe_' + [guid]::NewGuid().ToString('N')
         $request = @{
             cmd = $Cmd
-            id = 'probe_' + [guid]::NewGuid().ToString('N')
+            id = $requestId
             params = $paramsObject
         }
         if ($Auth) { $request.auth = $Auth }
@@ -50,17 +92,12 @@ try {
         }
         $header = [BitConverter]::GetBytes([int]$payload.Length)
         if ([BitConverter]::IsLittleEndian) { [Array]::Reverse($header) }
-        $stream.Write($header, 0, $header.Length)
-        $stream.Write($payload, 0, $payload.Length)
-        $stream.Flush()
+        Wait-IoTask ($stream.WriteAsync($header, 0, $header.Length)) 'request header write' | Out-Null
+        Wait-IoTask ($stream.WriteAsync($payload, 0, $payload.Length)) 'request payload write' | Out-Null
+        Wait-IoTask ($stream.FlushAsync()) 'request flush' | Out-Null
 
         $lengthBytes = [byte[]]::new(4)
-        $read = 0
-        while ($read -lt 4) {
-            $count = $stream.Read($lengthBytes, $read, 4 - $read)
-            if ($count -le 0) { throw 'Connection closed before response header completed' }
-            $read += $count
-        }
+        Read-ExactAsync $stream $lengthBytes 0 4 'response header read'
         if ([BitConverter]::IsLittleEndian) { [Array]::Reverse($lengthBytes) }
         $length = [BitConverter]::ToInt32($lengthBytes, 0)
         # The plugin caps responses at 8 MiB. Enforce the same boundary here so
@@ -71,15 +108,14 @@ try {
         }
 
         $responseBytes = [byte[]]::new($length)
-        $read = 0
-        while ($read -lt $length) {
-            $count = $stream.Read($responseBytes, $read, $length - $read)
-            if ($count -le 0) { throw 'Connection closed before response payload completed' }
-            $read += $count
-        }
+        Read-ExactAsync $stream $responseBytes 0 $length 'response payload read'
 
-        $responseText = [System.Text.Encoding]::UTF8.GetString($responseBytes)
+        $strictUtf8 = [System.Text.UTF8Encoding]::new($false, $true)
+        $responseText = $strictUtf8.GetString($responseBytes)
         $response = $responseText | ConvertFrom-Json
+        if ($null -eq $response.id -or [string]$response.id -cne $requestId) {
+            throw "Response correlation failed: expected id $requestId"
+        }
         $response | ConvertTo-Json -Compress -Depth 30
     }
     finally {
@@ -87,6 +123,15 @@ try {
     }
 }
 catch {
-    [Console]::Error.WriteLine("invoke-tcp-command failed: $($_.Exception.Message)")
+    # This helper is often used by security probes. Never echo a peer-controlled
+    # response fragment or request sentinel into captured CI/editor evidence.
+    $digest = Get-DiagnosticHash $_.Exception.Message
+    [Console]::Error.WriteLine("invoke-tcp-command failed: sanitized diagnostic sha256=$digest")
     exit 1
 }
+
+# When this script is invoked from another PowerShell script, a successful
+# scriptblock does not reliably populate the caller's $LASTEXITCODE. The
+# survival harness treats a missing exit status as a transport failure, so make
+# the success contract explicit just as the catch path makes failure explicit.
+exit 0

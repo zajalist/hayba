@@ -2,11 +2,13 @@
 #include "CoreMinimal.h"
 #include "Modules/ModuleManager.h"
 #include "Dom/JsonObject.h"
+#include "TimerManager.h"
 
 class FHaybaMCPTcpServer;
 class FHaybaMCPCommandHandler;
 class IHaybaMCPHandler;
 class FHaybaPlanOverlay;
+class IConsoleObject;
 
 // Lightweight tool-call record kept in the module so it survives tab
 // navigations. The Tool Stream panel hydrates from this buffer on Construct.
@@ -28,6 +30,8 @@ public:
     void StopTcpServer();
     bool IsTcpServerRunning() const;
     int32 GetTcpClientCount() const;
+    /** Active server's immutable, clamped transport limits; null while stopped. */
+    TSharedPtr<FJsonObject> GetTcpTransportLimits() const;
 
     bool StartMCPServer();
     void StopMCPServer();
@@ -75,8 +79,10 @@ public:
     HAYBAMCPTOOLKIT_API void RegisterExternalHandler(TSharedRef<IHaybaMCPHandler> Handler);
     HAYBAMCPTOOLKIT_API void UnregisterExternalHandler(const TSharedRef<IHaybaMCPHandler>& Handler);
 
-    // Multicast — fires on the GameThread every time a tool call is recorded.
-    // Subscribers: Chat panel's in-flight trace, future agent observability.
+    // Multicast — fires synchronously when a tool call is recorded on the Game
+    // Thread. Unexpected off-thread calls retain locked history but skip this
+    // Slate-facing notification. Subscribers: Chat panel's in-flight trace,
+    // future agent observability.
     DECLARE_MULTICAST_DELEGATE_OneParam(FOnToolCallRecorded, const FHaybaToolCallRecord&);
     FOnToolCallRecorded OnToolCallRecorded;
 
@@ -116,13 +122,24 @@ public:
 private:
     /** Adds the "Open with Hayba" entry to the StaticMesh content-browser menu. */
     void RegisterStudioContentMenu();
+    /** Adds the Plan Mode widget under this module's removable ToolMenus owner. */
+    void RegisterPlanModeToolbar();
+    /** Tracked next-tick onboarding action; ShutdownModule cancels it if pending. */
+    void OpenOnboardingTab();
     FString PendingStudioAsset;
     TWeakPtr<class SHaybaSemanticStudio> StudioWidget;
     TUniquePtr<FHaybaPlanOverlay> PlanOverlay;
+    IConsoleObject* OpenToolkitConsoleCommand = nullptr;
+    IConsoleObject* OpenStudioConsoleCommand = nullptr;
+    FTimerHandle AutoOpenTimerHandle;
+    FDelegateHandle StudioMenuStartupHandle;
+    FDelegateHandle PlanModeMenuStartupHandle;
 
     FString FindNodeExecutable() const;
     FString GetMCPServerPath() const;
 
+    // Connection workers retain the server while they exit during shutdown,
+    // so the shared controller crosses the game/listener/connection threads.
     TSharedPtr<FHaybaMCPTcpServer, ESPMode::ThreadSafe> TcpServer;
     TSharedPtr<FHaybaMCPCommandHandler> CommandHandler;
     mutable FProcHandle MCPProcessHandle;

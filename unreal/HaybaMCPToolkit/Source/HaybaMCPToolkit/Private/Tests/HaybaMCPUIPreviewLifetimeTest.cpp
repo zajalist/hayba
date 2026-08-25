@@ -209,6 +209,11 @@ bool FHaybaMCPUIPreviewLifetimeTest::RunTest(const FString& Parameters)
         const FHaybaHandlerResult Compiled = Handler.Handle(TEXT("ui_compile_widget"), Compile);
         GEditor->EndTransaction();
         TestTrue(TEXT("representative WBP recompiles"), Compiled.bOk);
+        if (Compiled.Data.IsValid())
+        {
+            TestTrue(TEXT("widget compile reports effective success"), Compiled.Data->GetBoolField(TEXT("ok")));
+            TestTrue(TEXT("widget compile reports a clean compile"), Compiled.Data->GetBoolField(TEXT("compiled_clean")));
+        }
 
         TArray<TWeakObjectPtr<UWorld>> CompilePreviewWorlds;
         for (TObjectIterator<UWorld> It; It; ++It)

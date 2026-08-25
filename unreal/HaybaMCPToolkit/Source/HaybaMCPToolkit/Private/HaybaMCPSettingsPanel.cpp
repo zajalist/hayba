@@ -86,6 +86,43 @@ void SHaybaMCPSettingsPanel::Construct(const FArguments& InArgs)
         .Text(FText::AsNumber(S.ToolCacheTTLSeconds))
         .OnTextChanged_Lambda(OnDirty);
 
+    AdvisoryVerbosityOptions = {
+        MakeShared<EHaybaMCPAdvisoryVerbosity>(EHaybaMCPAdvisoryVerbosity::ErrorsOnly),
+        MakeShared<EHaybaMCPAdvisoryVerbosity>(EHaybaMCPAdvisoryVerbosity::ErrorsAndWarnings),
+        MakeShared<EHaybaMCPAdvisoryVerbosity>(EHaybaMCPAdvisoryVerbosity::ErrorsWarningsAndTips),
+    };
+    for (const TSharedPtr<EHaybaMCPAdvisoryVerbosity>& Option : AdvisoryVerbosityOptions)
+    {
+        if (Option.IsValid() && *Option == S.AdvisoryVerbosity)
+        {
+            SelectedAdvisoryVerbosity = Option;
+            break;
+        }
+    }
+    if (!SelectedAdvisoryVerbosity.IsValid())
+    {
+        SelectedAdvisoryVerbosity = AdvisoryVerbosityOptions[1];
+    }
+    SAssignNew(AdvisoryVerbosityCombo, SComboBox<TSharedPtr<EHaybaMCPAdvisoryVerbosity>>)
+        .OptionsSource(&AdvisoryVerbosityOptions)
+        .InitiallySelectedItem(SelectedAdvisoryVerbosity)
+        .OnGenerateWidget_Lambda([](TSharedPtr<EHaybaMCPAdvisoryVerbosity> Value)
+        {
+            return SNew(STextBlock).Text(Value.IsValid()
+                ? AdvisoryVerbosityLabel(*Value)
+                : FText::GetEmpty());
+        })
+        .OnSelectionChanged(this, &SHaybaMCPSettingsPanel::OnAdvisoryVerbosityChanged)
+        [
+            SNew(STextBlock)
+            .Text_Lambda([this]()
+            {
+                return SelectedAdvisoryVerbosity.IsValid()
+                    ? AdvisoryVerbosityLabel(*SelectedAdvisoryVerbosity)
+                    : FText::GetEmpty();
+            })
+        ];
+
     ChildSlot
     [
         SNew(SBorder)
@@ -246,6 +283,25 @@ void SHaybaMCPSettingsPanel::Construct(const FArguments& InArgs)
                     + SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 8.f)
                     [
                         BuildSection(
+                            NSLOCTEXT("Hayba", "Settings.Sec.Guidance", "AI Response Guidance"),
+                            NSLOCTEXT("Hayba", "Settings.Sec.Guidance.TT",
+                                "Choose how much optional guidance Hayba adds to tool replies. Errors and safety-required recovery instructions can never be hidden."),
+                            SNew(SVerticalBox)
+                            + SVerticalBox::Slot().AutoHeight().Padding(0.f, 2.f)
+                            [ BuildLabeledRow(
+                                NSLOCTEXT("Hayba", "S.Guidance.Level", "Response detail"),
+                                NSLOCTEXT("Hayba", "S.Guidance.Level.TT",
+                                    "Errors only — suppress optional warnings and AI tips.\n\n"
+                                    "Errors and warnings — include risk, partial-success, and verification warnings, but no coaching tips.\n\n"
+                                    "Errors, warnings, and AI tips — include concise next-step guidance.\n\n"
+                                    "Errors, session-health failures, and mandatory recovery instructions are always returned."),
+                                AdvisoryVerbosityCombo.ToSharedRef()) ]
+                        )
+                    ]
+
+                    + SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 8.f)
+                    [
+                        BuildSection(
                             NSLOCTEXT("Hayba", "Settings.Sec.Visual", "Visual Sidecar"),
                             NSLOCTEXT("Hayba", "Settings.Sec.Visual.TT",
                                 "External Python service (FastAPI + CLIP / SpatialCLIP / OWL-ViT) that the toolkit calls for image embeddings and grounding.\n\n"
@@ -343,19 +399,18 @@ void SHaybaMCPSettingsPanel::Construct(const FArguments& InArgs)
                         BuildSection(
                             NSLOCTEXT("Hayba", "Settings.Sec.Python", "Python"),
                             NSLOCTEXT("Hayba", "Settings.Sec.Python.TT",
-                                "Controls what the agent's Python escape hatch (python_run) is allowed to do.\n\n"
-                                "Tier 1: pure UE editor scripting (unreal.* APIs). Always allowed.\n"
-                                "Tier 2: same as Tier 1 + read-only filesystem under the project. Always allowed.\n"
-                                "Tier 3: arbitrary code, full filesystem, subprocess, socket. Opt-in below."),
-                            BuildToggle(
-                                NSLOCTEXT("Hayba", "S.UnsafePython",
-                                    "Allow Tier 3 Python (filesystem, subprocess, socket) — DANGEROUS"),
-                                NSLOCTEXT("Hayba", "S.UnsafePython.TT",
-                                    "DANGER: turning this on lets the agent shell out, write anywhere on disk, open sockets, and import arbitrary modules.\n\n"
-                                    "Equivalent to giving the agent full code execution on your machine. Reserve for trusted local workflows where the alternative is even worse (e.g., scripting external tooling).\n\n"
-                                    "Default: off. Tier 3 calls return a permission error when this is off."),
-                                [](){ return FHaybaMCPSettings::Get().bAllowUnsafePython; },
-                                [](bool b){ FHaybaMCPSettings::Get().bAllowUnsafePython = b; })
+                                "python_run is an Unreal-only embedded scripting principal.\n\n"
+                                "Tier 1: bounded Unreal editor scripting.\n"
+                                "Tier 2: Unreal mutations guarded by the normal MCP policy.\n"
+                                "Tier 3: host filesystem, subprocess, and network access is always refused."),
+                            SNew(STextBlock)
+                                .TextStyle(&FAppStyle::Get().GetWidgetStyle<FTextBlockStyle>("NormalText"))
+                                .AutoWrapText(true)
+                                .Text(NSLOCTEXT("Hayba", "S.PythonBoundary",
+                                    "Host access from embedded python_run is permanently disabled. "
+                                    "The legacy allow_unsafe request field and old saved setting are accepted for compatibility but are ineffective. "
+                                    "Use a typed brokered MCP tool (#412/#415) for supported host operations. "
+                                    "This boundary reduces exposure; it does not claim arbitrary in-process Python safety (#392/#414)."))
                         )
                     ]
 
@@ -574,6 +629,30 @@ void SHaybaMCPSettingsPanel::RefreshKeyStatus()
         KeyStatusText->SetText(FText::FromString(FString::Printf(TEXT("Stored (DPAPI): ••••%s"), *Last4)));
         KeyStatusText->SetColorAndOpacity(FSlateColor(FHaybaMCPStyle::Colour("Hayba.Color.Text.Secondary")));
     }
+}
+
+FText SHaybaMCPSettingsPanel::AdvisoryVerbosityLabel(EHaybaMCPAdvisoryVerbosity Value)
+{
+    switch (Value)
+    {
+    case EHaybaMCPAdvisoryVerbosity::ErrorsOnly:
+        return NSLOCTEXT("Hayba", "S.Guidance.ErrorsOnly", "Errors only");
+    case EHaybaMCPAdvisoryVerbosity::ErrorsAndWarnings:
+        return NSLOCTEXT("Hayba", "S.Guidance.ErrorsWarnings", "Errors and warnings");
+    case EHaybaMCPAdvisoryVerbosity::ErrorsWarningsAndTips:
+    default:
+        return NSLOCTEXT("Hayba", "S.Guidance.ErrorsWarningsTips", "Errors, warnings, and AI tips");
+    }
+}
+
+void SHaybaMCPSettingsPanel::OnAdvisoryVerbosityChanged(
+    TSharedPtr<EHaybaMCPAdvisoryVerbosity> NewValue,
+    ESelectInfo::Type)
+{
+    if (!NewValue.IsValid()) return;
+    SelectedAdvisoryVerbosity = NewValue;
+    FHaybaMCPSettings::Get().AdvisoryVerbosity = *NewValue;
+    MarkDirty();
 }
 
 FReply SHaybaMCPSettingsPanel::OnRedoSetup()

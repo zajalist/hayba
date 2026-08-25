@@ -157,23 +157,19 @@ FHaybaHandlerResult FHaybaMCPPhysicsHandler::PhysicsSetCollisionProfile(const TS
 
 FHaybaHandlerResult FHaybaMCPPhysicsHandler::PhysicsAddImpulse(const TSharedPtr<FJsonObject>& P)
 {
-    UWorld* World = EditorWorld();
-    if (!World) return FHaybaHandlerResult::Err(TEXT("physics_add_impulse: no editor world"));
-
-    FString ActorId;
+    // Settle every wire-format error before consulting editor state. Besides
+    // producing the useful error when both the actor and a flag are wrong,
+    // this keeps malformed input away from world/component lookup entirely.
     FHaybaParamReader ParamR(P, TEXT("physics_add_impulse"));
-    ActorId = ParamR.RequiredString(TEXT("actor_id"));
+    const FString ActorId = ParamR.RequiredString(TEXT("actor_id"));
+    const TOptional<FVector> ImpulseValue = ParamR.RequiredVec3(TEXT("impulse"));
+    const bool bVelocityChange = ParamR.OptionalBool(TEXT("velocity_change"), false);
+    const FString ComponentName = ParamR.OptionalString(TEXT("component_name"));
     if (ParamR.HasErrors()) return FHaybaHandlerResult::Err(ParamR.ErrorMessage());
 
-    FVector Impulse;
-    if (!ReadVec(P, TEXT("impulse"), Impulse))
-        return FHaybaHandlerResult::Err(TEXT("physics_add_impulse: missing impulse"));
-
-    bool bVelocityChange = false;
-    P->TryGetBoolField(TEXT("velocity_change"), bVelocityChange);
-
-    FString ComponentName;
-    P->TryGetStringField(TEXT("component_name"), ComponentName);
+    const FVector Impulse = *ImpulseValue;
+    UWorld* World = EditorWorld();
+    if (!World) return FHaybaHandlerResult::Err(TEXT("physics_add_impulse: no editor world"));
 
     FString AmbiguityError;
     AActor* Actor = FindActorOrAmbiguityError(World, ActorId, TEXT("physics_add_impulse"), AmbiguityError);

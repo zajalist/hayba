@@ -2,7 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { isSelfSocketScript, danglingLifetimeRegistration, installToolHooks, _resetToolHooksForTests } from '../tool-hooks.js';
+import {
+  isSelfSocketScript,
+  danglingLifetimeRegistration,
+  installToolHooks,
+  _resetToolHooksForTests,
+} from '../tool-hooks.js';
 import { setHistoryPath, listFindings } from '../history.js';
 import { setConfigPath } from '../config.js';
 import { rulesById } from '../rules.js';
@@ -42,6 +47,7 @@ describe('isSelfSocketScript', () => {
     expect(isSelfSocketScript('import socket\ns = socket.socket()\ns.connect(("127.0.0.1", 52342))')).toBe(true);
     expect(isSelfSocketScript('s.connect(("localhost", 52345))')).toBe(true);
     expect(isSelfSocketScript('s.connect(("127.0.0.1", 52350))')).toBe(true);
+    expect(isSelfSocketScript('s.connect(("::1", 52346))')).toBe(true);
   });
 
   it('ignores ports outside the UE plugin range', () => {
@@ -61,10 +67,18 @@ describe('isSelfSocketScript', () => {
 
 describe('danglingLifetimeRegistration', () => {
   it('flags engine-lifetime callback registrations', () => {
-    expect(danglingLifetimeRegistration('unreal.register_slate_post_tick_callback(cb)')).toBe('register_slate_post_tick_callback');
-    expect(danglingLifetimeRegistration('unreal.register_slate_pre_tick_callback(cb)')).toBe('register_slate_pre_tick_callback');
-    expect(danglingLifetimeRegistration('unreal.register_python_shutdown_callback(cb)')).toBe('register_python_shutdown_callback');
-    expect(danglingLifetimeRegistration('unreal.register_post_engine_init_callback(cb)')).toBe('register_post_engine_init_callback');
+    expect(danglingLifetimeRegistration('unreal.register_slate_post_tick_callback(cb)')).toBe(
+      'register_slate_post_tick_callback',
+    );
+    expect(danglingLifetimeRegistration('unreal.register_slate_pre_tick_callback(cb)')).toBe(
+      'register_slate_pre_tick_callback',
+    );
+    expect(danglingLifetimeRegistration('unreal.register_python_shutdown_callback(cb)')).toBe(
+      'register_python_shutdown_callback',
+    );
+    expect(danglingLifetimeRegistration('unreal.register_post_engine_init_callback(cb)')).toBe(
+      'register_post_engine_init_callback',
+    );
   });
 
   it('returns null for one-shot scripts', () => {
@@ -76,28 +90,36 @@ describe('danglingLifetimeRegistration', () => {
 describe('python_run pre-flight wrapper — dangling lifetime callback', () => {
   it('rejects an engine-lifetime callback registration and emits a finding', async () => {
     const handler = makeValidatedPythonRunHandler({ scratchDir: tmpDir });
-    const result = await handler({
-      script: 'def t(dt):\n  pass\nunreal.register_slate_post_tick_callback(t)',
-    }, {});
+    const result = await handler(
+      {
+        script: 'def t(dt):\n  pass\nunreal.register_slate_post_tick_callback(t)',
+      },
+      {},
+    );
     expect(result.isError).toBe(true);
-    const text = result.content.map(c => c.text).join('\n');
+    const text = result.content.map((c) => c.text).join('\n');
     expect(text).toMatch(/dangling_lifetime_callback_in_python_run/);
     expect(text).toMatch(/register_slate_post_tick_callback/);
+    expect(text).toMatch(/HCR-LIFE-001/);
+    expect(text).toMatch(/Retry unchanged: forbidden/);
 
     const hist = await listFindings();
-    expect(hist.find(f => f.ruleId === 'dangling_lifetime_callback_in_python_run')).toBeDefined();
+    expect(hist.find((f) => f.ruleId === 'dangling_lifetime_callback_in_python_run')).toBeDefined();
   });
 
-  it('honours allow_unsafe and does not reject in pre-flight', async () => {
+  it('does not let allow_unsafe bypass the crash guard', async () => {
     const handler = makeValidatedPythonRunHandler({ scratchDir: tmpDir });
-    const result = await handler({
-      script: 'unreal.register_python_shutdown_callback(t)',
-      allow_unsafe: true,
-    }, {});
-    // With allow_unsafe the pre-flight does not reject; it delegates to the real
-    // handler (which fails to reach a live UE here, but NOT with our finding).
-    const text = result.content.map(c => c.text).join('\n');
-    expect(text).not.toMatch(/dangling_lifetime_callback_in_python_run/);
+    const result = await handler(
+      {
+        script: 'unreal.register_python_shutdown_callback(t)',
+        allow_unsafe: true,
+      },
+      {},
+    );
+    const text = result.content.map((c) => c.text).join('\n');
+    expect(result.isError).toBe(true);
+    expect(text).toMatch(/dangling_lifetime_callback_in_python_run/);
+    expect(text).toMatch(/non-bypassable/);
   });
 });
 
@@ -116,17 +138,21 @@ describe('attachEvaluator wired evaluators', () => {
 describe('python_run pre-flight wrapper', () => {
   it('rejects a self-socket script and emits a finding', async () => {
     const handler = makeValidatedPythonRunHandler({ scratchDir: tmpDir });
-    const result = await handler({
-      script: 'import socket\ns = socket.socket()\ns.connect(("127.0.0.1", 52342))',
-      allow_unsafe: true,
-    }, {});
+    const result = await handler(
+      {
+        script: 'import socket\ns = socket.socket()\ns.connect(("127.0.0.1", 52342))',
+        allow_unsafe: true,
+      },
+      {},
+    );
     expect(result.isError).toBe(true);
-    const text = result.content.map(c => c.text).join('\n');
+    const text = result.content.map((c) => c.text).join('\n');
     expect(text).toMatch(/tcp_socket_to_self_in_python_run/);
-    expect(text).toMatch(/rejected by validator/);
+    expect(text).toMatch(/HCR-BLOCK-001/);
+    expect(text).toMatch(/Retry unchanged: forbidden/);
 
     const hist = await listFindings();
-    expect(hist.find(f => f.ruleId === 'tcp_socket_to_self_in_python_run')).toBeDefined();
+    expect(hist.find((f) => f.ruleId === 'tcp_socket_to_self_in_python_run')).toBeDefined();
   });
 
   it('does not call into UE for self-socket scripts', async () => {
@@ -134,18 +160,24 @@ describe('python_run pre-flight wrapper', () => {
     // The cleanest signal: the handler returns isError synchronously without
     // having reached UE — covered above by isError===true on a fresh tmpDir.
     const handler = makeValidatedPythonRunHandler({ scratchDir: tmpDir });
-    const result = await handler({
-      script: 's.connect(("localhost", 52344))',
-    }, {});
+    const result = await handler(
+      {
+        script: 's.connect(("localhost", 52344))',
+      },
+      {},
+    );
     expect(result.isError).toBe(true);
   });
 
   it('rejects safely with an actionable hint', async () => {
     const handler = makeValidatedPythonRunHandler({ scratchDir: tmpDir });
-    const result = await handler({
-      script: 's.connect(("127.0.0.1", 52342))',
-    }, {});
-    const text = result.content.map(c => c.text).join('\n');
+    const result = await handler(
+      {
+        script: 's.connect(("127.0.0.1", 52342))',
+      },
+      {},
+    );
+    const text = result.content.map((c) => c.text).join('\n');
     expect(text).toMatch(/unreal\.\*/);
   });
 });

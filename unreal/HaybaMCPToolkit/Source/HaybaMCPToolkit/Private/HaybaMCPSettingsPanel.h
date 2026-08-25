@@ -1,5 +1,6 @@
 #pragma once
 #include "CoreMinimal.h"
+#include "HaybaMCPAdvisoryTypes.h"
 #include "Widgets/SCompoundWidget.h"
 #include "Input/Reply.h"
 
@@ -39,9 +40,17 @@ private:
     // Whether the user typed a new key this session (only then do we write the vault).
     bool bKeyEdited = false;
 
+    // Optional response-guidance level. Strongly typed so adding a future
+    // level cannot silently map to the wrong display label.
+    TArray<TSharedPtr<EHaybaMCPAdvisoryVerbosity>> AdvisoryVerbosityOptions;
+    TSharedPtr<EHaybaMCPAdvisoryVerbosity> SelectedAdvisoryVerbosity;
+    TSharedPtr<SComboBox<TSharedPtr<EHaybaMCPAdvisoryVerbosity>>> AdvisoryVerbosityCombo;
+
     void OnProviderChanged(TSharedPtr<FString> NewId, ESelectInfo::Type);
     void ApplyProviderDefaults(const FHaybaProviderInfo* Info, bool bOverwriteUrlModel);
     void RefreshKeyStatus();
+    void OnAdvisoryVerbosityChanged(TSharedPtr<EHaybaMCPAdvisoryVerbosity> NewValue, ESelectInfo::Type);
+    static FText AdvisoryVerbosityLabel(EHaybaMCPAdvisoryVerbosity Value);
 
     // Dirty tracking — Save button only enables when something has changed.
     bool bIsDirty = false;

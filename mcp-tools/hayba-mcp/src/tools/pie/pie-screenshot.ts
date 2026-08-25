@@ -15,7 +15,9 @@ export const schema = z
     filename: z
       .string()
       .optional()
-      .describe('Absolute output path. Defaults to Saved/Screenshots with a timestamp. check_only:true REQUIRES this (the filename the capture call returned).'),
+      .describe(
+        'Output path. An absolute path is used as-is; a RELATIVE name is anchored to the project screenshot directory (Saved/Screenshots/<Platform>) — it is NOT relative to the editor process, whose working directory is the Unreal install tree. Defaults to that directory with a timestamp. The response returns the RESOLVED ABSOLUTE path; poll check_only with that value. check_only:true REQUIRES this.',
+      ),
     path: z
       .string()
       .optional()
@@ -26,6 +28,10 @@ export const schema = z
       .describe(
         'Do not capture; just report whether the previously requested file (pass its filename!) has landed. The engine writes the image a frame or two after the request, so poll with this rather than assuming it is ready.',
       ),
+    show_ui: z
+      .boolean()
+      .default(true)
+      .describe('Include Slate/UMG in the capture. Defaults to true; set false only for a scene-only frame.'),
     // .strict() so a misspelled key is a loud validation error instead of
     // being stripped pre-wire — the exact failure that made check_only mint a
     // fresh timestamped filename and report captured:false forever.

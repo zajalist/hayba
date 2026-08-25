@@ -1,4 +1,5 @@
 #include "HaybaMCPSecurityManager.h"
+#include "HaybaMCPSecretRedaction.h"
 #include "HaybaMCPSettings.h"
 #include "Misc/Paths.h"
 #include "Misc/FileHelper.h"
@@ -165,8 +166,22 @@ void FHaybaMCPSecurityManager::Journal(const FHaybaJournalEntry& Entry)
 
     const FString JournalPath = FPaths::ProjectSavedDir() / TEXT("hayba-execution.log");
 
-    // Sanitize error message: strip tabs/newlines so each entry is exactly one line.
-    FString SafeError = Entry.ErrorMessage;
+    // The execution journal is an independent disk boundary.  Final TCP
+    // envelope filtering cannot protect it, and a handler error can contain a
+    // credential copied from an upstream API.  Run the same bounded native
+    // redactor before flattening the value to one line.
+    TSharedPtr<FJsonObject> JournalText = MakeShared<FJsonObject>();
+    JournalText->SetStringField(TEXT("error"), Entry.ErrorMessage);
+    const HaybaMCPSecretRedaction::FResult RedactedJournal =
+        HaybaMCPSecretRedaction::Redact(JournalText);
+    FString SafeError;
+    if (!RedactedJournal.Value.IsValid() ||
+        !RedactedJournal.Value->TryGetStringField(TEXT("error"), SafeError))
+    {
+        SafeError = TEXT("[TRUNCATED:nodes]");
+    }
+
+    // Strip tabs/newlines so each entry is exactly one line.
     SafeError.ReplaceInline(TEXT("\t"), TEXT(" "));
     SafeError.ReplaceInline(TEXT("\r"), TEXT(" "));
     SafeError.ReplaceInline(TEXT("\n"), TEXT(" "));

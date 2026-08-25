@@ -29,7 +29,7 @@ function resultText(v: unknown): string {
 // we don't want to drown the user in noise.
 
 const PCG_COUNTER_SCRIPT = `
-import json, os, unreal
+import json, unreal
 out = {"total": 0, "actors": 0}
 sub = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)
 if sub:
@@ -37,21 +37,11 @@ if sub:
         if not isinstance(actor, unreal.Actor):
             continue
         for comp in actor.get_components_by_class(unreal.HierarchicalInstancedStaticMeshComponent):
-            try:
-                out["total"] += int(comp.get_instance_count())
-                out["actors"] += 1
-            except Exception:
-                pass
+            out["total"] += int(comp.get_instance_count())
+            out["actors"] += 1
         for comp in actor.get_components_by_class(unreal.InstancedStaticMeshComponent):
-            try:
-                out["total"] += int(comp.get_instance_count())
-                out["actors"] += 1
-            except Exception:
-                pass
-out_path = os.path.join(unreal.SystemLibrary.get_project_directory(), ".scratch", "validator_pcg_instance_count.json")
-os.makedirs(os.path.dirname(out_path), exist_ok=True)
-with open(out_path, "w") as f:
-    json.dump(out, f)
+            out["total"] += int(comp.get_instance_count())
+            out["actors"] += 1
 print(json.dumps(out))
 `;
 
@@ -63,9 +53,7 @@ async function evaluatePcgZeroInstances(ctx: ValidatorContext): Promise<RuleFind
   // Use a generous timeout — walking the world can be slow on big levels.
   const total = await probeCount(ctx.probe, {
     script: PCG_COUNTER_SCRIPT,
-    fileName: 'validator_pcg_instance_count.json',
     key: 'total',
-    scratchDir: ctx.scratchDir,
     timeoutMs: 15_000,
   });
   if (total !== 0) return null;
@@ -123,17 +111,13 @@ async function evaluatePcgAssetNotFound(ctx: ValidatorContext): Promise<RuleFind
 // ── landscape_import_no_landscape_in_world ──────────────────────────────────
 
 const LANDSCAPE_COUNTER_SCRIPT = `
-import json, os, unreal
+import json, unreal
 count = 0
 sub = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)
 if sub:
     for a in sub.get_all_level_actors():
         if isinstance(a, unreal.LandscapeProxy):
             count += 1
-out_path = os.path.join(unreal.SystemLibrary.get_project_directory(), ".scratch", "validator_landscape_count.json")
-os.makedirs(os.path.dirname(out_path), exist_ok=True)
-with open(out_path, "w") as f:
-    json.dump({"count": count}, f)
 print(json.dumps({"count": count}))
 `;
 
@@ -144,9 +128,7 @@ async function evaluateLandscapeImportSilentFailure(ctx: ValidatorContext): Prom
 
   const count = await probeCount(ctx.probe, {
     script: LANDSCAPE_COUNTER_SCRIPT,
-    fileName: 'validator_landscape_count.json',
     key: 'count',
-    scratchDir: ctx.scratchDir,
     timeoutMs: 10_000,
   });
   if (count !== 0) return null;
@@ -188,9 +170,17 @@ async function evaluatePythonRunSelfSocket(ctx: ValidatorContext): Promise<RuleF
   return {
     ruleId: 'tcp_socket_to_self_in_python_run',
     severity: 'error',
-    message: 'python_run script opens a TCP socket to the UE plugin port (would deadlock)',
-    hint: 'Use the Python plugin API (`unreal.*`) directly instead of round-tripping through the TCP server (52342–52350).',
+    message:
+      'python_run policy_blocked [HCR-BLOCK-001]: script opens a TCP socket to the UE plugin port (would deadlock)',
+    hint: 'Use the Python plugin API (`unreal.*`) directly instead of round-tripping through the TCP server (52342–52350). Retry unchanged: forbidden; this guard is non-bypassable.',
     refs: ['[[python-run-no-self-connect]]'],
+    // `data`, not `context`: this branch collapsed the five finding shapes into
+    // one, and the Validation panel reads `data`. Their content is kept as-is.
+    data: {
+      policy_code: 'HCR-BLOCK-001',
+      matched_rule: 'loopback MCP socket connection',
+      retry_unchanged: 'forbidden',
+    },
     timestamp: nowIso(),
     toolName: ctx.toolName,
   };
@@ -224,14 +214,18 @@ export function danglingLifetimeRegistration(script: string): string | null {
 export function isSelfSocketScript(script: string): boolean {
   // Two idioms, both deadlocking, both common:
   //
-  //   s.connect(("127.0.0.1", 52342))            <- socket method
+  //   s.connect(("127.0.0.1", 52342))                 <- socket method
   //   socket.create_connection(("127.0.0.1", 52342))  <- the one-liner
   //
-  // Only the first was matched. The second is arguably the MORE likely thing
-  // an agent writes, and it reached the game thread unrefused while
-  // docs/RELIABILITY.md said the pattern was refused outright. Found by
-  // running the guard rather than by reading it.
-  const re = /(?:\.\s*connect|\bcreate_connection)\s*\(\s*\(\s*['"](?:127\.0\.0\.1|localhost|0\.0\.0\.0)['"]\s*,\s*(\d+)/gi;
+  // Only the first was matched here. The second is arguably the MORE likely
+  // thing an agent writes, and it reached the game thread unrefused while
+  // docs/RELIABILITY.md said the pattern was refused outright.
+  //
+  // The host list is the union of two independent fixes: `0.0.0.0` (a bind-all
+  // address that still resolves to this machine) and `::1` (IPv6 loopback,
+  // which Python reaches whenever the host resolves that way). Either alone
+  // leaves a live hole, and neither branch had both.
+  const re = /(?:\.\s*connect|\bcreate_connection)\s*\(\s*\(\s*['"](?:127\.0\.0\.1|localhost|0\.0\.0\.0|::1)['"]\s*,\s*(\d+)/gi;
   let m: RegExpExecArray | null;
   while ((m = re.exec(script)) !== null) {
     const port = Number(m[1]);
@@ -247,12 +241,12 @@ let INSTALLED = false;
 export function installToolHooks(): void {
   if (INSTALLED) return;
   INSTALLED = true;
-  attachEvaluator('pcg_zero_instances_after_execute',  evaluatePcgZeroInstances);
+  attachEvaluator('pcg_zero_instances_after_execute', evaluatePcgZeroInstances);
   attachEvaluator('pcg_execute_no_component_in_world', evaluatePcgNoComponentInWorld);
-  attachEvaluator('pcg_asset_not_found',                evaluatePcgAssetNotFound);
+  attachEvaluator('pcg_asset_not_found', evaluatePcgAssetNotFound);
   attachEvaluator('landscape_import_no_landscape_in_world', evaluateLandscapeImportSilentFailure);
-  attachEvaluator('asset_browse_describe_assets_missing',   evaluateAssetBrowseDescribeMissing);
-  attachEvaluator('tcp_socket_to_self_in_python_run',       evaluatePythonRunSelfSocket);
+  attachEvaluator('asset_browse_describe_assets_missing', evaluateAssetBrowseDescribeMissing);
+  attachEvaluator('tcp_socket_to_self_in_python_run', evaluatePythonRunSelfSocket);
 }
 
 /** Re-export so the test suite can reset between runs. */

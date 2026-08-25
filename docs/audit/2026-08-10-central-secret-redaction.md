@@ -2,7 +2,8 @@
 
 ## Outbound boundary inventory
 
-One non-mutating policy now covers the Node server's actual egress paths:
+One non-mutating policy now covers the Node server's actual egress paths and
+the native plugin's final serialized envelope:
 
 1. `wrapToolHandlerForStream` filters every native and deferred MCP tool return
    and thrown error, then mirrors that same already-safe value and safe params.
@@ -15,6 +16,9 @@ One non-mutating policy now covers the Node server's actual egress paths:
    rewrites legacy JSONL records that contain secret material.
 5. Process console methods are wrapped once before server startup. The ordinary
    logger also filters independently for library/test callers.
+6. `HaybaMCPSecretRedaction::RedactFinalEnvelope` filters the native TCP
+   envelope in `JsonToString`, immediately before `FJsonSerializer`; its stable
+   fact lives at `_meta["hayba/security_redaction"]`.
 
 MCP catalog resources and static files contain repository artifacts rather than
 handler-owned dynamic results; binary/static response bodies are deliberately
@@ -39,10 +43,21 @@ prioritized when an object-key budget is exhausted. Warnings are not treated as
 errors or removed. Accessors are never invoked; accessor and hostile-proxy
 subtrees fail closed with an `accessor` truncation fact.
 
-Buffers, typed arrays, explicitly named base64 fields, and image/audio/blob
-`data` remain byte-identical unless their owning key explicitly names a secret.
-The existing transport response-size cap remains the allocation boundary for
-those opaque artifacts.
+Buffers and typed arrays remain byte-identical. Explicitly named base64 fields
+and image/audio/blob `data` are opaque only when their value is complete
+standard-base64 with ASCII alphabet and valid trailing padding. A key/type is
+an encoding hint, never permission to bypass scanning malformed prose. An exact
+AWS access-key id overrides opacity because that credential is also valid
+base64 syntax. Secret-named keys are masked before either rule. The existing
+transport response-size cap remains the allocation boundary for opaque
+artifacts.
+
+The native object selector holds at most `MaxObjectKeys` candidates while it
+scans a JSON hash map. It gives mandatory error/recovery fields priority and
+keeps the lexicographically stable best candidates with a bounded heap; it
+never copies an overlong key in full or reserves every dropped key merely to
+choose a placeholder. Thus the object-key setting bounds working memory and
+collision attempts, not only the number of emitted fields.
 
 ## Invariants
 

@@ -24,6 +24,10 @@ void UHaybaMCPDeveloperSettings::PostEditChangeProperty(FPropertyChangedEvent& E
     // Persist immediately (DefaultConfig writes on SaveConfig)
     SaveConfig();
     // Re-pull into the cached FHaybaMCPSettings used by handlers
-    FHaybaMCPSettings::Get().Load();
+    FHaybaMCPSettings& CachedSettings = FHaybaMCPSettings::Get();
+    CachedSettings.Load();
+    // The Node MCP process reads this runtime mirror so TS-only tools obey the
+    // same response-guidance choice as native plugin commands immediately.
+    CachedSettings.WriteDisabledToolsFile();
 }
 #endif

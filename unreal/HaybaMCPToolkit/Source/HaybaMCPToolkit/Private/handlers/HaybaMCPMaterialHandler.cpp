@@ -141,10 +141,10 @@ static UMaterialExpression* FindExprByNameInFunction(UMaterialFunction* Fn, cons
 // longer force a synchronous UMaterialEditingLibrary::RecompileMaterial — that
 // translates the (possibly half-built) graph through the HLSL translator, which
 // asserts (e.g. "NormalCodeChunk != INDEX_NONE") and takes the whole editor
-// down on an invalid intermediate graph. Instead each successful edit marks the
-// package dirty and writes it to disk immediately, so the AI's progress
-// survives a later crash. The expensive/assert-prone translate is deferred to
-// the explicit, guarded material_compile command.
+// down on an invalid intermediate graph. Instead each successful graph edit
+// stays dirty in memory. The explicit, guarded material_compile command is the
+// single translate-and-save boundary; this prevents a half-built graph from
+// being written to disk and crashing later during editor load/thumbnail work.
 //
 // NOTE: saving a UMaterial can still trigger shader translation internally; the
 // real assert-avoidance is that routine per-edit translates are gone. A truly
@@ -212,6 +212,390 @@ struct FApplyNodePropsResult
     TArray<FString> Applied;
     TArray<FString> Unknown;
 };
+
+// Pure preflight for the reflection path below. HaybaReflection deliberately
+// accepts many shapes, but several branches call AsNumber/AsString and nested
+// structs/arrays can be partially written before a later element fails. A
+// mutation handler must establish that the complete value is compatible before
+// the expression is created or the live expression is touched.
+static bool IsFiniteJsonNumber(const TSharedPtr<FJsonValue>& V, double* Out = nullptr)
+{
+    double N = 0.0;
+    if (!V.IsValid() || !V->TryGetNumber(N) || !FMath::IsFinite(N)) return false;
+    if (Out) *Out = N;
+    return true;
+}
+
+static bool ValidateFiniteNumberArray(
+    const TSharedPtr<FJsonValue>& V,
+    int32 MinItems,
+    int32 MaxItems,
+    FString& OutReason)
+{
+    if (!V.IsValid() || V->Type != EJson::Array)
+    {
+        OutReason = TEXT("must be an array of finite numbers");
+        return false;
+    }
+    const TArray<TSharedPtr<FJsonValue>>& A = V->AsArray();
+    if (A.Num() < MinItems || A.Num() > MaxItems)
+    {
+        OutReason = FString::Printf(TEXT("must contain %d..%d numbers"), MinItems, MaxItems);
+        return false;
+    }
+    for (int32 Index = 0; Index < A.Num(); ++Index)
+    {
+        if (!IsFiniteJsonNumber(A[Index]))
+        {
+            OutReason = FString::Printf(TEXT("element %d must be a finite number"), Index);
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool ValidateJsonForProperty(
+    FProperty* Prop,
+    const TSharedPtr<FJsonValue>& V,
+    FString& OutReason,
+    int32 Depth = 0)
+{
+    if (Depth > 32)
+    {
+        OutReason = TEXT("exceeds the 32-level mutation depth limit");
+        return false;
+    }
+    if (!Prop || !V.IsValid())
+    {
+        OutReason = TEXT("property/value is null");
+        return false;
+    }
+    if (FBoolProperty* B = CastField<FBoolProperty>(Prop))
+    {
+        (void)B;
+        if (V->Type == EJson::Boolean || IsFiniteJsonNumber(V)) return true;
+        OutReason = TEXT("must be a boolean or finite number");
+        return false;
+    }
+    if (FByteProperty* Byte = CastField<FByteProperty>(Prop))
+    {
+        if (V->Type == EJson::String && Byte->Enum)
+        {
+            int64 EnumValue = Byte->Enum->GetValueByNameString(V->AsString());
+            if (EnumValue == INDEX_NONE)
+            {
+                const FString First = Byte->Enum->GetNameStringByIndex(0);
+                int32 Underscore = INDEX_NONE;
+                if (First.FindChar('_', Underscore))
+                    EnumValue = Byte->Enum->GetValueByNameString(
+                        First.Left(Underscore) + TEXT("_") + V->AsString());
+            }
+            if (EnumValue != INDEX_NONE) return true;
+            OutReason = TEXT("is not a valid enum value");
+            return false;
+        }
+        double N = 0.0;
+        if (IsFiniteJsonNumber(V, &N) && FMath::FloorToDouble(N) == N && N >= 0.0 && N <= 255.0) return true;
+        OutReason = TEXT("must be an integer byte value");
+        return false;
+    }
+    if (FEnumProperty* EnumProp = CastField<FEnumProperty>(Prop))
+    {
+        if (V->Type == EJson::String && EnumProp->GetEnum())
+        {
+            const UEnum* Enum = EnumProp->GetEnum();
+            const FString Raw = V->AsString();
+            if (Enum->GetValueByNameString(Raw) != INDEX_NONE
+                || Enum->GetValueByNameString(Enum->GetName() + TEXT("::") + Raw) != INDEX_NONE)
+                return true;
+            OutReason = TEXT("is not a valid enum value");
+            return false;
+        }
+        double N = 0.0;
+        if (IsFiniteJsonNumber(V, &N) && FMath::FloorToDouble(N) == N) return true;
+        OutReason = TEXT("must be an enum name or integer value");
+        return false;
+    }
+    if (FNumericProperty* Number = CastField<FNumericProperty>(Prop))
+    {
+        double N = 0.0;
+        if (!IsFiniteJsonNumber(V, &N))
+        {
+            OutReason = TEXT("must be a finite number");
+            return false;
+        }
+        if (Number->IsInteger() && FMath::FloorToDouble(N) != N)
+        {
+            OutReason = TEXT("must be an integer");
+            return false;
+        }
+        return true;
+    }
+    if (CastField<FNameProperty>(Prop) || CastField<FStrProperty>(Prop) || CastField<FTextProperty>(Prop))
+    {
+        if (V->Type == EJson::String) return true;
+        OutReason = TEXT("must be a string");
+        return false;
+    }
+    if (FObjectProperty* ObjectProp = CastField<FObjectProperty>(Prop))
+    {
+        if (V->Type == EJson::Null) return true;
+        UObject* Object = HaybaReflection::ResolveObjectRef(V);
+        if (Object && Object->IsA(ObjectProp->PropertyClass)) return true;
+        OutReason = FString::Printf(TEXT("must resolve to a %s object"), *ObjectProp->PropertyClass->GetName());
+        return false;
+    }
+    if (FStructProperty* StructProp = CastField<FStructProperty>(Prop))
+    {
+        if (V->Type == EJson::String) return true; // ImportText_Direct validates during staging.
+        if (V->Type == EJson::Object)
+        {
+            if (V->AsObject()->Values.Num() == 0)
+            {
+                OutReason = TEXT("struct object must contain at least one field");
+                return false;
+            }
+            if (V->AsObject()->Values.Num() > 256)
+            {
+                OutReason = TEXT("struct object exceeds the 256-field mutation limit");
+                return false;
+            }
+            for (const auto& Pair : V->AsObject()->Values)
+            {
+                FProperty* Field = StructProp->Struct->FindPropertyByName(FName(*FString(*Pair.Key)));
+                FString Nested;
+                if (!Field || !ValidateJsonForProperty(Field, Pair.Value, Nested, Depth + 1))
+                {
+                    OutReason = FString::Printf(TEXT("struct field '%s' %s"), *FString(*Pair.Key), *Nested);
+                    return false;
+                }
+            }
+            return true;
+        }
+        const FString StructName = StructProp->Struct->GetName();
+        int32 Min = 0, Max = 0;
+        if (StructName == TEXT("Vector") || StructName == TEXT("LinearColor") || StructName == TEXT("SlateColor") || StructName == TEXT("Color")) { Min = 3; Max = 4; }
+        else if (StructName == TEXT("Vector4") || StructName == TEXT("Vector4f")) { Min = 4; Max = 4; }
+        else if (StructName == TEXT("Vector2D")) { Min = 2; Max = 2; }
+        else if (StructName == TEXT("Margin")) { Min = 1; Max = 4; }
+        if (Min > 0) return ValidateFiniteNumberArray(V, Min, Max, OutReason);
+        OutReason = TEXT("must be a supported struct string/object shape");
+        return false;
+    }
+    if (FArrayProperty* ArrayProp = CastField<FArrayProperty>(Prop))
+    {
+        if (V->Type != EJson::Array)
+        {
+            OutReason = TEXT("must be an array");
+            return false;
+        }
+        if (V->AsArray().Num() > 1024)
+        {
+            OutReason = TEXT("array exceeds the 1024-item mutation limit");
+            return false;
+        }
+        for (int32 Index = 0; Index < V->AsArray().Num(); ++Index)
+        {
+            FString Nested;
+            if (!ValidateJsonForProperty(ArrayProp->Inner, V->AsArray()[Index], Nested, Depth + 1))
+            {
+                OutReason = FString::Printf(TEXT("array element %d %s"), Index, *Nested);
+                return false;
+            }
+        }
+        return true;
+    }
+
+    OutReason = FString::Printf(TEXT("uses unsupported property type %s"), *Prop->GetCPPType());
+    return false;
+}
+
+static bool PreflightNodeProps(
+    UClass* ExprClass,
+    const TSharedPtr<FJsonObject>& Props,
+    TArray<FString>& OutProblems)
+{
+    if (!Props.IsValid()) return true;
+    if (Props->Values.Num() > 256)
+    {
+        OutProblems.Add(TEXT("properties exceeds the 256-field mutation limit"));
+        return false;
+    }
+    if (!ExprClass || !ExprClass->IsChildOf<UMaterialExpression>())
+    {
+        OutProblems.Add(TEXT("expression class is not a UMaterialExpression"));
+        return false;
+    }
+
+    static const TSet<FString> Aliases = {
+        TEXT("parameter_name"), TEXT("default_value"), TEXT("texture"),
+        TEXT("const"), TEXT("function"), TEXT("function_path"),
+        TEXT("coordinate_index"), TEXT("u_tiling"), TEXT("v_tiling"),
+    };
+
+    if (Props->HasField(TEXT("function")) && Props->HasField(TEXT("function_path")))
+        OutProblems.Add(TEXT("properties.function and properties.function_path are aliases; pass only one"));
+
+    for (const auto& Pair : Props->Values)
+    {
+        const FString Key(*Pair.Key);
+        FString Reason;
+        bool bValid = false;
+
+        if (Key == TEXT("parameter_name"))
+        {
+            bValid = Pair.Value.IsValid() && Pair.Value->Type == EJson::String
+                && !Pair.Value->AsString().IsEmpty()
+                && (ExprClass->IsChildOf<UMaterialExpressionParameter>()
+                    || ExprClass->IsChildOf<UMaterialExpressionTextureSampleParameter>()
+                    || ExprClass->IsChildOf<UMaterialExpressionFunctionInput>()
+                    || ExprClass->IsChildOf<UMaterialExpressionFunctionOutput>());
+            Reason = TEXT("must be a non-empty string on a parameter/input/output expression");
+        }
+        else if (Key == TEXT("default_value"))
+        {
+            if (ExprClass->IsChildOf<UMaterialExpressionScalarParameter>())
+                bValid = IsFiniteJsonNumber(Pair.Value);
+            else if (ExprClass->IsChildOf<UMaterialExpressionStaticBoolParameter>())
+                bValid = Pair.Value.IsValid() && Pair.Value->Type == EJson::Boolean;
+            else if (ExprClass->IsChildOf<UMaterialExpressionVectorParameter>())
+                bValid = ValidateFiniteNumberArray(Pair.Value, 3, 4, Reason);
+            Reason = Reason.IsEmpty() ? TEXT("does not match this parameter expression's value type") : Reason;
+        }
+        else if (Key == TEXT("texture"))
+        {
+            FString Path;
+            bValid = ExprClass->IsChildOf<UMaterialExpressionTextureBase>()
+                && Pair.Value.IsValid() && Pair.Value->TryGetString(Path)
+                && !Path.IsEmpty() && LoadObject<UTexture>(nullptr, *Path) != nullptr;
+            Reason = TEXT("must name an existing texture for a texture expression");
+        }
+        else if (Key == TEXT("const"))
+        {
+            if (ExprClass->IsChildOf<UMaterialExpressionConstant>())
+                bValid = IsFiniteJsonNumber(Pair.Value);
+            else
+            {
+                const int32 Exact = ExprClass->IsChildOf<UMaterialExpressionConstant2Vector>() ? 2
+                    : ExprClass->IsChildOf<UMaterialExpressionConstant3Vector>() ? 3
+                    : ExprClass->IsChildOf<UMaterialExpressionConstant4Vector>() ? 4 : 0;
+                bValid = Exact > 0 && ValidateFiniteNumberArray(Pair.Value, Exact, Exact, Reason);
+            }
+            Reason = Reason.IsEmpty() ? TEXT("does not match this constant expression's arity") : Reason;
+        }
+        else if (Key == TEXT("function") || Key == TEXT("function_path"))
+        {
+            FString Path;
+            bValid = ExprClass->IsChildOf<UMaterialExpressionMaterialFunctionCall>()
+                && Pair.Value.IsValid() && Pair.Value->TryGetString(Path)
+                && !Path.IsEmpty() && LoadObject<UMaterialFunction>(nullptr, *Path) != nullptr;
+            Reason = TEXT("must name an existing material function on a MaterialFunctionCall expression");
+        }
+        else if (Key == TEXT("coordinate_index"))
+        {
+            double N = 0.0;
+            bValid = ExprClass->IsChildOf<UMaterialExpressionTextureCoordinate>()
+                && IsFiniteJsonNumber(Pair.Value, &N)
+                && FMath::FloorToDouble(N) == N && N >= 0.0 && N <= MAX_int32;
+            Reason = TEXT("must be a non-negative 32-bit integer on a TextureCoordinate expression");
+        }
+        else if (Key == TEXT("u_tiling") || Key == TEXT("v_tiling"))
+        {
+            bValid = ExprClass->IsChildOf<UMaterialExpressionTextureCoordinate>()
+                && IsFiniteJsonNumber(Pair.Value);
+            Reason = TEXT("must be a finite number on a TextureCoordinate expression");
+        }
+        else
+        {
+            FProperty* Prop = ExprClass->FindPropertyByName(FName(*Key));
+            bValid = Prop && Prop->HasAnyPropertyFlags(CPF_Edit)
+                && !Prop->HasAnyPropertyFlags(CPF_EditConst | CPF_Transient | CPF_Deprecated)
+                && ValidateJsonForProperty(Prop, Pair.Value, Reason);
+            if (!Prop) Reason = TEXT("is not a property on this expression class");
+        }
+
+        if (!bValid)
+            OutProblems.Add(FString::Printf(TEXT("properties.%s %s"), *Key, *Reason));
+    }
+    return OutProblems.Num() == 0;
+}
+
+static TArray<double> ReadFiniteNumberArray(
+    FHaybaParamReader& R,
+    const TCHAR* Key,
+    int32 MinItems,
+    int32 MaxItems,
+    bool& bOutPresent)
+{
+    TArray<double> Out;
+    bOutPresent = R.Raw().IsValid() && R.Raw()->HasField(Key);
+    if (!bOutPresent) return Out;
+
+    const TArray<TSharedPtr<FJsonValue>>* Values = R.OptionalArray(Key, MaxItems);
+    if (!Values) return Out;
+    if (Values->Num() < MinItems || Values->Num() > MaxItems)
+    {
+        R.AddError(FString::Printf(
+            TEXT("'%s' must contain %d..%d finite numbers"), Key, MinItems, MaxItems));
+        return Out;
+    }
+    for (int32 Index = 0; Index < Values->Num(); ++Index)
+    {
+        double Number = 0.0;
+        if (!(*Values)[Index].IsValid()
+            || !(*Values)[Index]->TryGetNumber(Number)
+            || !FMath::IsFinite(Number))
+        {
+            R.AddError(FString::Printf(
+                TEXT("'%s' element %d must be a finite number"), Key, Index));
+            Out.Reset();
+            return Out;
+        }
+        Out.Add(Number);
+    }
+    return Out;
+}
+
+static void ValidateIntegerArrayRange(
+    FHaybaParamReader& R,
+    const TCHAR* Key,
+    const TArray<double>& Values,
+    bool bPresent,
+    int32 Min,
+    int32 Max)
+{
+    if (!bPresent || Values.Num() == 0) return;
+    for (int32 Index = 0; Index < Values.Num(); ++Index)
+    {
+        const double Value = Values[Index];
+        if (FMath::FloorToDouble(Value) != Value || Value < Min || Value > Max)
+        {
+            R.AddError(FString::Printf(
+                TEXT("'%s' element %d must be an integer between %d and %d"),
+                Key, Index, Min, Max));
+        }
+    }
+}
+
+static void ValidateNumberArrayRange(
+    FHaybaParamReader& R,
+    const TCHAR* Key,
+    const TArray<double>& Values,
+    bool bPresent,
+    double Min,
+    double Max)
+{
+    if (!bPresent || Values.Num() == 0) return;
+    for (int32 Index = 0; Index < Values.Num(); ++Index)
+    {
+        if (Values[Index] < Min || Values[Index] > Max)
+        {
+            R.AddError(FString::Printf(
+                TEXT("'%s' element %d must be between %.17g and %.17g"),
+                Key, Index, Min, Max));
+        }
+    }
+}
 
 // Apply optional per-node properties. Friendly aliases (parameter_name/default_value/
 // texture/const/function/coordinate_index/u_tiling/v_tiling) are handled first for
@@ -346,7 +730,10 @@ static FApplyNodePropsResult ApplyNodeProps(UMaterialExpression* Expr, const TSh
         else                                                 R.Unknown.Add(Key);
     }
 
-    Expr->PostEditChange();
+    // Do not broadcast PostEditChange for every staged node edit. Some editor
+    // delegates compile/refresh material graphs from that notification and a
+    // stale delegate can AV the process. The owning material/function is dirty;
+    // material_compile is the single guarded broadcast/compile boundary.
     return R;
 }
 
@@ -401,14 +788,11 @@ static void AttachNodePropsResult(const TSharedRef<FJsonObject>& Out,
 
 FHaybaHandlerResult FHaybaMCPMaterialHandler::MatCreate(const TSharedPtr<FJsonObject>& P)
 {
-    FString PkgPath, Name;
-    if (!HaybaParams::GetString(P, TEXT("package_path"), PkgPath) || PkgPath.IsEmpty())
-        return FHaybaHandlerResult::Err(TEXT("material_create: missing package_path"));
-    if (!HaybaParams::GetString(P, TEXT("name"), Name) || Name.IsEmpty())
-        return FHaybaHandlerResult::Err(TEXT("material_create: missing name"));
+    FHaybaParamReader ParamR(P, TEXT("material_create"));
+    const FString PkgPath = ParamR.RequiredString(TEXT("package_path"));
+    const FString Name = ParamR.RequiredString(TEXT("name"), 256);
+    if (ParamR.HasErrors()) return FHaybaHandlerResult::Err(ParamR.ErrorMessage());
 
-    IAssetTools& Tools = FModuleManager::LoadModuleChecked<FAssetToolsModule>(TEXT("AssetTools")).Get();
-    UMaterialFactoryNew* Factory = NewObject<UMaterialFactoryNew>();
     // package_path may be the target directory OR the full asset path — see
     // material_function_create for the rationale. Backward-compatible: when the
     // last segment already equals Name (the documented full-path convention) this
@@ -416,6 +800,12 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatCreate(const TSharedPtr<FJsonOb
     const FString Dir = (FPackageName::GetShortName(PkgPath) == Name)
         ? FPackageName::GetLongPackagePath(PkgPath)
         : PkgPath;
+    const FString TargetPackage = Dir / Name;
+    if (!TargetPackage.StartsWith(TEXT("/Game/"))
+        || !FPackageName::IsValidLongPackageName(TargetPackage))
+        return FHaybaHandlerResult::Err(FString::Printf(
+            TEXT("material_create: target must be a valid package under /Game; resolved '%s'. Nothing was created."),
+            *TargetPackage));
     // Refuse a taken name instead of letting CreateAsset raise a modal
     // overwrite dialog, which would block the game thread and hang every
     // queued MCP request. See HaybaMCPAssetGuard.h.
@@ -425,6 +815,8 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatCreate(const TSharedPtr<FJsonOb
             HaybaAssetGuard::NameTakenError(TEXT("material_create"), Dir, Name));
     }
 
+    IAssetTools& Tools = FModuleManager::LoadModuleChecked<FAssetToolsModule>(TEXT("AssetTools")).Get();
+    UMaterialFactoryNew* Factory = NewObject<UMaterialFactoryNew>();
     UObject* Created = Tools.CreateAsset(Name, Dir, UMaterial::StaticClass(), Factory);
     if (!Created) return FHaybaHandlerResult::Err(TEXT("material_create: CreateAsset failed"));
 
@@ -438,20 +830,18 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatCreate(const TSharedPtr<FJsonOb
     Out->SetStringField(TEXT("path"), Created->GetPathName());
     Out->SetStringField(TEXT("name"), Name);
     Out->SetBoolField(TEXT("saved"), bSaved);
+    Out->SetBoolField(TEXT("dirty"), Created->GetOutermost()->IsDirty());
     if (!bSaved) Out->SetStringField(TEXT("save_error"), SaveErr);
     return FHaybaHandlerResult::Ok(Out);
 }
 
 FHaybaHandlerResult FHaybaMCPMaterialHandler::MatFunctionCreate(const TSharedPtr<FJsonObject>& P)
 {
-    FString PkgPath, Name;
-    if (!HaybaParams::GetString(P, TEXT("package_path"), PkgPath) || PkgPath.IsEmpty())
-        return FHaybaHandlerResult::Err(TEXT("material_function_create: missing package_path"));
-    if (!HaybaParams::GetString(P, TEXT("name"), Name) || Name.IsEmpty())
-        return FHaybaHandlerResult::Err(TEXT("material_function_create: missing name"));
+    FHaybaParamReader ParamR(P, TEXT("material_function_create"));
+    const FString PkgPath = ParamR.RequiredString(TEXT("package_path"));
+    const FString Name = ParamR.RequiredString(TEXT("name"), 256);
+    if (ParamR.HasErrors()) return FHaybaHandlerResult::Err(ParamR.ErrorMessage());
 
-    IAssetTools& Tools = FModuleManager::LoadModuleChecked<FAssetToolsModule>(TEXT("AssetTools")).Get();
-    UMaterialFunctionFactoryNew* Factory = NewObject<UMaterialFunctionFactoryNew>();
     // Robust path resolution — package_path may be EITHER the target directory
     // ("/Game/Dir/MFs") OR the full asset path ("/Game/Dir/MFs/MF_X"). Historically
     // this always did GetLongPackagePath (drops the last segment), which silently
@@ -463,6 +853,12 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatFunctionCreate(const TSharedPtr
     const FString Dir = (ShortName == Name)
         ? FPackageName::GetLongPackagePath(PkgPath)  // full path: strip the trailing name
         : PkgPath;                                   // directory: use verbatim
+    const FString TargetPackage = Dir / Name;
+    if (!TargetPackage.StartsWith(TEXT("/Game/"))
+        || !FPackageName::IsValidLongPackageName(TargetPackage))
+        return FHaybaHandlerResult::Err(FString::Printf(
+            TEXT("material_function_create: target must be a valid package under /Game; resolved '%s'. Nothing was created."),
+            *TargetPackage));
     // Refuse a taken name instead of letting CreateAsset raise a modal
     // overwrite dialog, which would block the game thread and hang every
     // queued MCP request. See HaybaMCPAssetGuard.h.
@@ -472,6 +868,8 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatFunctionCreate(const TSharedPtr
             HaybaAssetGuard::NameTakenError(TEXT("material_function_create"), Dir, Name));
     }
 
+    IAssetTools& Tools = FModuleManager::LoadModuleChecked<FAssetToolsModule>(TEXT("AssetTools")).Get();
+    UMaterialFunctionFactoryNew* Factory = NewObject<UMaterialFunctionFactoryNew>();
     UObject* Created = Tools.CreateAsset(Name, Dir, UMaterialFunction::StaticClass(), Factory);
     if (!Created) return FHaybaHandlerResult::Err(TEXT("material_function_create: CreateAsset failed"));
 
@@ -484,6 +882,7 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatFunctionCreate(const TSharedPtr
     Out->SetStringField(TEXT("path"), Created->GetPathName());
     Out->SetStringField(TEXT("name"), Name);
     Out->SetBoolField(TEXT("saved"), bSaved);
+    Out->SetBoolField(TEXT("dirty"), Created->GetOutermost()->IsDirty());
     if (!bSaved) Out->SetStringField(TEXT("save_error"), SaveErr);
     return FHaybaHandlerResult::Ok(Out);
 }
@@ -553,66 +952,79 @@ static FString HaybaExpressionOutputName(UMaterialExpression* Expr, int32 Output
 
 FHaybaHandlerResult FHaybaMCPMaterialHandler::MatAddNode(const TSharedPtr<FJsonObject>& P)
 {
-    FString ExprClass;
+    FString ExprClass, MatPath, FuncPath;
     FHaybaParamReader ParamR(P, TEXT("material_add_node"));
     ExprClass = ParamR.RequiredString(TEXT("expression_class"));
+    MatPath = ParamR.OptionalString(TEXT("material_path"));
+    FuncPath = ParamR.OptionalString(TEXT("function_path"));
+    const TSharedPtr<FJsonObject> PropsObj = ParamR.OptionalObject(TEXT("properties"), 128);
+    bool bHasPos = false;
+    const TArray<double> Pos = ReadFiniteNumberArray(ParamR, TEXT("node_pos"), 2, 2, bHasPos);
+    ValidateIntegerArrayRange(ParamR, TEXT("node_pos"), Pos, bHasPos, -10000000, 10000000);
+    if (MatPath.IsEmpty() == FuncPath.IsEmpty())
+        ParamR.AddError(TEXT("pass exactly one of 'material_path' or 'function_path'"));
     if (ParamR.HasErrors()) return FHaybaHandlerResult::Err(ParamR.ErrorMessage());
 
     UClass* ExprCls = FindFirstObjectSafe<UClass>(*ExprClass);
     if (!ExprCls) return FHaybaHandlerResult::Err(FString::Printf(TEXT("material_add_node: class not found: %s"), *ExprClass));
+    if (!ExprCls->IsChildOf<UMaterialExpression>() || ExprCls->HasAnyClassFlags(CLASS_Abstract))
+        return FHaybaHandlerResult::Err(FString::Printf(
+            TEXT("material_add_node: '%s' is not a concrete material-expression class; nothing was created"), *ExprClass));
 
-    int32 X = 0, Y = 0;
-    bool bHasPos = false;
-    const TArray<TSharedPtr<FJsonValue>>* Pos;
-    if (P->TryGetArrayField(TEXT("node_pos"), Pos) && Pos->Num() >= 2)
+    TArray<FString> PropertyProblems;
+    if (!PreflightNodeProps(ExprCls, PropsObj, PropertyProblems))
     {
-        X = (int32)(*Pos)[0]->AsNumber();
-        Y = (int32)(*Pos)[1]->AsNumber();
-        bHasPos = true;
+        return FHaybaHandlerResult::Err(FString::Printf(
+            TEXT("material_add_node: property preflight failed: %s. Nothing was created or dirtied."),
+            *FString::Join(PropertyProblems, TEXT("; "))));
     }
 
-    const TSharedPtr<FJsonObject>* PropsObj = nullptr;
-    P->TryGetObjectField(TEXT("properties"), PropsObj);
+    int32 X = bHasPos ? static_cast<int32>(Pos[0]) : 0;
+    int32 Y = bHasPos ? static_cast<int32>(Pos[1]) : 0;
 
     // Material-Function target (Task 4) takes precedence when supplied.
-    FString FuncPath;
-    if (P->TryGetStringField(TEXT("function_path"), FuncPath) && !FuncPath.IsEmpty())
+    if (!FuncPath.IsEmpty())
     {
         UMaterialFunction* Fn = LoadObject<UMaterialFunction>(nullptr, *FuncPath);
         if (!Fn) return FHaybaHandlerResult::Err(TEXT("material_add_node: function not found"));
         if (!bHasPos) HaybaAutoNodePos(Fn->GetExpressions().Num(), X, Y);
+        Fn->Modify();
         UMaterialExpression* Expr = UMaterialEditingLibrary::CreateMaterialExpressionInFunction(Fn, ExprCls, X, Y);
         if (!Expr) return FHaybaHandlerResult::Err(TEXT("material_add_node: CreateMaterialExpressionInFunction failed"));
         FApplyNodePropsResult PR;
-        if (PropsObj) PR = ApplyNodeProps(Expr, *PropsObj);
-        UMaterialEditingLibrary::UpdateMaterialFunction(Fn, nullptr);
+        if (PropsObj.IsValid()) PR = ApplyNodeProps(Expr, PropsObj);
+        // Do not compile/broadcast from an edit command. UpdateMaterialFunction
+        // is crash-prone in the presence of stale editor delegates and belongs
+        // only to the guarded material_compile(function_path) boundary.
         Fn->MarkPackageDirty();  // in-memory only — function written to disk by material_compile(function_path); avoids a half-built function landing on disk and asserting when the editor opens/compiles it
 
         TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
         Out->SetStringField(TEXT("node_id"), Expr->GetName());
+        Out->SetBoolField(TEXT("verified"), FindExprByNameInFunction(Fn, Expr->GetName()) == Expr);
+        Out->SetBoolField(TEXT("dirty"), Fn->GetOutermost()->IsDirty());
         EmitFunctionCallOutputs(Expr, Out.ToSharedRef());
         AttachNodePropsResult(Out.ToSharedRef(), PR, Expr, TEXT("material_add_node"));
         return FHaybaHandlerResult::Ok(Out);
     }
 
-    FString MatPath;
-    if (!HaybaParams::GetString(P, TEXT("material_path"), MatPath)) return FHaybaHandlerResult::Err(TEXT("material_add_node: missing material_path or function_path"));
-
     UMaterial* Mat = LoadObject<UMaterial>(nullptr, *MatPath);
     if (!Mat) return FHaybaHandlerResult::Err(TEXT("material_add_node: material not found"));
 
     if (!bHasPos) HaybaAutoNodePos(Mat->GetExpressions().Num(), X, Y);
+    Mat->Modify();
     UMaterialExpression* Expr = UMaterialEditingLibrary::CreateMaterialExpression(Mat, ExprCls, X, Y);
     if (!Expr) return FHaybaHandlerResult::Err(TEXT("material_add_node: CreateMaterialExpression failed"));
     FApplyNodePropsResult PR;
-    if (PropsObj) PR = ApplyNodeProps(Expr, *PropsObj);
-    // Deferred-compile + crash-resilient save: no per-edit RecompileMaterial
-    // (avoids translating a half-built graph -> editor-killing assert). Persist
-    // to disk now; translate via the explicit material_compile command.
+    if (PropsObj.IsValid()) PR = ApplyNodeProps(Expr, PropsObj);
+    // Deferred compile: no per-edit RecompileMaterial or save. Keep the
+    // half-built graph dirty in memory until guarded material_compile validates,
+    // translates, verifies, and writes it.
     Mat->MarkPackageDirty();  // in-memory only — master materials are written to disk ONLY by material_compile, so a half-built invalid-Normal graph never lands on disk for the editor to thumbnail/open-compile (Substrate check(NormalCodeChunk!=INDEX_NONE) crash)
 
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
     Out->SetStringField(TEXT("node_id"), Expr->GetName());
+    Out->SetBoolField(TEXT("verified"), FindExprByName(Mat, Expr->GetName()) == Expr);
+    Out->SetBoolField(TEXT("dirty"), Mat->GetOutermost()->IsDirty());
     EmitFunctionCallOutputs(Expr, Out.ToSharedRef());
     AttachNodePropsResult(Out.ToSharedRef(), PR, Expr, TEXT("material_add_node"));
     return FHaybaHandlerResult::Ok(Out);
@@ -735,30 +1147,37 @@ static FExpressionInput* ResolveToInput(UMaterialExpression* To, const FString& 
 
 FHaybaHandlerResult FHaybaMCPMaterialHandler::MatConnectNodes(const TSharedPtr<FJsonObject>& P)
 {
-    FString FromNode;
+    FString FromNode, FromOutput, ToNode, ToInput, PropStr, FuncPath, MatPath;
     FHaybaParamReader ParamR(P, TEXT("material_connect_nodes"));
     FromNode = ParamR.RequiredString(TEXT("from_node"));
+    FromOutput = ParamR.OptionalString(TEXT("from_output"));
+    ToNode = ParamR.OptionalString(TEXT("to_node"));
+    ToInput = ParamR.OptionalString(TEXT("to_input"));
+    PropStr = ParamR.OptionalString(TEXT("to_property"));
+    FuncPath = ParamR.OptionalString(TEXT("function_path"));
+    MatPath = ParamR.OptionalString(TEXT("material_path"));
+    const bool bHasFromOutputIndex = ParamR.Raw().IsValid()
+        && ParamR.Raw()->HasField(TEXT("from_output_index"));
+    const int32 FromOutputIndex = ParamR.OptionalIntInRange(TEXT("from_output_index"), 0, 0, 1023);
+    const bool bHasToInputIndex = ParamR.Raw().IsValid()
+        && ParamR.Raw()->HasField(TEXT("to_input_index"));
+    const int32 ToInputIndex = ParamR.OptionalIntInRange(TEXT("to_input_index"), -1, 0, 1023);
+    const bool bHasTo = !ToNode.IsEmpty();
+    const bool bHasProp = !PropStr.IsEmpty();
+    if (MatPath.IsEmpty() == FuncPath.IsEmpty())
+        ParamR.AddError(TEXT("pass exactly one of 'material_path' or 'function_path'"));
+    if (bHasTo == bHasProp)
+        ParamR.AddError(TEXT("pass exactly one target: 'to_node' or 'to_property'"));
+    if (!FuncPath.IsEmpty() && bHasProp)
+        ParamR.AddError(TEXT("function graph connections require 'to_node'; 'to_property' belongs to master materials"));
+    if (bHasToInputIndex && !ToInput.IsEmpty())
+        ParamR.AddError(TEXT("'to_input' and 'to_input_index' are mutually exclusive"));
+    if (bHasFromOutputIndex && !FromOutput.IsEmpty())
+        ParamR.AddError(TEXT("'from_output' and 'from_output_index' are mutually exclusive"));
     if (ParamR.HasErrors()) return FHaybaHandlerResult::Err(ParamR.ErrorMessage());
 
-    FString FromOutput;
-    P->TryGetStringField(TEXT("from_output"), FromOutput); // "" => first output
-
-    FString ToNode, ToInput, PropStr;
-    const bool bHasTo = P->TryGetStringField(TEXT("to_node"), ToNode);
-    P->TryGetStringField(TEXT("to_input"), ToInput);       // "" => first input
-    const bool bHasProp = P->TryGetStringField(TEXT("to_property"), PropStr);
-
-    // Index-based connection for pins that have no addressable name (Substrate
-    // slab/operator inputs report as input_N). to_input_index targets the Nth
-    // input; from_output_index picks the source output (default 0).
-    int32 ToInputIndex = -1, FromOutputIndex = 0;
-    bool bHasFromOutputIndex = false;
-    { double D; if (P->TryGetNumberField(TEXT("to_input_index"), D)) ToInputIndex = (int32)D; }
-    { double D; if (P->TryGetNumberField(TEXT("from_output_index"), D)) { FromOutputIndex = (int32)D; bHasFromOutputIndex = true; } }
-
     // Material-Function target (Task 4).
-    FString FuncPath;
-    if (P->TryGetStringField(TEXT("function_path"), FuncPath) && !FuncPath.IsEmpty())
+    if (!FuncPath.IsEmpty())
     {
         UMaterialFunction* Fn = LoadObject<UMaterialFunction>(nullptr, *FuncPath);
         if (!Fn) return FHaybaHandlerResult::Err(TEXT("material_connect_nodes: function not found"));
@@ -774,18 +1193,22 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatConnectNodes(const TSharedPtr<F
             if (FromIdx == INDEX_NONE) return FHaybaHandlerResult::Err(FString::Printf(TEXT("material_connect_nodes: %s"), *OErr));
             FExpressionInput* In = ResolveToInput(To, ToInput, ToInputIndex);
             if (!In) return FHaybaHandlerResult::Err(FString::Printf(TEXT("material_connect_nodes: to_input '%s' (index %d) not found on '%s'"), *ToInput, ToInputIndex, *ToNode));
+            Fn->Modify();
             In->Connect(FromIdx, From); // index-resolved — never silently output 0
+            if (In->Expression != From || In->OutputIndex != FromIdx)
+                return FHaybaHandlerResult::Err(TEXT("material_connect_nodes: connection write did not survive readback; function graph state is unknown — inspect material_get_info before retrying"));
         }
-        UMaterialEditingLibrary::UpdateMaterialFunction(Fn, nullptr);
+        // Staged only; material_compile(function_path) performs the guarded
+        // UpdateMaterialFunction and persistence step.
         Fn->MarkPackageDirty();  // in-memory only — function written to disk by material_compile(function_path); avoids a half-built function landing on disk and asserting when the editor opens/compiles it
 
         TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
         Out->SetBoolField(TEXT("connected"), true);
+        Out->SetBoolField(TEXT("verified"), true);
+        Out->SetBoolField(TEXT("dirty"), Fn->GetOutermost()->IsDirty());
         return FHaybaHandlerResult::Ok(Out);
     }
 
-    FString MatPath;
-    if (!HaybaParams::GetString(P, TEXT("material_path"), MatPath)) return FHaybaHandlerResult::Err(TEXT("material_connect_nodes: missing material_path or function_path"));
     UMaterial* Mat = LoadObject<UMaterial>(nullptr, *MatPath);
     if (!Mat) return FHaybaHandlerResult::Err(TEXT("material_connect_nodes: material not found"));
 
@@ -799,32 +1222,39 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatConnectNodes(const TSharedPtr<F
     if (FromIdx == INDEX_NONE) return FHaybaHandlerResult::Err(FString::Printf(TEXT("material_connect_nodes: %s"), *FromIdxErr));
 
     UMaterialExpression* To = nullptr;  // null when connecting to a material property
+    FExpressionInput* TargetInput = nullptr;
     if (bHasProp)
     {
         EMaterialProperty Prop;
         if (!TryParseProperty(PropStr, Prop))
             return FHaybaHandlerResult::Err(FString::Printf(TEXT("material_connect_nodes: unknown to_property: %s"), *PropStr));
-        FExpressionInput* In = Mat->GetExpressionInputForProperty(Prop);
-        if (!In) return FHaybaHandlerResult::Err(FString::Printf(TEXT("material_connect_nodes: material property '%s' has no input (material attributes in use?)"), *PropStr));
-        In->Connect(FromIdx, From); // index-resolved — never silently output 0
+        TargetInput = Mat->GetExpressionInputForProperty(Prop);
+        if (!TargetInput) return FHaybaHandlerResult::Err(FString::Printf(TEXT("material_connect_nodes: material property '%s' has no input (material attributes in use?)"), *PropStr));
     }
     else
     {
         if (!bHasTo) return FHaybaHandlerResult::Err(TEXT("material_connect_nodes: missing to_node or to_property"));
         To = FindExprByName(Mat, ToNode);
         if (!To) return FHaybaHandlerResult::Err(FString::Printf(TEXT("material_connect_nodes: to_node not found: %s"), *ToNode));
-        FExpressionInput* In = ResolveToInput(To, ToInput, ToInputIndex);
-        if (!In) return FHaybaHandlerResult::Err(FString::Printf(TEXT("material_connect_nodes: to_input '%s' (index %d) not found on '%s'"), *ToInput, ToInputIndex, *ToNode));
-        In->Connect(FromIdx, From); // index-resolved — never silently output 0
+        TargetInput = ResolveToInput(To, ToInput, ToInputIndex);
+        if (!TargetInput) return FHaybaHandlerResult::Err(FString::Printf(TEXT("material_connect_nodes: to_input '%s' (index %d) not found on '%s'"), *ToInput, ToInputIndex, *ToNode));
     }
 
-    // Deferred-compile + crash-resilient save: no per-edit RecompileMaterial
-    // (avoids translating a half-built graph -> editor-killing assert). Persist
-    // to disk now; translate via the explicit material_compile command.
+    Mat->Modify();
+    TargetInput->Connect(FromIdx, From); // index-resolved — never silently output 0
+    const bool bVerified = TargetInput->Expression == From
+        && TargetInput->OutputIndex == FromIdx;
+
+    // Deferred compile: keep the staged graph dirty in memory until the guarded
+    // material_compile boundary validates and saves it.
     Mat->MarkPackageDirty();  // in-memory only — master materials are written to disk ONLY by material_compile, so a half-built invalid-Normal graph never lands on disk for the editor to thumbnail/open-compile (Substrate check(NormalCodeChunk!=INDEX_NONE) crash)
 
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
     Out->SetBoolField(TEXT("connected"), true);
+    Out->SetBoolField(TEXT("verified"), bVerified);
+    if (!bVerified)
+        Out->SetStringField(TEXT("warning"), TEXT("The connection write did not survive readback. Inspect material_get_info before retrying; the graph outcome is unknown."));
+    Out->SetBoolField(TEXT("dirty"), Mat->GetOutermost()->IsDirty());
 
     // ── Clutter prevention (non-binding hints) ────────────────────────────────
     TArray<TSharedPtr<FJsonValue>> Suggestions;
@@ -848,23 +1278,23 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatConnectNodes(const TSharedPtr<F
 
 FHaybaHandlerResult FHaybaMCPMaterialHandler::MatCreateInstance(const TSharedPtr<FJsonObject>& P)
 {
-    FString ParentPath, PkgPath, Name;
-    if (!HaybaParams::GetString(P, TEXT("parent_material_path"), ParentPath)) return FHaybaHandlerResult::Err(TEXT("material_create_instance: missing parent_material_path"));
-    if (!HaybaParams::GetString(P, TEXT("package_path"), PkgPath)) return FHaybaHandlerResult::Err(TEXT("material_create_instance: missing package_path"));
-    if (!HaybaParams::GetString(P, TEXT("name"), Name)) return FHaybaHandlerResult::Err(TEXT("material_create_instance: missing name"));
+    FHaybaParamReader ParamR(P, TEXT("material_create_instance"));
+    const FString ParentPath = ParamR.RequiredString(TEXT("parent_material_path"));
+    const FString PkgPath = ParamR.RequiredString(TEXT("package_path"));
+    const FString Name = ParamR.RequiredString(TEXT("name"), 256);
+    if (ParamR.HasErrors()) return FHaybaHandlerResult::Err(ParamR.ErrorMessage());
 
-    UMaterialInterface* Parent = LoadObject<UMaterialInterface>(nullptr, *ParentPath);
-    if (!Parent) return FHaybaHandlerResult::Err(TEXT("material_create_instance: parent material not found"));
-
-    UMaterialInstanceConstantFactoryNew* Factory = NewObject<UMaterialInstanceConstantFactoryNew>();
-    Factory->InitialParent = Parent;
-
-    IAssetTools& Tools = FModuleManager::LoadModuleChecked<FAssetToolsModule>(TEXT("AssetTools")).Get();
     // package_path may be the target directory OR the full asset path — see
     // material_function_create. Backward-compatible with the full-path convention.
     const FString Dir = (FPackageName::GetShortName(PkgPath) == Name)
         ? FPackageName::GetLongPackagePath(PkgPath)
         : PkgPath;
+    const FString TargetPackage = Dir / Name;
+    if (!TargetPackage.StartsWith(TEXT("/Game/"))
+        || !FPackageName::IsValidLongPackageName(TargetPackage))
+        return FHaybaHandlerResult::Err(FString::Printf(
+            TEXT("material_create_instance: target must be a valid package under /Game; resolved '%s'. Nothing was created."),
+            *TargetPackage));
     // Refuse a taken name instead of letting CreateAsset raise a modal
     // overwrite dialog, which would block the game thread and hang every
     // queued MCP request. See HaybaMCPAssetGuard.h.
@@ -874,6 +1304,12 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatCreateInstance(const TSharedPtr
             HaybaAssetGuard::NameTakenError(TEXT("material_create_instance"), Dir, Name));
     }
 
+    UMaterialInterface* Parent = LoadObject<UMaterialInterface>(nullptr, *ParentPath);
+    if (!Parent) return FHaybaHandlerResult::Err(TEXT("material_create_instance: parent material not found"));
+
+    UMaterialInstanceConstantFactoryNew* Factory = NewObject<UMaterialInstanceConstantFactoryNew>();
+    Factory->InitialParent = Parent;
+    IAssetTools& Tools = FModuleManager::LoadModuleChecked<FAssetToolsModule>(TEXT("AssetTools")).Get();
     UObject* Created = Tools.CreateAsset(Name, Dir, UMaterialInstanceConstant::StaticClass(), Factory);
     if (!Created) return FHaybaHandlerResult::Err(TEXT("material_create_instance: CreateAsset failed"));
 
@@ -885,16 +1321,16 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatCreateInstance(const TSharedPtr
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
     Out->SetStringField(TEXT("path"), Created->GetPathName());
     Out->SetBoolField(TEXT("saved"), bSaved);
+    Out->SetBoolField(TEXT("dirty"), Created->GetOutermost()->IsDirty());
     if (!bSaved) Out->SetStringField(TEXT("save_error"), SaveErr);
     return FHaybaHandlerResult::Ok(Out);
 }
 
 FHaybaHandlerResult FHaybaMCPMaterialHandler::MatSetParam(const TSharedPtr<FJsonObject>& P)
 {
-    FString InstPath, ParamName;
-    if (!HaybaParams::GetString(P, TEXT("instance_path"), InstPath)) return FHaybaHandlerResult::Err(TEXT("material_set_param: missing instance_path"));
     FHaybaParamReader ParamR(P, TEXT("material_set_param"));
-    ParamName = ParamR.RequiredString(TEXT("param_name"));
+    const FString InstPath = ParamR.RequiredString(TEXT("instance_path"));
+    const FString ParamName = ParamR.RequiredString(TEXT("param_name"));
     if (ParamR.HasErrors()) return FHaybaHandlerResult::Err(ParamR.ErrorMessage());
 
     UMaterialInstanceConstant* MIC = LoadObject<UMaterialInstanceConstant>(nullptr, *InstPath);
@@ -906,6 +1342,7 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatSetParam(const TSharedPtr<FJson
     FName PName(*ParamName);
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
     Out->SetStringField(TEXT("param"), ParamName);
+    bool bVerified = false;
 
     // Honesty: the ...EditorOnly setters silently register an override for a
     // misspelled/nonexistent parameter and return void. Verify the parameter
@@ -916,12 +1353,20 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatSetParam(const TSharedPtr<FJson
 
     if (Val->Type == EJson::Number)
     {
+        double RequestedScalar = 0.0;
+        if (!IsFiniteJsonNumber(Val, &RequestedScalar))
+            return FHaybaHandlerResult::Err(TEXT("material_set_param: scalar value must be finite; nothing was changed"));
         float ExistingScalar = 0.f;
         if (!MIC->GetScalarParameterValue(ParamInfo, ExistingScalar, /*bOveriddenOnly=*/false))
             return FHaybaHandlerResult::Err(FString::Printf(
                 TEXT("material_set_param: scalar parameter '%s' does not exist on this material"), *ParamName));
-        MIC->SetScalarParameterValueEditorOnly(PName, (float)Val->AsNumber());
-        Out->SetNumberField(TEXT("value"), Val->AsNumber());
+        MIC->Modify();
+        MIC->SetScalarParameterValueEditorOnly(PName, static_cast<float>(RequestedScalar));
+        float ObservedScalar = 0.f;
+        bVerified = MIC->GetScalarParameterValue(ParamInfo, ObservedScalar, false)
+            && FMath::IsNearlyEqual(ObservedScalar, static_cast<float>(RequestedScalar));
+        Out->SetNumberField(TEXT("value"), RequestedScalar);
+        Out->SetNumberField(TEXT("observed_value"), ObservedScalar);
     }
     else if (Val->Type == EJson::Array)
     {
@@ -930,13 +1375,19 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatSetParam(const TSharedPtr<FJson
             return FHaybaHandlerResult::Err(FString::Printf(
                 TEXT("material_set_param: vector parameter '%s' does not exist on this material"), *ParamName));
         const TArray<TSharedPtr<FJsonValue>>& Arr = Val->AsArray();
-        FLinearColor C(0,0,0,1);
-        if (Arr.Num() > 0) C.R = Arr[0]->AsNumber();
-        if (Arr.Num() > 1) C.G = Arr[1]->AsNumber();
-        if (Arr.Num() > 2) C.B = Arr[2]->AsNumber();
-        if (Arr.Num() > 3) C.A = Arr[3]->AsNumber();
+        FString ShapeError;
+        if (!ValidateFiniteNumberArray(Val, 3, 4, ShapeError))
+            return FHaybaHandlerResult::Err(FString::Printf(
+                TEXT("material_set_param: vector value %s; nothing was changed"), *ShapeError));
+        FLinearColor C(Arr[0]->AsNumber(), Arr[1]->AsNumber(), Arr[2]->AsNumber(),
+            Arr.Num() > 3 ? Arr[3]->AsNumber() : 1.0);
+        MIC->Modify();
         MIC->SetVectorParameterValueEditorOnly(PName, C);
+        FLinearColor Observed;
+        bVerified = MIC->GetVectorParameterValue(ParamInfo, Observed, false)
+            && Observed.Equals(C);
         Out->SetStringField(TEXT("value"), C.ToString());
+        Out->SetStringField(TEXT("observed_value"), Observed.ToString());
     }
     else if (Val->Type == EJson::String)
     {
@@ -947,8 +1398,13 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatSetParam(const TSharedPtr<FJson
         FString TexPath = Val->AsString();
         UTexture* Tex = LoadObject<UTexture>(nullptr, *TexPath);
         if (!Tex) return FHaybaHandlerResult::Err(FString::Printf(TEXT("material_set_param: texture not found: %s"), *TexPath));
+        MIC->Modify();
         MIC->SetTextureParameterValueEditorOnly(PName, Tex);
+        UTexture* ObservedTexture = nullptr;
+        bVerified = MIC->GetTextureParameterValue(ParamInfo, ObservedTexture, false)
+            && ObservedTexture == Tex;
         Out->SetStringField(TEXT("value"), TexPath);
+        Out->SetStringField(TEXT("observed_value"), ObservedTexture ? ObservedTexture->GetPathName() : FString());
     }
     else if (Val->Type == EJson::Boolean)
     {
@@ -973,7 +1429,12 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatSetParam(const TSharedPtr<FJson
         if (!bFound)
             return FHaybaHandlerResult::Err(FString::Printf(
                 TEXT("material_set_param: static switch parameter '%s' does not exist on this material"), *ParamName));
+        MIC->Modify();
         MIC->UpdateStaticPermutation(StaticParams);
+        FStaticParameterSet ObservedParams;
+        MIC->GetStaticParameterValues(ObservedParams);
+        for (const FStaticSwitchParameter& SP : ObservedParams.StaticSwitchParameters)
+            if (SP.ParameterInfo.Name == PName) { bVerified = SP.Value == bSwitch; break; }
         Out->SetBoolField(TEXT("value"), bSwitch);
     }
     else return FHaybaHandlerResult::Err(TEXT("material_set_param: unsupported value type"));
@@ -982,19 +1443,27 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatSetParam(const TSharedPtr<FJson
     // instance permutation (no assert-prone translate); keep it, then persist
     // to disk so the param survives a later crash.
     MIC->PostEditChange();
-    { FString SaveErr; HaybaPersistAsset(MIC, SaveErr); }
+    FString SaveErr;
+    const bool bSaved = HaybaPersistAsset(MIC, SaveErr);
+    Out->SetBoolField(TEXT("verified"), bVerified);
+    Out->SetBoolField(TEXT("saved"), bSaved);
+    Out->SetBoolField(TEXT("dirty"), MIC->GetOutermost()->IsDirty());
+    if (!bVerified)
+        Out->SetStringField(TEXT("warning"), TEXT("The parameter setter returned but readback did not match. Inspect observed_value before retrying."));
+    if (!bSaved) Out->SetStringField(TEXT("save_error"), SaveErr);
     return FHaybaHandlerResult::Ok(Out);
 }
 
 FHaybaHandlerResult FHaybaMCPMaterialHandler::MatApply(const TSharedPtr<FJsonObject>& P)
 {
-    FString ActorId, MatPath;
-    int32 SlotIndex = 0;
-    if (!HaybaParams::GetString(P, TEXT("actor_id"), ActorId)) return FHaybaHandlerResult::Err(TEXT("material_apply: missing actor_id"));
-    if (!HaybaParams::GetString(P, TEXT("material_path"), MatPath)) return FHaybaHandlerResult::Err(TEXT("material_apply: missing material_path"));
-    P->TryGetNumberField(TEXT("slot_index"), SlotIndex);
+    FHaybaParamReader ParamR(P, TEXT("material_apply"));
+    const FString ActorId = ParamR.RequiredString(TEXT("actor_id"));
+    const FString MatPath = ParamR.RequiredString(TEXT("material_path"));
+    const int32 SlotIndex = ParamR.OptionalIntInRange(TEXT("slot_index"), 0, 0, 1023);
+    if (ParamR.HasErrors()) return FHaybaHandlerResult::Err(ParamR.ErrorMessage());
 
     UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
+    if (!World) return FHaybaHandlerResult::Err(TEXT("material_apply: no current editor world; nothing was changed"));
     AActor* Actor = FindActorInWorld(World, ActorId);
     if (!Actor) return FHaybaHandlerResult::Err(FString::Printf(TEXT("material_apply: actor not found: %s"), *ActorId));
 
@@ -1003,11 +1472,31 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatApply(const TSharedPtr<FJsonObj
 
     UStaticMeshComponent* SMC = Actor->FindComponentByClass<UStaticMeshComponent>();
     if (!SMC) return FHaybaHandlerResult::Err(TEXT("material_apply: actor has no StaticMeshComponent"));
-    SMC->SetMaterial(SlotIndex, Mat);
+    const int32 SlotCount = SMC->GetNumMaterials();
+    if (SlotIndex >= SlotCount)
+        return FHaybaHandlerResult::Err(FString::Printf(
+            TEXT("material_apply: slot_index %d is out of range for '%s' (%d material slot(s)); nothing was changed"),
+            SlotIndex, *ActorId, SlotCount));
+
+    const bool bAlreadyApplied = SMC->GetMaterial(SlotIndex) == Mat;
+    if (!bAlreadyApplied)
+    {
+        SMC->Modify();
+        SMC->SetMaterial(SlotIndex, Mat);
+        SMC->MarkRenderStateDirty();
+        Actor->MarkPackageDirty();
+    }
+    const bool bVerified = SMC->GetMaterial(SlotIndex) == Mat;
 
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
     Out->SetStringField(TEXT("actor_id"), ActorId);
     Out->SetNumberField(TEXT("slot_index"), SlotIndex);
+    Out->SetBoolField(TEXT("applied"), !bAlreadyApplied);
+    Out->SetBoolField(TEXT("already_applied"), bAlreadyApplied);
+    Out->SetBoolField(TEXT("verified"), bVerified);
+    Out->SetBoolField(TEXT("dirty"), Actor->GetOutermost()->IsDirty());
+    if (!bVerified)
+        Out->SetStringField(TEXT("warning"), TEXT("SetMaterial returned but readback did not match; inspect the component before retrying."));
     return FHaybaHandlerResult::Ok(Out);
 }
 
@@ -1559,57 +2048,79 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatGetInfo(const TSharedPtr<FJsonO
 // Move and/or re-property an existing node by id, in a material or function.
 FHaybaHandlerResult FHaybaMCPMaterialHandler::MatSetNode(const TSharedPtr<FJsonObject>& P)
 {
-    FString NodeId;
+    FString NodeId, MatPath, FuncPath;
     FHaybaParamReader ParamR(P, TEXT("material_set_node"));
     NodeId = ParamR.RequiredString(TEXT("node_id"));
+    MatPath = ParamR.OptionalString(TEXT("material_path"));
+    FuncPath = ParamR.OptionalString(TEXT("function_path"));
+    const TSharedPtr<FJsonObject> PropsObj = ParamR.OptionalObject(TEXT("properties"), 128);
+    bool bHasPos = false;
+    const TArray<double> Pos = ReadFiniteNumberArray(ParamR, TEXT("node_pos"), 2, 2, bHasPos);
+    ValidateIntegerArrayRange(ParamR, TEXT("node_pos"), Pos, bHasPos, -10000000, 10000000);
+    if (MatPath.IsEmpty() == FuncPath.IsEmpty())
+        ParamR.AddError(TEXT("pass exactly one of 'material_path' or 'function_path'"));
+    if (!bHasPos && !PropsObj.IsValid())
+        ParamR.AddError(TEXT("pass 'node_pos' and/or a non-empty 'properties' object; an empty update is not a mutation"));
+    if (PropsObj.IsValid() && PropsObj->Values.Num() == 0)
+        ParamR.AddError(TEXT("'properties' is empty"));
     if (ParamR.HasErrors()) return FHaybaHandlerResult::Err(ParamR.ErrorMessage());
 
-    int32 X = 0, Y = 0; bool bHasPos = false;
-    const TArray<TSharedPtr<FJsonValue>>* Pos;
-    if (P->TryGetArrayField(TEXT("node_pos"), Pos) && Pos->Num() >= 2)
-    {
-        X = (int32)(*Pos)[0]->AsNumber();
-        Y = (int32)(*Pos)[1]->AsNumber();
-        bHasPos = true;
-    }
-    const TSharedPtr<FJsonObject>* PropsObj = nullptr;
-    P->TryGetObjectField(TEXT("properties"), PropsObj);
+    const int32 X = bHasPos ? static_cast<int32>(Pos[0]) : 0;
+    const int32 Y = bHasPos ? static_cast<int32>(Pos[1]) : 0;
 
     FApplyNodePropsResult PR;
     auto ApplyTo = [&](UMaterialExpression* Expr) {
         if (bHasPos) { Expr->MaterialExpressionEditorX = X; Expr->MaterialExpressionEditorY = Y; }
-        if (PropsObj) PR = ApplyNodeProps(Expr, *PropsObj);
+        if (PropsObj.IsValid()) PR = ApplyNodeProps(Expr, PropsObj);
     };
 
-    FString FuncPath;
-    if (P->TryGetStringField(TEXT("function_path"), FuncPath) && !FuncPath.IsEmpty())
+    if (!FuncPath.IsEmpty())
     {
         UMaterialFunction* Fn = LoadObject<UMaterialFunction>(nullptr, *FuncPath);
         if (!Fn) return FHaybaHandlerResult::Err(TEXT("material_set_node: function not found"));
         UMaterialExpression* Expr = FindExprByNameInFunction(Fn, NodeId);
         if (!Expr) return FHaybaHandlerResult::Err(FString::Printf(TEXT("material_set_node: node not found: %s"), *NodeId));
+        TArray<FString> Problems;
+        if (!PreflightNodeProps(Expr->GetClass(), PropsObj, Problems))
+            return FHaybaHandlerResult::Err(FString::Printf(
+                TEXT("material_set_node: property preflight failed: %s. Node position, properties, and dirty state were not changed."),
+                *FString::Join(Problems, TEXT("; "))));
+        Fn->Modify();
+        Expr->Modify();
         ApplyTo(Expr);
-        UMaterialEditingLibrary::UpdateMaterialFunction(Fn, nullptr);
+        // Staged only; compile explicitly after the function graph is complete.
         Fn->MarkPackageDirty();  // in-memory only — function written to disk by material_compile(function_path); avoids a half-built function landing on disk and asserting when the editor opens/compiles it
         TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
         Out->SetStringField(TEXT("node_id"), NodeId);
+        Out->SetBoolField(TEXT("verified"), (!bHasPos
+            || (Expr->MaterialExpressionEditorX == X && Expr->MaterialExpressionEditorY == Y))
+            && PR.Unknown.Num() == 0);
+        Out->SetBoolField(TEXT("dirty"), Fn->GetOutermost()->IsDirty());
         AttachNodePropsResult(Out.ToSharedRef(), PR, Expr, TEXT("material_set_node"));
         return FHaybaHandlerResult::Ok(Out);
     }
 
-    FString MatPath;
-    if (!HaybaParams::GetString(P, TEXT("material_path"), MatPath)) return FHaybaHandlerResult::Err(TEXT("material_set_node: missing material_path or function_path"));
     UMaterial* Mat = LoadObject<UMaterial>(nullptr, *MatPath);
     if (!Mat) return FHaybaHandlerResult::Err(TEXT("material_set_node: material not found"));
     UMaterialExpression* Expr = FindExprByName(Mat, NodeId);
     if (!Expr) return FHaybaHandlerResult::Err(FString::Printf(TEXT("material_set_node: node not found: %s"), *NodeId));
+    TArray<FString> Problems;
+    if (!PreflightNodeProps(Expr->GetClass(), PropsObj, Problems))
+        return FHaybaHandlerResult::Err(FString::Printf(
+            TEXT("material_set_node: property preflight failed: %s. Node position, properties, and dirty state were not changed."),
+            *FString::Join(Problems, TEXT("; "))));
+    Mat->Modify();
+    Expr->Modify();
     ApplyTo(Expr);
-    // Deferred-compile + crash-resilient save: no per-edit RecompileMaterial
-    // (avoids translating a half-built graph -> editor-killing assert). Persist
-    // to disk now; translate via the explicit material_compile command.
+    // Deferred compile: keep the staged graph dirty in memory until the guarded
+    // material_compile boundary validates and saves it.
     Mat->MarkPackageDirty();  // in-memory only — master materials are written to disk ONLY by material_compile, so a half-built invalid-Normal graph never lands on disk for the editor to thumbnail/open-compile (Substrate check(NormalCodeChunk!=INDEX_NONE) crash)
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
     Out->SetStringField(TEXT("node_id"), NodeId);
+    Out->SetBoolField(TEXT("verified"), (!bHasPos
+        || (Expr->MaterialExpressionEditorX == X && Expr->MaterialExpressionEditorY == Y))
+        && PR.Unknown.Num() == 0);
+    Out->SetBoolField(TEXT("dirty"), Mat->GetOutermost()->IsDirty());
     AttachNodePropsResult(Out.ToSharedRef(), PR, Expr, TEXT("material_set_node"));
     return FHaybaHandlerResult::Ok(Out);
 }
@@ -1617,39 +2128,45 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatSetNode(const TSharedPtr<FJsonO
 // Delete an existing node by id, in a material or function.
 FHaybaHandlerResult FHaybaMCPMaterialHandler::MatDeleteNode(const TSharedPtr<FJsonObject>& P)
 {
-    FString NodeId;
+    FString NodeId, FuncPath, MatPath;
     FHaybaParamReader ParamR(P, TEXT("material_delete_node"));
     NodeId = ParamR.RequiredString(TEXT("node_id"));
+    FuncPath = ParamR.OptionalString(TEXT("function_path"));
+    MatPath = ParamR.OptionalString(TEXT("material_path"));
+    if (MatPath.IsEmpty() == FuncPath.IsEmpty())
+        ParamR.AddError(TEXT("pass exactly one of 'material_path' or 'function_path'"));
     if (ParamR.HasErrors()) return FHaybaHandlerResult::Err(ParamR.ErrorMessage());
 
-    FString FuncPath;
-    if (P->TryGetStringField(TEXT("function_path"), FuncPath) && !FuncPath.IsEmpty())
+    if (!FuncPath.IsEmpty())
     {
         UMaterialFunction* Fn = LoadObject<UMaterialFunction>(nullptr, *FuncPath);
         if (!Fn) return FHaybaHandlerResult::Err(TEXT("material_delete_node: function not found"));
         UMaterialExpression* Expr = FindExprByNameInFunction(Fn, NodeId);
         if (!Expr) return FHaybaHandlerResult::Err(FString::Printf(TEXT("material_delete_node: node not found: %s"), *NodeId));
+        Fn->Modify();
         UMaterialEditingLibrary::DeleteMaterialExpressionInFunction(Fn, Expr);
-        UMaterialEditingLibrary::UpdateMaterialFunction(Fn, nullptr);
+        // Staged only; compile explicitly after the function graph is complete.
         Fn->MarkPackageDirty();  // in-memory only — function written to disk by material_compile(function_path); avoids a half-built function landing on disk and asserting when the editor opens/compiles it
         TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
         Out->SetBoolField(TEXT("deleted"), true);
+        Out->SetBoolField(TEXT("verified"), FindExprByNameInFunction(Fn, NodeId) == nullptr);
+        Out->SetBoolField(TEXT("dirty"), Fn->GetOutermost()->IsDirty());
         return FHaybaHandlerResult::Ok(Out);
     }
 
-    FString MatPath;
-    if (!HaybaParams::GetString(P, TEXT("material_path"), MatPath)) return FHaybaHandlerResult::Err(TEXT("material_delete_node: missing material_path or function_path"));
     UMaterial* Mat = LoadObject<UMaterial>(nullptr, *MatPath);
     if (!Mat) return FHaybaHandlerResult::Err(TEXT("material_delete_node: material not found"));
     UMaterialExpression* Expr = FindExprByName(Mat, NodeId);
     if (!Expr) return FHaybaHandlerResult::Err(FString::Printf(TEXT("material_delete_node: node not found: %s"), *NodeId));
+    Mat->Modify();
     UMaterialEditingLibrary::DeleteMaterialExpression(Mat, Expr);
-    // Deferred-compile + crash-resilient save: no per-edit RecompileMaterial
-    // (avoids translating a half-built graph -> editor-killing assert). Persist
-    // to disk now; translate via the explicit material_compile command.
+    // Deferred compile: keep the staged graph dirty in memory until the guarded
+    // material_compile boundary validates and saves it.
     Mat->MarkPackageDirty();  // in-memory only — master materials are written to disk ONLY by material_compile, so a half-built invalid-Normal graph never lands on disk for the editor to thumbnail/open-compile (Substrate check(NormalCodeChunk!=INDEX_NONE) crash)
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
     Out->SetBoolField(TEXT("deleted"), true);
+    Out->SetBoolField(TEXT("verified"), FindExprByName(Mat, NodeId) == nullptr);
+    Out->SetBoolField(TEXT("dirty"), Mat->GetOutermost()->IsDirty());
     return FHaybaHandlerResult::Ok(Out);
 }
 
@@ -1658,50 +2175,68 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatDeleteNode(const TSharedPtr<FJs
 // CreateMaterialExpression would otherwise drop a stray empty node.
 FHaybaHandlerResult FHaybaMCPMaterialHandler::MatAddComment(const TSharedPtr<FJsonObject>& P)
 {
-    FString Text;
-    P->TryGetStringField(TEXT("text"), Text);
+    FHaybaParamReader ParamR(P, TEXT("material_add_comment"));
+    const FString Text = ParamR.OptionalString(TEXT("text"), FString(), 4096);
+    const FString FuncPath = ParamR.OptionalString(TEXT("function_path"));
+    const FString MatPath = ParamR.OptionalString(TEXT("material_path"));
+    bool bHasPos = false, bHasSize = false, bHasColor = false;
+    const TArray<double> Pos = ReadFiniteNumberArray(ParamR, TEXT("node_pos"), 2, 2, bHasPos);
+    const TArray<double> Size = ReadFiniteNumberArray(ParamR, TEXT("size"), 2, 2, bHasSize);
+    const TArray<double> ColorValues = ReadFiniteNumberArray(ParamR, TEXT("color"), 3, 4, bHasColor);
+    ValidateIntegerArrayRange(ParamR, TEXT("node_pos"), Pos, bHasPos, -10000000, 10000000);
+    ValidateIntegerArrayRange(ParamR, TEXT("size"), Size, bHasSize, 1, 1000000);
+    ValidateNumberArrayRange(ParamR, TEXT("color"), ColorValues, bHasColor, 0.0, 1.0);
+    const int32 Font = ParamR.OptionalIntInRange(TEXT("font_size"), 18, 1, 512);
+    if (MatPath.IsEmpty() == FuncPath.IsEmpty())
+        ParamR.AddError(TEXT("pass exactly one of 'material_path' or 'function_path'"));
+    if (ParamR.HasErrors()) return FHaybaHandlerResult::Err(ParamR.ErrorMessage());
 
-    int32 X = 0, Y = 0, W = 400, H = 200, Font = 18;
-    const TArray<TSharedPtr<FJsonValue>>* Arr;
-    if (P->TryGetArrayField(TEXT("node_pos"), Arr) && Arr->Num() >= 2) { X = (int32)(*Arr)[0]->AsNumber(); Y = (int32)(*Arr)[1]->AsNumber(); }
-    if (P->TryGetArrayField(TEXT("size"), Arr) && Arr->Num() >= 2)     { W = (int32)(*Arr)[0]->AsNumber(); H = (int32)(*Arr)[1]->AsNumber(); }
-    FLinearColor Color = FLinearColor::White;
-    if (P->TryGetArrayField(TEXT("color"), Arr) && Arr->Num() >= 3)
-        Color = FLinearColor((*Arr)[0]->AsNumber(), (*Arr)[1]->AsNumber(), (*Arr)[2]->AsNumber(), Arr->Num() >= 4 ? (*Arr)[3]->AsNumber() : 1.0);
-    { int32 F; if (P->TryGetNumberField(TEXT("font_size"), F)) Font = F; }
+    const int32 X = bHasPos ? static_cast<int32>(Pos[0]) : 0;
+    const int32 Y = bHasPos ? static_cast<int32>(Pos[1]) : 0;
+    const int32 W = bHasSize ? static_cast<int32>(Size[0]) : 400;
+    const int32 H = bHasSize ? static_cast<int32>(Size[1]) : 200;
+    const FLinearColor Color = bHasColor
+        ? FLinearColor(ColorValues[0], ColorValues[1], ColorValues[2],
+            ColorValues.Num() >= 4 ? ColorValues[3] : 1.0)
+        : FLinearColor::White;
 
     auto Setup = [&](UMaterialExpressionComment* C) {
         C->Text = Text; C->SizeX = W; C->SizeY = H; C->CommentColor = Color; C->FontSize = Font;
         C->MaterialExpressionEditorX = X; C->MaterialExpressionEditorY = Y;
     };
 
-    FString FuncPath;
-    if (P->TryGetStringField(TEXT("function_path"), FuncPath) && !FuncPath.IsEmpty())
+    if (!FuncPath.IsEmpty())
     {
         UMaterialFunction* Fn = LoadObject<UMaterialFunction>(nullptr, *FuncPath);
         if (!Fn) return FHaybaHandlerResult::Err(TEXT("material_add_comment: function not found"));
+        Fn->Modify();
         UMaterialExpressionComment* C = NewObject<UMaterialExpressionComment>(Fn);
         Setup(C);
         Fn->GetExpressionCollection().AddComment(C);
-        UMaterialEditingLibrary::UpdateMaterialFunction(Fn, nullptr);
+        // Comments do not justify a crash-prone function compile/broadcast.
         Fn->MarkPackageDirty();  // in-memory only — function written to disk by material_compile(function_path); avoids a half-built function landing on disk and asserting when the editor opens/compiles it
         TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
         Out->SetStringField(TEXT("comment_id"), C->GetName());
+        Out->SetBoolField(TEXT("verified"), Fn->GetEditorComments().Contains(C));
+        Out->SetBoolField(TEXT("save_requested"), false);
+        Out->SetBoolField(TEXT("dirty"), Fn->GetOutermost()->IsDirty());
         return FHaybaHandlerResult::Ok(Out);
     }
 
-    FString MatPath;
-    if (!HaybaParams::GetString(P, TEXT("material_path"), MatPath)) return FHaybaHandlerResult::Err(TEXT("material_add_comment: missing material_path or function_path"));
     UMaterial* Mat = LoadObject<UMaterial>(nullptr, *MatPath);
     if (!Mat) return FHaybaHandlerResult::Err(TEXT("material_add_comment: material not found"));
+    Mat->Modify();
     UMaterialExpressionComment* C = NewObject<UMaterialExpressionComment>(Mat);
     Setup(C);
     Mat->GetExpressionCollection().AddComment(C);
-    // Comments don't affect compilation; persist to disk (no PostEditChange,
-    // which would needlessly translate the material).
+    // Comments do not justify an eager PostEditChange/save either: keep one
+    // explicit persistence boundary for the entire graph edit session.
     Mat->MarkPackageDirty();  // in-memory only — master materials are written to disk ONLY by material_compile, so a half-built invalid-Normal graph never lands on disk for the editor to thumbnail/open-compile (Substrate check(NormalCodeChunk!=INDEX_NONE) crash)
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
     Out->SetStringField(TEXT("comment_id"), C->GetName());
+    Out->SetBoolField(TEXT("verified"), Mat->GetEditorComments().Contains(C));
+    Out->SetBoolField(TEXT("save_requested"), false);
+    Out->SetBoolField(TEXT("dirty"), Mat->GetOutermost()->IsDirty());
     return FHaybaHandlerResult::Ok(Out);
 }
 
@@ -1711,12 +2246,15 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatAddComment(const TSharedPtr<FJs
 // ARE expressions, so material_delete_node already deletes those.)
 FHaybaHandlerResult FHaybaMCPMaterialHandler::MatDeleteComment(const TSharedPtr<FJsonObject>& P)
 {
-    FString CommentId;
-    if (!P->TryGetStringField(TEXT("comment_id"), CommentId) || CommentId.IsEmpty())
-        return FHaybaHandlerResult::Err(TEXT("material_delete_comment: missing comment_id"));
+    FHaybaParamReader ParamR(P, TEXT("material_delete_comment"));
+    const FString CommentId = ParamR.RequiredString(TEXT("comment_id"));
+    const FString FuncPath = ParamR.OptionalString(TEXT("function_path"));
+    const FString MatPath = ParamR.OptionalString(TEXT("material_path"));
+    if (MatPath.IsEmpty() == FuncPath.IsEmpty())
+        ParamR.AddError(TEXT("pass exactly one of 'material_path' or 'function_path'"));
+    if (ParamR.HasErrors()) return FHaybaHandlerResult::Err(ParamR.ErrorMessage());
 
-    FString FuncPath;
-    if (P->TryGetStringField(TEXT("function_path"), FuncPath) && !FuncPath.IsEmpty())
+    if (!FuncPath.IsEmpty())
     {
         UMaterialFunction* Fn = LoadObject<UMaterialFunction>(nullptr, *FuncPath);
         if (!Fn) return FHaybaHandlerResult::Err(TEXT("material_delete_comment: function not found"));
@@ -1724,30 +2262,34 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatDeleteComment(const TSharedPtr<
         {
             if (C && C->GetName() == CommentId)
             {
+                Fn->Modify();
                 Fn->GetExpressionCollection().RemoveComment(C);
-                UMaterialEditingLibrary::UpdateMaterialFunction(Fn, nullptr);
-                { FString SaveErr; HaybaPersistAsset(Fn, SaveErr); }
+                Fn->MarkPackageDirty();
                 TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
                 Out->SetBoolField(TEXT("deleted"), true);
+                Out->SetBoolField(TEXT("verified"), !Fn->GetEditorComments().Contains(C));
+                Out->SetBoolField(TEXT("save_requested"), false);
+                Out->SetBoolField(TEXT("dirty"), Fn->GetOutermost()->IsDirty());
                 return FHaybaHandlerResult::Ok(Out);
             }
         }
         return FHaybaHandlerResult::Err(FString::Printf(TEXT("material_delete_comment: comment not found: %s"), *CommentId));
     }
 
-    FString MatPath;
-    if (!HaybaParams::GetString(P, TEXT("material_path"), MatPath))
-        return FHaybaHandlerResult::Err(TEXT("material_delete_comment: missing material_path or function_path"));
     UMaterial* Mat = LoadObject<UMaterial>(nullptr, *MatPath);
     if (!Mat) return FHaybaHandlerResult::Err(TEXT("material_delete_comment: material not found"));
     for (const TObjectPtr<UMaterialExpressionComment>& C : Mat->GetEditorComments())
     {
         if (C && C->GetName() == CommentId)
         {
+            Mat->Modify();
             Mat->GetExpressionCollection().RemoveComment(C);
             Mat->MarkPackageDirty();  // comments don't affect compilation; in-memory per the deferred-compile model
             TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
             Out->SetBoolField(TEXT("deleted"), true);
+            Out->SetBoolField(TEXT("verified"), !Mat->GetEditorComments().Contains(C));
+            Out->SetBoolField(TEXT("save_requested"), false);
+            Out->SetBoolField(TEXT("dirty"), Mat->GetOutermost()->IsDirty());
             return FHaybaHandlerResult::Ok(Out);
         }
     }
@@ -1760,27 +2302,59 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatDeleteComment(const TSharedPtr<
 // need a Python fallback.
 FHaybaHandlerResult FHaybaMCPMaterialHandler::MatSetComment(const TSharedPtr<FJsonObject>& P)
 {
-    FString CommentId;
-    if (!P->TryGetStringField(TEXT("comment_id"), CommentId) || CommentId.IsEmpty())
-        return FHaybaHandlerResult::Err(TEXT("material_set_comment: missing comment_id"));
+    FHaybaParamReader ParamR(P, TEXT("material_set_comment"));
+    const FString CommentId = ParamR.RequiredString(TEXT("comment_id"));
+    const FString FuncPath = ParamR.OptionalString(TEXT("function_path"));
+    const FString MatPath = ParamR.OptionalString(TEXT("material_path"));
+    const bool bHasText = ParamR.Raw().IsValid() && ParamR.Raw()->HasField(TEXT("text"));
+    const FString Text = ParamR.OptionalString(TEXT("text"), FString(), 4096);
+    bool bHasPos = false, bHasSize = false, bHasColor = false;
+    const TArray<double> Pos = ReadFiniteNumberArray(ParamR, TEXT("node_pos"), 2, 2, bHasPos);
+    const TArray<double> Size = ReadFiniteNumberArray(ParamR, TEXT("size"), 2, 2, bHasSize);
+    const TArray<double> ColorValues = ReadFiniteNumberArray(ParamR, TEXT("color"), 3, 4, bHasColor);
+    ValidateIntegerArrayRange(ParamR, TEXT("node_pos"), Pos, bHasPos, -10000000, 10000000);
+    ValidateIntegerArrayRange(ParamR, TEXT("size"), Size, bHasSize, 1, 1000000);
+    ValidateNumberArrayRange(ParamR, TEXT("color"), ColorValues, bHasColor, 0.0, 1.0);
+    const bool bHasFont = ParamR.Raw().IsValid() && ParamR.Raw()->HasField(TEXT("font_size"));
+    const int32 Font = ParamR.OptionalIntInRange(TEXT("font_size"), 18, 1, 512);
+    if (MatPath.IsEmpty() == FuncPath.IsEmpty())
+        ParamR.AddError(TEXT("pass exactly one of 'material_path' or 'function_path'"));
+    if (!bHasText && !bHasPos && !bHasSize && !bHasColor && !bHasFont)
+        ParamR.AddError(TEXT("no comment fields to update"));
+    if (ParamR.HasErrors()) return FHaybaHandlerResult::Err(ParamR.ErrorMessage());
 
     // Apply only the provided fields to a found comment.
-    const TArray<TSharedPtr<FJsonValue>>* Arr;
     auto Apply = [&](UMaterialExpressionComment* C)
     {
-        FString Text;
-        if (P->TryGetStringField(TEXT("text"), Text)) C->Text = Text;
-        if (P->TryGetArrayField(TEXT("node_pos"), Arr) && Arr->Num() >= 2)
-        { C->MaterialExpressionEditorX = (int32)(*Arr)[0]->AsNumber(); C->MaterialExpressionEditorY = (int32)(*Arr)[1]->AsNumber(); }
-        if (P->TryGetArrayField(TEXT("size"), Arr) && Arr->Num() >= 2)
-        { C->SizeX = (int32)(*Arr)[0]->AsNumber(); C->SizeY = (int32)(*Arr)[1]->AsNumber(); }
-        if (P->TryGetArrayField(TEXT("color"), Arr) && Arr->Num() >= 3)
-            C->CommentColor = FLinearColor((*Arr)[0]->AsNumber(), (*Arr)[1]->AsNumber(), (*Arr)[2]->AsNumber(), Arr->Num() >= 4 ? (*Arr)[3]->AsNumber() : 1.0);
-        { int32 F; if (P->TryGetNumberField(TEXT("font_size"), F)) C->FontSize = F; }
+        C->Modify();
+        if (bHasText) C->Text = Text;
+        if (bHasPos)
+        { C->MaterialExpressionEditorX = static_cast<int32>(Pos[0]); C->MaterialExpressionEditorY = static_cast<int32>(Pos[1]); }
+        if (bHasSize)
+        { C->SizeX = static_cast<int32>(Size[0]); C->SizeY = static_cast<int32>(Size[1]); }
+        if (bHasColor)
+            C->CommentColor = FLinearColor(ColorValues[0], ColorValues[1], ColorValues[2], ColorValues.Num() >= 4 ? ColorValues[3] : 1.0);
+        if (bHasFont) C->FontSize = Font;
+    };
+    auto Verify = [&](const UMaterialExpressionComment* C)
+    {
+        if (!C) return false;
+        if (bHasText && C->Text != Text) return false;
+        if (bHasPos && (C->MaterialExpressionEditorX != static_cast<int32>(Pos[0])
+            || C->MaterialExpressionEditorY != static_cast<int32>(Pos[1]))) return false;
+        if (bHasSize && (C->SizeX != static_cast<int32>(Size[0])
+            || C->SizeY != static_cast<int32>(Size[1]))) return false;
+        if (bHasColor)
+        {
+            const FLinearColor Expected(
+                ColorValues[0], ColorValues[1], ColorValues[2],
+                ColorValues.Num() >= 4 ? ColorValues[3] : 1.0);
+            if (!C->CommentColor.Equals(Expected)) return false;
+        }
+        return !bHasFont || C->FontSize == Font;
     };
 
-    FString FuncPath;
-    if (P->TryGetStringField(TEXT("function_path"), FuncPath) && !FuncPath.IsEmpty())
+    if (!FuncPath.IsEmpty())
     {
         UMaterialFunction* Fn = LoadObject<UMaterialFunction>(nullptr, *FuncPath);
         if (!Fn) return FHaybaHandlerResult::Err(TEXT("material_set_comment: function not found"));
@@ -1789,19 +2363,18 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatSetComment(const TSharedPtr<FJs
             if (C && C->GetName() == CommentId)
             {
                 Apply(C);
-                UMaterialEditingLibrary::UpdateMaterialFunction(Fn, nullptr);
-                { FString SaveErr; HaybaPersistAsset(Fn, SaveErr); }
+                Fn->MarkPackageDirty();
                 TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
                 Out->SetStringField(TEXT("comment_id"), CommentId);
+                Out->SetBoolField(TEXT("verified"), Verify(C));
+                Out->SetBoolField(TEXT("save_requested"), false);
+                Out->SetBoolField(TEXT("dirty"), Fn->GetOutermost()->IsDirty());
                 return FHaybaHandlerResult::Ok(Out);
             }
         }
         return FHaybaHandlerResult::Err(FString::Printf(TEXT("material_set_comment: comment not found: %s"), *CommentId));
     }
 
-    FString MatPath;
-    if (!HaybaParams::GetString(P, TEXT("material_path"), MatPath))
-        return FHaybaHandlerResult::Err(TEXT("material_set_comment: missing material_path or function_path"));
     UMaterial* Mat = LoadObject<UMaterial>(nullptr, *MatPath);
     if (!Mat) return FHaybaHandlerResult::Err(TEXT("material_set_comment: material not found"));
     for (const TObjectPtr<UMaterialExpressionComment>& C : Mat->GetEditorComments())
@@ -1812,6 +2385,9 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatSetComment(const TSharedPtr<FJs
             Mat->MarkPackageDirty();  // comments don't affect compilation; in-memory per the deferred-compile model
             TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
             Out->SetStringField(TEXT("comment_id"), CommentId);
+            Out->SetBoolField(TEXT("verified"), Verify(C));
+            Out->SetBoolField(TEXT("save_requested"), false);
+            Out->SetBoolField(TEXT("dirty"), Mat->GetOutermost()->IsDirty());
             return FHaybaHandlerResult::Ok(Out);
         }
     }
@@ -1824,15 +2400,24 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatSetComment(const TSharedPtr<FJs
 // material_connect_nodes (to_node = <this id>).
 FHaybaHandlerResult FHaybaMCPMaterialHandler::MatAddRerouteDeclaration(const TSharedPtr<FJsonObject>& P)
 {
-    FString Name;
-    if (!P->TryGetStringField(TEXT("name"), Name) || Name.IsEmpty()) return FHaybaHandlerResult::Err(TEXT("material_add_reroute_declaration: missing name"));
+    FHaybaParamReader ParamR(P, TEXT("material_add_reroute_declaration"));
+    const FString Name = ParamR.RequiredString(TEXT("name"), 256);
+    const FString FuncPath = ParamR.OptionalString(TEXT("function_path"));
+    const FString MatPath = ParamR.OptionalString(TEXT("material_path"));
+    bool bHasPos = false, bHasColor = false;
+    const TArray<double> Pos = ReadFiniteNumberArray(ParamR, TEXT("node_pos"), 2, 2, bHasPos);
+    const TArray<double> ColorValues = ReadFiniteNumberArray(ParamR, TEXT("color"), 3, 4, bHasColor);
+    ValidateIntegerArrayRange(ParamR, TEXT("node_pos"), Pos, bHasPos, -10000000, 10000000);
+    ValidateNumberArrayRange(ParamR, TEXT("color"), ColorValues, bHasColor, 0.0, 1.0);
+    if (MatPath.IsEmpty() == FuncPath.IsEmpty())
+        ParamR.AddError(TEXT("pass exactly one of 'material_path' or 'function_path'"));
+    if (ParamR.HasErrors()) return FHaybaHandlerResult::Err(ParamR.ErrorMessage());
 
-    int32 X = 0, Y = 0; bool bHasPos = false;
-    const TArray<TSharedPtr<FJsonValue>>* Arr;
-    if (P->TryGetArrayField(TEXT("node_pos"), Arr) && Arr->Num() >= 2) { X = (int32)(*Arr)[0]->AsNumber(); Y = (int32)(*Arr)[1]->AsNumber(); bHasPos = true; }
-    FLinearColor Color; bool bHasColor = false;
-    if (P->TryGetArrayField(TEXT("color"), Arr) && Arr->Num() >= 3)
-    { Color = FLinearColor((*Arr)[0]->AsNumber(), (*Arr)[1]->AsNumber(), (*Arr)[2]->AsNumber(), Arr->Num() >= 4 ? (*Arr)[3]->AsNumber() : 1.0); bHasColor = true; }
+    int32 X = bHasPos ? static_cast<int32>(Pos[0]) : 0;
+    int32 Y = bHasPos ? static_cast<int32>(Pos[1]) : 0;
+    const FLinearColor Color = bHasColor
+        ? FLinearColor(ColorValues[0], ColorValues[1], ColorValues[2], ColorValues.Num() >= 4 ? ColorValues[3] : 1.0)
+        : FLinearColor::White;
 
     UClass* Cls = UMaterialExpressionNamedRerouteDeclaration::StaticClass();
     auto Setup = [&](UMaterialExpressionNamedRerouteDeclaration* D) {
@@ -1843,36 +2428,48 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatAddRerouteDeclaration(const TSh
         if (!D->VariableGuid.IsValid()) D->VariableGuid = FGuid::NewGuid();
     };
 
-    FString FuncPath;
-    if (P->TryGetStringField(TEXT("function_path"), FuncPath) && !FuncPath.IsEmpty())
+    if (!FuncPath.IsEmpty())
     {
         UMaterialFunction* Fn = LoadObject<UMaterialFunction>(nullptr, *FuncPath);
         if (!Fn) return FHaybaHandlerResult::Err(TEXT("material_add_reroute_declaration: function not found"));
+        for (UMaterialExpression* Existing : Fn->GetExpressions())
+            if (const UMaterialExpressionNamedRerouteDeclaration* D = Cast<UMaterialExpressionNamedRerouteDeclaration>(Existing);
+                D && D->Name.ToString().Equals(Name, ESearchCase::IgnoreCase))
+                return FHaybaHandlerResult::Err(FString::Printf(TEXT("material_add_reroute_declaration: name '%s' already exists; nothing was changed"), *Name));
         if (!bHasPos) HaybaAutoNodePos(Fn->GetExpressions().Num(), X, Y);
+        Fn->Modify();
         UMaterialExpressionNamedRerouteDeclaration* D = Cast<UMaterialExpressionNamedRerouteDeclaration>(UMaterialEditingLibrary::CreateMaterialExpressionInFunction(Fn, Cls, X, Y));
         if (!D) return FHaybaHandlerResult::Err(TEXT("material_add_reroute_declaration: create failed"));
         Setup(D);
-        UMaterialEditingLibrary::UpdateMaterialFunction(Fn, nullptr);
+        // Staged only; material_compile(function_path) is the guarded boundary.
         Fn->MarkPackageDirty();  // in-memory only — function written to disk by material_compile(function_path); avoids a half-built function landing on disk and asserting when the editor opens/compiles it
         TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
         Out->SetStringField(TEXT("node_id"), D->GetName());
+        Out->SetBoolField(TEXT("verified"), FindExprByNameInFunction(Fn, D->GetName()) == D
+            && D->Name == FName(*Name) && D->VariableGuid.IsValid());
+        Out->SetBoolField(TEXT("dirty"), Fn->GetOutermost()->IsDirty());
         return FHaybaHandlerResult::Ok(Out);
     }
 
-    FString MatPath;
-    if (!HaybaParams::GetString(P, TEXT("material_path"), MatPath)) return FHaybaHandlerResult::Err(TEXT("material_add_reroute_declaration: missing material_path or function_path"));
     UMaterial* Mat = LoadObject<UMaterial>(nullptr, *MatPath);
     if (!Mat) return FHaybaHandlerResult::Err(TEXT("material_add_reroute_declaration: material not found"));
+    for (UMaterialExpression* Existing : Mat->GetExpressions())
+        if (const UMaterialExpressionNamedRerouteDeclaration* D = Cast<UMaterialExpressionNamedRerouteDeclaration>(Existing);
+            D && D->Name.ToString().Equals(Name, ESearchCase::IgnoreCase))
+            return FHaybaHandlerResult::Err(FString::Printf(TEXT("material_add_reroute_declaration: name '%s' already exists; nothing was changed"), *Name));
     if (!bHasPos) HaybaAutoNodePos(Mat->GetExpressions().Num(), X, Y);
+    Mat->Modify();
     UMaterialExpressionNamedRerouteDeclaration* D = Cast<UMaterialExpressionNamedRerouteDeclaration>(UMaterialEditingLibrary::CreateMaterialExpression(Mat, Cls, X, Y));
     if (!D) return FHaybaHandlerResult::Err(TEXT("material_add_reroute_declaration: create failed"));
     Setup(D);
-    // Deferred-compile + crash-resilient save: no per-edit RecompileMaterial
-    // (avoids translating a half-built graph -> editor-killing assert). Persist
-    // to disk now; translate via the explicit material_compile command.
+    // Deferred compile: keep the staged graph dirty in memory until the guarded
+    // material_compile boundary validates and saves it.
     Mat->MarkPackageDirty();  // in-memory only — master materials are written to disk ONLY by material_compile, so a half-built invalid-Normal graph never lands on disk for the editor to thumbnail/open-compile (Substrate check(NormalCodeChunk!=INDEX_NONE) crash)
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
     Out->SetStringField(TEXT("node_id"), D->GetName());
+    Out->SetBoolField(TEXT("verified"), FindExprByName(Mat, D->GetName()) == D
+        && D->Name == FName(*Name) && D->VariableGuid.IsValid());
+    Out->SetBoolField(TEXT("dirty"), Mat->GetOutermost()->IsDirty());
     return FHaybaHandlerResult::Ok(Out);
 }
 
@@ -1881,51 +2478,62 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatAddRerouteDeclaration(const TSh
 // output is wired to targets with material_connect_nodes (from_node = <this id>).
 FHaybaHandlerResult FHaybaMCPMaterialHandler::MatAddRerouteUsage(const TSharedPtr<FJsonObject>& P)
 {
-    FString DeclId;
-    if (!P->TryGetStringField(TEXT("declaration_id"), DeclId) || DeclId.IsEmpty()) return FHaybaHandlerResult::Err(TEXT("material_add_reroute_usage: missing declaration_id"));
+    FHaybaParamReader ParamR(P, TEXT("material_add_reroute_usage"));
+    const FString DeclId = ParamR.RequiredString(TEXT("declaration_id"));
+    const FString FuncPath = ParamR.OptionalString(TEXT("function_path"));
+    const FString MatPath = ParamR.OptionalString(TEXT("material_path"));
+    bool bHasPos = false;
+    const TArray<double> Pos = ReadFiniteNumberArray(ParamR, TEXT("node_pos"), 2, 2, bHasPos);
+    ValidateIntegerArrayRange(ParamR, TEXT("node_pos"), Pos, bHasPos, -10000000, 10000000);
+    if (MatPath.IsEmpty() == FuncPath.IsEmpty())
+        ParamR.AddError(TEXT("pass exactly one of 'material_path' or 'function_path'"));
+    if (ParamR.HasErrors()) return FHaybaHandlerResult::Err(ParamR.ErrorMessage());
 
-    int32 X = 0, Y = 0; bool bHasPos = false;
-    const TArray<TSharedPtr<FJsonValue>>* Arr;
-    if (P->TryGetArrayField(TEXT("node_pos"), Arr) && Arr->Num() >= 2) { X = (int32)(*Arr)[0]->AsNumber(); Y = (int32)(*Arr)[1]->AsNumber(); bHasPos = true; }
+    int32 X = bHasPos ? static_cast<int32>(Pos[0]) : 0;
+    int32 Y = bHasPos ? static_cast<int32>(Pos[1]) : 0;
 
     UClass* Cls = UMaterialExpressionNamedRerouteUsage::StaticClass();
 
-    FString FuncPath;
-    if (P->TryGetStringField(TEXT("function_path"), FuncPath) && !FuncPath.IsEmpty())
+    if (!FuncPath.IsEmpty())
     {
         UMaterialFunction* Fn = LoadObject<UMaterialFunction>(nullptr, *FuncPath);
         if (!Fn) return FHaybaHandlerResult::Err(TEXT("material_add_reroute_usage: function not found"));
         UMaterialExpressionNamedRerouteDeclaration* D = Cast<UMaterialExpressionNamedRerouteDeclaration>(FindExprByNameInFunction(Fn, DeclId));
         if (!D) return FHaybaHandlerResult::Err(FString::Printf(TEXT("material_add_reroute_usage: declaration not found: %s"), *DeclId));
         if (!bHasPos) HaybaAutoNodePos(Fn->GetExpressions().Num(), X, Y);
+        Fn->Modify();
         UMaterialExpressionNamedRerouteUsage* U = Cast<UMaterialExpressionNamedRerouteUsage>(UMaterialEditingLibrary::CreateMaterialExpressionInFunction(Fn, Cls, X, Y));
         if (!U) return FHaybaHandlerResult::Err(TEXT("material_add_reroute_usage: create failed"));
         U->Declaration = D;
         U->DeclarationGuid = D->VariableGuid;
-        UMaterialEditingLibrary::UpdateMaterialFunction(Fn, nullptr);
+        // Staged only; material_compile(function_path) is the guarded boundary.
         Fn->MarkPackageDirty();  // in-memory only — function written to disk by material_compile(function_path); avoids a half-built function landing on disk and asserting when the editor opens/compiles it
         TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
         Out->SetStringField(TEXT("node_id"), U->GetName());
+        Out->SetBoolField(TEXT("verified"), FindExprByNameInFunction(Fn, U->GetName()) == U
+            && U->Declaration == D && U->DeclarationGuid == D->VariableGuid);
+        Out->SetBoolField(TEXT("dirty"), Fn->GetOutermost()->IsDirty());
         return FHaybaHandlerResult::Ok(Out);
     }
 
-    FString MatPath;
-    if (!HaybaParams::GetString(P, TEXT("material_path"), MatPath)) return FHaybaHandlerResult::Err(TEXT("material_add_reroute_usage: missing material_path or function_path"));
     UMaterial* Mat = LoadObject<UMaterial>(nullptr, *MatPath);
     if (!Mat) return FHaybaHandlerResult::Err(TEXT("material_add_reroute_usage: material not found"));
     UMaterialExpressionNamedRerouteDeclaration* D = Cast<UMaterialExpressionNamedRerouteDeclaration>(FindExprByName(Mat, DeclId));
     if (!D) return FHaybaHandlerResult::Err(FString::Printf(TEXT("material_add_reroute_usage: declaration not found: %s"), *DeclId));
     if (!bHasPos) HaybaAutoNodePos(Mat->GetExpressions().Num(), X, Y);
+    Mat->Modify();
     UMaterialExpressionNamedRerouteUsage* U = Cast<UMaterialExpressionNamedRerouteUsage>(UMaterialEditingLibrary::CreateMaterialExpression(Mat, Cls, X, Y));
     if (!U) return FHaybaHandlerResult::Err(TEXT("material_add_reroute_usage: create failed"));
     U->Declaration = D;
     U->DeclarationGuid = D->VariableGuid;
-    // Deferred-compile + crash-resilient save: no per-edit RecompileMaterial
-    // (avoids translating a half-built graph -> editor-killing assert). Persist
-    // to disk now; translate via the explicit material_compile command.
+    // Deferred compile: keep the staged graph dirty in memory until the guarded
+    // material_compile boundary validates and saves it.
     Mat->MarkPackageDirty();  // in-memory only — master materials are written to disk ONLY by material_compile, so a half-built invalid-Normal graph never lands on disk for the editor to thumbnail/open-compile (Substrate check(NormalCodeChunk!=INDEX_NONE) crash)
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
     Out->SetStringField(TEXT("node_id"), U->GetName());
+    Out->SetBoolField(TEXT("verified"), FindExprByName(Mat, U->GetName()) == U
+        && U->Declaration == D && U->DeclarationGuid == D->VariableGuid);
+    Out->SetBoolField(TEXT("dirty"), Mat->GetOutermost()->IsDirty());
     return FHaybaHandlerResult::Ok(Out);
 }
 
@@ -1976,17 +2584,15 @@ static const TMap<FString, FString>& HaybaMaterialUsageCompatibilityAliases()
 
 FHaybaHandlerResult FHaybaMCPMaterialHandler::MatSetProperty(const TSharedPtr<FJsonObject>& P)
 {
-    FString MatPath;
-    if (!HaybaParams::GetString(P, TEXT("material_path"), MatPath))
-        return FHaybaHandlerResult::Err(TEXT("material_set_property: missing material_path"));
+    FHaybaParamReader ParamR(P, TEXT("material_set_property"));
+    const FString MatPath = ParamR.RequiredString(TEXT("material_path"));
+    const TSharedPtr<FJsonObject> PropsObj = ParamR.OptionalObject(TEXT("properties"), 128);
+    if (!PropsObj.IsValid() || PropsObj->Values.Num() == 0)
+        ParamR.AddError(TEXT("'properties' must be a non-empty object"));
+    if (ParamR.HasErrors()) return FHaybaHandlerResult::Err(ParamR.ErrorMessage());
+
     UMaterial* Mat = LoadObject<UMaterial>(nullptr, *MatPath);
     if (!Mat) return FHaybaHandlerResult::Err(TEXT("material_set_property: material not found"));
-
-    const TSharedPtr<FJsonObject>* PropsObj = nullptr;
-    if (!P->TryGetObjectField(TEXT("properties"), PropsObj) || !PropsObj)
-        return FHaybaHandlerResult::Err(TEXT("material_set_property: missing properties"));
-    if ((*PropsObj)->Values.Num() == 0)
-        return FHaybaHandlerResult::Err(TEXT("material_set_property: properties must be non-empty"));
 
     // Friendly alias -> real UMaterial UPROPERTY name.
     static const TMap<FString, FString> Aliases = {
@@ -1997,6 +2603,14 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatSetProperty(const TSharedPtr<FJ
         { TEXT("opacity_mask_clip_value"), TEXT("OpacityMaskClipValue") },
         { TEXT("enable_tessellation"),     TEXT("bEnableTessellation") },  // required for the displacement output to tessellate (Nanite)
     };
+
+    // Stage only the requested UPROPERTY values on a fresh transient material.
+    // Duplicating the live UMaterial would also duplicate its entire expression
+    // graph/resource state, needlessly walking the very crash-prone graph this
+    // setter is trying not to compile.
+    UMaterial* StagedMat = NewObject<UMaterial>(GetTransientPackage());
+    if (!StagedMat)
+        return FHaybaHandlerResult::Err(TEXT("material_set_property: could not allocate a staging material; nothing was changed"));
 
     // Usage aliases are deliberately allowlisted and typed. These flags select
     // vertex-factory shader permutations; treating them as arbitrary reflection
@@ -2014,7 +2628,8 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatSetProperty(const TSharedPtr<FJ
     TArray<FUsageRequest> RequestedUsage;
     TSet<FString> RequestedUsageKeys;
     bool bHasOrdinarySetting = false;
-    for (const auto& Pair : (*PropsObj)->Values)
+    TArray<FString> Problems;
+    for (const auto& Pair : PropsObj->Values)
     {
         const FString InputKey(*Pair.Key);
         const FString* CompatibilityKey = HaybaMaterialUsageCompatibilityAliases().Find(InputKey);
@@ -2023,12 +2638,14 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatSetProperty(const TSharedPtr<FJ
         {
             if (!Pair.Value.IsValid() || Pair.Value->Type != EJson::Boolean)
             {
-                return FHaybaHandlerResult::Err(FString::Printf(
-                    TEXT("material_set_property: usage flag '%s' must be a JSON boolean"), *Key));
+                Problems.Add(FString::Printf(TEXT("properties.%s must be a JSON boolean"), *InputKey));
+                continue;
             }
             if (RequestedUsageKeys.Contains(Key))
-                return FHaybaHandlerResult::Err(FString::Printf(
-                    TEXT("material_set_property: duplicate aliases supplied for usage flag '%s'"), *Key));
+            {
+                Problems.Add(FString::Printf(TEXT("properties.%s duplicates usage flag '%s'"), *InputKey, *Key));
+                continue;
+            }
             RequestedUsageKeys.Add(Key);
             RequestedUsage.Add({ Key, *Usage, Pair.Value->AsBool(), Mat->GetUsageByFlag(*Usage) });
         }
@@ -2038,49 +2655,97 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatSetProperty(const TSharedPtr<FJ
             TArray<FString> Supported;
             UsageAliases.GetKeys(Supported);
             Supported.Sort();
-            return FHaybaHandlerResult::Err(FString::Printf(
-                TEXT("material_set_property: unsupported usage flag '%s'; supported keys: %s"),
+            Problems.Add(FString::Printf(
+                TEXT("properties.%s is an unsupported usage flag; supported keys: %s"),
                 *InputKey, *FString::Join(Supported, TEXT(", "))));
         }
         else if (const FString* RealName = Aliases.Find(Key))
         {
             bHasOrdinarySetting = true;
+            FProperty* Prop = Mat->GetClass()->FindPropertyByName(FName(**RealName));
+            FString Reason;
+            if (!Prop || !Prop->HasAnyPropertyFlags(CPF_Edit)
+                || Prop->HasAnyPropertyFlags(CPF_EditConst | CPF_Transient | CPF_Deprecated)
+                || !ValidateJsonForProperty(Prop, Pair.Value, Reason))
+            {
+                if (!Prop) Reason = TEXT("is not a mutable material property");
+                Problems.Add(FString::Printf(TEXT("properties.%s %s"), *InputKey, *Reason));
+                continue;
+            }
+
             const EJson ExpectedType =
                 (Key == TEXT("two_sided") || Key == TEXT("enable_tessellation")) ? EJson::Boolean :
                 (Key == TEXT("opacity_mask_clip_value")) ? EJson::Number : EJson::String;
             if (!Pair.Value.IsValid() || Pair.Value->Type != ExpectedType)
-                return FHaybaHandlerResult::Err(FString::Printf(
-                    TEXT("material_set_property: '%s' has the wrong JSON type"), *Key));
+            {
+                Problems.Add(FString::Printf(TEXT("properties.%s has the wrong JSON type"), *InputKey));
+                continue;
+            }
 
             if (Key == TEXT("opacity_mask_clip_value"))
             {
                 const double Value = Pair.Value->AsNumber();
                 if (!FMath::IsFinite(Value) || Value < 0.0 || Value > 1.0)
-                    return FHaybaHandlerResult::Err(TEXT("material_set_property: opacity_mask_clip_value must be finite and between 0 and 1"));
+                {
+                    Problems.Add(TEXT("properties.opacity_mask_clip_value must be finite and between 0 and 1"));
+                    continue;
+                }
             }
             else if (Key == TEXT("domain") && StaticEnum<EMaterialDomain>()->GetValueByNameString(Pair.Value->AsString()) == INDEX_NONE)
-                return FHaybaHandlerResult::Err(TEXT("material_set_property: invalid domain enum value"));
+            {
+                Problems.Add(TEXT("properties.domain is not a valid material-domain enum value"));
+                continue;
+            }
             else if (Key == TEXT("blend_mode") && StaticEnum<EBlendMode>()->GetValueByNameString(Pair.Value->AsString()) == INDEX_NONE)
-                return FHaybaHandlerResult::Err(TEXT("material_set_property: invalid blend_mode enum value"));
+            {
+                Problems.Add(TEXT("properties.blend_mode is not a valid blend-mode enum value"));
+                continue;
+            }
             else if (Key == TEXT("shading_model") && StaticEnum<EMaterialShadingModel>()->GetValueByNameString(Pair.Value->AsString()) == INDEX_NONE)
-                return FHaybaHandlerResult::Err(TEXT("material_set_property: invalid shading_model enum value"));
+            {
+                Problems.Add(TEXT("properties.shading_model is not a valid shading-model enum value"));
+                continue;
+            }
+
+            // Prove the exact reflection conversion against isolated storage.
+            // The live material is untouched until every key has passed.
+            Prop->CopyCompleteValue_InContainer(StagedMat, Mat);
+            if (!HaybaReflection::SetProp(StagedMat, *RealName, Pair.Value))
+            {
+                Problems.Add(FString::Printf(TEXT("properties.%s failed while staging"), *InputKey));
+                continue;
+            }
+            if (Key == TEXT("shading_model"))
+            {
+                const EMaterialShadingModel Value = static_cast<EMaterialShadingModel>(
+                    StaticEnum<EMaterialShadingModel>()->GetValueByNameString(Pair.Value->AsString()));
+                StagedMat->SetShadingModel(Value);
+            }
         }
         else
         {
-            return FHaybaHandlerResult::Err(FString::Printf(
-                TEXT("material_set_property: unsupported property '%s'; use a documented friendly alias"), *InputKey));
+            Problems.Add(FString::Printf(
+                TEXT("properties.%s is unsupported; use a documented friendly alias"), *InputKey));
         }
     }
 
     if (RequestedUsage.Num() > 0 && bHasOrdinarySetting)
-        return FHaybaHandlerResult::Err(TEXT("material_set_property: submit usage flags separately from other settings so usage changes remain atomic"));
+        Problems.Add(TEXT("submit usage flags separately from other settings so usage changes remain atomic"));
 
     if (RequestedUsage.Num() > 0 &&
         Mat->MaterialDomain != MD_Surface && Mat->MaterialDomain != MD_DeferredDecal && Mat->MaterialDomain != MD_Volume)
     {
-        return FHaybaHandlerResult::Err(TEXT("material_set_property: usage flags require a Surface, Deferred Decal, or Volume material domain"));
+        Problems.Add(TEXT("usage flags require a Surface, Deferred Decal, or Volume material domain"));
     }
 
+    if (Problems.Num() > 0)
+    {
+        return FHaybaHandlerResult::Err(FString::Printf(
+            TEXT("material_set_property: preflight failed: %s. The material and package dirty state were not changed."),
+            *FString::Join(Problems, TEXT("; "))));
+    }
+
+    const bool bPackageWasDirty = Mat->GetOutermost()->IsDirty();
     TArray<TSharedPtr<FJsonValue>> Applied;
     TArray<TSharedPtr<FJsonValue>> Changed;
     if (RequestedUsage.Num() > 0)
@@ -2111,7 +2776,8 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatSetProperty(const TSharedPtr<FJ
         {
             for (const FUsageRequest& Request : RequestedUsage)
                 Mat->SetUsageByFlag(Request.Usage, Request.bPrevious);
-            return FHaybaHandlerResult::Err(TEXT("material_set_property: usage readback or dirty-mark verification failed; changes were rolled back"));
+            Mat->GetOutermost()->SetDirtyFlag(bPackageWasDirty);
+            return FHaybaHandlerResult::Err(TEXT("material_set_property: usage readback or dirty-mark verification failed; verification_failed contains one or more usage flags; changes were rolled back"));
         }
 
         bool bAnyUsageFlagDirty = false;
@@ -2124,6 +2790,9 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatSetProperty(const TSharedPtr<FJ
         Out->SetStringField(TEXT("material_path"), Mat->GetPathName());
         Out->SetArrayField(TEXT("applied"), Applied);
         Out->SetArrayField(TEXT("changed"), Changed);
+        Out->SetArrayField(
+            TEXT("verification_failed"),
+            TArray<TSharedPtr<FJsonValue>>());
         Out->SetObjectField(TEXT("usage_flags"), UsageReadback);
         Out->SetBoolField(TEXT("usage_flags_verified"), true);
         Out->SetBoolField(TEXT("dirty"), bPackageDirty);
@@ -2165,86 +2834,98 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatSetProperty(const TSharedPtr<FJ
     };
 
     bool bAnyChanged = false;
-    for (const auto& Pair : (*PropsObj)->Values)
+    for (const auto& Pair : PropsObj->Values)
     {
         const FString Key(*Pair.Key);
         Applied.Add(MakeShared<FJsonValueString>(Key));
         bool bKeyChanged = false;
         if (Key == TEXT("domain"))
-            bKeyChanged = Before.Domain != static_cast<EMaterialDomain>(StaticEnum<EMaterialDomain>()->GetValueByNameString(Pair.Value->AsString()));
+            bKeyChanged = Before.Domain != StagedMat->MaterialDomain;
         else if (Key == TEXT("blend_mode"))
-            bKeyChanged = Before.BlendMode != static_cast<EBlendMode>(StaticEnum<EBlendMode>()->GetValueByNameString(Pair.Value->AsString()));
+            bKeyChanged = Before.BlendMode != StagedMat->BlendMode;
         else if (Key == TEXT("shading_model"))
-            bKeyChanged = Before.ShadingModel != static_cast<EMaterialShadingModel>(StaticEnum<EMaterialShadingModel>()->GetValueByNameString(Pair.Value->AsString()));
-        else if (Key == TEXT("two_sided")) bKeyChanged = Before.bTwoSided != Pair.Value->AsBool();
-        else if (Key == TEXT("opacity_mask_clip_value")) bKeyChanged = !FMath::IsNearlyEqual(Before.OpacityMaskClipValue, static_cast<float>(Pair.Value->AsNumber()));
-        else if (Key == TEXT("enable_tessellation")) bKeyChanged = Before.bEnableTessellation != Pair.Value->AsBool();
+            bKeyChanged = Before.ShadingModel != StagedMat->GetShadingModels().GetFirstShadingModel();
+        else if (Key == TEXT("two_sided")) bKeyChanged = Before.bTwoSided != (StagedMat->TwoSided != 0);
+        else if (Key == TEXT("opacity_mask_clip_value")) bKeyChanged = !FMath::IsNearlyEqual(Before.OpacityMaskClipValue, StagedMat->OpacityMaskClipValue);
+        else if (Key == TEXT("enable_tessellation")) bKeyChanged = Before.bEnableTessellation != (StagedMat->bEnableTessellation != 0);
         bAnyChanged |= bKeyChanged;
         if (bKeyChanged) Changed.Add(MakeShared<FJsonValueString>(Key));
     }
     if (bAnyChanged) Mat->Modify();
 
     TSharedPtr<FJsonObject> Readback = MakeShared<FJsonObject>();
-    bool bVerified = true;
-    for (const auto& Pair : (*PropsObj)->Values)
+    TArray<TSharedPtr<FJsonValue>> VerificationFailed;
+    for (const auto& Pair : PropsObj->Values)
     {
         const FString Key(*Pair.Key);
+        bool bKeyVerified = false;
         if (Key == TEXT("domain"))
         {
-            const EMaterialDomain Value = static_cast<EMaterialDomain>(StaticEnum<EMaterialDomain>()->GetValueByNameString(Pair.Value->AsString()));
+            const EMaterialDomain Value = StagedMat->MaterialDomain;
             Mat->MaterialDomain = Value;
             const FString Observed = StaticEnum<EMaterialDomain>()->GetNameStringByValue(Mat->MaterialDomain);
             Readback->SetStringField(Key, Observed);
-            bVerified &= Mat->MaterialDomain == Value;
+            bKeyVerified = Mat->MaterialDomain == Value;
         }
         else if (Key == TEXT("blend_mode"))
         {
-            const EBlendMode Value = static_cast<EBlendMode>(StaticEnum<EBlendMode>()->GetValueByNameString(Pair.Value->AsString()));
+            const EBlendMode Value = StagedMat->BlendMode;
             Mat->BlendMode = Value;
             const FString Observed = StaticEnum<EBlendMode>()->GetNameStringByValue(Mat->BlendMode);
             Readback->SetStringField(Key, Observed);
-            bVerified &= Mat->BlendMode == Value;
+            bKeyVerified = Mat->BlendMode == Value;
         }
         else if (Key == TEXT("shading_model"))
         {
-            const EMaterialShadingModel Value = static_cast<EMaterialShadingModel>(StaticEnum<EMaterialShadingModel>()->GetValueByNameString(Pair.Value->AsString()));
+            const EMaterialShadingModel Value = StagedMat->GetShadingModels().GetFirstShadingModel();
             Mat->SetShadingModel(Value);
             const EMaterialShadingModel ObservedValue = Mat->GetShadingModels().GetFirstShadingModel();
             Readback->SetStringField(Key, StaticEnum<EMaterialShadingModel>()->GetNameStringByValue(ObservedValue));
-            bVerified &= ObservedValue == Value;
+            bKeyVerified = ObservedValue == Value;
         }
         else if (Key == TEXT("two_sided"))
         {
-            Mat->TwoSided = Pair.Value->AsBool();
+            Mat->TwoSided = StagedMat->TwoSided;
             Readback->SetBoolField(Key, Mat->TwoSided != 0);
-            bVerified &= (Mat->TwoSided != 0) == Pair.Value->AsBool();
+            bKeyVerified = (Mat->TwoSided != 0) == (StagedMat->TwoSided != 0);
         }
         else if (Key == TEXT("opacity_mask_clip_value"))
         {
-            Mat->OpacityMaskClipValue = static_cast<float>(Pair.Value->AsNumber());
+            Mat->OpacityMaskClipValue = StagedMat->OpacityMaskClipValue;
             Readback->SetNumberField(Key, Mat->OpacityMaskClipValue);
-            bVerified &= FMath::IsNearlyEqual(Mat->OpacityMaskClipValue, static_cast<float>(Pair.Value->AsNumber()));
+            bKeyVerified = FMath::IsNearlyEqual(Mat->OpacityMaskClipValue, StagedMat->OpacityMaskClipValue);
         }
         else if (Key == TEXT("enable_tessellation"))
         {
-            Mat->bEnableTessellation = Pair.Value->AsBool();
+            Mat->bEnableTessellation = StagedMat->bEnableTessellation;
             Readback->SetBoolField(Key, Mat->bEnableTessellation != 0);
-            bVerified &= (Mat->bEnableTessellation != 0) == Pair.Value->AsBool();
+            bKeyVerified = (Mat->bEnableTessellation != 0) == (StagedMat->bEnableTessellation != 0);
         }
+        if (!bKeyVerified) VerificationFailed.Add(MakeShared<FJsonValueString>(Key));
     }
     const bool bDirtyMarked = !bAnyChanged || Mat->MarkPackageDirty();
-    if (!bVerified || !bDirtyMarked)
+    if (VerificationFailed.Num() > 0 || !bDirtyMarked)
     {
         RestoreOrdinary();
-        return FHaybaHandlerResult::Err(TEXT("material_set_property: ordinary-setting readback or dirty-mark verification failed; changes were rolled back"));
+        Mat->GetOutermost()->SetDirtyFlag(bPackageWasDirty);
+        TArray<FString> FailedNames;
+        for (const TSharedPtr<FJsonValue>& Failed : VerificationFailed) FailedNames.Add(Failed->AsString());
+        if (!bDirtyMarked) FailedNames.Add(TEXT("package_dirty_state"));
+        return FHaybaHandlerResult::Err(FString::Printf(
+            TEXT("material_set_property: ordinary-setting readback or dirty-mark verification failed; verification_failed: %s; changes were rolled back"),
+            *FString::Join(FailedNames, TEXT(", "))));
     }
 
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
     Out->SetStringField(TEXT("material_path"), Mat->GetPathName());
     Out->SetArrayField(TEXT("applied"), Applied);
+    Out->SetNumberField(TEXT("succeeded"), Applied.Num() - VerificationFailed.Num());
+    Out->SetNumberField(TEXT("failed"), VerificationFailed.Num());
+    Out->SetArrayField(TEXT("verification_failed"), VerificationFailed);
+    Out->SetBoolField(TEXT("verified"), VerificationFailed.Num() == 0);
+    Out->SetBoolField(TEXT("save_requested"), false);
     Out->SetArrayField(TEXT("changed"), Changed);
     Out->SetObjectField(TEXT("readback"), Readback);
-    Out->SetBoolField(TEXT("verified"), true);
     const bool bPackageDirty = Mat->GetOutermost()->IsDirty();
     Out->SetBoolField(TEXT("dirty"), bPackageDirty);
     Out->SetBoolField(TEXT("saved"), false);
@@ -2255,9 +2936,10 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatSetProperty(const TSharedPtr<FJ
 
 // Explicit, deferred compile. This is the ONE place the master-material graph
 // is translated and saved (the per-edit handlers only stage dirty in-memory
-// state). UE5.8 RecompileMaterial performs the PreEditChange/PostEditChange pair
-// and forces shader translation so compile errors surface. Returns those errors
-// so the agent gets feedback instead of guessing.
+// state). RecompileMaterial performs the editor change notifications and forces
+// shader translation so compile errors surface. Validation catches known fatal
+// graph shapes first, the remaining native broadcast is SEH-guarded, and only a
+// clean return crosses the save boundary.
 // ── Graph validation ─────────────────────────────────────────────────────────
 // The HLSL translator asserts (uncatchable check 'Default != nullptr' in
 // FHLSLMaterialTranslator::GetParameterCodeRaw) when a CONSUMED expression
@@ -2366,19 +3048,19 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatValidate(const TSharedPtr<FJson
 
 FHaybaHandlerResult FHaybaMCPMaterialHandler::MatCompile(const TSharedPtr<FJsonObject>& P)
 {
-    const bool bHasMaterialPath = P->HasField(TEXT("material_path"));
-    const bool bHasFunctionPath = P->HasField(TEXT("function_path"));
-    if (bHasMaterialPath == bHasFunctionPath)
-        return FHaybaHandlerResult::Err(TEXT("material_compile: provide exactly one of material_path or function_path"));
-    if ((bHasMaterialPath && !P->HasTypedField<EJson::String>(TEXT("material_path"))) ||
-        (bHasFunctionPath && !P->HasTypedField<EJson::String>(TEXT("function_path"))))
-        return FHaybaHandlerResult::Err(TEXT("material_compile: target path must be a JSON string"));
+    FHaybaParamReader ParamR(P, TEXT("material_compile"));
+    const FString FuncPath = ParamR.OptionalString(TEXT("function_path"));
+    const FString MatPath = ParamR.OptionalString(TEXT("material_path"));
+    if (FuncPath.IsEmpty() == MatPath.IsEmpty())
+    {
+        ParamR.AddError(TEXT("pass exactly one non-empty target: 'material_path' or 'function_path'"));
+    }
+    if (ParamR.HasErrors()) return FHaybaHandlerResult::Err(ParamR.ErrorMessage());
 
     // Material FUNCTIONS are no longer auto-saved per edit (a half-built function
     // on disk asserts when the editor opens/compiles it). This is their explicit
     // save point: refresh + write to disk.
-    FString FuncPath;
-    if (P->TryGetStringField(TEXT("function_path"), FuncPath) && !FuncPath.IsEmpty())
+    if (!FuncPath.IsEmpty())
     {
         UMaterialFunction* Fn = LoadObject<UMaterialFunction>(nullptr, *FuncPath);
         if (!Fn) return FHaybaHandlerResult::Err(TEXT("material_compile: function not found"));
@@ -2389,11 +3071,13 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatCompile(const TSharedPtr<FJsonO
         if (Problems.Num() > 0)
         {
             TSharedPtr<FJsonObject> Bad = MakeShared<FJsonObject>();
+            Bad->SetBoolField(TEXT("ok"), false);
             Bad->SetBoolField(TEXT("saved"), false);
             Bad->SetBoolField(TEXT("has_errors"), true);
             TArray<TSharedPtr<FJsonValue>> Arr;
             for (const FString& Pr : Problems) Arr.Add(MakeShared<FJsonValueString>(Pr));
             Bad->SetArrayField(TEXT("errors"), Arr);
+            Bad->SetStringField(TEXT("error"), TEXT("material_compile: graph preflight rejected the function; no compile or save was attempted."));
             Bad->SetStringField(TEXT("blocked"), TEXT("graph would crash the HLSL translator; not compiled. Fix the listed problems (or run material_validate) then retry."));
             return FHaybaHandlerResult::Ok(Bad);
         }
@@ -2408,22 +3092,32 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatCompile(const TSharedPtr<FJsonO
         if (bFnCrashed)
         {
             TSharedPtr<FJsonObject> Bad = MakeShared<FJsonObject>();
+            Bad->SetBoolField(TEXT("ok"), false);
             Bad->SetBoolField(TEXT("saved"), false);
-            Bad->SetStringField(TEXT("crash_guarded"), TEXT("material_compile(function): native access violation during UpdateMaterialFunction — commonly a stale Python-registered editor delegate firing on a GC'd target. Editor kept alive by the SEH guard; function NOT saved."));
+            Bad->SetBoolField(TEXT("has_errors"), true);
+            Bad->SetBoolField(TEXT("session_suspect"), true);
+            Bad->SetStringField(TEXT("error"), TEXT("material_compile: native function compilation failed; the function was not saved. Restart the editor before another mutation."));
+            Bad->SetStringField(TEXT("crash_guarded"), TEXT("material_compile(function): native access violation during UpdateMaterialFunction — commonly a stale Python-registered editor delegate firing on a GC'd target. Editor kept alive by the SEH guard; function NOT saved. Restart the editor before another mutation."));
             return FHaybaHandlerResult::Ok(Bad);
         }
         FString FnSaveErr;
         const bool bFnSaved = HaybaPersistAsset(Fn, FnSaveErr);
         TSharedPtr<FJsonObject> FnOut = MakeShared<FJsonObject>();
         FnOut->SetStringField(TEXT("function_path"), Fn->GetPathName());
+        FnOut->SetBoolField(TEXT("ok"), bFnSaved);
+        // UpdateMaterialFunction has no compiler-diagnostic return channel. We
+        // can prove that the update call returned without a native fault, but
+        // not that every dependent shader compiled cleanly.
+        FnOut->SetBoolField(TEXT("update_completed"), true);
         FnOut->SetBoolField(TEXT("saved"), bFnSaved);
-        if (!bFnSaved) FnOut->SetStringField(TEXT("save_error"), FnSaveErr);
+        if (!bFnSaved)
+        {
+            FnOut->SetStringField(TEXT("error"), TEXT("material_compile: function update completed, but persistence verification failed."));
+            FnOut->SetStringField(TEXT("save_error"), FnSaveErr);
+        }
         return FHaybaHandlerResult::Ok(FnOut);
     }
 
-    FString MatPath;
-    if (!HaybaParams::GetString(P, TEXT("material_path"), MatPath))
-        return FHaybaHandlerResult::Err(TEXT("material_compile: missing material_path or function_path"));
     UMaterial* Mat = LoadObject<UMaterial>(nullptr, *MatPath);
     if (!Mat) return FHaybaHandlerResult::Err(TEXT("material_compile: material not found"));
 
@@ -2438,11 +3132,13 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatCompile(const TSharedPtr<FJsonO
         if (Problems.Num() > 0)
         {
             TSharedPtr<FJsonObject> Bad = MakeShared<FJsonObject>();
+            Bad->SetBoolField(TEXT("ok"), false);
             Bad->SetBoolField(TEXT("saved"), false);
             Bad->SetBoolField(TEXT("has_errors"), true);
             TArray<TSharedPtr<FJsonValue>> Arr;
             for (const FString& Pr : Problems) Arr.Add(MakeShared<FJsonValueString>(Pr));
             Bad->SetArrayField(TEXT("errors"), Arr);
+            Bad->SetStringField(TEXT("error"), TEXT("material_compile: graph preflight rejected the material; no compile or save was attempted."));
             Bad->SetStringField(TEXT("blocked"), TEXT("graph would crash the HLSL translator; not compiled. Fix the listed problems (or run material_validate) then retry."));
             return FHaybaHandlerResult::Ok(Bad);
         }
@@ -2473,29 +3169,56 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatCompile(const TSharedPtr<FJsonO
         if (bCompileCrashed)
         {
             TSharedPtr<FJsonObject> Bad = MakeShared<FJsonObject>();
+            Bad->SetBoolField(TEXT("ok"), false);
             Bad->SetBoolField(TEXT("saved"), false);
             Bad->SetBoolField(TEXT("has_errors"), true);
-            Bad->SetStringField(TEXT("crash_guarded"), TEXT("material_compile: native access violation during recompile/PostEditChange — commonly a stale Python-registered editor delegate firing on a garbage-collected target, or a re-entrant property broadcast. The editor was kept alive by the SEH guard and the material was NOT saved. Do not register UE editor delegates from python_run whose targets can be GC'd."));
+            Bad->SetBoolField(TEXT("compiled_clean"), false);
+            Bad->SetBoolField(TEXT("session_suspect"), true);
+            Bad->SetStringField(TEXT("error"), TEXT("material_compile: native material compilation failed; the material was not saved. Restart the editor before another mutation."));
+            Bad->SetStringField(TEXT("crash_guarded"), TEXT("material_compile: native access violation during recompile/PostEditChange — commonly a stale Python-registered editor delegate firing on a garbage-collected target, or a re-entrant property broadcast. The editor was kept alive by the SEH guard and the material was NOT saved. Restart the editor before another mutation. Do not register UE editor delegates from python_run whose targets can be GC'd."));
             return FHaybaHandlerResult::Ok(Bad);
         }
 
         TArray<TSharedPtr<FJsonValue>> Errs;
         for (const FString& Error : CompileErrors) Errs.Add(MakeShared<FJsonValueString>(Error));
 
+        const bool bCompiledClean = CompileErrors.Num() == 0;
         FString SaveErr;
-        const bool bSaved = HaybaPersistAsset(Mat, SaveErr);
+        bool bSaved = false;
+        if (bCompiledClean)
+        {
+            // A failed compile must remain an in-memory diagnostic. Persisting
+            // it made a broken material survive restart and turned a truthful
+            // compile failure into a destructive save.
+            bSaved = HaybaPersistAsset(Mat, SaveErr);
+        }
 
         Out = MakeShared<FJsonObject>();
         Out->SetStringField(TEXT("material_path"), Mat->GetPathName());
         Out->SetArrayField(TEXT("errors"), Errs);
-        Out->SetBoolField(TEXT("has_errors"), Errs.Num() > 0);
+        Out->SetBoolField(TEXT("ok"), bCompiledClean && bSaved);
+        Out->SetBoolField(TEXT("compiled_clean"), bCompiledClean);
+        Out->SetBoolField(TEXT("has_errors"), !bCompiledClean);
         Out->SetBoolField(TEXT("saved"), bSaved);
-        if (!bSaved) Out->SetStringField(TEXT("save_error"), SaveErr);
+        if (!bCompiledClean)
+        {
+            Out->SetStringField(TEXT("error"), TEXT("material_compile: shader compilation failed; the material was not saved. Fix data.errors, then retry."));
+        }
+        else if (!bSaved)
+        {
+            Out->SetStringField(TEXT("error"), TEXT("material_compile: compilation succeeded, but persistence verification failed."));
+            Out->SetStringField(TEXT("save_error"), SaveErr);
+        }
 
         // Continue below to append optimization feedback using the recompiled
         // resource without compiling or saving a second time.
     }
-    FMaterialResource* Res = Mat->GetMaterialResource(GMaxRHIShaderPlatform);
+    // Do not inspect a resource derived from a failed compile. Apart from being
+    // misleading optimization feedback, downstream resource access adds risk
+    // precisely when the translator has already said its state is invalid.
+    FMaterialResource* Res = Out->GetBoolField(TEXT("compiled_clean"))
+        ? Mat->GetMaterialResource(GMaxRHIShaderPlatform)
+        : nullptr;
 
     // ── Optimization feedback ────────────────────────────────────────────────
     // After a clean recompile, read shader cost off the recompiled
@@ -2509,17 +3232,36 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatCompile(const TSharedPtr<FJsonO
         // Instruction counts per representative shader permutation.
         // ExtractMatertialStatsInfo is MATERIALEDITOR_API-exported; it internally
         // calls GetRepresentativeInstructionCounts (which is not exported).
-        FShaderStatsInfo Info;
-        // Also MaterialEditor — guard it; on a fault Info stays empty and the
-        // loops below just emit empty stats (never crashes the editor).
+        // Keep the extraction target off the C++ stack. If the guarded engine
+        // call faults midway through mutating its TMaps, running that partially
+        // written object's destructor outside SEH is another possible fault.
+        // Quarantine the single allocation on the crash path; mandatory editor
+        // restart will reclaim it. The normal path deletes it below.
+        FShaderStatsInfo* Info = new FShaderStatsInfo();
+        // Also MaterialEditor — guard it. A native fault means the resource is
+        // no longer safe to inspect: continuing into the getters below could
+        // immediately repeat the same AV outside SEH. Preserve the already
+        // completed compile/save facts, but fail the logical operation and tell
+        // the command boundary that this editor session is suspect.
+        bool bStatsCrashed = false;
         {
-            struct FStatsCtx { FShaderStatsInfo* I; FMaterialResource* R; } Ctx{ &Info, Res };
-            bool bStatsCrashed = false;
+            struct FStatsCtx { FShaderStatsInfo* I; FMaterialResource* R; } Ctx{ Info, Res };
             HaybaSeh::RunGuarded(+[](void* P)
             {
                 FStatsCtx* C = static_cast<FStatsCtx*>(P);
                 FMaterialStatsUtils::ExtractMatertialStatsInfo(GMaxRHIShaderPlatform, *C->I, C->R);
             }, &Ctx, bStatsCrashed);
+        }
+        if (bStatsCrashed)
+        {
+            Out->SetBoolField(TEXT("ok"), false);
+            Out->SetBoolField(TEXT("session_suspect"), true);
+            Out->SetStringField(TEXT("error"), TEXT(
+                "material_compile: native access violation while reading optimization statistics after compile/save. "
+                "No further FMaterialResource access was attempted; restart the editor before another mutation."));
+            Out->SetStringField(TEXT("crash_guarded"), TEXT(
+                "material_compile(stats): ExtractMatertialStatsInfo faulted under SEH after the material compile/save lifecycle completed."));
+            return FHaybaHandlerResult::Ok(Out);
         }
 
         // Local name map — FMaterialStatsUtils::RepresentativeShaderTypeToString is
@@ -2546,7 +3288,7 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatCompile(const TSharedPtr<FJsonO
 
         TArray<TSharedPtr<FJsonValue>> Shaders;
         int32 PeakInstructions = 0;
-        for (const TPair<ERepresentativeShader, FShaderStatsInfo::FContent>& Pair : Info.ShaderInstructionCount)
+        for (const TPair<ERepresentativeShader, FShaderStatsInfo::FContent>& Pair : Info->ShaderInstructionCount)
         {
             // StrDescription is the bare instruction count (e.g. "142") or "n/a".
             const FString& Desc = Pair.Value.StrDescription;
@@ -2594,6 +3336,7 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatCompile(const TSharedPtr<FJsonO
         Stats->SetStringField(TEXT("blend_mode"), BlendModeName);
 
         Out->SetObjectField(TEXT("stats"), Stats);
+        delete Info;
     }
 
     return FHaybaHandlerResult::Ok(Out);
@@ -2605,31 +3348,35 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatCompile(const TSharedPtr<FJsonO
 // or to_property.
 FHaybaHandlerResult FHaybaMCPMaterialHandler::MatDisconnect(const TSharedPtr<FJsonObject>& P)
 {
-    FString MatPath;
-    if (!HaybaParams::GetString(P, TEXT("material_path"), MatPath))
-        return FHaybaHandlerResult::Err(TEXT("material_disconnect: missing material_path"));
+    FHaybaParamReader ParamR(P, TEXT("material_disconnect"));
+    const FString MatPath = ParamR.RequiredString(TEXT("material_path"));
+    const FString ToNode = ParamR.OptionalString(TEXT("to_node"));
+    const FString ToInput = ParamR.OptionalString(TEXT("to_input"));
+    const FString PropStr = ParamR.OptionalString(TEXT("to_property"));
+    const bool bHasIndex = ParamR.Raw().IsValid()
+        && ParamR.Raw()->HasField(TEXT("to_input_index"));
+    const int32 RequestedIndex = ParamR.OptionalIntInRange(TEXT("to_input_index"), 0, 0, 1023);
+    const bool bHasNode = !ToNode.IsEmpty();
+    const bool bHasProp = !PropStr.IsEmpty();
+    if (bHasNode == bHasProp)
+        ParamR.AddError(TEXT("pass exactly one target: 'to_node' or 'to_property'"));
+    if (bHasIndex && !ToInput.IsEmpty())
+        ParamR.AddError(TEXT("'to_input' and 'to_input_index' are mutually exclusive"));
+    if (ParamR.HasErrors()) return FHaybaHandlerResult::Err(ParamR.ErrorMessage());
+
     UMaterial* Mat = LoadObject<UMaterial>(nullptr, *MatPath);
     if (!Mat) return FHaybaHandlerResult::Err(TEXT("material_disconnect: material not found"));
 
-    FString ToNode, ToInput, PropStr;
-    const bool bHasNode = P->TryGetStringField(TEXT("to_node"), ToNode);
-    P->TryGetStringField(TEXT("to_input"), ToInput);
-    const bool bHasProp = P->TryGetStringField(TEXT("to_property"), PropStr);
-
-    if (!bHasNode && !bHasProp)
-        return FHaybaHandlerResult::Err(TEXT("material_disconnect: missing to_node or to_property"));
-
+    FExpressionInput* TargetInput = nullptr;
     if (bHasProp)
     {
         // Disconnect a material-output property (e.g. base_color, normal, etc.)
         EMaterialProperty Prop;
         if (!TryParseProperty(PropStr, Prop))
             return FHaybaHandlerResult::Err(FString::Printf(TEXT("material_disconnect: unknown to_property: %s"), *PropStr));
-        FExpressionInput* Input = Mat->GetExpressionInputForProperty(Prop);
-        if (!Input)
+        TargetInput = Mat->GetExpressionInputForProperty(Prop);
+        if (!TargetInput)
             return FHaybaHandlerResult::Err(FString::Printf(TEXT("material_disconnect: property has no ExpressionInput: %s"), *PropStr));
-        Input->Expression = nullptr;
-        Input->OutputIndex = 0;
     }
     else
     {
@@ -2641,7 +3388,6 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatDisconnect(const TSharedPtr<FJs
         // Find the matching input by name or index.
         int32 InputIndex = 0;
         int32 NamedIdx = INDEX_NONE;
-        double IndexVal = 0.0;
         if (!ToInput.IsEmpty())
         {
             // Try named match first
@@ -2652,35 +3398,42 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatDisconnect(const TSharedPtr<FJs
                 ++InputIndex;
             }
         }
-        else if (P->TryGetNumberField(TEXT("to_input_index"), IndexVal))
+        else if (bHasIndex)
         {
-            NamedIdx = (int32)IndexVal;
+            NamedIdx = RequestedIndex;
         }
         else
         {
             NamedIdx = 0; // default: first input
         }
 
-        // Walk to NamedIdx and clear
+        // Resolve completely before crossing the mutation boundary.
         int32 Cur = 0;
-        bool bCleared = false;
         for (FExpressionInputIterator It{ToExpr}; It; ++It)
         {
             if (Cur == NamedIdx)
             {
-                It->Expression = nullptr;
-                It->OutputIndex = 0;
-                bCleared = true;
+                TargetInput = It.Input;
                 break;
             }
             ++Cur;
         }
-        if (!bCleared)
+        if (!TargetInput)
             return FHaybaHandlerResult::Err(FString::Printf(TEXT("material_disconnect: input index %d out of range on %s"), NamedIdx, *ToNode));
     }
 
-    Mat->MarkPackageDirty();  // in-memory only — master materials are written to disk ONLY by material_compile, so a half-built invalid-Normal graph never lands on disk for the editor to thumbnail/open-compile (Substrate check(NormalCodeChunk!=INDEX_NONE) crash)
+    const bool bAlreadyDisconnected = TargetInput->Expression == nullptr;
+    if (!bAlreadyDisconnected)
+    {
+        Mat->Modify();
+        TargetInput->Expression = nullptr;
+        TargetInput->OutputIndex = 0;
+        Mat->MarkPackageDirty();
+    }
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
-    Out->SetBoolField(TEXT("disconnected"), true);
+    Out->SetBoolField(TEXT("disconnected"), !bAlreadyDisconnected);
+    Out->SetBoolField(TEXT("already_disconnected"), bAlreadyDisconnected);
+    Out->SetBoolField(TEXT("verified"), TargetInput->Expression == nullptr);
+    Out->SetBoolField(TEXT("dirty"), Mat->GetOutermost()->IsDirty());
     return FHaybaHandlerResult::Ok(Out);
 }

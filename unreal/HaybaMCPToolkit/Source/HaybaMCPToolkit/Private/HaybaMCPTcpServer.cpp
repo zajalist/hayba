@@ -1,7 +1,8 @@
 #include "HaybaMCPTcpServer.h"
 #include "HaybaMCPCommandHandler.h"
 #include "HaybaMCPFrameReadPolicy.h"
-#include "Async/Async.h"
+#include "HaybaMCPSettings.h"
+#include "Containers/StringConv.h"
 #include "Serialization/JsonSerializer.h"
 #include "SocketSubsystem.h"
 #include "IPAddress.h"
@@ -10,18 +11,130 @@ DEFINE_LOG_CATEGORY_STATIC(LogHaybaMCPTCP, Log, All);
 
 namespace
 {
-	constexpr int32 SocketPollMs = 100;
-	constexpr int32 SendPollMs = 25;
-	constexpr double FrameReadTimeoutSeconds = 5.0;
-	constexpr double SendStallTimeoutSeconds = 5.0;
-	constexpr double SendTotalTimeoutSeconds = 30.0;
-	constexpr int32 MaxCommandsPerTick = 4;
+    constexpr int32 SocketPollMs = 100;
+    constexpr int32 SendPollMs = 25;
+    constexpr int32 MaxCommandsPerTick = 4;
+    constexpr double MaxDrainSeconds = 0.008;
+	FThreadSafeCounter ClientWorkerSerial;
+
+    // FUTF8ToTCHAR deliberately replaces malformed sequences with the Unicode
+    // replacement character. That is friendly for display text and unsafe for
+    // a framed command protocol: the bytes authenticated/hashed by a future
+    // transport layer must be the exact request the JSON parser sees. Reject
+    // overlong forms, surrogate encodings, truncated sequences, out-of-range
+    // code points, and embedded NUL before conversion.
+    bool HasStrictUtf8(const uint8* Bytes, int32 Length)
+    {
+        if (!Bytes || Length <= 0) return false;
+        int32 I = 0;
+        auto IsContinuation = [](uint8 B) { return B >= 0x80 && B <= 0xbf; };
+        while (I < Length)
+        {
+            const uint8 B0 = Bytes[I++];
+            if (B0 == 0) return false;
+            if (B0 <= 0x7f) continue;
+
+            if (B0 >= 0xc2 && B0 <= 0xdf)
+            {
+                if (I >= Length || !IsContinuation(Bytes[I])) return false;
+                ++I;
+                continue;
+            }
+            if (B0 >= 0xe0 && B0 <= 0xef)
+            {
+                if (I + 1 >= Length) return false;
+                const uint8 B1 = Bytes[I];
+                const uint8 B2 = Bytes[I + 1];
+                if (!IsContinuation(B2)) return false;
+                if (B0 == 0xe0 ? (B1 < 0xa0 || B1 > 0xbf)
+                    : B0 == 0xed ? (B1 < 0x80 || B1 > 0x9f)
+                                 : !IsContinuation(B1)) return false;
+                I += 2;
+                continue;
+            }
+            if (B0 >= 0xf0 && B0 <= 0xf4)
+            {
+                if (I + 2 >= Length) return false;
+                const uint8 B1 = Bytes[I];
+                if (B0 == 0xf0 ? (B1 < 0x90 || B1 > 0xbf)
+                    : B0 == 0xf4 ? (B1 < 0x80 || B1 > 0x8f)
+                                 : !IsContinuation(B1)) return false;
+                if (!IsContinuation(Bytes[I + 1]) || !IsContinuation(Bytes[I + 2])) return false;
+                I += 3;
+                continue;
+            }
+            return false;
+        }
+        return true;
+    }
+
+    // Lexical, allocation-free preflight before FJsonSerializer's recursive
+    // parser. A sub-megabyte payload can still contain tens of thousands of
+    // nested arrays/objects and exhaust the game-thread stack. Braces inside
+    // strings are ignored, including escaped quotes.
+    bool HasSafeJsonNesting(const FString& Text, int32 MaxDepth)
+    {
+        int32 Depth = 0;
+        bool bInString = false;
+        bool bEscaped = false;
+        for (const TCHAR Ch : Text)
+        {
+            if (Ch == TEXT('\0')) return false;
+            if (bInString)
+            {
+                if (bEscaped) bEscaped = false;
+                else if (Ch == TEXT('\\')) bEscaped = true;
+                else if (Ch == TEXT('"')) bInString = false;
+                continue;
+            }
+
+            if (Ch == TEXT('"'))
+            {
+                bInString = true;
+            }
+            else if (Ch == TEXT('{') || Ch == TEXT('['))
+            {
+                if (++Depth > MaxDepth) return false;
+            }
+            else if (Ch == TEXT('}') || Ch == TEXT(']'))
+            {
+                if (--Depth < 0) return false;
+            }
+        }
+        return Depth == 0 && !bInString && !bEscaped;
+    }
+
+	// Exact UTF-8 byte measurement without constructing FTCHARToUTF8's output
+	// buffer. The TCHAR lower-bound check also prevents ConvertedLength from
+	// doing attacker-proportional work once the answer is already oversized.
+	EHaybaMCPResponseAdmission ClassifyResponseUtf8(
+		const FString& Message, int32 MaxBytes, int32& OutUtf8Bytes)
+	{
+		OutUtf8Bytes = 0;
+		const EHaybaMCPResponseAdmission CharLowerBound =
+			FHaybaMCPOutboundAdmission::ClassifyFrameBytes(
+				static_cast<uint64>(Message.Len()), static_cast<uint64>(MaxBytes));
+		if (CharLowerBound != EHaybaMCPResponseAdmission::Accepted)
+		{
+			return CharLowerBound;
+		}
+
+		OutUtf8Bytes = FTCHARToUTF8_Convert::ConvertedLength(*Message, Message.Len());
+		return FHaybaMCPOutboundAdmission::ClassifyFrameBytes(
+			static_cast<uint64>(OutUtf8Bytes), static_cast<uint64>(MaxBytes));
+	}
 }
 
-FHaybaMCPClientConnection::FHaybaMCPClientConnection(FSocket* InSocket)
+FHaybaMCPClientConnection::FHaybaMCPClientConnection(
+	FSocket* InSocket,
+	FHaybaMCPCountReservationPtr InClientReservation,
+	int64 InMaxOutboundMemoryBytes)
 	: Socket(InSocket)
 	, AcceptedAtSeconds(FPlatformTime::Seconds())
+	, OutboundBudget(MakeShared<FHaybaMCPOutboundBudget, ESPMode::ThreadSafe>(
+		InMaxOutboundMemoryBytes))
 	, OutboundEvent(FPlatformProcess::GetSynchEventFromPool(false))
+	, ClientWorkers(2, MoveTemp(InClientReservation))
 {
 }
 
@@ -41,13 +154,36 @@ FHaybaMCPClientConnection::~FHaybaMCPClientConnection()
 }
 
 FHaybaMCPTcpServer::FHaybaMCPTcpServer(int32 InPort)
-    : Port(InPort)
+	: Port(InPort)
+	, GlobalOutboundBudget(MakeShared<FHaybaMCPOutboundBudget, ESPMode::ThreadSafe>(
+		MaxGlobalOutboundMemoryBytes))
 {
 }
 
 FHaybaMCPTcpServer::~FHaybaMCPTcpServer()
 {
     Shutdown();
+}
+
+TSharedRef<FJsonObject> FHaybaMCPTcpServer::GetTransportLimitsSnapshot() const
+{
+    TSharedRef<FJsonObject> Limits = MakeShared<FJsonObject>();
+    Limits->SetNumberField(TEXT("max_request_bytes"), MaxRequestBytes);
+    Limits->SetNumberField(TEXT("max_response_bytes"), MaxResponseBytes);
+    Limits->SetNumberField(TEXT("max_clients"), MaxClientConnections);
+    Limits->SetNumberField(TEXT("max_pending_commands"), MaxPendingCommands);
+    Limits->SetNumberField(TEXT("max_json_nesting_depth"), MaxJsonNestingDepth);
+    Limits->SetNumberField(TEXT("frame_read_timeout_ms"), FrameReadTimeoutMs);
+    Limits->SetNumberField(TEXT("send_timeout_ms"), SendTimeoutMs);
+    Limits->SetNumberField(TEXT("max_pipelined_requests_per_client"), MaxPipelinedRequestsPerClient);
+	// Preserve the older character-named field as a response-sized compatibility
+	// hint; the byte fields below are the enforced memory reservations.
+    Limits->SetNumberField(TEXT("max_queued_response_chars_per_client"), MaxResponseBytes);
+	Limits->SetNumberField(TEXT("max_outbound_memory_bytes_per_client"), MaxOutboundMemoryBytesPerClient);
+	Limits->SetNumberField(TEXT("max_global_outbound_memory_bytes"), MaxGlobalOutboundMemoryBytes);
+	Limits->SetBoolField(TEXT("outbound_budget_includes_in_flight"), true);
+    Limits->SetStringField(TEXT("applies"), TEXT("active_tcp_server_snapshot"));
+    return Limits;
 }
 
 bool FHaybaMCPTcpServer::Start()
@@ -69,6 +205,26 @@ bool FHaybaMCPTcpServer::Start()
         CommandHandler = MakeShareable(new FHaybaMCPCommandHandler());
     }
 
+    const FHaybaMCPSettings& Settings = FHaybaMCPSettings::Get();
+    MaxRequestBytes = FMath::Clamp(Settings.TcpMaxRequestBytes, 64 * 1024, 16 * 1024 * 1024);
+    MaxResponseBytes = FMath::Clamp(Settings.TcpMaxResponseBytes, 1024 * 1024, 64 * 1024 * 1024);
+    MaxClientConnections = FMath::Clamp(Settings.TcpMaxClientConnections, 1, 64);
+    MaxPendingCommands = FMath::Clamp(Settings.TcpMaxPendingCommands, 1, 1024);
+    MaxJsonNestingDepth = FMath::Clamp(Settings.TcpMaxJsonNestingDepth, 8, 256);
+    FrameReadTimeoutMs = FMath::Clamp(Settings.TcpFrameReadTimeoutMs, 500, 30000);
+    SendTimeoutMs = FMath::Clamp(Settings.TcpSendTimeoutMs, 100, 30000);
+	// Couple both per-client and global FString budgets to one maximum response.
+	// This prevents MaxClientConnections peers from each retaining a full queue;
+	// reservations include the response currently blocked inside SendMessage.
+	MaxOutboundMemoryBytesPerClient = static_cast<int64>(MaxResponseBytes) * 4;
+	MaxGlobalOutboundMemoryBytes = static_cast<int64>(MaxResponseBytes) * 4;
+	if (!GlobalOutboundBudget->Configure(MaxGlobalOutboundMemoryBytes))
+	{
+		UE_LOG(LogHaybaMCPTCP, Error,
+			TEXT("Refusing TCP restart while outbound-memory leases are still active"));
+		return false;
+	}
+
     // Deliberately NOT .AsReusable(): the multi-instance port scan in
     // FHaybaMCPModule::StartTcpServer() depends on Listen() FAILING when the
     // port is already taken by another editor instance, so it can walk
@@ -79,7 +235,7 @@ bool FHaybaMCPTcpServer::Start()
     ListenSocket = FTcpSocketBuilder(TEXT("HaybaMCPListener"))
         .BoundToAddress(FIPv4Address(127, 0, 0, 1))
         .BoundToPort(Port)
-        .Listening(4);
+        .Listening(MaxClientConnections);
 
     if (!ListenSocket)
     {
@@ -98,8 +254,22 @@ bool FHaybaMCPTcpServer::Start()
         FTickerDelegate::CreateRaw(this, &FHaybaMCPTcpServer::DrainPendingCommands), 0.0f);
 
     Thread = FRunnableThread::Create(this, TEXT("HaybaMCPTCPServer"), 0, TPri_Normal);
+    if (!Thread)
+    {
+        bIsRunning = false;
+        FTSTicker::GetCoreTicker().RemoveTicker(DrainTickerHandle);
+        DrainTickerHandle.Reset();
+        ListenSocket->Close();
+        ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM)->DestroySocket(ListenSocket);
+        ListenSocket = nullptr;
+        UE_LOG(LogHaybaMCPTCP, Error, TEXT("Failed to create TCP listener thread on port %d"), Port);
+        return false;
+    }
 
-    UE_LOG(LogHaybaMCPTCP, Log, TEXT("TCP server started on port %d"), Port);
+    UE_LOG(LogHaybaMCPTCP, Log,
+        TEXT("TCP server started on port %d (request=%d B, response=%d B, clients=%d, pending=%d, json_depth=%d, read_timeout=%d ms, send_timeout=%d ms)"),
+        Port, MaxRequestBytes, MaxResponseBytes, MaxClientConnections,
+        MaxPendingCommands, MaxJsonNestingDepth, FrameReadTimeoutMs, SendTimeoutMs);
     return true;
 }
 
@@ -115,10 +285,10 @@ void FHaybaMCPTcpServer::Shutdown()
 
     if (ListenSocket)
     {
-		// Wake the listener instead of waiting for its next poll while module
-		// teardown is already in progress.
-		ListenSocket->Close();
-	}
+        // Closing first wakes WaitForPendingConnection immediately instead of
+        // relying on its timeout while the module is trying to unload.
+        ListenSocket->Close();
+    }
 
     if (Thread)
     {
@@ -135,16 +305,32 @@ void FHaybaMCPTcpServer::Shutdown()
 
 	// No new read workers can be added after the listener is joined, and no
 	// response workers can be added after the ticker is removed. Read/send loops
-	// poll bIsRunning, so each future leaves promptly without raw module access.
-	TArray<TFuture<void>> WorkersToJoin;
+	// poll bIsRunning, so each owned thread leaves promptly without raw module access.
+	TArray<TUniquePtr<FHaybaMCPJoinableWorker>> WorkersToJoin;
 	{
 		FScopeLock Lock(&WorkerMutex);
 		WorkersToJoin = MoveTemp(Workers);
 	}
-	for (TFuture<void>& Worker : WorkersToJoin)
+	for (TUniquePtr<FHaybaMCPJoinableWorker>& Worker : WorkersToJoin)
 	{
-		Worker.Wait();
+		if (Worker.IsValid())
+		{
+			Worker->JoinAndDestroy();
+		}
 	}
+	// JoinAndDestroy reset every callable capture; destroying the owners here is
+	// now bookkeeping, not a deferred module-lifetime dependency.
+	WorkersToJoin.Reset();
+
+    // No producer or consumer remains after the listener and owned workers are
+    // truly joined. Drain every unexecuted command and balance both
+    // reservations so a later Start() cannot inherit phantom pressure.
+    FHaybaMCPPendingCommand Discarded;
+    while (PendingCommands.Dequeue(Discarded))
+    {
+		Discarded.PendingReservation.Reset();
+		Discarded.ResponseReservation.Reset();
+    }
 
     UE_LOG(LogHaybaMCPTCP, Log, TEXT("TCP server stopped"));
 }
@@ -162,35 +348,76 @@ uint32 FHaybaMCPTcpServer::Run()
             {
 				if (ClientCount.GetValue() >= MaxClientConnections)
 				{
+					UE_LOG(LogHaybaMCPTCP, Warning,
+						TEXT("Rejecting client: active-connection limit %d reached"),
+						MaxClientConnections);
 					ClientSocket->Close();
 					ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM)->DestroySocket(ClientSocket);
-					UE_LOG(LogHaybaMCPTCP, Warning,
-						TEXT("Rejected client above active-connection limit %d"), MaxClientConnections);
 					continue;
 				}
 				// Polling non-blocking reads let the connection worker observe
 				// shutdown and enforce bounded idle/partial-frame deadlines.
 				if (!ClientSocket->SetNonBlocking(true))
 				{
+					UE_LOG(LogHaybaMCPTCP, Warning,
+						TEXT("Rejecting client: could not enable non-blocking I/O"));
 					ClientSocket->Close();
 					ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM)->DestroySocket(ClientSocket);
 					continue;
 				}
 				ClientSocket->SetNoDelay(true);
-                const int32 NewCount = ClientCount.Increment();
+				FHaybaMCPCountReservationPtr ClientReservation =
+					MakeShared<FHaybaMCPCountReservation, ESPMode::ThreadSafe>(ClientCount);
+				const int32 NewCount = ClientReservation->GetCountAfterAcquire();
                 UE_LOG(LogHaybaMCPTCP, Log, TEXT("Client accepted (active: %d)"), NewCount);
-                FHaybaMCPClientConnectionPtr Conn = MakeShared<FHaybaMCPClientConnection, ESPMode::ThreadSafe>(ClientSocket);
+				FHaybaMCPClientConnectionPtr Conn =
+					MakeShared<FHaybaMCPClientConnection, ESPMode::ThreadSafe>(
+						ClientSocket, MoveTemp(ClientReservation), MaxOutboundMemoryBytesPerClient);
 				TSharedRef<FHaybaMCPTcpServer, ESPMode::ThreadSafe> Self = AsShared();
-				// A bounded reader and serial writer per connection prevent persistent
-				// reads from starving response work in the global task pool.
-				RetainWorker(Async(EAsyncExecution::Thread, [Self, Conn]()
-                {
-					Self->HandleClientConnection(Conn);
-				}));
-				RetainWorker(Async(EAsyncExecution::Thread, [Self, Conn]()
+				// Dedicated owned threads are intentionally not Async(Thread): in UE
+				// 5.8 a future can be ready before TAsyncRunnable/capture deletion.
+				TUniquePtr<FHaybaMCPJoinableWorker> Reader =
+					MakeUnique<FHaybaMCPJoinableWorker>([Self, Conn]()
+					{
+						Self->HandleClientConnection(Conn);
+						Self->CompleteClientWorker(Conn, TEXT("reader"));
+					});
+				const FString ReaderName = FString::Printf(
+					TEXT("HaybaMCPClientReader_%d"), ClientWorkerSerial.Increment());
+				if (!Reader->Start(*ReaderName))
 				{
-					Self->HandleClientWrites(Conn);
-				}));
+					Conn->bAlive = false;
+					if (Conn->Socket)
+					{
+						Conn->Socket->Shutdown(ESocketShutdownMode::ReadWrite);
+					}
+					CompleteClientWorker(Conn, TEXT("reader-start-failed"));
+					CompleteClientWorker(Conn, TEXT("writer-not-started"));
+					UE_LOG(LogHaybaMCPTCP, Error, TEXT("Could not create client reader thread"));
+					continue;
+				}
+				RetainWorker(MoveTemp(Reader));
+
+				TUniquePtr<FHaybaMCPJoinableWorker> Writer =
+					MakeUnique<FHaybaMCPJoinableWorker>([Self, Conn]()
+					{
+						Self->HandleClientWrites(Conn);
+						Self->CompleteClientWorker(Conn, TEXT("writer"));
+					});
+				const FString WriterName = FString::Printf(
+					TEXT("HaybaMCPClientWriter_%d"), ClientWorkerSerial.Increment());
+				if (!Writer->Start(*WriterName))
+				{
+					Conn->bAlive = false;
+					if (Conn->Socket)
+					{
+						Conn->Socket->Shutdown(ESocketShutdownMode::ReadWrite);
+					}
+					CompleteClientWorker(Conn, TEXT("writer-start-failed"));
+					UE_LOG(LogHaybaMCPTCP, Error, TEXT("Could not create client writer thread"));
+					continue;
+				}
+				RetainWorker(MoveTemp(Writer));
             }
         }
     }
@@ -223,11 +450,23 @@ void FHaybaMCPTcpServer::HandleClientConnection(FHaybaMCPClientConnectionPtr Con
         // socket outlives this read loop). NOT AsyncTask(GameThread) — see header:
         // running a handler inside a task-graph task crashes when it re-enters the
         // task graph (python_run -> Interchange import).
+		FHaybaMCPCountReservationPtr PendingReservation =
+			MakeShared<FHaybaMCPCountReservation, ESPMode::ThreadSafe>(PendingCommandCount);
+		if (PendingReservation->GetCountAfterAcquire() > MaxPendingCommands)
+		{
+			PendingReservation->Release();
+			UE_LOG(LogHaybaMCPTCP, Warning,
+				TEXT("Disconnecting client: pending-command limit %d reached"),
+				MaxPendingCommands);
+			break;
+		}
 		// Increment before the reader waits for the next frame. Otherwise a
 		// command can be queued just before its old idle deadline and the worker
 		// can close the socket before the game-thread handler sends its response.
-		Conn->ResponsesPending.Increment();
-        PendingCommands.Enqueue(FHaybaMCPPendingCommand{ Message, Conn });
+		FHaybaMCPCountReservationPtr ResponseReservation =
+			MakeShared<FHaybaMCPCountReservation, ESPMode::ThreadSafe>(Conn->ResponsesPending);
+		PendingCommands.Enqueue(FHaybaMCPPendingCommand{
+			MoveTemp(Message), Conn, MoveTemp(PendingReservation), MoveTemp(ResponseReservation) });
     }
 
     Conn->bAlive = false;
@@ -235,15 +474,13 @@ void FHaybaMCPTcpServer::HandleClientConnection(FHaybaMCPClientConnectionPtr Con
 	{
 		Conn->Socket->Shutdown(ESocketShutdownMode::ReadWrite);
 	}
-	const int32 NewCount = ClientCount.Decrement();
-	UE_LOG(LogHaybaMCPTCP, Log, TEXT("Client disconnected (active: %d)"), NewCount);
 }
 
 void FHaybaMCPTcpServer::HandleClientWrites(FHaybaMCPClientConnectionPtr Conn)
 {
 	while (bIsRunning && Conn.IsValid() && Conn->bAlive)
 	{
-		FString Response;
+		FHaybaMCPOutboundResponse Response;
 		if (!Conn->OutboundResponses.Dequeue(Response))
 		{
 			if (Conn->OutboundEvent)
@@ -253,21 +490,57 @@ void FHaybaMCPTcpServer::HandleClientWrites(FHaybaMCPClientConnectionPtr Conn)
 			continue;
 		}
 
-		Conn->QueuedResponseChars.Subtract(Response.Len());
-		SendMessage(Conn, Response);
+		SendMessage(Conn, Response.Message);
 		Conn->ResponseGeneration.Increment();
-		Conn->ResponsesPending.Decrement();
+		Response.ResponseReservation.Reset();
+		// Held while SendMessage owns both the FString and its bounded UTF-8
+		// conversion, not merely while the item waits in OutboundResponses.
+		Response.MemoryReservation.Reset();
 	}
 }
 
-void FHaybaMCPTcpServer::RetainWorker(TFuture<void>&& Worker)
+void FHaybaMCPTcpServer::CompleteClientWorker(
+	const FHaybaMCPClientConnectionPtr& Conn, const TCHAR* WorkerName)
 {
-	FScopeLock Lock(&WorkerMutex);
-	Workers.RemoveAll([](const TFuture<void>& Existing)
+	if (!Conn.IsValid())
 	{
-		return Existing.IsReady();
-	});
-	Workers.Add(MoveTemp(Worker));
+		return;
+	}
+	const FHaybaMCPWorkerCompletion Completion = Conn->ClientWorkers.WorkerFinished();
+	if (Completion.bReleasedReservation)
+	{
+		UE_LOG(LogHaybaMCPTCP, Log,
+			TEXT("Client workers stopped; slot released by %s (active: %d)"),
+			WorkerName, Completion.CountAfterRelease);
+	}
+	else
+	{
+		UE_LOG(LogHaybaMCPTCP, Verbose,
+			TEXT("Client %s stopped; slot retained for %d remaining worker(s)"),
+			WorkerName, Completion.RemainingWorkers);
+	}
+}
+
+void FHaybaMCPTcpServer::RetainWorker(TUniquePtr<FHaybaMCPJoinableWorker>&& Worker)
+{
+	TArray<TUniquePtr<FHaybaMCPJoinableWorker>> CompletedWorkers;
+	{
+		FScopeLock Lock(&WorkerMutex);
+		for (int32 Index = Workers.Num() - 1; Index >= 0; --Index)
+		{
+			if (Workers[Index].IsValid() && Workers[Index]->IsCompleted())
+			{
+				CompletedWorkers.Add(MoveTemp(Workers[Index]));
+				Workers.RemoveAtSwap(Index, 1, EAllowShrinking::No);
+			}
+		}
+		Workers.Add(MoveTemp(Worker));
+	}
+	for (TUniquePtr<FHaybaMCPJoinableWorker>& Completed : CompletedWorkers)
+	{
+		Completed->JoinAndDestroy();
+	}
+	CompletedWorkers.Reset();
 }
 
 bool FHaybaMCPTcpServer::DrainPendingCommands(float /*DeltaTime*/)
@@ -277,44 +550,71 @@ bool FHaybaMCPTcpServer::DrainPendingCommands(float /*DeltaTime*/)
     // Drain all pending commands this tick — each command is one game-thread
     // command, matching the historical one-task-per-command behaviour.
     FHaybaMCPPendingCommand Cmd;
-	int32 Processed = 0;
+    const double Deadline = FPlatformTime::Seconds() + MaxDrainSeconds;
+    int32 Processed = 0;
     while (Processed < MaxCommandsPerTick && PendingCommands.Dequeue(Cmd))
     {
-		++Processed;
+        ++Processed;
+		Cmd.PendingReservation.Reset();
 		if (!Cmd.Conn.IsValid())
 		{
+			Cmd.ResponseReservation.Reset();
 			continue;
 		}
 		if (!Cmd.Conn->bAlive || !CommandHandler.IsValid())
         {
-			Cmd.Conn->ResponsesPending.Decrement();
+			Cmd.ResponseReservation.Reset();
             continue;
         }
-        const FString ResponseString = CommandHandler->ProcessCommand(Cmd.Message);
-
-		// The serial per-connection writer keeps socket backpressure off the
-		// game-thread ticker and preserves response order. Bound queued output so
-		// a pipelined local peer cannot turn responses into unbounded memory.
-		const int32 QueuedChars = Cmd.Conn->QueuedResponseChars.Add(ResponseString.Len());
-		if (QueuedChars > MaxQueuedResponseCharsPerClient)
+        FString ResponseString = CommandHandler->ProcessCommand(Cmd.Message);
+		int32 ResponseUtf8Bytes = 0;
+		if (ClassifyResponseUtf8(ResponseString, MaxResponseBytes, ResponseUtf8Bytes)
+			!= EHaybaMCPResponseAdmission::Accepted)
 		{
-			Cmd.Conn->QueuedResponseChars.Subtract(ResponseString.Len());
-			Cmd.Conn->ResponsesPending.Decrement();
+			Cmd.ResponseReservation.Reset();
+			Cmd.Conn->bAlive = false;
+			if (Cmd.Conn->Socket)
+			{
+				Cmd.Conn->Socket->Shutdown(ESocketShutdownMode::ReadWrite);
+			}
+			UE_LOG(LogHaybaMCPTCP, Error,
+				TEXT("Disconnected client before queueing oversized response (measured/lower-bound %d bytes, limit %d)"),
+				ResponseUtf8Bytes > 0 ? ResponseUtf8Bytes : ResponseString.Len(), MaxResponseBytes);
+			continue;
+		}
+
+		// Couple the per-client and server-global reservations before enqueueing.
+		// Lock-based subtraction-before-add semantics avoid relying on
+		// FThreadSafeCounter::Add, whose UE API returns the OLD value.
+		FHaybaMCPOutboundBudgetReservationPtr MemoryReservation =
+			FHaybaMCPOutboundBudgetReservation::TryCreate(
+				Cmd.Conn->OutboundBudget,
+				GlobalOutboundBudget,
+				static_cast<int64>(ResponseString.GetAllocatedSize())
+					+ static_cast<int64>(ResponseUtf8Bytes));
+		if (!MemoryReservation.IsValid())
+		{
+			Cmd.ResponseReservation.Reset();
 			Cmd.Conn->bAlive = false;
 			if (Cmd.Conn->Socket)
 			{
 				Cmd.Conn->Socket->Shutdown(ESocketShutdownMode::ReadWrite);
 			}
 			UE_LOG(LogHaybaMCPTCP, Warning,
-				TEXT("Disconnected client above queued-response budget %d chars"),
-				MaxQueuedResponseCharsPerClient);
+				TEXT("Disconnected client above coupled outbound-memory budget (client=%lld, global=%lld bytes)"),
+				MaxOutboundMemoryBytesPerClient, MaxGlobalOutboundMemoryBytes);
 			continue;
 		}
-		Cmd.Conn->OutboundResponses.Enqueue(ResponseString);
+		Cmd.Conn->OutboundResponses.Enqueue(FHaybaMCPOutboundResponse{
+			MoveTemp(ResponseString), MoveTemp(Cmd.ResponseReservation), MoveTemp(MemoryReservation) });
 		if (Cmd.Conn->OutboundEvent)
 		{
 			Cmd.Conn->OutboundEvent->Trigger();
 		}
+        if (FPlatformTime::Seconds() >= Deadline)
+        {
+            break;
+        }
     }
     return true; // keep ticking
 }
@@ -333,7 +633,8 @@ bool FHaybaMCPTcpServer::ReadMessage(const FHaybaMCPClientConnectionPtr& Conn, F
 		? Conn->AcceptedAtSeconds
 		: FPlatformTime::Seconds();
 	FHaybaMCPFrameReadPolicy ReadPolicy(
-		ReadStartedAt, FrameReadTimeoutSeconds, Conn->ResponseGeneration.GetValue());
+		ReadStartedAt, static_cast<double>(FrameReadTimeoutMs) / 1000.0,
+		Conn->ResponseGeneration.GetValue());
 
 	auto ReadBounded = [this, &Conn, Socket, &ReadPolicy](uint8* Destination, int32 NumBytes) -> bool
 	{
@@ -401,7 +702,7 @@ bool FHaybaMCPTcpServer::ReadMessage(const FHaybaMCPClientConnectionPtr& Conn, F
                            (static_cast<uint32>(Header[2]) << 8) |
                            static_cast<uint32>(Header[3]);
 
-    if (MessageLength == 0 || MessageLength > 1024 * 1024)
+    if (MessageLength == 0 || MessageLength > static_cast<uint32>(MaxRequestBytes))
     {
         return false;
     }
@@ -410,8 +711,28 @@ bool FHaybaMCPTcpServer::ReadMessage(const FHaybaMCPClientConnectionPtr& Conn, F
     Buffer.SetNum(MessageLength + 1);
 	if (!ReadBounded(Buffer.GetData(), static_cast<int32>(MessageLength))) return false;
 
+    if (!HasStrictUtf8(Buffer.GetData(), static_cast<int32>(MessageLength)))
+    {
+        UE_LOG(LogHaybaMCPTCP, Warning, TEXT("Rejecting request with malformed UTF-8 or embedded NUL"));
+        return false;
+    }
+
     Buffer[MessageLength] = 0;
-    OutMessage = UTF8_TO_TCHAR(Buffer.GetData());
+    // Use the declared byte length instead of a NUL-terminated macro. An
+    // embedded NUL used to truncate the command silently, so the bytes that
+    // were authenticated/hashed could differ from what the sender framed.
+    const FUTF8ToTCHAR Converted(
+        reinterpret_cast<const ANSICHAR*>(Buffer.GetData()),
+        static_cast<int32>(MessageLength));
+    OutMessage = FString(Converted.Length(), Converted.Get());
+    if (!HasSafeJsonNesting(OutMessage, MaxJsonNestingDepth))
+    {
+        UE_LOG(LogHaybaMCPTCP, Warning,
+            TEXT("Rejecting request with invalid structure or JSON nesting deeper than %d"),
+            MaxJsonNestingDepth);
+        OutMessage.Reset();
+        return false;
+    }
     return true;
 }
 
@@ -421,6 +742,22 @@ bool FHaybaMCPTcpServer::SendMessage(const FHaybaMCPClientConnectionPtr& Conn, c
     {
 		return false;
     }
+
+	int32 MeasuredUtf8Bytes = 0;
+	const EHaybaMCPResponseAdmission Admission =
+		ClassifyResponseUtf8(Message, MaxResponseBytes, MeasuredUtf8Bytes);
+	if (Admission != EHaybaMCPResponseAdmission::Accepted)
+	{
+		UE_LOG(LogHaybaMCPTCP, Error,
+			TEXT("Refusing response frame before allocation (measured/lower-bound %d bytes, limit %d)"),
+			MeasuredUtf8Bytes > 0 ? MeasuredUtf8Bytes : Message.Len(), MaxResponseBytes);
+		Conn->bAlive = false;
+		if (Conn->Socket)
+		{
+			Conn->Socket->Shutdown(ESocketShutdownMode::ReadWrite);
+		}
+		return false;
+	}
 
     // Serialize sends and re-check liveness under the lock: the read loop may
     // have flagged the client dead between the task's guard and here. The
@@ -432,8 +769,17 @@ bool FHaybaMCPTcpServer::SendMessage(const FHaybaMCPClientConnectionPtr& Conn, c
     }
     FSocket* Socket = Conn->Socket;
 
+    // Allocation is now bounded by the exact preflight above.
     FTCHARToUTF8 Utf8Msg(*Message);
     uint32 Length = Utf8Msg.Length();
+    if (Length != static_cast<uint32>(MeasuredUtf8Bytes))
+    {
+        UE_LOG(LogHaybaMCPTCP, Error,
+			TEXT("Refusing response whose UTF-8 size changed during bounded conversion"));
+        Conn->bAlive = false;
+        Socket->Shutdown(ESocketShutdownMode::ReadWrite);
+        return false;
+    }
 
     uint8 Header[4];
     Header[0] = (Length >> 24) & 0xFF;
@@ -441,11 +787,16 @@ bool FHaybaMCPTcpServer::SendMessage(const FHaybaMCPClientConnectionPtr& Conn, c
     Header[2] = (Length >> 8) & 0xFF;
     Header[3] = Length & 0xFF;
 
-	auto SendExact = [this, &Conn, Socket](const uint8* Data, int32 NumBytes) -> bool
+	// The configured timeout is the truthful absolute ceiling for the complete
+	// response (header plus payload). Progress also refreshes a shorter stall
+	// window, while never extending that absolute ceiling.
+	const double SendTotalTimeoutSeconds = static_cast<double>(SendTimeoutMs) / 1000.0;
+	const double SendStallTimeoutSeconds = FMath::Min(5.0, SendTotalTimeoutSeconds);
+	FHaybaMCPSendDeadlinePolicy Deadline(
+		FPlatformTime::Seconds(), SendStallTimeoutSeconds, SendTotalTimeoutSeconds);
+	auto SendExact = [this, &Conn, Socket, &Deadline](const uint8* Data, int32 NumBytes) -> bool
 	{
 		int32 TotalSent = 0;
-		FHaybaMCPSendDeadlinePolicy Deadline(
-			FPlatformTime::Seconds(), SendStallTimeoutSeconds, SendTotalTimeoutSeconds);
 		while (TotalSent < NumBytes && bIsRunning && Conn->bAlive)
 		{
 			if (Deadline.ShouldAbort(FPlatformTime::Seconds()))

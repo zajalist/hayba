@@ -1,9 +1,10 @@
 import * as path from 'node:path';
-import * as fsp from 'node:fs/promises';
 import { z } from 'zod';
 import type { HaybaToolMeta } from '../hayba-tool-meta.js';
 import {
   createUniqueCacheDir,
+  cleanupAfterRefusal,
+  connectorErrorResult,
   downloadToFile,
   fetchJsonBounded,
   importIntoUe,
@@ -101,7 +102,7 @@ export async function handlePolyhavenDownload(params: PolyhavenDownloadParams) {
       written.push(dest);
     }
     const gamePath = target_dir ?? `/Game/AssetConnectors/polyhaven/${asset_id}`;
-    const importResult = await importIntoUe(cacheDir, gamePath);
+    const importResult = await importIntoUe(cacheDir, gamePath, cacheDir);
     const verify = importResult.ok ? await verifyAndMarkDelta(gamePath) : { verified: false, reason: 'import_failed' };
     const data: DownloadedAsset = {
       assetId: asset_id,
@@ -114,10 +115,9 @@ export async function handlePolyhavenDownload(params: PolyhavenDownloadParams) {
       verified: verify.verified,
       verifyReason: verify.reason,
     };
-    return { content: [{ type: 'text' as const, text: JSON.stringify(data, null, 2) }] };
+    return { content: [{ type: 'text' as const, text: JSON.stringify(data, null, 2) }], isError: !data.imported };
   } catch (e: unknown) {
-    if (requestCacheDir) await fsp.rm(requestCacheDir, { recursive: true, force: true });
-    const msg = e instanceof Error ? e.message : String(e);
-    return { content: [{ type: 'text' as const, text: `Poly Haven download error: ${msg}` }], isError: true };
+    const failure = requestCacheDir ? await cleanupAfterRefusal(e, requestCacheDir) : e;
+    return connectorErrorResult('polyhaven', failure);
   }
 }

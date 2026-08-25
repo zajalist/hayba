@@ -26,7 +26,9 @@ describe('bounded central secret redaction', () => {
       expect(serialized).not.toContain(sentinel);
     }
     expect(serialized).not.toContain('SENTINEL_AUTH');
-    expect(result.summary.categories).toEqual(expect.arrayContaining(['api_key', 'authorization', 'credential', 'token']));
+    expect(result.summary.categories).toEqual(
+      expect.arrayContaining(['api_key', 'authorization', 'credential', 'token']),
+    );
     expect(original.apiKey).toBe('SENTINEL_API');
   });
 
@@ -58,9 +60,9 @@ describe('bounded central secret redaction', () => {
     expect(result.value).not.toContain('SENTINEL');
     expect(result.value).not.toContain(JWT);
     expect(result.value).toContain('safe=yes');
-    expect(result.summary.categories).toEqual(expect.arrayContaining([
-      'bearer', 'credential', 'password', 'provider_key', 'token', 'url_query',
-    ]));
+    expect(result.summary.categories).toEqual(
+      expect.arrayContaining(['bearer', 'credential', 'password', 'provider_key', 'token', 'url_query']),
+    );
 
     const veryLong = redactSecrets(`Bearer ${'S'.repeat(10_000)}`);
     expect(veryLong.value).toBe('[REDACTED:bearer]');
@@ -86,14 +88,16 @@ describe('bounded central secret redaction', () => {
     const providerKey = 'sk-1234567890abcdefghijklmnop';
     const queryKey = 'https://example.test/callback?token=SENTINEL_KEY_QUERY';
     const bearerKey = 'Authorization: Bearer SENTINEL_KEY_BEARER_123456';
-    const hostile = JSON.parse(JSON.stringify({
-      [providerKey]: 1,
-      [queryKey]: 2,
-      [bearerKey]: 3,
-      _redacted_key_provider_key_0: 'collision remains safe',
-      __proto__: 'safe prototype spelling',
-      token_count: 4,
-    }));
+    const hostile = JSON.parse(
+      JSON.stringify({
+        [providerKey]: 1,
+        [queryKey]: 2,
+        [bearerKey]: 3,
+        _redacted_key_provider_key_0: 'collision remains safe',
+        __proto__: 'safe prototype spelling',
+        token_count: 4,
+      }),
+    );
     Object.defineProperty(hostile, '__proto__', {
       enumerable: true,
       configurable: true,
@@ -107,20 +111,23 @@ describe('bounded central secret redaction', () => {
     expect(serialized).not.toContain(providerKey);
     expect(serialized).not.toContain('SENTINEL_KEY');
     expect(Object.keys(first.value)).toEqual(Object.keys(second.value));
-    expect(Object.keys(first.value)).toEqual(expect.arrayContaining([
-      '_redacted_key_provider_key_0_1',
-      '_redacted_key_url_query_1',
-      '_redacted_key_bearer_2',
-      '_redacted_key_provider_key_0',
-      '__proto__',
-      'token_count',
-    ]));
+    expect(Object.keys(first.value)).toEqual(
+      expect.arrayContaining([
+        '_redacted_key_provider_key_0_1',
+        '_redacted_key_url_query_1',
+        '_redacted_key_bearer_2',
+        '_redacted_key_provider_key_0',
+        '__proto__',
+        'token_count',
+      ]),
+    );
     expect(first.summary.categories).toEqual(expect.arrayContaining(['bearer', 'provider_key', 'url_query']));
     expect(Object.prototype.hasOwnProperty.call(first.value, '__proto__')).toBe(true);
   });
 
   it('masks private-key blocks without deleting surrounding recovery text', () => {
-    const text = 'Recovery: rotate this key\n-----BEGIN PRIVATE KEY-----\nSENTINEL_PRIVATE\n-----END PRIVATE KEY-----\nThen retry safely.';
+    const text =
+      'Recovery: rotate this key\n-----BEGIN PRIVATE KEY-----\nSENTINEL_PRIVATE\n-----END PRIVATE KEY-----\nThen retry safely.';
     const result = redactSecrets(text);
     expect(result.value).not.toContain('SENTINEL_PRIVATE');
     expect(result.value).toContain('Recovery: rotate this key');
@@ -128,7 +135,9 @@ describe('bounded central secret redaction', () => {
   });
 
   it('handles prototype keys without prototype pollution', () => {
-    const hostile = JSON.parse('{"__proto__":{"apiKey":"SENTINEL_PROTO"},"constructor":{"token":"SENTINEL_CTOR"},"prototype":{"password":"SENTINEL_PASS"}}');
+    const hostile = JSON.parse(
+      '{"__proto__":{"apiKey":"SENTINEL_PROTO"},"constructor":{"token":"SENTINEL_CTOR"},"prototype":{"password":"SENTINEL_PASS"}}',
+    );
     const result = redactSecrets(hostile);
     expect(JSON.stringify(result.value)).not.toContain('SENTINEL');
     expect(Object.prototype).not.toHaveProperty('apiKey');
@@ -136,7 +145,9 @@ describe('bounded central secret redaction', () => {
   });
 
   it('never invokes hostile getters and fails closed on proxy traversal traps', () => {
-    const getter = vi.fn(() => { throw new Error('SENTINEL_GETTER_EXCEPTION'); });
+    const getter = vi.fn(() => {
+      throw new Error('SENTINEL_GETTER_EXCEPTION');
+    });
     const hostile: Record<string, unknown> = { safe: 'preserved' };
     Object.defineProperty(hostile, 'apiKey', { enumerable: true, get: getter });
     const getterResult = redactSecrets(hostile);
@@ -144,9 +155,14 @@ describe('bounded central secret redaction', () => {
     expect(JSON.stringify(getterResult.value)).not.toContain('SENTINEL');
     expect((getterResult.value as Record<string, unknown>).apiKey).toBe('[REDACTED:api_key]');
 
-    const proxy = new Proxy({}, {
-      ownKeys() { throw new Error('SENTINEL_PROXY_EXCEPTION'); },
-    });
+    const proxy = new Proxy(
+      {},
+      {
+        ownKeys() {
+          throw new Error('SENTINEL_PROXY_EXCEPTION');
+        },
+      },
+    );
     const proxyResult = redactSecrets(proxy);
     expect(proxyResult.value).toBe('[TRUNCATED:accessor]');
     expect(proxyResult.summary.truncation_reasons).toContain('accessor');
@@ -155,24 +171,29 @@ describe('bounded central secret redaction', () => {
   it('fails closed on cycles, depth, node, array, object-key, and text budgets', () => {
     const cycle: Record<string, unknown> = { safe: true };
     cycle.self = cycle;
-    const result = redactSecrets({
-      cycle,
-      deep: { a: { b: { c: { apiKey: 'SENTINEL_DEEP' } } } },
-      array: Array.from({ length: 20 }, (_, i) => i),
-      object: Object.fromEntries(Array.from({ length: 20 }, (_, i) => [`k${i}`, i])),
-      prose: 'x'.repeat(200),
-    }, {
-      maxDepth: 3,
-      maxNodes: 50,
-      maxArrayItems: 4,
-      maxObjectKeys: 6,
-      maxKeyChars: 20,
-      maxStringChars: 32,
-      maxTotalStringChars: 64,
-    });
+    const result = redactSecrets(
+      {
+        cycle,
+        deep: { a: { b: { c: { apiKey: 'SENTINEL_DEEP' } } } },
+        array: Array.from({ length: 20 }, (_, i) => i),
+        object: Object.fromEntries(Array.from({ length: 20 }, (_, i) => [`k${i}`, i])),
+        prose: 'x'.repeat(200),
+      },
+      {
+        maxDepth: 3,
+        maxNodes: 50,
+        maxArrayItems: 4,
+        maxObjectKeys: 6,
+        maxKeyChars: 20,
+        maxStringChars: 32,
+        maxTotalStringChars: 64,
+      },
+    );
     expect(() => JSON.stringify(result.value)).not.toThrow();
     expect(result.summary.truncated).toBe(true);
-    expect(result.summary.truncation_reasons).toEqual(expect.arrayContaining(['array_items', 'cycle', 'depth', 'object_keys', 'string_chars']));
+    expect(result.summary.truncation_reasons).toEqual(
+      expect.arrayContaining(['array_items', 'cycle', 'depth', 'object_keys', 'string_chars']),
+    );
     expect(JSON.stringify(result.value)).not.toContain('SENTINEL_DEEP');
   });
 
@@ -201,9 +222,12 @@ describe('bounded central secret redaction', () => {
   it('preserves binary, base64, and image/audio content unless the key itself is secret', () => {
     const binary = Buffer.from('Bearer SENTINEL_BINARY');
     const payload = {
-      png_base64: 'Bearer SENTINEL_BASE64',
+      png_base64: 'SEFZQkEtQklOQVJZ',
+      malformed_base64: 'Bearer SENTINEL_FALSE_OPAQUE',
+      provider_base64: 'AKIAABCDEFGHIJKLMNOP',
       artifact_path: '/Saved/SENTINEL_ARTIFACT.png',
-      image: { type: 'image', data: 'Bearer SENTINEL_IMAGE_DATA', mimeType: 'image/png' },
+      image: { type: 'image', data: 'QUJDREVGRw==', mimeType: 'image/png' },
+      audio: { type: 'audio', data: 'SEFZQkEtQVVESU8=', mimeType: 'audio/wav' },
       binary,
       secret_base64: 'SENTINEL_SECRET_BASE64',
     };
@@ -211,13 +235,21 @@ describe('bounded central secret redaction', () => {
     expect((result.value as typeof payload).png_base64).toBe(payload.png_base64);
     expect((result.value as typeof payload).artifact_path).toBe(payload.artifact_path);
     expect((result.value as typeof payload).image.data).toBe(payload.image.data);
+    expect((result.value as typeof payload).audio.data).toBe(payload.audio.data);
     expect((result.value as typeof payload).binary).toBe(binary);
+    expect((result.value as typeof payload).malformed_base64).not.toContain('SENTINEL');
+    expect((result.value as typeof payload).provider_base64).toBe('[REDACTED:provider_key]');
     expect(JSON.stringify(result.value)).not.toContain('SENTINEL_SECRET_BASE64');
   });
 
   it('redacts nested JSON text in MCP content, annotates `_meta`, and is idempotent', () => {
     const original = {
-      content: [{ type: 'text', text: JSON.stringify({ error: 'apiKey=SENTINEL_MCP', mandatory_recovery: 'rotate and retry' }) }],
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify({ error: 'apiKey=SENTINEL_MCP', mandatory_recovery: 'rotate and retry' }),
+        },
+      ],
       isError: true,
     };
     const once = redactMcpResult(original) as typeof original & { _meta?: Record<string, unknown> };
@@ -265,7 +297,9 @@ describe('bounded central secret redaction', () => {
     const safeCaused = redactThrown(caused) as Error;
     expect(String((safeCaused.cause as Error).message)).not.toContain('SENTINEL_CAUSE');
 
-    const detailGetter = vi.fn(() => { throw new Error('SENTINEL_ERROR_GETTER'); });
+    const detailGetter = vi.fn(() => {
+      throw new Error('SENTINEL_ERROR_GETTER');
+    });
     const hostile = new Error('safe message');
     Object.defineProperty(hostile, 'detail', { enumerable: true, get: detailGetter });
     const safeHostile = redactThrown(hostile) as Error & { detail: unknown };

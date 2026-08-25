@@ -273,7 +273,8 @@ export const niagaraCapabilityProbeDescriptor: PyToolDescriptor<typeof niagaraCa
   description:
     'Probe whether the Niagara plugin and its python surface are available (NiagaraSystem/Component/FunctionLibrary classes, spawn entry points, and which set_variable_* setters exist). The cheap capability gate to call before any other niagara tool so an agent knows what will work in this editor build.',
   cost: 'low',
-  returns: '{ok, niagara_available, capabilities:{NiagaraSystem,NiagaraComponent,NiagaraFunctionLibrary,NiagaraActor,spawn_system_at_location,spawn_system_attached,component_setters[]}}',
+  returns:
+    '{ok, niagara_available, capabilities:{NiagaraSystem,NiagaraComponent,NiagaraFunctionLibrary,NiagaraActor,spawn_system_at_location,spawn_system_attached,component_setters[]}}',
   schema: niagaraCapabilityProbeSchema.shape,
   meta: readMeta,
   buildScript: niagaraCapabilityProbeScript,
@@ -372,9 +373,10 @@ function niagaraSystemInspectScript(p: NiagaraSystemInspectParams): string {
 export const niagaraSystemInspectDescriptor: PyToolDescriptor<typeof niagaraSystemInspectSchema.shape> = {
   name: 'niagara_system_inspect',
   description:
-    'Dump a NiagaraSystem asset\'s structure: emitter handles (name/enabled/sim-target), exposed USER parameters (name/type/is_data_interface), data interfaces, fixed-bounds flag, warmup time and effect type. The inspection-first paired read for the VFX authoring tools. Emitter-handle and exposed-parameter reflection is UNCERTAIN-API in 5.7 — anything unresolved is reported in warnings[] rather than guessed.',
+    "Dump a NiagaraSystem asset's structure: emitter handles (name/enabled/sim-target), exposed USER parameters (name/type/is_data_interface), data interfaces, fixed-bounds flag, warmup time and effect type. The inspection-first paired read for the VFX authoring tools. Emitter-handle and exposed-parameter reflection is UNCERTAIN-API in 5.7 — anything unresolved is reported in warnings[] rather than guessed.",
   cost: 'low',
-  returns: '{ok, system_path, emitters:[{name,enabled,sim_target}], user_params:[{name,type,is_data_interface}], data_interfaces[], fixed_bounds, warmup_time, effect_type, warnings[]}',
+  returns:
+    '{ok, system_path, emitters:[{name,enabled,sim_target}], user_params:[{name,type,is_data_interface}], data_interfaces[], fixed_bounds, warmup_time, effect_type, warnings[]}',
   schema: niagaraSystemInspectSchema.shape,
   meta: readMeta,
   buildScript: niagaraSystemInspectScript,
@@ -550,7 +552,9 @@ export const niagaraParamSetSchema = z.object({
   component: z.string().min(1).describe('NiagaraComponent object path OR an actor label/path carrying one'),
   param_name: z.string().min(1).describe('User parameter name (with or without the "User." prefix)'),
   value_type: z.enum(VALUE_TYPES).describe('Value type of the parameter'),
-  value: z.any().describe('The value: number (float/int), bool, [x,y,z] arrays for vectors/color, or an object path string'),
+  value: z
+    .any()
+    .describe('The value: number (float/int), bool, [x,y,z] arrays for vectors/color, or an object path string'),
 });
 export type NiagaraParamSetParams = z.infer<typeof niagaraParamSetSchema>;
 
@@ -613,7 +617,7 @@ function niagaraSetUserParamDefaultScript(p: NiagaraSetUserParamDefaultParams): 
     'def _go():',
     '    sys = _load_system(_path)',
     '    # exposed-parameter default write goes through the same typed setters on the',
-    '    # system\'s exposed-parameter store; the store object is UNCERTAIN-API so we',
+    "    # system's exposed-parameter store; the store object is UNCERTAIN-API so we",
     '    # probe it and report applied honestly.',
     '    store = None',
     '    for g in ("get_exposed_parameters",):',
@@ -699,7 +703,7 @@ function niagaraComponentInspectScript(p: NiagaraComponentInspectParams): string
 export const niagaraComponentInspectDescriptor: PyToolDescriptor<typeof niagaraComponentInspectSchema.shape> = {
   name: 'niagara_component_inspect',
   description:
-    'Read a live NiagaraComponent\'s runtime state: active/paused flags and the system asset it plays — the read-back/verify tool for runtime control ops (pairs with niagara_activate / niagara_param_set).',
+    "Read a live NiagaraComponent's runtime state: active/paused flags and the system asset it plays — the read-back/verify tool for runtime control ops (pairs with niagara_activate / niagara_param_set).",
   cost: 'low',
   returns: '{ok, component_path, active, paused, age, system_path}',
   schema: niagaraComponentInspectSchema.shape,
@@ -819,23 +823,94 @@ export const niagaraActivateDescriptor: PyToolDescriptor<typeof niagaraActivateS
 };
 
 // ── niagara_advance_simulation ───────────────────────────────────────────────
+export const NIAGARA_ADVANCE_WORK_LIMITS = Object.freeze({
+  maxSeconds: 60,
+  minTickDt: 1 / 240,
+  maxTickDt: 1,
+  maxTicks: 7_200,
+});
+
+function finiteNiagaraAdvanceNumber(field: string, alternative: string) {
+  return z.custom<number>((value) => typeof value === 'number' && Number.isFinite(value), {
+    message: `bounded_work_limit: niagara_advance_simulation ${field} must be a finite number. ${alternative}; no Unreal request was sent`,
+  });
+}
+
+const niagaraAdvanceSeconds = finiteNiagaraAdvanceNumber(
+  'seconds',
+  `Use a positive finite duration <= ${NIAGARA_ADVANCE_WORK_LIMITS.maxSeconds}, or advance a longer preview in bounded chunks`,
+).refine((value) => value > 0 && value <= NIAGARA_ADVANCE_WORK_LIMITS.maxSeconds, {
+  message: `bounded_work_limit: niagara_advance_simulation seconds must be > 0 and <= ${NIAGARA_ADVANCE_WORK_LIMITS.maxSeconds}. Use a positive duration inside that limit, or advance longer simulations in bounded chunks while staying under ${NIAGARA_ADVANCE_WORK_LIMITS.maxTicks} ticks per call; no Unreal request was sent`,
+});
+
+const niagaraAdvanceTickDt = finiteNiagaraAdvanceNumber(
+  'tick_dt',
+  `Use a finite tick delta in [${NIAGARA_ADVANCE_WORK_LIMITS.minTickDt}, ${NIAGARA_ADVANCE_WORK_LIMITS.maxTickDt}]`,
+).refine((value) => value >= NIAGARA_ADVANCE_WORK_LIMITS.minTickDt && value <= NIAGARA_ADVANCE_WORK_LIMITS.maxTickDt, {
+  message: `bounded_work_limit: niagara_advance_simulation tick_dt must be in [${NIAGARA_ADVANCE_WORK_LIMITS.minTickDt}, ${NIAGARA_ADVANCE_WORK_LIMITS.maxTickDt}]. Choose a value inside that range; increasing tick_dt within the range reduces native ticks, or split the preview into bounded calls; no Unreal request was sent`,
+});
+
 export const niagaraAdvanceSimulationSchema = z.object({
   component: z.string().min(1).describe('NiagaraComponent object path OR an actor label/path carrying one'),
-  seconds: z.number().positive().describe('How many seconds of simulation to advance'),
-  tick_dt: z.number().positive().default(0.0167).describe('Fixed per-tick delta seconds (default ~60fps)'),
+  seconds: niagaraAdvanceSeconds.describe(
+    `How many seconds of simulation to advance (max ${NIAGARA_ADVANCE_WORK_LIMITS.maxSeconds})`,
+  ),
+  tick_dt: niagaraAdvanceTickDt
+    .default(0.0167)
+    .describe(
+      `Fixed per-tick delta seconds (${NIAGARA_ADVANCE_WORK_LIMITS.minTickDt}..${NIAGARA_ADVANCE_WORK_LIMITS.maxTickDt})`,
+    ),
 });
 export type NiagaraAdvanceSimulationParams = z.infer<typeof niagaraAdvanceSimulationSchema>;
 
+/** Calculate and cap native tick work before script allocation or UE transport. */
+function preflightNiagaraAdvance(p: NiagaraAdvanceSimulationParams): number {
+  const limits = NIAGARA_ADVANCE_WORK_LIMITS;
+  if (!Number.isFinite(p.seconds) || !Number.isFinite(p.tick_dt)) {
+    throw new Error(
+      'bounded_work_limit: niagara_advance_simulation accepts only finite seconds and tick_dt. Use values inside the published duration and tick-delta limits; no Unreal request was sent',
+    );
+  }
+  if (p.seconds <= 0 || p.seconds > limits.maxSeconds) {
+    throw new Error(
+      `bounded_work_limit: niagara_advance_simulation seconds must be > 0 and <= ${limits.maxSeconds}. Use a positive duration inside that limit, or advance longer simulations in chunks of at most ${limits.maxSeconds} seconds while staying under ${limits.maxTicks} ticks per call; no Unreal request was sent`,
+    );
+  }
+  if (p.tick_dt < limits.minTickDt || p.tick_dt > limits.maxTickDt) {
+    throw new Error(
+      `bounded_work_limit: niagara_advance_simulation tick_dt must be in [${limits.minTickDt}, ${limits.maxTickDt}]. Choose a value inside that range; increasing tick_dt within the range reduces native ticks, or split the preview into bounded calls; no Unreal request was sent`,
+    );
+  }
+
+  // Fields are capped first, so division cannot overflow. Round upward so the
+  // preflight never undercounts native work due to a fractional ratio; embed
+  // this exact integer so Python cannot recalculate a different count.
+  const ticks = Math.max(1, Math.ceil(p.seconds / p.tick_dt));
+  if (!Number.isSafeInteger(ticks)) {
+    throw new Error(
+      'bounded_work_limit: niagara_advance_simulation tick calculation exceeded the safe integer range; use a larger tick_dt; no Unreal request was sent',
+    );
+  }
+  if (ticks > limits.maxTicks) {
+    throw new Error(
+      `bounded_work_limit: niagara_advance_simulation would request ${ticks} native ticks; limit is ${limits.maxTicks}. Increase tick_dt to at least seconds/${limits.maxTicks}, or split the advance into chunks of at most ${limits.maxTicks} ticks; no Unreal request was sent`,
+    );
+  }
+  return ticks;
+}
+
 function niagaraAdvanceSimulationScript(p: NiagaraAdvanceSimulationParams): string {
+  const ticks = preflightNiagaraAdvance(p);
   return [
     PY_NIAGARA_HELPERS,
     `_ref = ${pyStr(p.component)}`,
     `_secs = ${p.seconds}`,
     `_dt = ${p.tick_dt}`,
+    `_ticks = ${ticks}`,
     'def _go():',
     '    comp = _find_component(_ref)',
     '    if comp is None: raise Exception("niagara component not found: %s" % _ref)',
-    '    ticks = max(1, int(round(_secs / _dt)))',
+    '    ticks = _ticks  # exact bounded count precomputed before UE transport',
     '    done = _try(lambda: comp.advance_simulation(ticks, _dt),',
     '                lambda: comp.advance_simulation_by_time(_secs, _dt))',
     '    warnings = []',
@@ -850,8 +925,7 @@ function niagaraAdvanceSimulationScript(p: NiagaraAdvanceSimulationParams): stri
 
 export const niagaraAdvanceSimulationDescriptor: PyToolDescriptor<typeof niagaraAdvanceSimulationSchema.shape> = {
   name: 'niagara_advance_simulation',
-  description:
-    'Deterministically tick a live NiagaraComponent\'s sim by N seconds at a fixed dt (AdvanceSimulation) so a screenshot is reproducible — the deterministic-preview primitive the vision loop needs (a transient effect is invisible at t=0). SET-SUCCESS: applied:true only when the advance call ran; arg order probed defensively. NON-IDEMPOTENT: each call advances the sim cumulatively, so a repeat/retry compounds simulated time — re-run from a fresh spawn for a reproducible frame.',
+  description: `Deterministically tick a live NiagaraComponent's sim by N seconds at a fixed dt (AdvanceSimulation) so a screenshot is reproducible — the deterministic-preview primitive the vision loop needs (a transient effect is invisible at t=0). Refuses before UE transport above ${NIAGARA_ADVANCE_WORK_LIMITS.maxTicks} native ticks; increase tick_dt or advance in bounded chunks. SET-SUCCESS: applied:true only when the advance call ran; arg order probed defensively. NON-IDEMPOTENT: each call advances the sim cumulatively, so a repeat/retry compounds simulated time — re-run from a fresh spawn for a reproducible frame.`,
   cost: 'medium',
   returns: '{ok, component_path, advanced_seconds, ticks, applied, warnings[]}',
   schema: niagaraAdvanceSimulationSchema.shape,

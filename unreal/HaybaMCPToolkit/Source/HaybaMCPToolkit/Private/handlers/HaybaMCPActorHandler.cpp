@@ -585,12 +585,13 @@ FHaybaHandlerResult FHaybaMCPActorHandler::ValidatePlacement(const TSharedPtr<FJ
 {
     FHaybaParamReader R(P, TEXT("placement_validate"));
     const FString ClassPath = R.RequiredString(TEXT("class_path"));
-    const TOptional<FVector> Loc = R.OptionalVec3(TEXT("location"));
-    if (!Loc.IsSet()) R.AddError(TEXT("'location' is required (3 numbers)"));
+    const TOptional<FVector> Loc = R.RequiredVec3(TEXT("location"));
+    const double RadiusValue = R.OptionalNumberInRange(
+        TEXT("radius"), 50.0, 0.000001, 100000000.0);
     if (R.HasErrors()) return FHaybaHandlerResult::Err(R.ErrorMessage());
 
     const FVector Location = *Loc;
-    const float Radius = static_cast<float>(R.OptionalNumber(TEXT("radius"), 50.0));
+    const float Radius = static_cast<float>(RadiusValue);
 
     UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
     if (!World)

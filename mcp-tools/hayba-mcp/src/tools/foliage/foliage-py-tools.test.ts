@@ -11,6 +11,7 @@ import {
   foliageTypeCreateDescriptor,
   foliageAddInstancesDescriptor,
   foliageScatterPaintDescriptor,
+  FOLIAGE_SCATTER_WORK_LIMITS,
   foliageRemoveInBoundsDescriptor,
   foliageClearTypeDescriptor,
   foliagePyDescriptors,
@@ -49,7 +50,9 @@ describe('foliage_capability_probe', () => {
 
 describe('foliage_scan_types', () => {
   it('enumerates types with pagination', async () => {
-    const { sender, lastScript } = mockStdout(emit({ ok: true, types: [], total: 0, has_more: false, next_offset: 10 }));
+    const { sender, lastScript } = mockStdout(
+      emit({ ok: true, types: [], total: 0, has_more: false, next_offset: 10 }),
+    );
     setDefaultSender(sender);
     await makePyToolHandler(foliageScanTypesDescriptor)({ limit: 10, offset: 5 });
     const s = lastScript();
@@ -94,7 +97,12 @@ describe('foliage_type_set_params', () => {
   it('emits set logic for provided fields + scale interval', async () => {
     const { sender, lastScript } = mockStdout(emit({ ok: true, changed_keys: ['density'] }));
     setDefaultSender(sender);
-    await makePyToolHandler(foliageTypeSetParamsDescriptor)({ foliage_type_path: '/Game/FT', density: 5, scale_min: 0.8, scale_max: 1.2 });
+    await makePyToolHandler(foliageTypeSetParamsDescriptor)({
+      foliage_type_path: '/Game/FT',
+      density: 5,
+      scale_min: 0.8,
+      scale_max: 1.2,
+    });
     const s = lastScript();
     expect(s).toContain('_density = 5');
     expect(s).toContain('_smin = 0.8');
@@ -139,7 +147,11 @@ describe('foliage_type_create', () => {
     expect(missing.isError).toBe(true);
     const { sender, lastScript } = mockStdout(emit({ ok: true, foliage_type_path: '/Game/FT', created: true }));
     setDefaultSender(sender);
-    await makePyToolHandler(foliageTypeCreateDescriptor)({ static_mesh_path: '/Game/SM', dest_path: '/Game/Foliage', name: 'FT_Tree' });
+    await makePyToolHandler(foliageTypeCreateDescriptor)({
+      static_mesh_path: '/Game/SM',
+      dest_path: '/Game/Foliage',
+      name: 'FT_Tree',
+    });
     const s = lastScript();
     expect(s).toContain('FoliageType_InstancedStaticMesh');
     expect(s).toContain('create_asset');
@@ -154,7 +166,11 @@ describe('foliage_type_create', () => {
   it('guards against reusing a non-FoliageType asset at the destination path', async () => {
     const { sender, lastScript } = mockStdout(emit({ ok: true, foliage_type_path: '/Game/FT', created: false }));
     setDefaultSender(sender);
-    await makePyToolHandler(foliageTypeCreateDescriptor)({ static_mesh_path: '/Game/SM', dest_path: '/Game/Foliage', name: 'FT_Tree' });
+    await makePyToolHandler(foliageTypeCreateDescriptor)({
+      static_mesh_path: '/Game/SM',
+      dest_path: '/Game/Foliage',
+      name: 'FT_Tree',
+    });
     const s = lastScript();
     expect(s).toContain('isinstance(existing, unreal.FoliageType)');
     expect(s).toContain('exists but is not a FoliageType');
@@ -204,6 +220,185 @@ describe('foliage_scatter_paint', () => {
 
   it('IS classified NON_IDEMPOTENT (append)', () => {
     expect(NON_IDEMPOTENT.has('foliage_scatter_paint')).toBe(true);
+  });
+
+  it('precomputes and emits the exact maximum bounded candidate count', async () => {
+    const { sender, lastScript } = mockStdout(
+      emit({ ok: true, painted: 0, candidates: FOLIAGE_SCATTER_WORK_LIMITS.maxCandidates }),
+    );
+    setDefaultSender(sender);
+    const densityAtExactMax = FOLIAGE_SCATTER_WORK_LIMITS.maxCandidates / Math.PI;
+
+    const result = await makePyToolHandler(foliageScatterPaintDescriptor)({
+      foliage_type_path: '/Game/FT',
+      center: [0, 0, 0],
+      radius: 100,
+      density_per_100m2: densityAtExactMax,
+    });
+
+    expect(result.isError).toBeUndefined();
+    expect(lastScript()).toContain(`_candidate_count = ${FOLIAGE_SCATTER_WORK_LIMITS.maxCandidates}`);
+    expect(lastScript()).toContain('n = _candidate_count');
+    expect(lastScript()).not.toContain('area_cells =');
+  });
+
+  it('refuses hostile, fractional and max+1 workloads with zero UE transport', async () => {
+    let transportCalls = 0;
+    setDefaultSender((async () => {
+      transportCalls += 1;
+      throw new Error('UE transport must not run for refused work');
+    }) as Sender);
+    const handler = makePyToolHandler(foliageScatterPaintDescriptor);
+    const base = {
+      foliage_type_path: '/Game/FT',
+      center: [0, 0, 0],
+      radius: 100,
+      density_per_100m2: 1,
+    };
+    const refused: Array<{
+      name: string;
+      params: Record<string, unknown>;
+      fact: string;
+      alternative: string;
+    }> = [
+      {
+        name: 'derived candidate max+1',
+        params: { ...base, density_per_100m2: (FOLIAGE_SCATTER_WORK_LIMITS.maxCandidates + 1) / Math.PI },
+        fact: `limit is ${FOLIAGE_SCATTER_WORK_LIMITS.maxCandidates}`,
+        alternative: 'split the area into non-overlapping chunks',
+      },
+      {
+        name: 'radius max+1',
+        params: { ...base, radius: FOLIAGE_SCATTER_WORK_LIMITS.maxRadius + 1 },
+        fact: `radius must be > 0 and <= ${FOLIAGE_SCATTER_WORK_LIMITS.maxRadius}`,
+        alternative: 'positive radius inside that limit',
+      },
+      {
+        name: 'zero radius',
+        params: { ...base, radius: 0 },
+        fact: `radius must be > 0 and <= ${FOLIAGE_SCATTER_WORK_LIMITS.maxRadius}`,
+        alternative: 'positive radius inside that limit',
+      },
+      {
+        name: 'density max+1',
+        params: { ...base, density_per_100m2: FOLIAGE_SCATTER_WORK_LIMITS.maxDensityPer100m2 + 1 },
+        fact: `density_per_100m2 must be > 0 and <= ${FOLIAGE_SCATTER_WORK_LIMITS.maxDensityPer100m2}`,
+        alternative: 'submit smaller regions',
+      },
+      {
+        name: 'zero density',
+        params: { ...base, density_per_100m2: 0 },
+        fact: `density_per_100m2 must be > 0 and <= ${FOLIAGE_SCATTER_WORK_LIMITS.maxDensityPer100m2}`,
+        alternative: 'positive density inside that limit',
+      },
+      {
+        name: 'overflow-sized radius',
+        params: { ...base, radius: Number.MAX_VALUE },
+        fact: `radius must be > 0 and <= ${FOLIAGE_SCATTER_WORK_LIMITS.maxRadius}`,
+        alternative: 'split a larger area',
+      },
+      {
+        name: 'non-finite radius',
+        params: { ...base, radius: Number.POSITIVE_INFINITY },
+        fact: 'radius must be a finite number',
+        alternative: 'split a larger area',
+      },
+      {
+        name: 'non-finite density',
+        params: { ...base, density_per_100m2: Number.NaN },
+        fact: 'density_per_100m2 must be a finite number',
+        alternative: 'submit smaller regions',
+      },
+      {
+        name: 'non-finite center',
+        params: { ...base, center: [0, Number.POSITIVE_INFINITY, 0] },
+        fact: 'center coordinates must be a finite number',
+        alternative: 'Use finite coordinates',
+      },
+      {
+        name: 'center range max+1',
+        params: { ...base, center: [FOLIAGE_SCATTER_WORK_LIMITS.maxAbsWorldCoordinate + 1, 0, 0] },
+        fact: `center coordinates must be within +/-${FOLIAGE_SCATTER_WORK_LIMITS.maxAbsWorldCoordinate}`,
+        alternative: 'Move the center',
+      },
+      {
+        name: 'fractional seed',
+        params: { ...base, seed: 1.5 },
+        fact: 'seed must be an integer',
+        alternative: 'signed 32-bit integer seed',
+      },
+      {
+        name: 'non-finite seed',
+        params: { ...base, seed: Number.POSITIVE_INFINITY },
+        fact: 'seed must be a finite number',
+        alternative: 'signed 32-bit integer seed',
+      },
+      {
+        name: 'seed max+1',
+        params: { ...base, seed: FOLIAGE_SCATTER_WORK_LIMITS.maxSeed + 1 },
+        fact: `seed must be an integer in [${FOLIAGE_SCATTER_WORK_LIMITS.minSeed}, ${FOLIAGE_SCATTER_WORK_LIMITS.maxSeed}]`,
+        alternative: 'signed 32-bit integer seed',
+      },
+      {
+        name: 'unordered scale interval',
+        params: { ...base, scale_min: 2, scale_max: 1 },
+        fact: '0 < scale_min <= scale_max',
+        alternative: 'smaller ordered scale interval',
+      },
+      {
+        name: 'scale range max+1',
+        params: { ...base, scale_max: FOLIAGE_SCATTER_WORK_LIMITS.maxScale + 1 },
+        fact: `scale_max must be > 0 and <= ${FOLIAGE_SCATTER_WORK_LIMITS.maxScale}`,
+        alternative: 'positive finite scale',
+      },
+      {
+        name: 'zero minimum scale',
+        params: { ...base, scale_min: 0 },
+        fact: `scale_min must be > 0 and <= ${FOLIAGE_SCATTER_WORK_LIMITS.maxScale}`,
+        alternative: 'positive finite scale',
+      },
+      {
+        name: 'non-finite maximum scale',
+        params: { ...base, scale_max: Number.POSITIVE_INFINITY },
+        fact: 'scale_max must be a finite number',
+        alternative: 'positive finite scale',
+      },
+      {
+        name: 'non-finite scale',
+        params: { ...base, scale_min: Number.NaN },
+        fact: 'scale_min must be a finite number',
+        alternative: 'positive finite scale',
+      },
+      {
+        name: 'zero trace height',
+        params: { ...base, trace_height: 0 },
+        fact: `trace_height must be > 0 and <= ${FOLIAGE_SCATTER_WORK_LIMITS.maxTraceHeight}`,
+        alternative: 'positive finite trace',
+      },
+      {
+        name: 'trace height max+1',
+        params: { ...base, trace_height: FOLIAGE_SCATTER_WORK_LIMITS.maxTraceHeight + 1 },
+        fact: `trace_height must be > 0 and <= ${FOLIAGE_SCATTER_WORK_LIMITS.maxTraceHeight}`,
+        alternative: 'positive finite trace',
+      },
+      {
+        name: 'non-finite trace height',
+        params: { ...base, trace_height: Number.POSITIVE_INFINITY },
+        fact: 'trace_height must be a finite number',
+        alternative: 'positive finite trace',
+      },
+    ];
+
+    for (const refusal of refused) {
+      const result = await handler(refusal.params);
+      expect(result.isError, refusal.name).toBe(true);
+      const error = JSON.parse(result.content[0]!.text) as { error: string };
+      expect(error.error, refusal.name).toContain('bounded_work_limit');
+      expect(error.error, refusal.name).toContain(refusal.fact);
+      expect(error.error, refusal.name).toContain(refusal.alternative);
+      expect(error.error, refusal.name).toContain('no Unreal request was sent');
+    }
+    expect(transportCalls).toBe(0);
   });
 });
 
@@ -272,13 +467,25 @@ describe('foliage-domain factory catalog', () => {
       const { sender, lastScript } = mockStdout(emit({ ok: true }));
       setDefaultSender(sender);
       const params: Record<string, unknown> = {};
-      if (d.name !== 'foliage_capability_probe' && d.name !== 'foliage_scan_types') params.foliage_type_path = '/Game/FT';
+      if (d.name !== 'foliage_capability_probe' && d.name !== 'foliage_scan_types')
+        params.foliage_type_path = '/Game/FT';
       if (d.name === 'foliage_type_set_params') params.density = 1;
       if (d.name === 'foliage_replace_mesh') params.new_mesh_path = '/Game/SM';
-      if (d.name === 'foliage_type_create') { params.static_mesh_path = '/Game/SM'; params.dest_path = '/Game/F'; params.name = 'FT'; }
+      if (d.name === 'foliage_type_create') {
+        params.static_mesh_path = '/Game/SM';
+        params.dest_path = '/Game/F';
+        params.name = 'FT';
+      }
       if (d.name === 'foliage_add_instances') params.transforms = [{ location: [0, 0, 0] }];
-      if (d.name === 'foliage_scatter_paint') { params.center = [0, 0, 0]; params.radius = 100; params.density_per_100m2 = 1; }
-      if (d.name === 'foliage_remove_in_bounds') { params.center = [0, 0, 0]; params.extent = [1, 1, 1]; }
+      if (d.name === 'foliage_scatter_paint') {
+        params.center = [0, 0, 0];
+        params.radius = 100;
+        params.density_per_100m2 = 1;
+      }
+      if (d.name === 'foliage_remove_in_bounds') {
+        params.center = [0, 0, 0];
+        params.extent = [1, 1, 1];
+      }
       if (d.name === 'foliage_clear_type') params.confirm = true;
       await makePyToolHandler(d)(params);
       expect(lastScript()).toContain('_err(_e)');
