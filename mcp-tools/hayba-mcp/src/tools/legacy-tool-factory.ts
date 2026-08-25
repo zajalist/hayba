@@ -142,10 +142,53 @@ function descriptionFor(name: string, entry: LegacyCommandEntry): string {
   return notes ? `${base} ${notes}` : base;
 }
 
+/**
+ * Does this command CHANGE something?
+ *
+ * Distinct from `isNonIdempotentLegacy`, which asks whether running it twice
+ * does damage. The two are not the same question, and conflating them was a
+ * real gap: `actor_set_visibility` is perfectly idempotent — setting the same
+ * visibility twice is harmless — and it still mutates the scene. Deriving
+ * `effects` from idempotency gave every such tool `effects: []`, which put it
+ * outside the evidence contract entirely, so it could report `ok` with no
+ * evidence of having done anything and nothing would notice.
+ *
+ * Every non-idempotent command is by definition mutating, so this is a
+ * superset.
+ */
+export function isMutatingLegacy(name: string): boolean {
+  if (isNonIdempotentLegacy(name)) return true;
+  return /(?:^|_)(set|apply|assign|attach|move|rename|save|write|paint|scatter|place|bake|build|compile|connect|disconnect|clear|reset|update|insert|convert|cook)(?:_|$)/
+    .test(name);
+}
+
+/**
+ * The most specific effect token we can justify from the command's domain.
+ *
+ * `isSceneMutating` matches a fixed token list (actor / level / scene / world /
+ * lighting / landscape / foliage / pcg) to decide whether to append the
+ * validation nudge. The old code emitted the generic `mutates_state`, which
+ * matches NONE of them — so no legacy tool ever got the nudge, including
+ * `actor_spawn`. Naming the domain fixes that for the tools where the domain
+ * is unambiguous, and leaves the generic tag where it genuinely is generic.
+ */
+function effectTokenFor(name: string): string {
+  if (/^(actor|ism|physics|net|anim)_/.test(name)) return 'mutates_actor';
+  if (/^(level|world)_/.test(name)) return 'modifies_level';
+  if (/^(foliage|landscape)_/.test(name)) return 'modifies_foliage_or_landscape';
+  if (/^(light|sky|postprocess)/.test(name)) return 'modifies_lighting';
+  if (/^pcg_/.test(name)) return 'modifies_pcg_graph';
+  if (/^(asset|material|texture|mesh|blueprint|bt|metasound|audio|data|ui|seq|niagara)_/.test(name)) {
+    return 'modifies_asset';
+  }
+  if (/^(build|test)_/.test(name)) return 'filesystem_write';
+  return 'mutates_state';
+}
+
 function metaFor(name: string, entry: LegacyCommandEntry, cost: Cost): HaybaToolMeta {
   return {
     cost,
-    effects: isNonIdempotentLegacy(name) ? ['mutates_state'] : [],
+    effects: isMutatingLegacy(name) ? [effectTokenFor(name)] : [],
     when: descriptionFor(name, entry),
     not_when: '',
   };
