@@ -594,3 +594,51 @@ file of eight), and "take theirs, this branch is the small side" (backwards for
 three files). Each came from measuring something cheap — file names, line
 counts — instead of reading the conflicting text. The hunks took one script and
 about ten minutes.
+
+---
+
+## Correction: the two prompt tools should NOT be registered (2026-08-25)
+
+Recorded above as finding #2 of the orphan survey — "two shipped tools are
+unreachable… the registration did not survive the repo restructure… fixing it
+fixes it for everyone" — and queued as merge follow-up work. **That was wrong,
+and acting on it would have made things worse.**
+
+`hayba_request_input` and `hayba_get_user_response` send the wire commands
+`hayba_request_input` / `hayba_get_user_response` to the editor. Those commands
+do not exist:
+
+    grep -rn "hayba_request_input|hayba_get_user_response" unreal/…/Private/  -> nothing
+    grep -rn "request_input|user_response|prompt_id"       unreal/…/          -> nothing
+    git log --all -S "hayba_request_input" -- "*.cpp" "*.h"                   -> nothing
+
+The plugin half was never written, in any branch, at any point in history.
+`HaybaMCPPlanPanel` has no prompt or response surface, and no `plan_*` command
+appears in the generated capability list.
+
+So the TypeScript tools are one half of a feature whose other half does not
+exist. **Being unregistered is the correct state**, not a regression: they
+cannot work, and registering them would put two more tools in the catalogue
+that answer `Unknown command` — precisely the Fab situation criticised
+elsewhere in this document. The right comparison is not "a registration was
+lost" but "this is the Fab pattern, found a second time".
+
+### What actually follows
+
+- **Do not register them** during or after the merge. Remove that item from the
+  follow-up list.
+- The real question is the same one the Fab tools raise: whether TypeScript
+  halves of unbuilt features should live in the tree at all. Both sets are
+  written, tested, and inert. Deleting them, or building the plugin side, are
+  both defensible; leaving them registered is not, and only Fab is registered.
+- The `python_run` validated-handler swap remains a genuine follow-up. That one
+  fixes a guard that exists on both sides and was simply not wired.
+
+### Why the first reading was wrong
+
+I checked that the registration had once existed (it had — 40 lines in an
+older `tools/index.ts`) and inferred the feature had been complete and then
+broken. I never checked whether the commands those tools call exist. The
+evidence for "shipped feature, lost registration" and for "TypeScript-only
+half, never finishable" looks identical from the registration side alone; only
+the C++ distinguishes them, and it was one grep away.
