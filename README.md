@@ -5,9 +5,9 @@
 **The agentic engine for spatial and procedural world-building in Unreal Engine 5.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![UE 5.7](https://img.shields.io/badge/Unreal_Engine-5.7-blue.svg)](https://www.unrealengine.com/)
+[![UE 5.8](https://img.shields.io/badge/Unreal_Engine-5.8-blue.svg)](https://www.unrealengine.com/)
 [![MCP](https://img.shields.io/badge/Model_Context_Protocol-✓-7A8AB8.svg)](https://modelcontextprotocol.io)
-[![Tools](https://img.shields.io/badge/Tools-100+_across_30+_domains-green.svg)](#features)
+[![Commands](https://img.shields.io/badge/Commands-239_across_35_handlers-green.svg)](docs/CAPABILITIES.md)
 [![Node](https://img.shields.io/badge/Node-%E2%89%A522.5-339933.svg)](.nvmrc)
 
 </div>
@@ -20,7 +20,7 @@ This repo is the UE5 MCP toolkit: the Node MCP server, the UE5 C++ editor plugin
 
 ## Features
 
-- **100+ tools across 30+ domains** — Actor / Level / Scene / Asset / Blueprint / Material / Foliage / Spline / World Partition / ISM / Physics / Python / Editor / Docs / PCG / Sequencer / Animation / Audio / Behavior Tree / Input / UI / Net / Mesh / Texture / Data / Project / Build / Test / Memory / Plan / Conventions, plus GAS and MetaSound as optional [satellite plugins](docs/adr/0008-satellite-plugins-earn-their-place.md)
+- **[239 commands across 35 handlers](docs/CAPABILITIES.md)** — counted by a script from the C++ that declares them, and checked in CI, because the number used to be countable four incompatible ways. Domains: Actor / Level / Scene / Asset / Blueprint / Material / Foliage / Spline / World Partition / ISM / Physics / Python / Editor / Docs / PCG / Sequencer / Animation / Audio / Behavior Tree / Input / UI / Net / Mesh / Texture / Data / Project / Build / Test / Memory / Plan / Conventions, plus GAS and MetaSound as optional [satellite plugins](docs/adr/0008-satellite-plugins-earn-their-place.md)
 - **PCG SQLite registry** — 344 PCGEx nodes / 356 pins / 2270 properties scraped from C++ headers, queryable with semantic + structural intent
 - **Cognitive Map** — 2D top-down semantic clustering of every actor in the level, force-directed mindmap renderer
 - **Visual sidecar** — FastAPI + CLIP / SpatialCLIP / OWL-ViT for deep physics validation and spatial grounding, plus SAM segmentation for AI mask generation
@@ -42,13 +42,25 @@ This repo is the UE5 MCP toolkit: the Node MCP server, the UE5 C++ editor plugin
 
 ## Quick start
 
-### 1. Install the UE plugin
+**Install is two artifacts.** The npm server reaches your agent host; the UE
+editor plugin has to reach your project. One without the other gives you a
+server connected to nothing, and the symptom is "unknown command" rather than
+anything that says so.
 
-Copy [`unreal/HaybaMCPToolkit/`](unreal/HaybaMCPToolkit) into your UE project's `Plugins/` folder, regenerate Visual Studio project files, recompile (UE 5.7+, VS 2022).
+There is **no prebuilt plugin release yet**, so today this means building from
+source. That is the honest state of it; a one-line installer is on the roadmap
+and is not written yet.
 
-### 2. Register the MCP server with your agent host
+### 1. Build the plugin into your project
+
+Copy [`unreal/HaybaMCPToolkit/`](unreal/HaybaMCPToolkit) into your UE project's
+`Plugins/` folder, regenerate project files, and compile. **UE 5.8**, VS 2022.
+
+### 2. Point your agent host at the server
 
 ```bash
+npm install && npm --prefix mcp-tools/hayba-mcp run build
+
 # Claude Code
 claude mcp add hayba-toolkit -- node /path/to/hayba/mcp-tools/hayba-mcp/dist/index.js
 ```
@@ -65,11 +77,18 @@ claude mcp add hayba-toolkit -- node /path/to/hayba/mcp-tools/hayba-mcp/dist/ind
 }
 ```
 
-### 3. Run the editor
+### 3. Open the editor, then check it took
 
-Open UE; the **Hayba MCP Toolkit** panel appears in the toolbar. Pick **Integrated** (your MCP host drives the agent) or **API Key** (in-editor chat drives Anthropic/OpenAI directly).
+```bash
+node mcp-tools/hayba-mcp/dist/cli/index.js doctor --project <path to your .uproject>
+```
 
-Then ask Claude: *"Search the PCG node catalog for voronoi, propose a 3-step plan to author a Voronoi graph, and execute it after I approve."*
+`doctor` checks the four things that actually break — plugin present, its
+dependencies resolved, the editor reachable on its port, and both halves
+speaking the same protocol version — and each failure says what to do about it.
+
+Then ask Claude: *"Search the PCG node catalog for voronoi, propose a 3-step
+plan to author a Voronoi graph, and execute it after I approve."*
 
 ## Architecture
 
@@ -87,6 +106,7 @@ Two language boundaries, one protocol. The TCP envelope on `:52342` (auto-fallba
 ## Documentation
 
 - **[CONTEXT.md](CONTEXT.md)** — domain glossary + repo philosophy (read this first)
+- **[Capabilities](docs/CAPABILITIES.md)** — every command, generated from the source that declares them
 - **[Architecture](docs/ARCHITECTURE.md)** — language boundaries, the TCP seam, data flows
 - **[Getting started](docs/getting-started.md)** — local dev setup and first run
 - **[Wiki](docs/wiki/)** — guides, tool reference, troubleshooting
