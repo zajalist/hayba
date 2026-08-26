@@ -150,7 +150,7 @@ if ($List) {
 }
 
 function Get-SanitizedHash([object]$Value) {
-    $json = $Value | ConvertTo-Json -Compress -Depth 30
+    $json = ConvertTo-Json -InputObject $Value -Compress -Depth 30
     $bytes = [Text.Encoding]::UTF8.GetBytes($json)
     $sha = [Security.Cryptography.SHA256]::Create()
     try {
