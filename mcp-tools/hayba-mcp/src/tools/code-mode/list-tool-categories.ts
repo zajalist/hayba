@@ -223,7 +223,7 @@ const DOMAINS: ReadonlyArray<{ domain: string; command_count: number; commands: 
     command_count: 4,
     commands: ['build_project', 'build_cook', 'build_generate_project_files', 'build_status'],
   },
-  { domain: 'test', command_count: 3, commands: ['test_list', 'test_run', 'test_get_log'] },
+  { domain: 'test', command_count: 4, commands: ['test_list', 'test_run', 'test_cancel', 'test_get_log'] },
 ];
 
 /** Domain for a command name. Mirrors inferDir() in ../index.ts, duplicated
