@@ -78,4 +78,16 @@ describe('UMG GUID invariant crash boundary (#406)', () => {
       expect(source, marker).toContain(marker);
     }
   });
+
+  it('keeps rollback diagnostics compatible with UE checked format strings', () => {
+    expect(source).not.toMatch(/FString::Printf\(\s*\w+\s*\?\s*TEXT\(/);
+    for (const marker of [
+      'if (bRecovered)',
+      'if (bStillOriginal)',
+      'Widget and slot restored',
+      'the staged subtree was removed',
+    ]) {
+      expect(source, marker).toContain(marker);
+    }
+  });
 });
