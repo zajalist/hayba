@@ -6,7 +6,8 @@ import type { HaybaToolMeta } from '../hayba-tool-meta.js';
 export const meta: HaybaToolMeta = {
   cost: 'low',
   effects: ['read_only'],
-  when: 'inspecting a material or material instance: its properties, parameters, and connected expressions',
+  when:
+    'inspecting a material or material instance: authored parameter names and typed defaults, exact material-output connections, and connected expressions',
   not_when: 'listing multiple materials (use material_list)',
 };
 

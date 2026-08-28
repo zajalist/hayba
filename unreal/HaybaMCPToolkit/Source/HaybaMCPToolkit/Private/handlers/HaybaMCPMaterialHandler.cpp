@@ -17,6 +17,8 @@
 #include "GameFramework/Actor.h"
 #include "Engine/Texture.h"
 #include "Engine/Texture2D.h"
+#include "Engine/TextureCollection.h"
+#include "Engine/Font.h"
 #include "Engine/World.h"
 #include "Misc/PackageName.h"
 #include "UObject/UObjectGlobals.h"
@@ -24,6 +26,8 @@
 #include "UObject/EnumProperty.h"
 // Graph authoring (Tasks 2-4): connections, node properties, material functions
 #include "MaterialEditingLibrary.h"
+#include "Materials/MaterialAttributeDefinitionMap.h"
+#include "Materials/MaterialParameterCollection.h"
 #include "StaticParameterSet.h"  // FStaticParameterSet, FStaticSwitchParameter (Task 5)
 #include "MaterialTypes.h"
 #include "Materials/MaterialFunction.h"
@@ -920,6 +924,32 @@ static void EmitFunctionCallOutputs(UMaterialExpression* Expr, const TSharedRef<
     Out->SetArrayField(TEXT("outputs"), Outs);
 }
 
+// Prefer UE's public output pin metadata, but recover the authoritative name
+// from a material-function call when GetOutputs() is stale/unnamed. The output
+// index remains the hard identity; output_N is only a deterministic label for
+// genuinely unnamed single-output expressions.
+static FString HaybaExpressionOutputName(UMaterialExpression* Expr, int32 OutputIndex)
+{
+    if (!Expr || OutputIndex < 0) return FString();
+    const TArray<FExpressionOutput>& Outputs = Expr->GetOutputs();
+    if (Outputs.IsValidIndex(OutputIndex))
+    {
+        const FExpressionOutput& Output = Outputs[OutputIndex];
+        if (!Output.OutputName.IsNone()) return Output.OutputName.ToString();
+        if (const UMaterialExpressionMaterialFunctionCall* Call = Cast<UMaterialExpressionMaterialFunctionCall>(Expr))
+            if (Call->FunctionOutputs.IsValidIndex(OutputIndex) && !Call->FunctionOutputs[OutputIndex].Output.OutputName.IsNone())
+                return Call->FunctionOutputs[OutputIndex].Output.OutputName.ToString();
+        if (Output.Mask)
+        {
+            if (Output.MaskR && !Output.MaskG && !Output.MaskB && !Output.MaskA) return TEXT("R");
+            if (!Output.MaskR && Output.MaskG && !Output.MaskB && !Output.MaskA) return TEXT("G");
+            if (!Output.MaskR && !Output.MaskG && Output.MaskB && !Output.MaskA) return TEXT("B");
+            if (!Output.MaskR && !Output.MaskG && !Output.MaskB && Output.MaskA) return TEXT("A");
+        }
+    }
+    return FString();
+}
+
 FHaybaHandlerResult FHaybaMCPMaterialHandler::MatAddNode(const TSharedPtr<FJsonObject>& P)
 {
     FString ExprClass, MatPath, FuncPath;
@@ -1053,8 +1083,10 @@ static bool RequireOutputChoice(UMaterialExpression* From, const FString& FromOu
     if (!FromOutput.IsEmpty() || bHasFromOutputIndex) return true; // caller chose
     TArray<FString> Names;
     for (int32 i = 0; i < Outs.Num(); ++i)
-        Names.Add(FString::Printf(TEXT("[%d] %s"), i,
-            Outs[i].OutputName.IsNone() ? TEXT("(unnamed)") : *Outs[i].OutputName.ToString()));
+    {
+        const FString Name = HaybaExpressionOutputName(From, i);
+        Names.Add(FString::Printf(TEXT("[%d] %s"), i, Name.IsEmpty() ? TEXT("(unnamed; use index)") : *Name));
+    }
     OutErr = FString::Printf(
         TEXT("material_connect_nodes: '%s' has %d outputs (%s) — specify which with from_output (the pin NAME) or from_output_index. Defaulting to the first output silently swaps multi-output nodes like material functions."),
         *From->GetName(), Outs.Num(), *FString::Join(Names, TEXT(", ")));
@@ -1080,18 +1112,12 @@ static int32 ResolveFromOutputIndex(UMaterialExpression* From, const FString& Na
     }
     if (Name.IsEmpty()) return 0; // single-output; multi-output already gated by RequireOutputChoice
     for (int32 i = 0; i < Outs.Num(); ++i)
-        if (Outs[i].OutputName.ToString().Equals(Name, ESearchCase::IgnoreCase)) return i;
-    if (UMaterialExpressionMaterialFunctionCall* Call = Cast<UMaterialExpressionMaterialFunctionCall>(From))
-        for (int32 i = 0; i < Call->FunctionOutputs.Num(); ++i)
-            if (Call->FunctionOutputs[i].Output.OutputName.ToString().Equals(Name, ESearchCase::IgnoreCase)) return i;
+        if (HaybaExpressionOutputName(From, i).Equals(Name, ESearchCase::IgnoreCase)) return i;
     TArray<FString> Avail;
     for (int32 i = 0; i < Outs.Num(); ++i)
     {
-        FString Nm = Outs[i].OutputName.IsNone() ? FString() : Outs[i].OutputName.ToString();
-        if (Nm.IsEmpty())
-            if (UMaterialExpressionMaterialFunctionCall* C = Cast<UMaterialExpressionMaterialFunctionCall>(From))
-                if (C->FunctionOutputs.IsValidIndex(i)) Nm = C->FunctionOutputs[i].Output.OutputName.ToString();
-        Avail.Add(FString::Printf(TEXT("[%d] %s"), i, Nm.IsEmpty() ? TEXT("(unnamed)") : *Nm));
+        const FString Nm = HaybaExpressionOutputName(From, i);
+        Avail.Add(FString::Printf(TEXT("[%d] %s"), i, Nm.IsEmpty() ? TEXT("(unnamed; use from_output_index)") : *Nm));
     }
     OutErr = FString::Printf(TEXT("from_output '%s' not found on '%s' — available outputs: %s. (Use the exact name or from_output_index.)"),
         *Name, *From->GetName(), *FString::Join(Avail, TEXT(", ")));
@@ -1547,6 +1573,139 @@ static TArray<TSharedPtr<FJsonValue>> SerializeMaterialExpressions(
             Entry->SetStringField(TEXT("reroute_kind"), TEXT("usage"));
         }
 
+        // Parameter identity and authored default belong to the expression,
+        // not to a future material instance.  Omitting them forced callers to
+        // infer names from captions/classes and made a graph audit unable to
+        // distinguish two parameters of the same type.  Use the expression's
+        // virtual metadata seam so engine and plugin-defined parameter nodes
+        // participate without a growing cast list.
+        if (Expr->HasAParameterName())
+        {
+            const FName ParameterName = Expr->GetParameterName();
+            const bool bParameterNameValid = ParameterName.IsValid() && !ParameterName.IsNone();
+            if (!bParameterNameValid)
+                Entry->SetField(TEXT("parameter_name"), MakeShared<FJsonValueNull>());
+            else
+                Entry->SetStringField(TEXT("parameter_name"), ParameterName.ToString());
+            Entry->SetBoolField(TEXT("parameter_name_valid"), bParameterNameValid);
+
+            FMaterialParameterMetadata Metadata;
+            const bool bMetadataAvailable = Expr->GetParameterValue(Metadata);
+            Entry->SetBoolField(TEXT("parameter_metadata_available"), bMetadataAvailable);
+
+            FString ParameterType = TEXT("unknown");
+            bool bDefaultAvailable = bMetadataAvailable;
+            TSharedPtr<FJsonValue> DefaultValue = MakeShared<FJsonValueNull>();
+            if (bMetadataAvailable)
+            {
+                switch (Metadata.Value.Type)
+                {
+                case EMaterialParameterType::Scalar:
+                {
+                    ParameterType = TEXT("scalar");
+                    const float Value = Metadata.Value.AsScalar();
+                    bDefaultAvailable = FMath::IsFinite(Value);
+                    if (bDefaultAvailable) DefaultValue = MakeShared<FJsonValueNumber>(Value);
+                    break;
+                }
+                case EMaterialParameterType::Vector:
+                {
+                    ParameterType = TEXT("vector");
+                    const FLinearColor Value = Metadata.Value.AsLinearColor();
+                    bDefaultAvailable = FMath::IsFinite(Value.R) && FMath::IsFinite(Value.G)
+                        && FMath::IsFinite(Value.B) && FMath::IsFinite(Value.A);
+                    if (bDefaultAvailable)
+                    {
+                        TArray<TSharedPtr<FJsonValue>> Components = {
+                            MakeShared<FJsonValueNumber>(Value.R), MakeShared<FJsonValueNumber>(Value.G),
+                            MakeShared<FJsonValueNumber>(Value.B), MakeShared<FJsonValueNumber>(Value.A),
+                        };
+                        DefaultValue = MakeShared<FJsonValueArray>(MoveTemp(Components));
+                    }
+                    break;
+                }
+                case EMaterialParameterType::DoubleVector:
+                {
+                    ParameterType = TEXT("double_vector");
+                    const FVector4d Value = Metadata.Value.AsVector4d();
+                    bDefaultAvailable = FMath::IsFinite(Value.X) && FMath::IsFinite(Value.Y)
+                        && FMath::IsFinite(Value.Z) && FMath::IsFinite(Value.W);
+                    if (bDefaultAvailable)
+                    {
+                        TArray<TSharedPtr<FJsonValue>> Components = {
+                            MakeShared<FJsonValueNumber>(Value.X), MakeShared<FJsonValueNumber>(Value.Y),
+                            MakeShared<FJsonValueNumber>(Value.Z), MakeShared<FJsonValueNumber>(Value.W),
+                        };
+                        DefaultValue = MakeShared<FJsonValueArray>(MoveTemp(Components));
+                    }
+                    break;
+                }
+                case EMaterialParameterType::Texture:
+                    ParameterType = TEXT("texture");
+                    if (UObject* Value = Metadata.Value.AsTextureObject())
+                        DefaultValue = MakeShared<FJsonValueString>(Value->GetPathName());
+                    break;
+                case EMaterialParameterType::TextureCollection:
+                    ParameterType = TEXT("texture_collection");
+                    if (Metadata.Value.TextureCollection)
+                        DefaultValue = MakeShared<FJsonValueString>(Metadata.Value.TextureCollection->GetPathName());
+                    break;
+                case EMaterialParameterType::RuntimeVirtualTexture:
+                    ParameterType = TEXT("runtime_virtual_texture");
+                    if (UObject* Value = Metadata.Value.AsTextureObject())
+                        DefaultValue = MakeShared<FJsonValueString>(Value->GetPathName());
+                    break;
+                case EMaterialParameterType::SparseVolumeTexture:
+                    ParameterType = TEXT("sparse_volume_texture");
+                    if (UObject* Value = Metadata.Value.AsTextureObject())
+                        DefaultValue = MakeShared<FJsonValueString>(Value->GetPathName());
+                    break;
+                case EMaterialParameterType::Font:
+                {
+                    ParameterType = TEXT("font");
+                    TSharedPtr<FJsonObject> FontValue = MakeShared<FJsonObject>();
+                    if (Metadata.Value.Font.Value)
+                        FontValue->SetStringField(TEXT("asset"), Metadata.Value.Font.Value->GetPathName());
+                    else
+                        FontValue->SetField(TEXT("asset"), MakeShared<FJsonValueNull>());
+                    FontValue->SetNumberField(TEXT("page"), Metadata.Value.Font.Page);
+                    DefaultValue = MakeShared<FJsonValueObject>(FontValue.ToSharedRef());
+                    break;
+                }
+                case EMaterialParameterType::StaticSwitch:
+                    ParameterType = TEXT("static_switch");
+                    DefaultValue = MakeShared<FJsonValueBoolean>(Metadata.Value.AsStaticSwitch());
+                    break;
+                case EMaterialParameterType::StaticComponentMask:
+                {
+                    ParameterType = TEXT("static_component_mask");
+                    const FStaticComponentMaskValue Value = Metadata.Value.AsStaticComponentMask();
+                    TSharedPtr<FJsonObject> Mask = MakeShared<FJsonObject>();
+                    Mask->SetBoolField(TEXT("r"), Value.R);
+                    Mask->SetBoolField(TEXT("g"), Value.G);
+                    Mask->SetBoolField(TEXT("b"), Value.B);
+                    Mask->SetBoolField(TEXT("a"), Value.A);
+                    DefaultValue = MakeShared<FJsonValueObject>(Mask.ToSharedRef());
+                    break;
+                }
+                case EMaterialParameterType::ParameterCollection:
+                    ParameterType = TEXT("parameter_collection");
+                    if (Metadata.Value.ParameterCollection)
+                        DefaultValue = MakeShared<FJsonValueString>(Metadata.Value.ParameterCollection->GetPathName());
+                    break;
+                case EMaterialParameterType::None:
+                case EMaterialParameterType::Num:
+                default:
+                    bDefaultAvailable = false;
+                    break;
+                }
+            }
+
+            Entry->SetStringField(TEXT("parameter_type"), ParameterType);
+            Entry->SetBoolField(TEXT("default_value_available"), bDefaultAvailable);
+            Entry->SetField(TEXT("default_value"), DefaultValue);
+        }
+
         TArray<TSharedPtr<FJsonValue>> Inputs;
         int32 InputIdx = 0;
         for (FExpressionInputIterator It{Expr}; It; ++It)
@@ -1585,9 +1744,12 @@ static TArray<TSharedPtr<FJsonValue>> SerializeMaterialExpressions(
             for (int32 OutIdx = 0; OutIdx < Outs.Num(); ++OutIdx)
             {
                 TSharedPtr<FJsonObject> OutEntry = MakeShared<FJsonObject>();
-                const FName OutName = Outs[OutIdx].OutputName;
-                OutEntry->SetStringField(TEXT("name"),
-                    OutName.IsNone() ? FString::Printf(TEXT("output_%d"), OutIdx) : OutName.ToString());
+                const FString OutputName = HaybaExpressionOutputName(Expr, OutIdx);
+                if (OutputName.IsEmpty()) OutEntry->SetField(TEXT("name"), MakeShared<FJsonValueNull>());
+                else OutEntry->SetStringField(TEXT("name"), OutputName);
+                OutEntry->SetStringField(TEXT("label"), OutputName.IsEmpty()
+                    ? FString::Printf(TEXT("output_%d"), OutIdx) : OutputName);
+                OutEntry->SetBoolField(TEXT("connect_by_name"), !OutputName.IsEmpty());
                 OutEntry->SetNumberField(TEXT("index"), OutIdx);
                 Outputs.Add(MakeShared<FJsonValueObject>(OutEntry.ToSharedRef()));
             }
@@ -1602,6 +1764,76 @@ static TArray<TSharedPtr<FJsonValue>> SerializeMaterialExpressions(
 // Forward decl — defined later (used by the validator path too).
 static void GatherMaterialPropertyInputs(UMaterial* Mat, TArray<FExpressionInput*>& Out);
 static const TMap<FString, EMaterialUsage>& HaybaMaterialUsageAliases();
+
+// UE intentionally preserves individual property wires when Use Material
+// Attributes is enabled so they can be restored later. Those stored wires are
+// not compiler roots (except the engine's three explicit exceptions); treating
+// them as live makes dead-node/reachability audits false-green.
+static bool HaybaIsMaterialPropertyCompilerInputActive(const UMaterial* Mat, EMaterialProperty Property)
+{
+    if (!Mat) return false;
+    if (Mat->bUseMaterialAttributes)
+    {
+        // CompilePropertyEx routes every semantic property (except these three
+        // direct exceptions) through the single MaterialAttributes input. That
+        // root remains real in non-surface domains even though asking whether
+        // MP_MaterialAttributes itself is an active semantic property returns
+        // false there.
+        if (Property == MP_MaterialAttributes) return true;
+        if (Property == MP_DiffuseColor || Property == MP_SpecularColor || Property == MP_FrontMaterial)
+            return Mat->IsPropertyActiveInEditor(Property);
+        return false;
+    }
+    return Property != MP_MaterialAttributes && Mat->IsPropertyActiveInEditor(Property);
+}
+
+// Exact terminal connections for the master material. Reachability alone says
+// that a node is live; this map preserves both stored graph state and whether
+// that terminal is currently considered by the compiler.
+static TArray<TSharedPtr<FJsonValue>> SerializeMaterialOutputs(UMaterial* Mat)
+{
+    TArray<TSharedPtr<FJsonValue>> Outputs;
+    if (!Mat) return Outputs;
+
+    for (int32 PropertyIndex = 0; PropertyIndex < MP_MAX; ++PropertyIndex)
+    {
+        const EMaterialProperty Property = static_cast<EMaterialProperty>(PropertyIndex);
+        FExpressionInput* Input = Mat->GetExpressionInputForProperty(Property);
+        if (!Input) continue;
+
+        TSharedPtr<FJsonObject> Entry = MakeShared<FJsonObject>();
+        Entry->SetStringField(TEXT("property"), FMaterialAttributeDefinitionMap::GetAttributeName(Property));
+        Entry->SetStringField(TEXT("display_name"), FMaterialAttributeDefinitionMap::GetDisplayNameForMaterial(Property, Mat).ToString());
+        Entry->SetNumberField(TEXT("property_id"), PropertyIndex);
+        Entry->SetBoolField(TEXT("connected"), Input->Expression != nullptr);
+        const bool bCompilerInputActive = HaybaIsMaterialPropertyCompilerInputActive(Mat, Property);
+        Entry->SetBoolField(TEXT("compiler_input_active"), bCompilerInputActive);
+        Entry->SetBoolField(TEXT("connection_compiler_used"), bCompilerInputActive && Input->Expression != nullptr);
+        if (Input->Expression)
+        {
+            Entry->SetStringField(TEXT("from_node"), Input->Expression->GetName());
+            Entry->SetNumberField(TEXT("from_output"), Input->OutputIndex);
+            const TArray<FExpressionOutput>& SourceOutputs = Input->Expression->GetOutputs();
+            if (SourceOutputs.IsValidIndex(Input->OutputIndex))
+            {
+                const FString OutputName = HaybaExpressionOutputName(Input->Expression, Input->OutputIndex);
+                if (OutputName.IsEmpty()) Entry->SetField(TEXT("from_output_name"), MakeShared<FJsonValueNull>());
+                else Entry->SetStringField(TEXT("from_output_name"), OutputName);
+                Entry->SetStringField(TEXT("from_output_label"), OutputName.IsEmpty()
+                    ? FString::Printf(TEXT("output_%d"), Input->OutputIndex) : OutputName);
+            }
+            else
+            {
+                // Preserve corrupt/out-of-range graph evidence without
+                // fabricating a pin name. material_validate reports the error.
+                Entry->SetField(TEXT("from_output_name"), MakeShared<FJsonValueNull>());
+                Entry->SetField(TEXT("from_output_label"), MakeShared<FJsonValueNull>());
+            }
+        }
+        Outputs.Add(MakeShared<FJsonValueObject>(Entry.ToSharedRef()));
+    }
+    return Outputs;
+}
 
 // Build the two graph sets the compiler implicitly knows:
 //   Consumed  — every expression whose output feeds some node input or a root.
@@ -1699,7 +1931,9 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatGetInfo(const TSharedPtr<FJsonO
         TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
         Out->SetStringField(TEXT("kind"), TEXT("material"));
         Out->SetStringField(TEXT("name"), Mat->GetName());
+        Out->SetBoolField(TEXT("uses_material_attributes"), Mat->bUseMaterialAttributes);
         Out->SetArrayField(TEXT("expressions"), SerializeMaterialExpressions(Mat->GetExpressions(), &Consumed, &Reachable));
+        Out->SetArrayField(TEXT("material_outputs"), SerializeMaterialOutputs(Mat));
         Out->SetArrayField(TEXT("dead_nodes"), CollectDeadNodeIds(Mat->GetExpressions(), Reachable));
         Out->SetArrayField(TEXT("comments"), SerializeComments(Mat->GetEditorComments()));
         Out->SetNumberField(TEXT("shading_model"), (int32)Mat->GetShadingModels().GetFirstShadingModel());
@@ -2773,8 +3007,12 @@ static void GatherMaterialPropertyInputs(UMaterial* Mat, TArray<FExpressionInput
 {
     if (!Mat) return;
     for (int32 Prop = 0; Prop < MP_MAX; ++Prop)
-        if (FExpressionInput* In = Mat->GetExpressionInputForProperty((EMaterialProperty)Prop))
+    {
+        const EMaterialProperty Property = static_cast<EMaterialProperty>(Prop);
+        if (!HaybaIsMaterialPropertyCompilerInputActive(Mat, Property)) continue;
+        if (FExpressionInput* In = Mat->GetExpressionInputForProperty(Property))
             Out.Add(In);
+    }
 }
 
 FHaybaHandlerResult FHaybaMCPMaterialHandler::MatValidate(const TSharedPtr<FJsonObject>& P)
