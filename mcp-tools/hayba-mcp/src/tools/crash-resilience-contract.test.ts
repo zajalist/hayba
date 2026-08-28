@@ -165,6 +165,11 @@ describe('TCP crash-resilience contract', () => {
     expect(survivalHarness).not.toContain("'D:\\Projects\\aphrosia");
   });
 
+  it('serializes null evidence explicitly instead of dropping it through the PowerShell pipeline', () => {
+    expect(survivalHarness).toContain('ConvertTo-Json -InputObject $Value -Compress -Depth 30');
+    expect(survivalHarness).not.toContain('$Value | ConvertTo-Json -Compress -Depth 30');
+  });
+
   it('attests exact clean source and loaded plugin artifacts before accepting evidence', () => {
     for (const marker of [
       '[string]$ExpectedSourceCommit',
