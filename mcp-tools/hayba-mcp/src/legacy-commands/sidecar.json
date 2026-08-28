@@ -375,11 +375,11 @@
           "required": false,
           "description": "Restrict to SmokeFilter-tagged tests"
         },
-        {
-          "name": "timeout_seconds",
-          "type": "number",
-          "required": false,
-          "description": "Per-test latent-command drain timeout (default 120)"
+          {
+            "name": "timeout_seconds",
+            "type": "number",
+            "required": false,
+            "description": "For allowlisted in-process tests: per-test latent drain timeout. For owned-child runs: total process deadline, default 300 and hard-capped at 900 seconds."
         }
       ],
       "returns": {
@@ -394,6 +394,21 @@
             "name": "status",
             "type": "string",
             "description": "'running' immediately; 'busy' if another run is already in flight"
+          },
+          {
+            "name": "execution_mode",
+            "type": "string",
+            "description": "'in_process_allowlisted' only for exact audited Hayba contracts; otherwise 'owned_child'"
+          },
+          {
+            "name": "ownership_token",
+            "type": "string",
+            "description": "Unique command-line tag proving ownership of a disposable child"
+          },
+          {
+            "name": "child_pid",
+            "type": "number",
+            "description": "PID of the owned UnrealEditor-Cmd child when execution_mode is owned_child"
           },
           {
             "name": "total",
@@ -422,7 +437,48 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "JOB ENVELOPE (async, non-freezing): run explicit test_names, 'all', or the same filter/filter_pattern/category selectors accepted by test_list. Selectors are case-insensitive and cannot be combined with explicit names; an empty or zero-match selection is an error rather than a false green run. Returns { job_id, status:'running' } immediately and runs tests on the editor's game-thread core ticker. Poll build_status for { passed, failed, skipped, elapsed_seconds, total }, or test_get_log for detailed entries. Only one pollable run may be active; busy errors include its job_id, while orphaned/done ownership is recovered automatically."
+      "notes": "JOB ENVELOPE (async, non-freezing): unknown project, engine, plugin, and future Hayba tests default to a tagged owned UnrealEditor-Cmd child. Only exact lifecycle-audited pure Hayba contracts use the serving editor's core ticker. Empty or unmatched selections fail closed instead of producing a false green. Poll build_status for structured counts plus execution_mode, child PID/token, exit code, report validity, crash, timeout, cancellation, output-bound, and crash-artifact-count evidence. A crash or never-started child is failed, never skipped. Only one run may be active."
+    },
+    "test_cancel": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPTestHandler::Handle",
+      "params": [
+        {
+          "name": "job_id",
+          "type": "string",
+          "required": true,
+          "description": "Active owned-child test_run job id"
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "job_id",
+            "type": "string"
+          },
+          {
+            "name": "status",
+            "type": "string",
+            "description": "'cancelling'; poll build_status for terminal evidence"
+          },
+          {
+            "name": "child_pid",
+            "type": "number"
+          },
+          {
+            "name": "ownership_token",
+            "type": "string"
+          },
+          {
+            "name": "cancel_requested",
+            "type": "boolean"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": "Cancels only the tagged UnrealEditor-Cmd child owned by the matching active test_run job. It never enumerates or terminates arbitrary editor processes."
     },
     "test_get_log": {
       "aliases": [],

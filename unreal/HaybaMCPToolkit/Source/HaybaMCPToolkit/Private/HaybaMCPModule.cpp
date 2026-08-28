@@ -63,6 +63,8 @@
 #include "HAL/PlatformMisc.h"
 #include "HAL/IConsoleManager.h"
 #include "Misc/Paths.h"
+#include "Misc/CommandLine.h"
+#include "Misc/Parse.h"
 #include "Misc/FileHelper.h"
 #include "HAL/FileManager.h"
 #include "Logging/LogMacros.h"
@@ -245,10 +247,18 @@ void FHaybaMCPModule::StartupModule()
         }
     }
 
+    // A disposable automation child must never publish a heartbeat or claim a
+    // listener port. Doing so could redirect the MCP client away from the
+    // serving editor that owns the run.
+    FString AutomationChildToken;
+    const bool bOwnedAutomationChild = FParse::Value(
+        FCommandLine::Get(), TEXT("HaybaAutomationChild="), AutomationChildToken)
+        && !AutomationChildToken.IsEmpty();
+
     // Auto-start the TCP listener so external MCP clients (Claude Code, Cline,
     // OpenCode, …) can connect as soon as the editor is up. The MCP node
     // server itself can still be started/stopped independently via the panel.
-    if (!StartTcpServer())
+    if (!bOwnedAutomationChild && !StartTcpServer())
     {
         UE_LOG(LogHaybaMCP, Error, TEXT("Failed to start TCP listener on port %d at module startup"), TcpPort);
     }
@@ -256,7 +266,7 @@ void FHaybaMCPModule::StartupModule()
     // Auto-start the Node chat sidecar so the in-editor chat works with no manual
     // step. Skip if disabled, or if something is already listening on the sidecar
     // port (a manually-run sidecar or a prior instance) — in that case we reuse it.
-    if (FHaybaMCPSettings::Get().bAutoStartSidecar)
+    if (!bOwnedAutomationChild && FHaybaMCPSettings::Get().bAutoStartSidecar)
     {
         const int32 SidecarPort = HaybaParseSidecarPort(FHaybaMCPSettings::Get().SidecarURL, 7821);
         // Short, bounded probe so we never block editor startup.
