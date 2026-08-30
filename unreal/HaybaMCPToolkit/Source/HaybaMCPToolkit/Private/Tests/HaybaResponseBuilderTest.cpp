@@ -70,6 +70,28 @@ bool FHaybaResponseBuilderImageExemptionTest::RunTest(const FString&)
         TestFalse(TEXT("and clipping leaves it non-empty — which is why it read as valid"), Clipped.IsEmpty());
     }
 
+    {
+        // A field-count cap is presentation policy, not permission to erase
+        // save/verification/failure facts. Those facts drive retry safety.
+        FHaybaResponseLimits Limits;
+        Limits.MaxTopLevelFields = 3;
+        TSharedRef<FJsonObject> In = MakeShared<FJsonObject>();
+        for (int32 Index = 0; Index < 12; ++Index)
+        {
+            In->SetStringField(FString::Printf(TEXT("a%02d"), Index), TEXT("ordinary"));
+        }
+        In->SetBoolField(TEXT("saved"), false);
+        In->SetBoolField(TEXT("verified"), false);
+        In->SetNumberField(TEXT("failed"), 2);
+
+        FHaybaMCPResponseBuilder Builder{Limits};
+        TSharedRef<FJsonObject> Out = Builder.Build(In);
+        TestTrue(TEXT("save fact survives the field cap"), Out->HasField(TEXT("saved")));
+        TestTrue(TEXT("verification fact survives the field cap"), Out->HasField(TEXT("verified")));
+        TestTrue(TEXT("failure count survives the field cap"), Out->HasField(TEXT("failed")));
+        TestTrue(TEXT("ordinary fields are still bounded"), Out->HasField(TEXT("_truncated")));
+    }
+
     return true;
 }
 

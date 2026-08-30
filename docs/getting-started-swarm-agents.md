@@ -4,10 +4,10 @@ Sibling of [`docs/getting-started.md`](getting-started.md). Covers the
 multi-agent "archetype" concept referenced by the in-editor onboarding
 wizard and by `mcp-tools/hayba-mcp/hayba.agents.json`.
 
-**Read this whole page before relying on archetypes for anything.** The
-config file and its schema exist and are real; the loader that was supposed
-to read the file at runtime does not currently exist in this repo. What
-*is* wired up is a lower-level mechanism you drive by hand.
+**Status up front:** the manifest is validated and loaded at runtime. Pass an
+archetype id to `POST /chat/stream` and Hayba applies that archetype's system
+prompt and default tool filter. An explicit `archetype_filter` still overrides
+the manifest's filter for that request.
 
 ## The config file and its schema
 
@@ -35,19 +35,13 @@ The matching TypeScript type is
 [`mcp-tools/hayba-mcp/src/agents/types.ts`](../mcp-tools/hayba-mcp/src/agents/types.ts):
 
 ```ts
-export interface ArchetypeConfig {
-  id: string;
-  role: string;
-  system_prompt: string;
-  tool_filter: string[];          // glob patterns: "*", "actor_*", "scene_*"
-  memory_scope: 'shared' | 'private+shared';
-}
-
-export interface AgentsManifest {
-  version: number;
-  shared_memory: string;          // filename for HaybaMemory db (relative to project root)
-  archetypes: ArchetypeConfig[];
-}
+export const ArchetypeConfigSchema = z.object({
+  id: z.string().min(1),
+  role: z.string().min(1),
+  system_prompt: z.string().min(1),
+  tool_filter: z.array(z.string().min(1)).min(1),
+  memory_scope: z.enum(['private', 'shared', 'private+shared']),
+});
 ```
 
 The onboarding wizard describes the file to new users as user-editable:
@@ -57,29 +51,15 @@ The onboarding wizard describes the file to new users as user-editable:
 > tool filters and system prompts."
 > — `HaybaMCPOnboardingWidget.cpp`
 
-## What is NOT wired up
+## Runtime wiring
 
-Nothing in this repository currently loads `hayba.agents.json`. There is no
-`AgentRegistry` class, no `agent-registry.ts`, no C++ code that opens the
-file. A comment in `mcp-tools/hayba-mcp/vitest.config.ts` documents that an
-earlier version of the test suite carried an `agent-registry` test entry
-"for source that no longer exists" — i.e. the loader was built at one point
-(the v0.3.0 entry in `CHANGELOG.md` describes it: "`AgentRegistry` — loads
-`hayba.agents.json`, instantiates per-archetype runtimes with glob
-`tool_filter` matching") and has since been removed.
-
-Concretely: `system_prompt` and `memory_scope` in the file are not consumed
-by any code path found in this repo. `shared_memory` is likewise not read —
-see [Getting started — Memory system](getting-started-memory-system.md) for
-why the SQLite layer it's meant to point at isn't reachable either.
-
-## What is actually wired up
-
-The chat API accepts a raw glob list per request — it does not read the
-archetype file at all. `POST /chat/stream`
+[`agent-registry.ts`](../mcp-tools/hayba-mcp/src/agents/agent-registry.ts)
+loads and validates `hayba.agents.json`, caches the parsed manifest, rejects
+duplicate or unknown ids, and reports malformed fields with their file path.
+`POST /chat/stream`
 (`mcp-tools/hayba-mcp/src/chat/chat-server.ts`) takes an optional
-`archetype_filter: string[]` field in the request body and threads it
-through to `runAgentLoop` → `buildToolCatalog` in
+`archetype: string` id. It applies that entry's `system_prompt` and threads
+its `tool_filter` through `runAgentLoop` → `buildToolCatalog` in
 [`mcp-tools/hayba-mcp/src/chat/agent-loop.ts`](../mcp-tools/hayba-mcp/src/chat/agent-loop.ts):
 
 ```ts
@@ -97,12 +77,18 @@ whatever the disabled-tools list already excludes. This is the real,
 tested mechanism — see `agent-loop.test.ts`, `'filters by archetype
 tool_filter and disabled list'`.
 
-**So today, "configuring an archetype per project" means:** copy the
-`tool_filter` array for the archetype you want out of `hayba.agents.json`
-by hand, and pass it as `archetype_filter` in the `POST /chat/stream` body
-yourself (or wire up a client that does this — none of the shipped UE panel
-code does it, as far as this search found). Editing `hayba.agents.json`
-alone changes nothing at runtime.
+Example request body:
+
+```json
+{ "prompt": "Audit this level", "archetype": "director" }
+```
+
+For compatibility, callers may instead pass `archetype_filter: string[]`.
+When both fields are present, the explicit filter wins while the selected
+archetype's system prompt still applies. `memory_scope` is validated metadata;
+callers remain responsible for choosing the matching scope on `memory_*` tools.
+The manifest's `shared_memory` field does not redirect the store; configure the
+database with `HAYBA_MEMORY_DB` as described in the memory guide.
 
 ## A separate, actually-wired gating mechanism: disabled tools
 
@@ -118,8 +104,6 @@ archetype.
 
 ## Bottom line
 
-If your workflow needs distinct tool subsets per agent role today, drive
-`archetype_filter` directly against `/chat/stream`. If you want a durable,
-per-project on-disk config that a client automatically honours, that piece
-(the archetype loader) is not implemented — treat `hayba.agents.json` as
-documentation of an intended shape, not a working config file.
+Use `archetype` for the shipped role configuration and `archetype_filter` for
+one-off filtering. Editing the checked-in manifest changes subsequent process
+loads; restart the Node server after editing because the registry is cached.

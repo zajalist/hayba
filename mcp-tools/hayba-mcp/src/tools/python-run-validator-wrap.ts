@@ -43,18 +43,26 @@ export function makeValidatedPythonRunHandler(opts: WrapOpts = {}): ToolHandler 
       const finding = await emitDirectFinding({
         ruleId: 'tcp_socket_to_self_in_python_run',
         severity: 'error',
-        message: 'python_run script opens a TCP socket to the UE plugin port (would deadlock)',
+        message:
+          'python_run policy_blocked [HCR-BLOCK-001]: script opens a TCP socket to the UE plugin port (would deadlock)',
         hint: 'Use the Python plugin API (`unreal.*`) directly instead of round-tripping through the TCP server (52342–52350).',
         refs: ['[[python-run-no-self-connect]]'],
-        context: { script_preview: args.script.slice(0, 200) },
+        context: {
+          policy_code: 'HCR-BLOCK-001',
+          matched_rule: 'loopback MCP socket connection',
+          retry_unchanged: 'forbidden',
+          script_preview: args.script.slice(0, 200),
+        },
         toolName: 'python_run',
       });
       return attachFindingsToResponse(
         {
-          content: [{
-            type: 'text',
-            text: 'python_run rejected by validator: script would open a TCP socket back to the UE plugin port, which deadlocks the game thread.',
-          }],
+          content: [
+            {
+              type: 'text',
+              text: 'python_run policy_blocked [HCR-BLOCK-001]: matched loopback MCP socket connection, which deadlocks the game thread. Safe alternative: call unreal.* directly or return and make a separate MCP request. Retry unchanged: forbidden. This crash guard is non-bypassable.',
+            },
+          ],
           isError: true,
         },
         [finding],
@@ -69,22 +77,30 @@ export function makeValidatedPythonRunHandler(opts: WrapOpts = {}): ToolHandler 
     // guard can't catch because it fires on a later tick). Reject before it
     // reaches UE — matches the authoritative C++ gate in HaybaMCPPythonHandler.
     const danglingPattern = danglingLifetimeRegistration(args.script);
-    if (danglingPattern && !args.allow_unsafe) {
+    if (danglingPattern) {
       const finding = await emitDirectFinding({
         ruleId: 'dangling_lifetime_callback_in_python_run',
         severity: 'error',
-        message: `python_run script registers an engine-lifetime callback ('${danglingPattern}') that would dangle and crash the editor`,
-        hint: 'Do the work inline in this python_run call instead of registering a persistent tick/shutdown/engine-init callback. If you truly need one, keep the callable on a module-global so it is never garbage-collected and pass allow_unsafe=true.',
+        message: `python_run policy_blocked [HCR-LIFE-001]: script registers an engine-lifetime callback ('${danglingPattern}') that would dangle and crash the editor`,
+        hint: 'Do bounded Unreal work inline. allow_unsafe is deprecated and ineffective; use a typed brokered tool (#412/#415) for supported host work.',
         refs: ['[[python-run-no-dangling-delegate]]'],
-        context: { pattern: danglingPattern, script_preview: args.script.slice(0, 200) },
+        context: {
+          policy_code: 'HCR-LIFE-001',
+          matched_rule: danglingPattern,
+          retry_unchanged: 'forbidden',
+          pattern: danglingPattern,
+          script_preview: args.script.slice(0, 200),
+        },
         toolName: 'python_run',
       });
       return attachFindingsToResponse(
         {
-          content: [{
-            type: 'text',
-            text: `python_run rejected by validator: script registers an engine-lifetime callback ('${danglingPattern}'). From a one-shot python_run the Python callable is garbage-collected immediately and the next engine broadcast crashes the editor with a native access violation. Do the work inline, or keep the callable on a module-global and re-run with allow_unsafe=true.`,
-          }],
+          content: [
+            {
+              type: 'text',
+              text: `python_run policy_blocked [HCR-LIFE-001]: script registers an engine-lifetime callback ('${danglingPattern}'). From a one-shot python_run the Python callable is garbage-collected immediately and the next engine broadcast crashes the editor with a native access violation. Safe alternative: perform the work inline or implement an owned native handler. Retry unchanged: forbidden. This crash guard is non-bypassable.`,
+            },
+          ],
           isError: true,
         },
         [finding],
@@ -102,6 +118,9 @@ export function makeValidatedPythonRunHandler(opts: WrapOpts = {}): ToolHandler 
       probe: null, // no follow-up UE queries needed for self-socket post-cond
       scratchDir,
     });
-    return attachFindingsToResponse(result as { content: Array<{ type: 'text'; text: string }>; isError?: boolean }, findings);
+    return attachFindingsToResponse(
+      result as { content: Array<{ type: 'text'; text: string }>; isError?: boolean },
+      findings,
+    );
   };
 }

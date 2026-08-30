@@ -9,6 +9,7 @@
 #include "WidgetBlueprintFactory.h"
 #include "Blueprint/UserWidget.h"
 #include "Blueprint/WidgetTree.h"
+#include "Animation/WidgetAnimation.h"
 #include "Components/Widget.h"
 #include "Components/PanelWidget.h"
 #include "Components/PanelSlot.h"
@@ -243,6 +244,77 @@ namespace
         }
     }
 
+    /** Bring the entire source-object/GUID map to the exact shape required by
+     *  FWidgetBlueprintCompilerContext::ValidateAndFixUpVariableGuids BEFORE a
+     *  compile can emit ensureAlways. Local OnVariableAdded/Remove calls are
+     *  intentionally not trusted as the final authority: a stale entry from an
+     *  earlier failed mutation can poison an otherwise unrelated property edit.
+     *
+     *  Missing/stale/invalid/colliding entries are bounded, deterministic map
+     *  repairs. Duplicate source names and leaked staging/trash objects are tree
+     *  corruption, not map corruption, so those block compilation with a useful
+     *  recovery message instead of guessing which object should win. */
+    bool ReconcileWidgetVariableGuids(
+        UWidgetBlueprint* WBP,
+        const TCHAR* Context,
+        FString& OutError,
+        FString* OutRepairSummary = nullptr)
+    {
+        OutError.Reset();
+        if (OutRepairSummary) OutRepairSummary->Reset();
+        if (!WBP || !WBP->WidgetTree)
+        {
+            OutError = FString::Printf(TEXT("%s: widget blueprint has no WidgetTree"), Context);
+            return false;
+        }
+
+        TArray<FName> SourceNames;
+        WBP->ForEachSourceWidget([&SourceNames](UWidget* Widget)
+        {
+            if (Widget) SourceNames.Add(Widget->GetFName());
+        });
+        for (UWidgetAnimation* Animation : WBP->Animations)
+        {
+            if (Animation) SourceNames.Add(Animation->GetFName());
+        }
+
+        const HaybaUIOps::FVariableGuidReconciliation Plan =
+            HaybaUIOps::PlanVariableGuidReconciliation(
+                SourceNames, WBP->WidgetVariableNameToGuidMap);
+
+        if (!Plan.CanApply())
+        {
+            OutError = FString::Printf(
+                TEXT("%s: unsafe widget tree refused before compilation: %s. ")
+                TEXT("No compile or save was attempted. Reload the asset to discard an incomplete prior mutation; ")
+                TEXT("if the defect persists, repair the duplicate/temporary widget in the UMG Designer."),
+                Context, *Plan.BlockingReason());
+            return false;
+        }
+
+        if (Plan.bChanged)
+        {
+            WBP->Modify();
+            WBP->WidgetVariableNameToGuidMap = Plan.Reconciled;
+            const FString Summary = Plan.RepairSummary();
+            if (OutRepairSummary) *OutRepairSummary = Summary;
+            UE_LOG(LogHaybaMCPUI, Warning,
+                TEXT("%s repaired WidgetVariableNameToGuidMap before compile (%s)."),
+                Context, *Summary);
+        }
+        return true;
+    }
+
+    /** The only safe structural notification for MCP-authored UMG changes. */
+    bool FinalizeWidgetTreeMutation(UWidgetBlueprint* WBP, const TCHAR* Context, FString& OutError)
+    {
+        FString Repairs;
+        if (!ReconcileWidgetVariableGuids(WBP, Context, OutError, &Repairs)) return false;
+        FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(WBP);
+        WBP->MarkPackageDirty();
+        return true;
+    }
+
     UClass* ResolveWidgetClass(const FString& Name)
     {
         static const TMap<FString, UClass*> Known = []
@@ -330,6 +402,49 @@ namespace
         }
     }
 
+    /** Remove an editor-only staging/discard object from the compiler's source
+     *  population. UBaseWidgetBlueprint::ForEachSourceWidget enumerates every
+     *  direct UObject outer of WidgetTree, not merely the attached hierarchy;
+     *  UWidgetTree::RemoveWidget therefore is not sufficient on its own. */
+    bool RetireWidgetTreeObject(UWidgetBlueprint* WBP, UWidget* Widget)
+    {
+        if (!WBP || !WBP->WidgetTree || !Widget) return false;
+        if (Widget->GetOuter() != WBP->WidgetTree) return true;
+
+        UObject* const RetiredOuter = GetTransientPackage();
+        const FName RetiredName = MakeUniqueObjectName(
+            RetiredOuter, Widget->GetClass(), TEXT("HaybaMCP_RetiredWidget"));
+        return Widget->Rename(
+                *RetiredName.ToString(), RetiredOuter,
+                REN_DontCreateRedirectors | REN_DoNotDirty)
+            && Widget->GetOuter() == RetiredOuter;
+    }
+
+    /** Remove every object allocated for a staged operation and prove none is
+     *  still a source widget. Returning false means the caller must report an
+     *  unknown recovery state, never claim the original tree was restored. */
+    bool DiscardStagedWidgets(UWidgetBlueprint* WBP, const TArray<UWidget*>& Staged)
+    {
+        if (!WBP || !WBP->WidgetTree) return false;
+
+        bool bAllRetired = true;
+        for (int32 Index = Staged.Num() - 1; Index >= 0; --Index)
+        {
+            UWidget* Widget = Staged[Index];
+            if (!Widget) continue;
+            if (UPanelWidget* Parent = Widget->GetParent()) Parent->RemoveChild(Widget);
+            WBP->WidgetTree->RemoveWidget(Widget);
+            bAllRetired = RetireWidgetTreeObject(WBP, Widget) && bAllRetired;
+        }
+
+        bool bAnyRemain = false;
+        WBP->ForEachSourceWidget([&Staged, &bAnyRemain](UWidget* Widget)
+        {
+            if (Staged.Contains(Widget)) bAnyRemain = true;
+        });
+        return bAllRetired && !bAnyRemain;
+    }
+
     /** Copy every property the two widgets share by name and type. Used by
      *  `replace` with preserve_properties — text, colours, padding and so on
      *  survive a Button→CheckBox style swap instead of resetting to defaults. */
@@ -407,8 +522,14 @@ namespace
      *  copy its properties, then recurse and re-parent, copying each slot's
      *  layout across as we go. Every widget produced is genuinely new.
      *
-     *  Returns nullptr if construction fails at any level. */
-    UWidget* DeepCloneWidget(UWidgetBlueprint* WBP, UWidget* Source, FName DesiredName, int32 Depth = 0)
+     *  Returns nullptr if construction/re-parenting fails at any level and
+     *  records every allocation so the caller can remove the whole staged copy. */
+    UWidget* DeepCloneWidget(
+        UWidgetBlueprint* WBP,
+        UWidget* Source,
+        FName DesiredName,
+        TArray<UWidget*>& Created,
+        int32 Depth = 0)
     {
         if (!WBP || !WBP->WidgetTree || !Source) return nullptr;
         if (Depth > 64) return nullptr;  // defensive: a cycle would never terminate
@@ -420,6 +541,7 @@ namespace
 
         UWidget* New = WBP->WidgetTree->ConstructWidget<UWidget>(Cls, Name);
         if (!New) return nullptr;
+        Created.Add(New);
 
         CopyCommonProperties(Source, New);
 
@@ -433,10 +555,11 @@ namespace
                     UWidget* SrcChild = SrcPanel->GetChildAt(i);
                     if (!SrcChild) continue;
 
-                    UWidget* NewChild = DeepCloneWidget(WBP, SrcChild, NAME_None, Depth + 1);
-                    if (!NewChild) continue;
+                    UWidget* NewChild = DeepCloneWidget(WBP, SrcChild, NAME_None, Created, Depth + 1);
+                    if (!NewChild) return nullptr;
 
                     UPanelSlot* NewSlot = NewPanel->AddChild(NewChild);
+                    if (!NewSlot) return nullptr;
                     if (NewSlot && SrcChild->Slot && NewSlot->GetClass() == SrcChild->Slot->GetClass())
                     {
                         CopyCommonProperties(SrcChild->Slot, NewSlot);
@@ -1066,6 +1189,14 @@ namespace
         FCompileResult R;
         if (!WBP) { R.Status = TEXT("NoBP"); return R; }
 
+        FString InvariantError;
+        if (!ReconcileWidgetVariableGuids(WBP, TEXT("ui_compile_widget"), InvariantError))
+        {
+            R.Status = TEXT("UnsafeWidgetTree");
+            R.Errors.Add(InvariantError);
+            return R;
+        }
+
         // UWidgetBlueprint validation creates dummy UWorld/UUserWidget
         // previews.  ui_compile_widget intentionally has no Hayba transaction,
         // but a command can still arrive while an unrelated editor gesture has
@@ -1100,6 +1231,41 @@ namespace
         else                                           R.Status = TEXT("Unknown");
 
         return R;
+    }
+
+    /** Preserve compiler diagnostics as structured data while exposing the
+     *  stable lifecycle facts consumed by the command boundary. A handler-level
+     *  Ok only means that compilation ran without crashing; `ok` and
+     *  `compiled_clean` say whether the requested operation actually worked. */
+    void DescribeCompileResult(
+        const FCompileResult& Result,
+        const TSharedPtr<FJsonObject>& Out)
+    {
+        Out->SetBoolField(TEXT("ok"), Result.bSuccess);
+        Out->SetBoolField(TEXT("success"), Result.bSuccess);
+        Out->SetBoolField(TEXT("compiled_clean"), Result.bSuccess);
+        Out->SetStringField(TEXT("status"), Result.Status);
+
+        TArray<TSharedPtr<FJsonValue>> WarningValues;
+        for (const FString& Warning : Result.Warnings)
+        {
+            WarningValues.Add(MakeShared<FJsonValueString>(Warning));
+        }
+        Out->SetArrayField(TEXT("warnings"), WarningValues);
+
+        TArray<TSharedPtr<FJsonValue>> ErrorValues;
+        for (const FString& Error : Result.Errors)
+        {
+            ErrorValues.Add(MakeShared<FJsonValueString>(Error));
+        }
+        Out->SetArrayField(TEXT("errors"), ErrorValues);
+
+        if (!Result.bSuccess)
+        {
+            Out->SetStringField(TEXT("error"), FString::Printf(
+                TEXT("Widget Blueprint compilation did not finish cleanly (status: %s). Fix the compiler errors in data.errors, then retry."),
+                *Result.Status));
+        }
     }
 
     /** Save and verify against the file system. See HaybaMCPSaveVerify.h — the
@@ -1187,7 +1353,9 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleCreateWidget(const TSharedPtr<FJso
         UCanvasPanel* Root = WBP->WidgetTree->ConstructWidget<UCanvasPanel>(UCanvasPanel::StaticClass(), TEXT("RootCanvas"));
         WBP->WidgetTree->RootWidget = Root;
         RegisterWidgetVariable(WBP, Root);
-        FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(WBP);
+        FString InvariantError;
+        if (!FinalizeWidgetTreeMutation(WBP, TEXT("ui_create_widget"), InvariantError))
+            return FHaybaHandlerResult::Err(InvariantError);
     }
 
     FAssetRegistryModule::AssetCreated(WBP);
@@ -1235,6 +1403,14 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleAddElement(const TSharedPtr<FJsonO
             return FHaybaHandlerResult::Err(FString::Printf(TEXT("ui_add_element: parent '%s' not found or not a panel"), *ParentName));
     }
 
+    if (!ChildName.IsEmpty() && !ValidateWidgetName(WBP->WidgetTree, ChildName))
+        return FHaybaHandlerResult::Err(FString::Printf(
+            TEXT("ui_add_element: widget name '%s' is already taken"), *ChildName));
+
+    FString InvariantError;
+    if (!ReconcileWidgetVariableGuids(WBP, TEXT("ui_add_element preflight"), InvariantError))
+        return FHaybaHandlerResult::Err(InvariantError);
+
     const FName ConstructName = ChildName.IsEmpty() ? NAME_None : FName(*ChildName);
     UWidget* NewChild = WBP->WidgetTree->ConstructWidget<UWidget>(ChildClass, ConstructName);
     if (!NewChild)
@@ -1278,8 +1454,19 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleAddElement(const TSharedPtr<FJsonO
     if (P->TryGetObjectField(TEXT("slot_props"), SlotProps) && SlotProps && SlotProps->IsValid())
         ApplySlotProps(NewSlot, *SlotProps);
 
-    FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(WBP);
-    WBP->MarkPackageDirty();
+    if (!FinalizeWidgetTreeMutation(WBP, TEXT("ui_add_element"), InvariantError))
+    {
+        const TArray<UWidget*> StagedWidgets = { NewChild };
+        const bool bWidgetRemoved = DiscardStagedWidgets(WBP, StagedWidgets);
+        FString IgnoredRecoveryError;
+        const bool bGuidMapRecovered = ReconcileWidgetVariableGuids(
+            WBP, TEXT("ui_add_element rollback"), IgnoredRecoveryError);
+        return FHaybaHandlerResult::Err(FString::Printf(
+            TEXT("%s %s"), *InvariantError,
+            bWidgetRemoved && bGuidMapRecovered
+                ? TEXT("The new widget and its GUID were removed; no structural compile was attempted.")
+                : TEXT("Recovery is unknown; reload the asset before any further UI command.")));
+    }
 
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
     Out->SetStringField(TEXT("widget_blueprint_path"), WBP->GetPathName());
@@ -1309,6 +1496,12 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleSetProperties(const TSharedPtr<FJs
     if (!WBP || !WBP->WidgetTree)
         return FHaybaHandlerResult::Err(TEXT("ui_set_widget_properties: widget blueprint not found"));
 
+    FString InvariantError;
+    FString GuidRepairSummary;
+    if (!ReconcileWidgetVariableGuids(
+            WBP, TEXT("ui_set_widget_properties preflight"), InvariantError, &GuidRepairSummary))
+        return FHaybaHandlerResult::Err(InvariantError);
+
     UWidget* Widget = FindWidgetByName(WBP->WidgetTree, WidgetName);
     if (!Widget)
         return FHaybaHandlerResult::Err(FString::Printf(TEXT("ui_set_widget_properties: widget '%s' not found"), *WidgetName));
@@ -1324,6 +1517,12 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleSetProperties(const TSharedPtr<FJs
     TArray<FString>& FailedProps = Result.FailedProps;
     TArray<FString>& UnknownSlotProps = Result.UnknownSlotProps;
     TArray<FString>& Warnings = Result.Warnings;
+    if (!GuidRepairSummary.IsEmpty())
+    {
+        Warnings.Add(FString::Printf(
+            TEXT("Repaired the widget blueprint's compiler GUID map before applying properties (%s)."),
+            *GuidRepairSummary));
+    }
     {
         // No FScopedTransaction: these are automation-tool edits with no undo/redo
         // requirement, and the global editor transaction buffer (GEditor->Trans) can
@@ -1410,8 +1609,12 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleSetProperties(const TSharedPtr<FJs
         Widget->PostEditChange();
         // Designer-slot layout is serialized as part of the WidgetTree, so use
         // a structural notification rather than a mere generated-class refresh.
-        FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(WBP);
-        WBP->MarkPackageDirty();
+        if (!FinalizeWidgetTreeMutation(WBP, TEXT("ui_set_widget_properties"), InvariantError))
+        {
+            return FHaybaHandlerResult::Err(FString::Printf(
+                TEXT("%s Property values may be staged in memory, but no structural compile or save was attempted; ")
+                TEXT("reload the asset before retrying."), *InvariantError));
+        }
     }
 
     // 3. Shape — pure.
@@ -1525,9 +1728,17 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleMutateTree(const TSharedPtr<FJsonO
     if (!WBP || !WBP->WidgetTree)
         return FHaybaHandlerResult::Err(TEXT("ui_mutate_tree: widget blueprint not found"));
 
+    FString InvariantError;
+    FString GuidRepairSummary;
+    if (!ReconcileWidgetVariableGuids(
+            WBP, TEXT("ui_mutate_tree preflight"), InvariantError, &GuidRepairSummary))
+        return FHaybaHandlerResult::Err(InvariantError);
+
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
     Out->SetStringField(TEXT("widget_blueprint_path"), WBP->GetPathName());
     Out->SetStringField(TEXT("operation"), Operation);
+    if (!GuidRepairSummary.IsEmpty())
+        Out->SetStringField(TEXT("guid_map_repaired"), GuidRepairSummary);
 
     if (Operation == TEXT("remove"))
     {
@@ -1585,6 +1796,8 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleMutateTree(const TSharedPtr<FJsonO
                         return FHaybaHandlerResult::Err(TEXT("ui_mutate_tree remove: invalid replacement_root class"));
 
                     UWidget* NewRoot = WBP->WidgetTree->ConstructWidget<UWidget>(NewRootClass);
+                    if (!NewRoot)
+                        return FHaybaHandlerResult::Err(TEXT("ui_mutate_tree remove: replacement root construction failed; tree unchanged"));
                     WBP->WidgetTree->RootWidget = NewRoot;
                     RegisterWidgetVariable(WBP, NewRoot);
                 }
@@ -1620,8 +1833,12 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleMutateTree(const TSharedPtr<FJsonO
                 if (W) WBP->WidgetVariableNameToGuidMap.Remove(W->GetFName());
             }
 
-            FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(WBP);
-            WBP->MarkPackageDirty();
+            if (!FinalizeWidgetTreeMutation(WBP, TEXT("ui_mutate_tree remove"), InvariantError))
+            {
+                return FHaybaHandlerResult::Err(FString::Printf(
+                    TEXT("%s The removal is staged in memory but was not compiled or saved; reload the asset before retrying."),
+                    *InvariantError));
+            }
         }
 
         Out->SetStringField(TEXT("widget_name"), WidgetName);
@@ -1666,6 +1883,12 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleMutateTree(const TSharedPtr<FJsonO
 
         int32 OldIndex = OldParent->GetChildIndex(Widget);
         FString OldParentName = OldParent->GetName();
+        UObject* OldSlotSnapshot = nullptr;
+        if (Widget->Slot)
+        {
+            OldSlotSnapshot = NewObject<UObject>(GetTransientPackage(), Widget->Slot->GetClass());
+            CopyCommonProperties(Widget->Slot, OldSlotSnapshot);
+        }
 
         int32 InsertIndex = -1;
         P->TryGetNumberField(TEXT("index"), InsertIndex);
@@ -1690,10 +1913,25 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleMutateTree(const TSharedPtr<FJsonO
                 // panels (SizeBox, Border, ScaleBox hold exactly one child)
                 // reject the add and the caller's tree would silently lose a
                 // whole subtree.
-                OldParent->InsertChildAt(FMath::Clamp(OldIndex, 0, OldParent->GetChildrenCount()), Widget);
+                UPanelSlot* RestoredSlot = OldParent->InsertChildAt(
+                    FMath::Clamp(OldIndex, 0, OldParent->GetChildrenCount()), Widget);
+                if (RestoredSlot && OldSlotSnapshot && RestoredSlot->GetClass() == OldSlotSnapshot->GetClass())
+                {
+                    CopyCommonProperties(OldSlotSnapshot, RestoredSlot);
+                    RestoredSlot->SynchronizeProperties();
+                }
+                const bool bRecovered = RestoredSlot
+                    && Widget->GetParent() == OldParent
+                    && OldParent->GetChildIndex(Widget) == OldIndex;
+                if (bRecovered)
+                {
+                    return FHaybaHandlerResult::Err(FString::Printf(
+                        TEXT("ui_mutate_tree reparent: '%s' refused the child (a %s holds a limited number of children). Widget and slot restored under '%s'."),
+                        *NewParentName, *NewParent->GetClass()->GetName(), *OldParentName));
+                }
                 return FHaybaHandlerResult::Err(FString::Printf(
-                    TEXT("ui_mutate_tree reparent: '%s' refused the child (a %s holds a limited number of children). Widget left under '%s'."),
-                    *NewParentName, *NewParent->GetClass()->GetName(), *OldParentName));
+                    TEXT("ui_mutate_tree reparent: '%s' refused the child and recovery is unknown; reload the asset before any further UI command."),
+                    *NewParentName));
             }
 
             // Slot layout for the NEW parent, since the old slot's type is
@@ -1715,8 +1953,29 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleMutateTree(const TSharedPtr<FJsonO
             Out->SetStringField(TEXT("new_slot_class"), NewSlot->GetClass()->GetName());
             Out->SetNumberField(TEXT("new_child_index"), NewParent->GetChildIndex(Widget));
 
-            FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(WBP);
-            WBP->MarkPackageDirty();
+            if (!FinalizeWidgetTreeMutation(WBP, TEXT("ui_mutate_tree reparent"), InvariantError))
+            {
+                NewParent->RemoveChild(Widget);
+                UPanelSlot* RestoredSlot = OldParent->InsertChildAt(
+                    FMath::Clamp(OldIndex, 0, OldParent->GetChildrenCount()), Widget);
+                if (RestoredSlot && OldSlotSnapshot && RestoredSlot->GetClass() == OldSlotSnapshot->GetClass())
+                {
+                    CopyCommonProperties(OldSlotSnapshot, RestoredSlot);
+                    RestoredSlot->SynchronizeProperties();
+                }
+                FString IgnoredRecoveryError;
+                const bool bGuidMapRecovered = ReconcileWidgetVariableGuids(
+                    WBP, TEXT("ui_mutate_tree reparent rollback"), IgnoredRecoveryError);
+                const bool bRecovered = RestoredSlot
+                    && bGuidMapRecovered
+                    && Widget->GetParent() == OldParent
+                    && OldParent->GetChildIndex(Widget) == OldIndex;
+                return FHaybaHandlerResult::Err(FString::Printf(
+                    TEXT("%s %s"), *InvariantError,
+                    bRecovered
+                        ? *FString::Printf(TEXT("The widget and slot were restored under '%s'; no structural compile was attempted."), *OldParentName)
+                        : TEXT("Recovery is unknown; reload the asset before any further UI command.")));
+            }
         }
 
         Out->SetStringField(TEXT("widget_name"), WidgetName);
@@ -1775,8 +2034,19 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleMutateTree(const TSharedPtr<FJsonO
             UPanelSlot* NewSlot = Parent->InsertChildAt(NewIndex, Widget);
             if (!NewSlot)
             {
-                Parent->InsertChildAt(FMath::Clamp(OldIndex, 0, Parent->GetChildrenCount()), Widget);
-                return FHaybaHandlerResult::Err(TEXT("ui_mutate_tree move: re-insert failed; widget restored to its original index"));
+                UPanelSlot* RestoredSlot = Parent->InsertChildAt(
+                    FMath::Clamp(OldIndex, 0, Parent->GetChildrenCount()), Widget);
+                if (RestoredSlot && SlotSnapshot && RestoredSlot->GetClass() == SlotSnapshot->GetClass())
+                {
+                    CopyCommonProperties(SlotSnapshot, RestoredSlot);
+                    RestoredSlot->SynchronizeProperties();
+                }
+                const bool bRecovered = RestoredSlot
+                    && Widget->GetParent() == Parent
+                    && Parent->GetChildIndex(Widget) == OldIndex;
+                return FHaybaHandlerResult::Err(bRecovered
+                    ? TEXT("ui_mutate_tree move: re-insert failed; widget and slot restored to the original index")
+                    : TEXT("ui_mutate_tree move: re-insert and rollback both failed; recovery is unknown, reload the asset before any further UI command"));
             }
             if (SlotSnapshot)
             {
@@ -1784,8 +2054,29 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleMutateTree(const TSharedPtr<FJsonO
                 NewSlot->SynchronizeProperties();
             }
 
-            FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(WBP);
-            WBP->MarkPackageDirty();
+            if (!FinalizeWidgetTreeMutation(WBP, TEXT("ui_mutate_tree move"), InvariantError))
+            {
+                Parent->RemoveChild(Widget);
+                UPanelSlot* RestoredSlot = Parent->InsertChildAt(
+                    FMath::Clamp(OldIndex, 0, Parent->GetChildrenCount()), Widget);
+                if (RestoredSlot && SlotSnapshot && RestoredSlot->GetClass() == SlotSnapshot->GetClass())
+                {
+                    CopyCommonProperties(SlotSnapshot, RestoredSlot);
+                    RestoredSlot->SynchronizeProperties();
+                }
+                FString IgnoredRecoveryError;
+                const bool bGuidMapRecovered = ReconcileWidgetVariableGuids(
+                    WBP, TEXT("ui_mutate_tree move rollback"), IgnoredRecoveryError);
+                const bool bRecovered = RestoredSlot
+                    && bGuidMapRecovered
+                    && Widget->GetParent() == Parent
+                    && Parent->GetChildIndex(Widget) == OldIndex;
+                return FHaybaHandlerResult::Err(FString::Printf(
+                    TEXT("%s %s"), *InvariantError,
+                    bRecovered
+                        ? TEXT("The widget and slot were restored to the original index; no structural compile was attempted.")
+                        : TEXT("Recovery is unknown; reload the asset before any further UI command.")));
+            }
         }
 
         Out->SetStringField(TEXT("widget_name"), WidgetName);
@@ -1801,6 +2092,10 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleMutateTree(const TSharedPtr<FJsonO
             return FHaybaHandlerResult::Err(TEXT("ui_mutate_tree rename: missing widget_name"));
         if (!P->TryGetStringField(TEXT("new_name"), NewName) || NewName.IsEmpty())
             return FHaybaHandlerResult::Err(TEXT("ui_mutate_tree rename: missing new_name"));
+        if (NewName.StartsWith(TEXT("TRASH_")) || NewName.StartsWith(TEXT("HaybaMCP_Replaced"))
+            || NewName.StartsWith(TEXT("HaybaMCP_ReplacementStaging")))
+            return FHaybaHandlerResult::Err(TEXT(
+                "ui_mutate_tree rename: temporary/trash prefixes are reserved because UMG cannot safely compile them"));
 
         UWidget* Widget = FindWidgetByName(WBP->WidgetTree, WidgetName);
         if (!Widget)
@@ -1814,15 +2109,58 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleMutateTree(const TSharedPtr<FJsonO
         // Carry the variable GUID across so existing bindings and any graph
         // references keep resolving to this widget.
         FGuid Guid;
-        const bool bHadGuid = WBP->WidgetVariableNameToGuidMap.RemoveAndCopyValue(FName(*WidgetName), Guid);
+        const FGuid* FoundGuid = WBP->WidgetVariableNameToGuidMap.Find(FName(*WidgetName));
+        const bool bHadGuid = FoundGuid != nullptr;
+        if (FoundGuid) Guid = *FoundGuid;
 
-        Widget->Rename(*NewName, Widget->GetOuter(), REN_DontCreateRedirectors);
+        const bool bRenameReportedSuccess = Widget->Rename(
+            *NewName, Widget->GetOuter(), REN_DontCreateRedirectors);
+        if (!bRenameReportedSuccess || Widget->GetName() != NewName)
+        {
+            const bool bStillOriginal = Widget->GetName() == WidgetName
+                || (Widget->Rename(
+                        *WidgetName,
+                        Widget->GetOuter(),
+                        REN_DontCreateRedirectors | REN_DoNotDirty)
+                    && Widget->GetName() == WidgetName);
+            if (bStillOriginal)
+            {
+                return FHaybaHandlerResult::Err(FString::Printf(
+                    TEXT("ui_mutate_tree rename: Unreal refused '%s'; widget remains '%s' and no GUID was moved"),
+                    *NewName, *Widget->GetName()));
+            }
+            return FHaybaHandlerResult::Err(FString::Printf(
+                TEXT("ui_mutate_tree rename: Unreal refused '%s' and the original name could not be verified; recovery is unknown, reload the asset before any further UI command (current name '%s')"),
+                *NewName, *Widget->GetName()));
+        }
 
+        WBP->WidgetVariableNameToGuidMap.Remove(FName(*WidgetName));
         if (bHadGuid) WBP->WidgetVariableNameToGuidMap.Add(FName(*NewName), Guid);
         else RegisterWidgetVariable(WBP, Widget);
 
-        FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(WBP);
-        WBP->MarkPackageDirty();
+        if (!FinalizeWidgetTreeMutation(WBP, TEXT("ui_mutate_tree rename"), InvariantError))
+        {
+            const bool bNameRestored = Widget->Rename(
+                    *WidgetName,
+                    Widget->GetOuter(),
+                    REN_DontCreateRedirectors | REN_DoNotDirty)
+                && Widget->GetName() == WidgetName;
+            WBP->WidgetVariableNameToGuidMap.Remove(FName(*NewName));
+            if (bHadGuid) WBP->WidgetVariableNameToGuidMap.Add(FName(*WidgetName), Guid);
+            FString IgnoredRecoveryError;
+            const bool bGuidMapRecovered = ReconcileWidgetVariableGuids(
+                WBP, TEXT("ui_mutate_tree rename rollback"), IgnoredRecoveryError);
+            const FGuid* RestoredGuid = WBP->WidgetVariableNameToGuidMap.Find(FName(*WidgetName));
+            const bool bRecovered = bNameRestored
+                && bGuidMapRecovered
+                && (!bHadGuid || (RestoredGuid && *RestoredGuid == Guid))
+                && !WBP->WidgetVariableNameToGuidMap.Contains(FName(*NewName));
+            return FHaybaHandlerResult::Err(FString::Printf(
+                TEXT("%s %s"), *InvariantError,
+                bRecovered
+                    ? TEXT("The original name and GUID were restored; no structural compile was attempted.")
+                    : TEXT("Recovery is unknown; reload the asset before any further UI command.")));
+        }
 
         Out->SetStringField(TEXT("old_name"), WidgetName);
         Out->SetStringField(TEXT("new_name"), Widget->GetName());
@@ -1849,6 +2187,10 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleMutateTree(const TSharedPtr<FJsonO
 
         if (!NewName.IsEmpty() && !ValidateWidgetName(WBP->WidgetTree, NewName))
             return FHaybaHandlerResult::Err(FString::Printf(TEXT("ui_mutate_tree duplicate: '%s' is already taken"), *NewName));
+        if (NewName.StartsWith(TEXT("TRASH_")) || NewName.StartsWith(TEXT("HaybaMCP_Replaced"))
+            || NewName.StartsWith(TEXT("HaybaMCP_ReplacementStaging")))
+            return FHaybaHandlerResult::Err(TEXT(
+                "ui_mutate_tree duplicate: temporary/trash prefixes are reserved because UMG cannot safely compile them"));
 
         WBP->Modify();
         TargetParent->Modify();
@@ -1872,9 +2214,17 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleMutateTree(const TSharedPtr<FJsonO
             ? MakeUniqueObjectName(WBP->WidgetTree, Source->GetClass(), Source->GetFName())
             : FName(*NewName);
 
-        UWidget* Copy = DeepCloneWidget(WBP, Source, RootName);
+        TArray<UWidget*> StagedWidgets;
+        UWidget* Copy = DeepCloneWidget(WBP, Source, RootName, StagedWidgets);
         if (!Copy)
-            return FHaybaHandlerResult::Err(TEXT("ui_mutate_tree duplicate: could not clone the widget subtree"));
+        {
+            const bool bRecovered = DiscardStagedWidgets(WBP, StagedWidgets);
+            FString IgnoredRecoveryError;
+            ReconcileWidgetVariableGuids(WBP, TEXT("ui_mutate_tree duplicate construction rollback"), IgnoredRecoveryError);
+            return FHaybaHandlerResult::Err(bRecovered
+                ? TEXT("ui_mutate_tree duplicate: could not clone the complete widget subtree; every staged widget was removed and no compile was attempted")
+                : TEXT("ui_mutate_tree duplicate: clone failed and staged widgets could not be fully removed; recovery is unknown, reload the asset before any further UI command"));
+        }
 
         TArray<FString> RenameFallbacks;
         if (Copy->GetFName() != RootName)
@@ -1890,8 +2240,20 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleMutateTree(const TSharedPtr<FJsonO
 
         UPanelSlot* NewSlot = TargetParent->AddChild(Copy);
         if (!NewSlot)
+        {
+            const bool bRecovered = DiscardStagedWidgets(WBP, StagedWidgets);
+            FString IgnoredRecoveryError;
+            ReconcileWidgetVariableGuids(WBP, TEXT("ui_mutate_tree duplicate attach rollback"), IgnoredRecoveryError);
+            if (bRecovered)
+            {
+                return FHaybaHandlerResult::Err(FString::Printf(
+                    TEXT("ui_mutate_tree duplicate: '%s' refused the child (panel is full); the staged subtree was removed and no compile was attempted"),
+                    *TargetParent->GetName()));
+            }
             return FHaybaHandlerResult::Err(FString::Printf(
-                TEXT("ui_mutate_tree duplicate: '%s' refused the child (panel is full)"), *TargetParent->GetName()));
+                TEXT("ui_mutate_tree duplicate: '%s' refused the child and staged widgets remain; recovery is unknown, reload the asset before any further UI command"),
+                *TargetParent->GetName()));
+        }
 
         const FString NameAfterAddChild = Copy->GetName();
 
@@ -1912,18 +2274,6 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleMutateTree(const TSharedPtr<FJsonO
         {
             ApplySlotPropsChecked(NewSlot, *SlotProps);
         }
-
-        // Structural, like every other tree mutation here.
-        //
-        // A stage trace showed the copy surviving the clone and AddChild, then
-        // becoming TRASH_ across this call — which looked like the recompile was
-        // at fault. It was not. The copy was ORPHANED (its parent slot pointed
-        // at the source's child, because slot Content was being copied), and the
-        // recompile simply collected a widget nothing referenced. Fixing the
-        // slot pointers made it reachable, and it now survives compilation like
-        // every other widget these tools create.
-        FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(WBP);
-        WBP->MarkPackageDirty();
 
         {
             TSharedPtr<FJsonObject> Stages = MakeShared<FJsonObject>();
@@ -1981,17 +2331,36 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleMutateTree(const TSharedPtr<FJsonO
 
             if (Defects.Num() > 0)
             {
+                const bool bRecovered = DiscardStagedWidgets(WBP, StagedWidgets);
+                FString IgnoredRecoveryError;
+                const bool bGuidMapRecovered = ReconcileWidgetVariableGuids(
+                    WBP, TEXT("ui_mutate_tree duplicate defect rollback"), IgnoredRecoveryError);
                 // Carry the stage trace in the error itself. The success payload
                 // is discarded on this path, and the whole point of recording
                 // where the name changed is to know WHICH call broke it.
                 return FHaybaHandlerResult::Err(FString::Printf(
                     TEXT("ui_mutate_tree duplicate: the copy did not come out clean — %s. ")
                     TEXT("Name by stage: after_clone=\"%s\" after_add_child=\"%s\" final=\"%s\". ")
-                    TEXT("The blueprint has NOT been saved; discard the change by reloading the asset. ")
-                    TEXT("Build the widget explicitly with ui_build_tree instead."),
+                    TEXT("%s"),
                     *FString::Join(Defects, TEXT("; ")),
-                    *NameAfterClone, *NameAfterAddChild, *Copy->GetName()));
+                    *NameAfterClone, *NameAfterAddChild, *Copy->GetName(),
+                    bRecovered && bGuidMapRecovered
+                        ? TEXT("The staged subtree and its GUIDs were removed; no structural compile or save was attempted. Build the widget explicitly with ui_build_tree instead.")
+                        : TEXT("Recovery is unknown; reload the asset before any further UI command.")));
             }
+        }
+
+        if (!FinalizeWidgetTreeMutation(WBP, TEXT("ui_mutate_tree duplicate"), InvariantError))
+        {
+            const bool bRecovered = DiscardStagedWidgets(WBP, StagedWidgets);
+            FString RecoveryError;
+            const bool bGuidMapRecovered = ReconcileWidgetVariableGuids(
+                WBP, TEXT("ui_mutate_tree duplicate invariant rollback"), RecoveryError);
+            return FHaybaHandlerResult::Err(FString::Printf(
+                TEXT("%s %s"), *InvariantError,
+                bRecovered && bGuidMapRecovered
+                    ? TEXT("The staged subtree and its GUIDs were removed; no structural compile was attempted.")
+                    : TEXT("Recovery is unknown; reload the asset before any further UI command.")));
         }
 
         if (RenameFallbacks.Num() > 0)
@@ -2049,7 +2418,27 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleMutateTree(const TSharedPtr<FJsonO
         if (!Parent)
             return FHaybaHandlerResult::Err(TEXT("ui_mutate_tree replace: cannot replace root widget"));
 
+        const FName FinalName = NewName.IsEmpty() ? Widget->GetFName() : FName(*NewName);
+        if (!NewName.IsEmpty() && FinalName != Widget->GetFName()
+            && !ValidateWidgetName(WBP->WidgetTree, NewName))
+        {
+            return FHaybaHandlerResult::Err(FString::Printf(
+                TEXT("ui_mutate_tree replace: new_name '%s' is already taken"), *NewName));
+        }
+        if (FinalName.ToString().StartsWith(TEXT("TRASH_"))
+            || FinalName.ToString().StartsWith(TEXT("HaybaMCP_Replaced"))
+            || FinalName.ToString().StartsWith(TEXT("HaybaMCP_ReplacementStaging")))
+        {
+            return FHaybaHandlerResult::Err(TEXT(
+                "ui_mutate_tree replace: temporary/trash prefixes are reserved because UMG cannot safely compile them"));
+        }
+
         int32 ChildIndex = Parent->GetChildIndex(Widget);
+        if (ChildIndex == INDEX_NONE)
+        {
+            return FHaybaHandlerResult::Err(TEXT(
+                "ui_mutate_tree replace: parent/child relationship is inconsistent; no changes were made"));
+        }
         FString OldClass = Widget->GetClass()->GetName();
         const FName OriginalName = Widget->GetFName();
         const FName ConstructName = NewName.IsEmpty() ? OriginalName : FName(*NewName);
@@ -2121,14 +2510,18 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleMutateTree(const TSharedPtr<FJsonO
             OriginalDescendantCount = FMath::Max(0, OriginalSubtree.Num() - 1);
         }
 
-        TArray<FName> DiscardedDescendantNames;
+        TArray<TPair<UWidget*, FName>> DiscardedDescendants;
         if (!bPreserveChildren && OldPanel)
         {
             TArray<UWidget*> DiscardedSubtree;
             CollectSubtree(Widget, DiscardedSubtree);
             for (int32 Index = 1; Index < DiscardedSubtree.Num(); ++Index)
             {
-                if (DiscardedSubtree[Index]) DiscardedDescendantNames.Add(DiscardedSubtree[Index]->GetFName());
+                if (DiscardedSubtree[Index])
+                {
+                    DiscardedDescendants.Emplace(
+                        DiscardedSubtree[Index], DiscardedSubtree[Index]->GetFName());
+                }
             }
         }
 
@@ -2139,64 +2532,149 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleMutateTree(const TSharedPtr<FJsonO
             Widget->Modify();
             Parent->Modify();
 
-            // Free the name before reusing it. Constructing a widget with a name
-            // the outgoing widget still holds makes UE silently uniquify the new
-            // one ("Title_1"), which then breaks every binding that referenced
-            // the original name.
             UPanelSlot* const OldSlot = Widget->Slot;
-            Widget->Rename(*MakeUniqueObjectName(Widget->GetOuter(), Widget->GetClass(), TEXT("HaybaMCP_Replaced")).ToString(),
-                Widget->GetOuter(), REN_DontCreateRedirectors | REN_DoNotDirty);
+            UObject* SlotSnapshot = nullptr;
+            if (OldSlot)
+            {
+                SlotSnapshot = NewObject<UObject>(GetTransientPackage(), OldSlot->GetClass());
+                CopyCommonProperties(OldSlot, SlotSnapshot);
+            }
 
-            UWidget* NewWidget = WBP->WidgetTree->ConstructWidget<UWidget>(NewClass, ConstructName);
+            const TMap<FName, FGuid> GuidMapBefore = WBP->WidgetVariableNameToGuidMap;
+            const FName NewStagingName = MakeUniqueObjectName(
+                WBP->WidgetTree, NewClass, TEXT("HaybaMCP_ReplacementStagingNew"));
+            const FName OldStagingName = MakeUniqueObjectName(
+                WBP->WidgetTree, Widget->GetClass(), TEXT("HaybaMCP_ReplacementStagingOld"));
+
+            TArray<UWidget*> StagedWidgets;
+            UWidget* NewWidget = WBP->WidgetTree->ConstructWidget<UWidget>(NewClass, NewStagingName);
             if (!NewWidget)
             {
-                if (Widget->GetFName() != OriginalName)
-                    Widget->Rename(*OriginalName.ToString(), Widget->GetOuter(), REN_DontCreateRedirectors | REN_DoNotDirty);
                 return FHaybaHandlerResult::Err(TEXT("ui_mutate_tree replace: ConstructWidget failed"));
             }
-
-            auto RestoreOriginalChildren = [&]() -> bool
-            {
-                if (!OldPanel) return true;
-                // Detach every original child first so a single-child panel is
-                // empty before AddChild performs its capacity check.
-                for (const FPreservedChild& Entry : PreservedChildren)
-                {
-                    if (Entry.Widget) Entry.Widget->RemoveFromParent();
-                }
-                for (const FPreservedChild& Entry : PreservedChildren)
-                {
-                    if (!Entry.Widget || !OldPanel->AddChild(Entry.Widget, Entry.SlotTemplate)) return false;
-                }
-                return true;
-            };
-
-            auto DiscardFailedReplacement = [&]()
-            {
-                NewWidget->RemoveFromParent();
-                NewWidget->Rename(
-                    *MakeUniqueObjectName(NewWidget->GetOuter(), NewWidget->GetClass(), TEXT("HaybaMCP_FailedReplacement")).ToString(),
-                    NewWidget->GetOuter(), REN_DontCreateRedirectors | REN_DoNotDirty);
-                WBP->WidgetTree->RemoveWidget(NewWidget);
-                if (Widget->GetFName() != OriginalName)
-                    Widget->Rename(*OriginalName.ToString(), Widget->GetOuter(), REN_DontCreateRedirectors | REN_DoNotDirty);
-            };
-
-            if (NewWidget->GetFName() != ConstructName ||
-                (!NewName.IsEmpty() && !NewWidget->GetName().Equals(NewName, ESearchCase::CaseSensitive)))
-            {
-                const FString ActualName = NewWidget->GetName();
-                DiscardFailedReplacement();
-                return FHaybaHandlerResult::Err(FString::Printf(
-                    TEXT("ui_mutate_tree replace: ConstructWidget returned name '%s' instead of requested '%s'; no changes were kept"),
-                    *ActualName, *ConstructName.ToString()));
-            }
+            StagedWidgets.Add(NewWidget);
 
             int32 PropertiesCopied = 0;
             if (bPreserveProperties)
             {
                 PropertiesCopied = CopyCommonProperties(Widget, NewWidget);
             }
+
+            auto RestoreOriginalChildren = [&]() -> bool
+            {
+                if (!bPreserveChildren || !OldPanel) return true;
+
+                // Empty both the old and replacement panels first so rollback
+                // also works for single-child containers.
+                for (const FPreservedChild& Entry : PreservedChildren)
+                {
+                    if (Entry.Widget) Entry.Widget->RemoveFromParent();
+                }
+                for (const FPreservedChild& Entry : PreservedChildren)
+                {
+                    UPanelSlot* RestoredSlot = Entry.Widget
+                        ? OldPanel->AddChild(Entry.Widget, Entry.SlotTemplate)
+                        : nullptr;
+                    if (!RestoredSlot) return false;
+                    if (Entry.SlotTemplate && RestoredSlot->GetClass() == Entry.SlotTemplate->GetClass())
+                    {
+                        CopyCommonProperties(Entry.SlotTemplate, RestoredSlot);
+                        RestoredSlot->SynchronizeProperties();
+                    }
+                }
+
+                if (OldPanel->GetChildrenCount() != PreservedChildren.Num()) return false;
+                for (int32 Index = 0; Index < PreservedChildren.Num(); ++Index)
+                {
+                    if (!PreservedChildren[Index].Widget
+                        || OldPanel->GetChildAt(Index) != PreservedChildren[Index].Widget
+                        || PreservedChildren[Index].Widget->GetParent() != OldPanel)
+                    {
+                        return false;
+                    }
+                }
+                return true;
+            };
+
+            auto RestoreDiscardedNames = [&]() -> bool
+            {
+                bool bRestored = true;
+                for (const TPair<UWidget*, FName>& Entry : DiscardedDescendants)
+                {
+                    if (!Entry.Key) { bRestored = false; continue; }
+                    if (Entry.Key->GetFName() == Entry.Value) continue;
+                    bRestored = Entry.Key->Rename(
+                        *Entry.Value.ToString(), WBP->WidgetTree,
+                        REN_DontCreateRedirectors | REN_DoNotDirty)
+                        && Entry.Key->GetFName() == Entry.Value
+                        && bRestored;
+                }
+                return bRestored;
+            };
+
+            auto RestoreOriginal = [&]() -> bool
+            {
+                // Free the requested final name before restoring the outgoing
+                // object. A unique rollback name also keeps failed allocations
+                // out of the authoring namespace until they are discarded.
+                bool bReplacementNameFreed = true;
+                if (NewWidget->GetFName() == FinalName)
+                {
+                    const FName RollbackName = MakeUniqueObjectName(
+                        WBP->WidgetTree, NewClass, TEXT("HaybaMCP_ReplacementStagingRollback"));
+                    bReplacementNameFreed = NewWidget->Rename(
+                        *RollbackName.ToString(), WBP->WidgetTree,
+                        REN_DontCreateRedirectors | REN_DoNotDirty)
+                        && NewWidget->GetFName() == RollbackName;
+                }
+
+                const bool bChildrenRestored = RestoreOriginalChildren();
+                const bool bDiscardedNamesRestored = RestoreDiscardedNames();
+                const bool bOriginalNameRestored = Widget->GetFName() == OriginalName
+                    || (Widget->Rename(
+                            *OriginalName.ToString(), WBP->WidgetTree,
+                            REN_DontCreateRedirectors | REN_DoNotDirty)
+                        && Widget->GetFName() == OriginalName);
+
+                bool bParentRestored = Parent->GetChildAt(ChildIndex) == Widget;
+                if (!bParentRestored && Parent->GetChildAt(ChildIndex) == NewWidget)
+                {
+                    bParentRestored = Parent->ReplaceChildAt(ChildIndex, Widget);
+                    if (bParentRestored) NewWidget->Slot = nullptr;
+                }
+                if (!bParentRestored)
+                {
+                    if (UPanelWidget* CurrentParent = Widget->GetParent())
+                        CurrentParent->RemoveChild(Widget);
+                    UPanelSlot* RestoredSlot = Parent->InsertChildAt(
+                        FMath::Clamp(ChildIndex, 0, Parent->GetChildrenCount()), Widget);
+                    if (RestoredSlot && SlotSnapshot && RestoredSlot->GetClass() == SlotSnapshot->GetClass())
+                    {
+                        CopyCommonProperties(SlotSnapshot, RestoredSlot);
+                        RestoredSlot->SynchronizeProperties();
+                    }
+                    bParentRestored = RestoredSlot && Parent->GetChildIndex(Widget) == ChildIndex;
+                }
+
+                const bool bExactParentSlotRestored = !OldSlot || Widget->Slot == OldSlot;
+                const bool bStagedRemoved = DiscardStagedWidgets(WBP, StagedWidgets);
+                WBP->WidgetVariableNameToGuidMap = GuidMapBefore;
+                FString RecoveryInvariantError;
+                const bool bGuidMapRecovered = ReconcileWidgetVariableGuids(
+                    WBP, TEXT("ui_mutate_tree replace rollback"), RecoveryInvariantError);
+
+                return bReplacementNameFreed
+                    && bChildrenRestored
+                    && bDiscardedNamesRestored
+                    && bOriginalNameRestored
+                    && bParentRestored
+                    && bExactParentSlotRestored
+                    && bStagedRemoved
+                    && bGuidMapRecovered
+                    && Widget->GetParent() == Parent
+                    && Parent->GetChildIndex(Widget) == ChildIndex
+                    && FindWidgetByName(WBP->WidgetTree, WidgetName) == Widget;
+            };
 
             if (PreservedChildren.Num() > 0)
             {
@@ -2206,8 +2684,7 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleMutateTree(const TSharedPtr<FJsonO
                     UPanelSlot* ChildSlot = Entry.Widget ? NewPanel->AddChild(Entry.Widget, Entry.SlotTemplate) : nullptr;
                     if (!ChildSlot)
                     {
-                        const bool bRestored = RestoreOriginalChildren();
-                        DiscardFailedReplacement();
+                        const bool bRestored = RestoreOriginal();
                         return FHaybaHandlerResult::Err(FString::Printf(
                             TEXT("ui_mutate_tree replace: replacement class '%s' refused child '%s'; rollback %s"),
                             *NewClassName, Entry.Widget ? *Entry.Widget->GetName() : TEXT("<null>"),
@@ -2227,14 +2704,21 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleMutateTree(const TSharedPtr<FJsonO
             // widget and so the exact parent slot object/layout survives.
             if (!Parent->ReplaceChildAt(ChildIndex, NewWidget))
             {
-                const bool bRestored = RestoreOriginalChildren();
-                DiscardFailedReplacement();
+                const bool bRestored = RestoreOriginal();
                 return FHaybaHandlerResult::Err(FString::Printf(
                     TEXT("ui_mutate_tree replace: parent refused in-place replacement; rollback %s"),
                     bRestored ? TEXT("completed and no changes were kept") : TEXT("failed; reload the unsaved asset")));
             }
             Widget->Slot = nullptr;
             UPanelSlot* const NewSlot = NewWidget->Slot;
+
+            if (!NewSlot || (OldSlot && NewSlot != OldSlot))
+            {
+                const bool bRestored = RestoreOriginal();
+                return FHaybaHandlerResult::Err(FString::Printf(
+                    TEXT("ui_mutate_tree replace: parent slot preservation post-condition failed; rollback %s"),
+                    bRestored ? TEXT("completed and no changes were kept") : TEXT("failed; reload the unsaved asset")));
+            }
 
             bool bChildrenVerified = true;
             if (PreservedChildren.Num() > 0)
@@ -2247,53 +2731,64 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleMutateTree(const TSharedPtr<FJsonO
                     bChildrenVerified = Entry.Widget && NewPanel->GetChildAt(Index) == Entry.Widget &&
                         Entry.Widget->GetParent() == NewPanel;
                 }
+
+                TArray<UWidget*> PreservedSubtree;
+                CollectSubtree(NewWidget, PreservedSubtree);
+                bChildrenVerified = bChildrenVerified
+                    && PreservedSubtree.Num() == OriginalDescendantCount + 1;
             }
             if (!bChildrenVerified)
             {
-                Parent->ReplaceChildAt(ChildIndex, Widget);
-                NewWidget->Slot = nullptr;
-                const bool bRestored = RestoreOriginalChildren();
-                DiscardFailedReplacement();
+                const bool bRestored = RestoreOriginal();
                 return FHaybaHandlerResult::Err(FString::Printf(
                     TEXT("ui_mutate_tree replace: child preservation post-condition failed; rollback %s"),
                     bRestored ? TEXT("completed and no changes were kept") : TEXT("failed; reload the unsaved asset")));
             }
 
-            // Slot layout describes the widget's place in its parent, not the
-            // widget's own identity, so it survives a class swap whenever the
-            // parent hands out the same slot type (it always does — the slot
-            // class is a property of the panel).
-            if (OldSlot && NewSlot->GetClass() == OldSlot->GetClass())
-            {
-                CopyCommonProperties(OldSlot, NewSlot);
-                NewSlot->SynchronizeProperties();
-            }
+            // ReplaceChildAt retains the exact parent slot object, which is
+            // stronger than copying compatible layout fields into a new slot.
+            // The pointer-identity post-condition above proves that guarantee.
 
             Out->SetNumberField(TEXT("properties_copied"), PropertiesCopied);
             Out->SetNumberField(TEXT("children_preserved"), PreservedChildren.Num());
             Out->SetNumberField(TEXT("descendants_preserved"), bPreserveChildren ? OriginalDescendantCount : 0);
             Out->SetBoolField(TEXT("preserve_children"), bPreserveChildren);
 
+            if (!Widget->Rename(
+                    *OldStagingName.ToString(),
+                    Widget->GetOuter(),
+                    REN_DontCreateRedirectors | REN_DoNotDirty)
+                || Widget->GetFName() != OldStagingName)
+            {
+                const bool bRecovered = RestoreOriginal();
+                return FHaybaHandlerResult::Err(bRecovered
+                    ? TEXT("ui_mutate_tree replace: could not stage the outgoing widget name; original state restored and no compile attempted")
+                    : TEXT("ui_mutate_tree replace: outgoing-name staging failed and recovery is unknown; reload the asset before any further UI command"));
+            }
+
+            if (!NewWidget->Rename(
+                    *FinalName.ToString(),
+                    NewWidget->GetOuter(),
+                    REN_DontCreateRedirectors | REN_DoNotDirty)
+                || NewWidget->GetFName() != FinalName)
+            {
+                const bool bRecovered = RestoreOriginal();
+                return FHaybaHandlerResult::Err(bRecovered
+                    ? TEXT("ui_mutate_tree replace: Unreal refused the final replacement name; original state restored and no compile attempted")
+                    : TEXT("ui_mutate_tree replace: final rename failed and recovery is unknown; reload the asset before any further UI command"));
+            }
+
+            const FName OldName(*WidgetName);
+            const FGuid* OldGuid = GuidMapBefore.Find(OldName);
+            WBP->WidgetVariableNameToGuidMap.Remove(OldName);
             if (bPreserveGuid)
             {
-                // The outgoing widget may have been renamed to a scratch name
-                // just above, so key off the name the caller asked for.
-                const FName OldName(*WidgetName);
-                FGuid OldGuid;
-                if (WBP->WidgetVariableNameToGuidMap.RemoveAndCopyValue(OldName, OldGuid))
-                {
-                    if (!WBP->WidgetVariableNameToGuidMap.Contains(ConstructName))
-                        WBP->WidgetVariableNameToGuidMap.Add(ConstructName, OldGuid);
-                }
+                if (OldGuid && OldGuid->IsValid())
+                    WBP->WidgetVariableNameToGuidMap.Add(FinalName, *OldGuid);
             }
-            else
+            for (const TPair<UWidget*, FName>& Entry : DiscardedDescendants)
             {
-                WBP->WidgetVariableNameToGuidMap.Remove(FName(*WidgetName));
-                RegisterWidgetVariable(WBP, NewWidget);
-            }
-            for (const FName& DescendantName : DiscardedDescendantNames)
-            {
-                WBP->WidgetVariableNameToGuidMap.Remove(DescendantName);
+                WBP->WidgetVariableNameToGuidMap.Remove(Entry.Value);
             }
             WBP->WidgetTree->RemoveWidget(Widget);
             if (!bPreserveChildren && OldPanel)
@@ -2302,11 +2797,9 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleMutateTree(const TSharedPtr<FJsonO
                 // subtree.  Move descendant names out of the authoring namespace
                 // so an explicit destructive replacement does not make a later
                 // ConstructWidget("OldChildName") silently become OldChildName_1.
-                TArray<UWidget*> DiscardedSubtree;
-                CollectSubtree(Widget, DiscardedSubtree);
-                for (int32 Index = 1; Index < DiscardedSubtree.Num(); ++Index)
+                for (const TPair<UWidget*, FName>& Entry : DiscardedDescendants)
                 {
-                    UWidget* Descendant = DiscardedSubtree[Index];
+                    UWidget* Descendant = Entry.Key;
                     if (!Descendant) continue;
                     Descendant->Rename(
                         *MakeUniqueObjectName(Descendant->GetOuter(), Descendant->GetClass(), TEXT("HaybaMCP_Discarded")).ToString(),
@@ -2314,8 +2807,31 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleMutateTree(const TSharedPtr<FJsonO
                 }
             }
 
-            FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(WBP);
-            WBP->MarkPackageDirty();
+            bool bOutgoingRetired = true;
+            for (const TPair<UWidget*, FName>& Entry : DiscardedDescendants)
+            {
+                bOutgoingRetired = Entry.Key
+                    && RetireWidgetTreeObject(WBP, Entry.Key)
+                    && bOutgoingRetired;
+            }
+            bOutgoingRetired = RetireWidgetTreeObject(WBP, Widget) && bOutgoingRetired;
+            if (!bOutgoingRetired)
+            {
+                const bool bRecovered = RestoreOriginal();
+                return FHaybaHandlerResult::Err(bRecovered
+                    ? TEXT("ui_mutate_tree replace: outgoing widget retirement failed; original state restored and no compile attempted")
+                    : TEXT("ui_mutate_tree replace: outgoing widget retirement failed and recovery is unknown; reload the asset before any further UI command"));
+            }
+
+            if (!FinalizeWidgetTreeMutation(WBP, TEXT("ui_mutate_tree replace"), InvariantError))
+            {
+                const bool bRecovered = RestoreOriginal();
+                return FHaybaHandlerResult::Err(FString::Printf(
+                    TEXT("%s %s"), *InvariantError,
+                    bRecovered
+                        ? TEXT("The original widget, slot, name, and GUID map were restored; no structural compile was attempted.")
+                        : TEXT("Recovery is unknown; reload the asset before any further UI command.")));
+            }
         }
 
         Out->SetStringField(TEXT("widget_name"), WidgetName);
@@ -2362,33 +2878,8 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleCompile(const TSharedPtr<FJsonObje
     }
 
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
-    Out->SetBoolField(TEXT("success"), CR.bSuccess);
-    Out->SetStringField(TEXT("status"), CR.Status);
+    DescribeCompileResult(CR, Out);
     if (bAttemptedSave) HaybaSaveVerify::Describe(SaveResult, Out);
-
-    if (CR.Warnings.Num() > 0)
-    {
-        TArray<TSharedPtr<FJsonValue>> WArr;
-        for (const FString& W : CR.Warnings)
-            WArr.Add(MakeShared<FJsonValueString>(W));
-        Out->SetArrayField(TEXT("warnings"), WArr);
-    }
-    else
-    {
-        Out->SetArrayField(TEXT("warnings"), TArray<TSharedPtr<FJsonValue>>());
-    }
-
-    if (CR.Errors.Num() > 0)
-    {
-        TArray<TSharedPtr<FJsonValue>> EArr;
-        for (const FString& E : CR.Errors)
-            EArr.Add(MakeShared<FJsonValueString>(E));
-        Out->SetArrayField(TEXT("errors"), EArr);
-    }
-    else
-    {
-        Out->SetArrayField(TEXT("errors"), TArray<TSharedPtr<FJsonValue>>());
-    }
 
     return FHaybaHandlerResult::Ok(Out);
 }
@@ -2403,6 +2894,10 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleSave(const TSharedPtr<FJsonObject>
     if (!WBP)
         return FHaybaHandlerResult::Err(TEXT("ui_save_widget: widget blueprint not found"));
 
+    FString InvariantError;
+    if (!ReconcileWidgetVariableGuids(WBP, TEXT("ui_save_widget preflight"), InvariantError))
+        return FHaybaHandlerResult::Err(InvariantError);
+
     bool bCompileFirst = false;
     P->TryGetBoolField(TEXT("compile_first"), bCompileFirst);
 
@@ -2412,9 +2907,10 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleSave(const TSharedPtr<FJsonObject>
         if (!CR.bSuccess)
         {
             TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
-            Out->SetBoolField(TEXT("success"), false);
+            DescribeCompileResult(CR, Out);
             Out->SetStringField(TEXT("saved_path"), WBP->GetPathName());
             Out->SetStringField(TEXT("reason"), TEXT("compile_failed"));
+            Out->SetBoolField(TEXT("save_attempted"), false);
             return FHaybaHandlerResult::Ok(Out);
         }
     }
@@ -2500,6 +2996,7 @@ namespace
     {
         int32 Created = 0;
         TArray<FString> Names;
+        TArray<UWidget*> CreatedWidgets;
         TArray<FString> Warnings;
     };
 
@@ -2527,6 +3024,7 @@ namespace
         const FName ConstructName = Name.IsEmpty() ? NAME_None : FName(*Name);
         UWidget* New = WBP->WidgetTree->ConstructWidget<UWidget>(Class, ConstructName);
         if (!New) return FString::Printf(TEXT("ui_build_tree: could not construct '%s'"), *ClassName);
+        Stats.CreatedWidgets.Add(New);
 
         UPanelSlot* Slot = Parent->AddChild(New);
         if (!Slot)
@@ -2625,6 +3123,10 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleBuildTree(const TSharedPtr<FJsonOb
             return FHaybaHandlerResult::Err(FString::Printf(TEXT("ui_build_tree: parent '%s' not found or not a panel"), *ParentName));
     }
 
+    FString InvariantError;
+    if (!ReconcileWidgetVariableGuids(WBP, TEXT("ui_build_tree preflight"), InvariantError))
+        return FHaybaHandlerResult::Err(InvariantError);
+
     // Accept either a single root node or an array of siblings.
     TArray<TSharedPtr<FJsonValue>> Nodes;
     const TSharedPtr<FJsonObject>* SingleNode = nullptr;
@@ -2663,20 +3165,15 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleBuildTree(const TSharedPtr<FJsonOb
     // of the first. Remove what this call created, newest first so parents go
     // after their children.
     int32 RolledBack = 0;
-    if (!Error.IsEmpty() && Stats.Names.Num() > 0)
+    bool bRollbackVerified = true;
+    if (!Error.IsEmpty() && Stats.CreatedWidgets.Num() > 0)
     {
-        for (int32 i = Stats.Names.Num() - 1; i >= 0; --i)
-        {
-            if (UWidget* Created = FindWidgetByName(WBP->WidgetTree, Stats.Names[i]))
-            {
-                WBP->WidgetTree->RemoveWidget(Created);
-                ++RolledBack;
-            }
-        }
+        bRollbackVerified = DiscardStagedWidgets(WBP, Stats.CreatedWidgets);
+        RolledBack = bRollbackVerified ? Stats.CreatedWidgets.Num() : 0;
+        FString RecoveryError;
+        bRollbackVerified = bRollbackVerified
+            && ReconcileWidgetVariableGuids(WBP, TEXT("ui_build_tree rollback"), RecoveryError);
     }
-
-    FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(WBP);
-    WBP->MarkPackageDirty();
 
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
     Out->SetStringField(TEXT("widget_blueprint_path"), WBP->GetPathName());
@@ -2708,13 +3205,35 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleBuildTree(const TSharedPtr<FJsonOb
         Out->SetStringField(TEXT("error"), Error);
         Out->SetBoolField(TEXT("partial"), false);
         Out->SetNumberField(TEXT("rolled_back"), RolledBack);
+        FString RecoveryNote;
+        if (Stats.CreatedWidgets.IsEmpty())
+        {
+            RecoveryNote = TEXT(" Nothing was created, so the tree is unchanged.");
+        }
+        else if (bRollbackVerified && RolledBack > 0)
+        {
+            RecoveryNote = FString::Printf(
+                TEXT(" %d widget(s) created before the failure were removed, so the blueprint is as it was and a corrected call will not duplicate them."),
+                RolledBack);
+        }
+        else
+        {
+            RecoveryNote = TEXT(" Recovery could not be verified; reload the asset before any further UI command.");
+        }
+        return FHaybaHandlerResult::Err(Error + RecoveryNote);
+    }
+
+    if (!FinalizeWidgetTreeMutation(WBP, TEXT("ui_build_tree"), InvariantError))
+    {
+        const bool bRecovered = DiscardStagedWidgets(WBP, Stats.CreatedWidgets);
+        FString RecoveryError;
+        const bool bGuidMapRecovered = ReconcileWidgetVariableGuids(
+            WBP, TEXT("ui_build_tree invariant rollback"), RecoveryError);
         return FHaybaHandlerResult::Err(FString::Printf(
-            TEXT("%s%s"),
-            *Error,
-            RolledBack > 0
-                ? *FString::Printf(TEXT(" %d widget(s) created before the failure were removed, so the blueprint "
-                                        "is as it was and a corrected call will not duplicate them."), RolledBack)
-                : TEXT("")));
+            TEXT("%s %s"), *InvariantError,
+            bRecovered && bGuidMapRecovered
+                ? TEXT("Every staged widget was removed; no structural compile was attempted.")
+                : TEXT("Recovery is unknown; reload the asset before any further UI command.")));
     }
 
     return FHaybaHandlerResult::Ok(Out);
@@ -2732,6 +3251,10 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleSetVariable(const TSharedPtr<FJson
     if (!WBP || !WBP->WidgetTree)
         return FHaybaHandlerResult::Err(TEXT("ui_set_variable: widget blueprint not found"));
 
+    FString InvariantError;
+    if (!ReconcileWidgetVariableGuids(WBP, TEXT("ui_set_variable preflight"), InvariantError))
+        return FHaybaHandlerResult::Err(InvariantError);
+
     UWidget* Widget = FindWidgetByName(WBP->WidgetTree, WidgetName);
     if (!Widget)
         return FHaybaHandlerResult::Err(FString::Printf(TEXT("ui_set_variable: widget '%s' not found"), *WidgetName));
@@ -2741,10 +3264,15 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleSetVariable(const TSharedPtr<FJson
 
     WBP->Modify();
     Widget->Modify();
+    const bool bWasVariable = Widget->bIsVariable;
+    const FString OldCategory = Widget->GetCategoryName();
     Widget->bIsVariable = bIsVariable;
 
-    if (bIsVariable) RegisterWidgetVariable(WBP, Widget);
-    else WBP->WidgetVariableNameToGuidMap.Remove(Widget->GetFName());
+    // bIsVariable controls whether the generated UserWidget exposes a member.
+    // It does NOT control WidgetVariableNameToGuidMap: UE5.8's compiler requires
+    // a GUID for every source widget, including those with bIsVariable=false.
+    // Removing this entry was the direct missing-GUID ensure reproduced in #406.
+    RegisterWidgetVariable(WBP, Widget);
 
     FString Category;
     if (P->TryGetStringField(TEXT("category"), Category) && !Category.IsEmpty())
@@ -2752,12 +3280,27 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleSetVariable(const TSharedPtr<FJson
         Widget->SetCategoryName(Category);
     }
 
-    FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(WBP);
-    WBP->MarkPackageDirty();
+    if (!FinalizeWidgetTreeMutation(WBP, TEXT("ui_set_variable"), InvariantError))
+    {
+        Widget->bIsVariable = bWasVariable;
+        Widget->SetCategoryName(OldCategory);
+        FString RecoveryError;
+        const bool bGuidMapRecovered = ReconcileWidgetVariableGuids(
+            WBP, TEXT("ui_set_variable rollback"), RecoveryError);
+        const bool bRecovered = bGuidMapRecovered
+            && Widget->bIsVariable == bWasVariable
+            && Widget->GetCategoryName() == OldCategory;
+        return FHaybaHandlerResult::Err(FString::Printf(
+            TEXT("%s %s"), *InvariantError,
+            bRecovered
+                ? TEXT("The variable/category values were restored; no structural compile was attempted.")
+                : TEXT("Recovery is unknown; reload the asset before any further UI command.")));
+    }
 
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
     Out->SetStringField(TEXT("widget_name"), Widget->GetName());
     Out->SetBoolField(TEXT("is_variable"), bIsVariable);
+    Out->SetBoolField(TEXT("compiler_guid_preserved"), true);
     if (!Category.IsEmpty()) Out->SetStringField(TEXT("category"), Category);
     return FHaybaHandlerResult::Ok(Out);
 }
@@ -2778,32 +3321,37 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleBindProperty(const TSharedPtr<FJso
     if (!WBP || !WBP->WidgetTree)
         return FHaybaHandlerResult::Err(TEXT("ui_bind_property: widget blueprint not found"));
 
+    FString InvariantError;
+    if (!ReconcileWidgetVariableGuids(WBP, TEXT("ui_bind_property preflight"), InvariantError))
+        return FHaybaHandlerResult::Err(InvariantError);
+
     UWidget* Widget = FindWidgetByName(WBP->WidgetTree, WidgetName);
     if (!Widget)
         return FHaybaHandlerResult::Err(FString::Printf(TEXT("ui_bind_property: widget '%s' not found"), *WidgetName));
-
-    // A binding only survives compile if the widget is a variable of the UserWidget — the
-    // binding is stored by name and resolved against the generated class.
-    if (!Widget->bIsVariable)
-    {
-        Widget->Modify();
-        Widget->bIsVariable = true;
-        RegisterWidgetVariable(WBP, Widget);
-    }
-
-    WBP->Modify();
 
     // One binding per (widget, property) — FDelegateEditorBinding::operator== compares exactly
     // those two, so removing first makes this idempotent and doubles as the "clear" path.
     FDelegateEditorBinding Binding;
     Binding.ObjectName = Widget->GetName();
     Binding.PropertyName = FName(*PropertyName);
-    WBP->Bindings.Remove(Binding);
 
     if (bClearing)
     {
-        FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(WBP);
-        WBP->MarkPackageDirty();
+        WBP->Modify();
+        const TArray<FDelegateEditorBinding> BindingsBefore = WBP->Bindings;
+        WBP->Bindings.Remove(Binding);
+        if (!FinalizeWidgetTreeMutation(WBP, TEXT("ui_bind_property clear"), InvariantError))
+        {
+            WBP->Bindings = BindingsBefore;
+            FString RecoveryError;
+            const bool bRecovered = ReconcileWidgetVariableGuids(
+                WBP, TEXT("ui_bind_property clear rollback"), RecoveryError);
+            return FHaybaHandlerResult::Err(FString::Printf(
+                TEXT("%s %s"), *InvariantError,
+                bRecovered
+                    ? TEXT("The prior binding list was restored; no structural compile was attempted.")
+                    : TEXT("Recovery is unknown; reload the asset before any further UI command.")));
+        }
 
         TSharedPtr<FJsonObject> ClearedOut = MakeShared<FJsonObject>();
         ClearedOut->SetStringField(TEXT("widget_name"), Widget->GetName());
@@ -2855,9 +3403,32 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleBindProperty(const TSharedPtr<FJso
             *VariableName, *Widget->GetName(), *PropertyName, *BindError.ToString()));
     }
 
+    // All fallible validation is complete before the first mutation. A binding
+    // only survives compile if its widget is exposed as a generated member.
+    WBP->Modify();
+    Widget->Modify();
+    const bool bWasVariable = Widget->bIsVariable;
+    const TArray<FDelegateEditorBinding> BindingsBefore = WBP->Bindings;
+    Widget->bIsVariable = true;
+    RegisterWidgetVariable(WBP, Widget);
+    WBP->Bindings.Remove(Binding);
     WBP->Bindings.Add(Binding);
-    FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(WBP);
-    WBP->MarkPackageDirty();
+    if (!FinalizeWidgetTreeMutation(WBP, TEXT("ui_bind_property"), InvariantError))
+    {
+        WBP->Bindings = BindingsBefore;
+        Widget->bIsVariable = bWasVariable;
+        FString RecoveryError;
+        const bool bGuidMapRecovered = ReconcileWidgetVariableGuids(
+            WBP, TEXT("ui_bind_property rollback"), RecoveryError);
+        const bool bRecovered = bGuidMapRecovered
+            && WBP->Bindings.Num() == BindingsBefore.Num()
+            && Widget->bIsVariable == bWasVariable;
+        return FHaybaHandlerResult::Err(FString::Printf(
+            TEXT("%s %s"), *InvariantError,
+            bRecovered
+                ? TEXT("The previous binding list and variable flag were restored; no structural compile was attempted.")
+                : TEXT("Recovery is unknown; reload the asset before any further UI command.")));
+    }
 
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
     Out->SetStringField(TEXT("widget_name"), Widget->GetName());
@@ -3090,6 +3661,7 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleLayoutSnapshot(const TSharedPtr<FJ
             }
         }
     }
+
     double RequestedOffset = 0.0;
     double RequestedLimit = 50.0;
     P->TryGetNumberField(TEXT("offset"), RequestedOffset);

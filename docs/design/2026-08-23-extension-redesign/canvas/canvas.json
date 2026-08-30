@@ -1,0 +1,72 @@
+{
+  "pages": [
+    {
+      "id": "page-1",
+      "name": "Design language"
+    },
+    {
+      "id": "page-2",
+      "name": "Icons"
+    }
+  ],
+  "artboards": [
+    {
+      "file": "Foundations.dc.html",
+      "x": 0,
+      "y": 0,
+      "w": 960,
+      "h": 1150,
+      "title": "Foundations",
+      "page": "page-1"
+    },
+    {
+      "file": "Components.dc.html",
+      "x": 1060,
+      "y": 0,
+      "w": 960,
+      "h": 1020,
+      "title": "Components",
+      "page": "page-1"
+    },
+    {
+      "file": "Sidebar.dc.html",
+      "x": 2120,
+      "y": 0,
+      "w": 300,
+      "h": 520,
+      "title": "Sidebar at real size",
+      "page": "page-1"
+    },
+    {
+      "file": "Main.dc.html",
+      "x": 0,
+      "y": 0,
+      "w": 1100,
+      "h": 1230,
+      "title": "Icon inventory",
+      "page": "page-2"
+    }
+  ],
+  "annotations": [
+    {
+      "id": "signed",
+      "x": 1200,
+      "y": 0,
+      "w": 300,
+      "page": "page-2",
+      "text": "Every asset user-signed 2026-08-23.\nState marks live in the row\u2019s right slot or inline next to text \u2014 never on an icon.\nSource PNGs: docs/design/2026-08-23-extension-redesign/icons-final/"
+    },
+    {
+      "id": "lang-note",
+      "x": 2120,
+      "y": 580,
+      "w": 300,
+      "page": "page-1",
+      "text": "The ochre rule: #C47A28 only for active / pending / unsaved / attention. Logo keeps #B56A1D untouched."
+    }
+  ],
+  "launch": {
+    "view": "canvas",
+    "page": "page-2"
+  }
+}

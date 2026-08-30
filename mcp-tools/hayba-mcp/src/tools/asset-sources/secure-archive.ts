@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import * as fsp from 'node:fs/promises';
 import * as path from 'node:path';
+import { createHash } from 'node:crypto';
 import { Readable, Transform, Writable, type TransformCallback } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { createInflateRaw } from 'node:zlib';
@@ -53,9 +54,160 @@ export class ArchiveSecurityError extends Error {
   }
 }
 
+export interface ConnectorFailureFacts {
+  primary_error: string;
+  primary_code?: string;
+  cleanup_failed: boolean;
+  retained_count: number;
+  retained_path_refs: string[];
+  cleanup_error?: string;
+}
+
+/** Preserves the refusal that caused cleanup while carrying bounded cleanup facts. */
+export class ConnectorCleanupError extends Error {
+  readonly cleanup_failed = true;
+
+  constructor(
+    public readonly primary: unknown,
+    public readonly retainedPaths: string[],
+    public readonly cleanupError: unknown,
+  ) {
+    super(primary instanceof Error ? primary.message : String(primary));
+    this.name = 'ConnectorCleanupError';
+  }
+}
+
+const MAX_RETAINED_PATH_REFS = 8;
+const SAFE_PLATFORM_ERROR_CODES = new Set([
+  'EACCES',
+  'EBUSY',
+  'EEXIST',
+  'EIO',
+  'EISDIR',
+  'ELOOP',
+  'EMFILE',
+  'ENAMETOOLONG',
+  'ENFILE',
+  'ENOENT',
+  'ENOSPC',
+  'ENOTDIR',
+  'ENOTEMPTY',
+  'EPERM',
+  'EROFS',
+]);
+
+function errorCode(error: unknown): string | undefined {
+  if (!error || typeof error !== 'object') return undefined;
+  const code = (error as { code?: unknown }).code;
+  if (typeof code !== 'string' || !/^[A-Z][A-Z0-9_-]{0,63}$/.test(code)) return undefined;
+  return code.startsWith('HAYBA-') || SAFE_PLATFORM_ERROR_CODES.has(code) ? code : undefined;
+}
+
+function isStableHaybaError(error: unknown): error is Error & { code: string } {
+  if (!(error instanceof Error)) return false;
+  const code = errorCode(error);
+  return (
+    (error.name === 'ArchiveSecurityError' && Boolean(code?.startsWith('HAYBA-ARCHIVE-'))) ||
+    (error.name === 'AssetEnumerationError' && Boolean(code?.startsWith('HAYBA-ASSET-')))
+  );
+}
+
+function publicPrimaryError(error: unknown): string {
+  return isStableHaybaError(error) ? error.message.slice(0, 512) : 'connector operation failed unexpectedly';
+}
+
+function publicCleanupError(error: unknown): string {
+  return errorCode(error) ?? 'cleanup operation failed unexpectedly';
+}
+
+function retainedPathRef(candidate: string): string {
+  const resolved = path.normalize(path.resolve(candidate));
+  const normalized = process.platform === 'win32' ? resolved.toLocaleLowerCase('en-US') : resolved;
+  return `sha256:${createHash('sha256').update(normalized).digest('hex').slice(0, 16)}`;
+}
+
+async function pathExists(candidate: string): Promise<boolean> {
+  try {
+    await fsp.lstat(candidate);
+    return true;
+  } catch (error: unknown) {
+    if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return false;
+    return true;
+  }
+}
+
+function containsPath(root: string, candidate: string): boolean {
+  const relative = path.relative(path.resolve(root), path.resolve(candidate));
+  return relative === '' || (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative));
+}
+
+export function connectorFailureFacts(error: unknown): ConnectorFailureFacts {
+  if (error instanceof ConnectorCleanupError) {
+    const primary = error.primary instanceof ConnectorCleanupError ? error.primary.primary : error.primary;
+    const retained = [...new Set(error.retainedPaths.map((item) => path.resolve(item)))];
+    return {
+      primary_error: publicPrimaryError(primary),
+      ...(errorCode(primary) ? { primary_code: errorCode(primary) } : {}),
+      cleanup_failed: true,
+      retained_count: retained.length,
+      retained_path_refs: retained.slice(0, MAX_RETAINED_PATH_REFS).map(retainedPathRef),
+      cleanup_error: publicCleanupError(error.cleanupError),
+    };
+  }
+  return {
+    primary_error: publicPrimaryError(error),
+    ...(errorCode(error) ? { primary_code: errorCode(error) } : {}),
+    cleanup_failed: false,
+    retained_count: 0,
+    retained_path_refs: [],
+  };
+}
+
+type RemoveTree = (root: string) => Promise<void>;
+
+const removeTree: RemoveTree = async (root) => fsp.rm(root, { recursive: true, force: true });
+
+/**
+ * Attempt cleanup without ever replacing the original refusal. A successful
+ * broader cleanup also clears an earlier nested cleanup failure when it covers
+ * every retained path.
+ */
+export async function cleanupAfterRefusal(
+  primary: unknown,
+  cleanupRoot: string,
+  remove: RemoveTree = removeTree,
+): Promise<unknown> {
+  const root = path.resolve(cleanupRoot);
+  try {
+    await remove(root);
+    if (primary instanceof ConnectorCleanupError) {
+      if (primary.retainedPaths.length === 0) return primary;
+      const unresolved = primary.retainedPaths.filter((candidate) => !containsPath(root, candidate));
+      return unresolved.length === 0
+        ? primary.primary
+        : new ConnectorCleanupError(primary.primary, unresolved, primary.cleanupError);
+    }
+    return primary;
+  } catch (cleanupError: unknown) {
+    const inherited = primary instanceof ConnectorCleanupError ? primary.retainedPaths : [];
+    const retained: string[] = [];
+    for (const candidate of inherited) {
+      if (await pathExists(candidate)) retained.push(candidate);
+    }
+    if (await pathExists(root)) retained.push(root);
+    const original = primary instanceof ConnectorCleanupError ? primary.primary : primary;
+    return new ConnectorCleanupError(original, retained, cleanupError);
+  }
+}
+
 /** @internal Deterministic test seam; production connector calls never supply it. */
 export interface ArchiveExtractionTestHooks {
   afterStageReady?: () => Promise<void>;
+}
+
+/** @internal Deterministic cleanup-failure seam; production connector calls never supply it. */
+export interface DownloadExtractTestHooks {
+  removeFailureCleanupRoot?: (root: string) => Promise<void>;
 }
 
 function checkedLimits(overrides?: Partial<ArchiveLimits>): ArchiveLimits {
@@ -163,6 +315,7 @@ export async function downloadToFile(
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(new Error('download deadline exceeded')), limits.downloadTimeoutMs);
   timeout.unref?.();
+  let failure: unknown;
 
   try {
     const res = await fetch(url, { headers, signal: controller.signal });
@@ -206,17 +359,27 @@ export async function downloadToFile(
     }
   } catch (error: unknown) {
     if (controller.signal.aborted && !(error instanceof ArchiveSecurityError)) {
-      throw new ArchiveSecurityError('HAYBA-DOWNLOAD-TIMEOUT', `download exceeded ${limits.downloadTimeoutMs} ms`);
+      failure = new ArchiveSecurityError('HAYBA-DOWNLOAD-TIMEOUT', `download exceeded ${limits.downloadTimeoutMs} ms`);
+    } else if (error instanceof ArchiveSecurityError) {
+      failure = error;
+    } else {
+      const code = (error as NodeJS.ErrnoException)?.code;
+      failure = new ArchiveSecurityError(
+        'HAYBA-DOWNLOAD-NETWORK',
+        code ? `network/filesystem failure (${code})` : 'network/filesystem failure',
+      );
     }
-    if (error instanceof ArchiveSecurityError) throw error;
-    const code = (error as NodeJS.ErrnoException)?.code;
-    throw new ArchiveSecurityError(
-      'HAYBA-DOWNLOAD-NETWORK',
-      code ? `network/filesystem failure (${code})` : 'network/filesystem failure',
-    );
   } finally {
     clearTimeout(timeout);
-    await fsp.rm(tempRoot, { recursive: true, force: true });
+  }
+  if (failure !== undefined) throw await cleanupAfterRefusal(failure, tempRoot);
+  const cleanupMarker = new ArchiveSecurityError(
+    'HAYBA-DOWNLOAD-CLEANUP',
+    'download published but private staging cleanup could not be established',
+  );
+  const cleanupResult = await cleanupAfterRefusal(cleanupMarker, tempRoot);
+  if (cleanupResult instanceof ConnectorCleanupError) {
+    throw cleanupResult;
   }
 }
 
@@ -312,6 +475,10 @@ function rejectUnsafeName(
   const reserved = /^(?:con|prn|aux|nul|clock\$|conin\$|conout\$|com[1-9]|lpt[1-9])(?:\..*)?$/i;
   for (const segment of segments) {
     const normalized = segment.normalize('NFC');
+    const hasForbiddenCharacter = [...segment].some((character) => {
+      const codePoint = character.codePointAt(0)!;
+      return codePoint <= 0x1f || codePoint === 0x7f || '<>"|?*'.includes(character);
+    });
     if (
       !segment ||
       segment === '.' ||
@@ -319,7 +486,7 @@ function rejectUnsafeName(
       normalized !== segment ||
       segment.normalize('NFKC') !== segment ||
       segment.includes(':') ||
-      /[\u0000-\u001f\u007f<>"|?*]/u.test(segment) ||
+      hasForbiddenCharacter ||
       /[. ]$/.test(segment) ||
       reserved.test(segment)
     ) {
@@ -747,6 +914,9 @@ export async function extractZip(
   timeout.unref?.();
   let archiveHandle: fsp.FileHandle | undefined;
   let stageRoot: string | undefined;
+  let result: string[] | undefined;
+  let failure: unknown;
+  let closeFailure: unknown;
   try {
     archiveHandle = await fsp.open(zipPath, 'r');
     const plan = await inspectZip(archiveHandle, limits, controller.signal);
@@ -766,17 +936,37 @@ export async function extractZip(
     }
     throwIfArchiveAborted(controller.signal);
     await fsp.rename(activeStageRoot, destDir);
-    return stageFiles.map((file) => path.join(destDir, path.relative(activeStageRoot, file)));
+    result = stageFiles.map((file) => path.join(destDir, path.relative(activeStageRoot, file)));
+    stageRoot = undefined;
   } catch (error: unknown) {
-    if (stageRoot) await fsp.rm(stageRoot, { recursive: true, force: true });
-    if (controller.signal.aborted) {
-      throw new ArchiveSecurityError('HAYBA-ARCHIVE-TIMEOUT', 'archive validation/extraction deadline exceeded');
-    }
-    throw error;
+    failure = controller.signal.aborted
+      ? new ArchiveSecurityError('HAYBA-ARCHIVE-TIMEOUT', 'archive validation/extraction deadline exceeded')
+      : error;
   } finally {
     clearTimeout(timeout);
-    await archiveHandle?.close();
+    try {
+      await archiveHandle?.close();
+    } catch (closeError: unknown) {
+      closeFailure = closeError;
+    }
   }
+  if (failure !== undefined) {
+    if (stageRoot) failure = await cleanupAfterRefusal(failure, stageRoot);
+    if (closeFailure !== undefined) {
+      const retained = failure instanceof ConnectorCleanupError ? failure.retainedPaths : [];
+      const primary = failure instanceof ConnectorCleanupError ? failure.primary : failure;
+      failure = new ConnectorCleanupError(primary, retained, closeFailure);
+    }
+    throw failure;
+  }
+  if (closeFailure !== undefined) {
+    throw new ConnectorCleanupError(
+      new ArchiveSecurityError('HAYBA-ARCHIVE-CLOSE', 'archive handle cleanup failed after extraction'),
+      [],
+      closeFailure,
+    );
+  }
+  return result!;
 }
 
 /**
@@ -792,6 +982,7 @@ export async function downloadExtractThen<T>(options: {
   /** Request-owned directory removed in full if download or validation fails. */
   failureCleanupRoot?: string;
   afterVerified: (files: string[]) => Promise<T>;
+  testHooks?: DownloadExtractTestHooks;
 }): Promise<{ files: string[]; result: T }> {
   const cleanupRoot = options.failureCleanupRoot ? path.resolve(options.failureCleanupRoot) : undefined;
   if (cleanupRoot) {
@@ -810,7 +1001,8 @@ export async function downloadExtractThen<T>(options: {
     const result = await options.afterVerified(files);
     return { files, result };
   } catch (error) {
-    if (cleanupRoot) await fsp.rm(cleanupRoot, { recursive: true, force: true });
-    throw error;
+    throw cleanupRoot
+      ? await cleanupAfterRefusal(error, cleanupRoot, options.testHooks?.removeFailureCleanupRoot)
+      : error;
   }
 }

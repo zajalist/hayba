@@ -14,6 +14,7 @@ ADRs. One decision per file. Status: `Accepted` · `Superseded` ·
 | [0006](0006-one-visual-sidecar.md) | One visual sidecar, one interface | Accepted |
 | [0007](0007-static-checks-must-know-every-call-form.md) | A static check must know every form of the call it guards | Accepted |
 | [0008](0008-satellite-plugins-earn-their-place.md) | A satellite plugin has to add capability the always-available surface cannot | Accepted |
+| [0009](0009-one-verdict-language-profile-rule-recipe.md) | One verdict language: Profile, Rule, Recipe | Proposed |
 
 An ADR describing code that moves **out** of this repo gets copied to both
 repos, not moved. 0005 was moved, and `CHANGELOG.md` spent two months citing a

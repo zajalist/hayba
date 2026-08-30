@@ -27,6 +27,11 @@ const lifecycle = readFileSync(
     'HaybaMCPToolkit', 'Private', 'handlers', 'HaybaMCPTestRunLifecycle.h'),
   'utf8',
 );
+const isolationPolicy = readFileSync(
+  join(here, '..', '..', '..', '..', 'unreal', 'HaybaMCPToolkit', 'Source',
+    'HaybaMCPToolkit', 'Private', 'handlers', 'HaybaMCPAutomationIsolationPolicy.h'),
+  'utf8',
+);
 const moduleCpp = readFileSync(
   join(here, '..', '..', '..', '..', 'unreal', 'HaybaMCPToolkit', 'Source',
     'HaybaMCPToolkit', 'Private', 'HaybaMCPModule.cpp'),
@@ -69,13 +74,34 @@ describe('test_run selection contract', () => {
   });
 
   it('fails closed for empty, zero-match, and ambiguous selections', () => {
+    const runHandler = cpp.slice(
+      cpp.indexOf('static FHaybaHandlerResult Cmd_TestRun'),
+      cpp.indexOf('static FHaybaHandlerResult Cmd_TestCancel'),
+    );
     expect(selectionOps).toContain('test_run requires test_names');
     expect(selectionOps).toContain('test_run matched no tests');
     expect(selectionOps).toContain('cannot combine filter/category selectors with explicit test_names');
     expect(cpp).toContain('ValidateResolvedSelection');
     expect(cpp).toContain('ValidateCombination');
     expect(sidecar.commands.test_run!.notes).toContain('false green');
-    expect(cpp.indexOf('ValidateResolvedSelection')).toBeLessThan(cpp.indexOf('AllocateJob(TEXT("test_run"))'));
+    expect(runHandler.indexOf('ValidateResolvedSelection')).toBeLessThan(
+      runHandler.indexOf('StartOwnedChildRun('),
+    );
+  });
+
+  it('defaults every non-allowlisted test to an owned child', () => {
+    expect(isolationPolicy).toContain('return EExecutionMode::OwnedChild;');
+    expect(isolationPolicy).not.toMatch(/StartsWith|Contains|Hayba\.\*/i);
+    expect(cpp).toContain('HaybaAutomationIsolation::Classify(Name)');
+    expect(cpp).toContain('StartOwnedChildRun(');
+    expect(cpp).toContain('-HaybaAutomationChild=%s');
+    expect(cpp).toContain('GAutomationChildOutputLimitChars');
+    expect(cpp).toContain('GAutomationChildMaximumTimeoutSeconds');
+    expect(sidecar.commands).toHaveProperty('test_cancel');
+    expect(moduleCpp).toContain('HaybaAutomationChild=');
+    expect(moduleCpp).toContain('!bOwnedAutomationChild && !StartTcpServer()');
+    expect(cpp).not.toMatch(/taskkill|Stop-Process|CreateToolhelp32Snapshot/);
+    expect(cpp).toContain('FPlatformProcess::TerminateProc(State->Process, true)');
   });
 
   it('cannot strand the single-flight lease on completion or setup failure', () => {

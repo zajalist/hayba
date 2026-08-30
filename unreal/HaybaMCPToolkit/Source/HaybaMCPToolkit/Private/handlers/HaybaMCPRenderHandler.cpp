@@ -1,15 +1,14 @@
 // HaybaMCPRenderHandler.cpp — see header.
 //
-// Threading: Handle() is invoked from the TCP server's per-request thread
-// (NOT the game thread). All UWorld/UPCGComponent/SceneCapture touches must
-// happen on the game thread, so we AsyncTask the render work and block the
-// TCP thread on an FEvent until completion.
+// Threading: ProcessCommand drains requests on the game thread. Handle()
+// enforces that boundary before acquiring a render lease or touching any
+// UWorld/SceneCapture/RHI state. Off-thread callers are rejected without
+// queuing module-owned work, so shutdown can never unload beneath a late task.
 
 #include "HaybaMCPRenderHandler.h"
 #include "HaybaMCPCaptureActor.h"
+#include "HaybaMCPRenderSafety.h"
 
-#include "Async/Async.h"
-#include "Containers/Ticker.h"
 #include "Editor.h"
 #include "Editor/EditorEngine.h"
 #include "EngineUtils.h"
@@ -24,6 +23,7 @@
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
 #include "Misc/Guid.h"
+#include "Misc/ScopeExit.h"
 #include "HAL/FileManager.h"
 #include "HAL/PlatformProcess.h"
 #include "UObject/SoftObjectPath.h"
@@ -39,8 +39,10 @@ namespace HaybaRender
     }
     static bool IsAssetsBusyImpl()
     {
-        FAssetRegistryModule& Mod = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"));
-        return Mod.Get().IsLoadingAssets();
+        // LoadModuleChecked turns a missing/unloading optional subsystem into a
+        // process-fatal check. A render preflight must degrade safely instead.
+        FAssetRegistryModule* Mod = FModuleManager::Get().LoadModulePtr<FAssetRegistryModule>(TEXT("AssetRegistry"));
+        return Mod && Mod->Get().IsLoadingAssets();
     }
 
     static UWorld* ActiveEditorWorld()
@@ -62,76 +64,6 @@ namespace HaybaRender
         // pre-render; we treat them as never-busy here to keep this handler
         // self-contained. Callers wanting full coverage can wait_for_idle first.
         return false;
-    }
-
-    static FString FormatTimestamp()
-    {
-        const FDateTime Now = FDateTime::Now();
-        return FString::Printf(TEXT("%04d%02d%02d_%02d%02d%02d"),
-            Now.GetYear(), Now.GetMonth(), Now.GetDay(),
-            Now.GetHour(), Now.GetMinute(), Now.GetSecond());
-    }
-
-    static FString ResolveOutputPath(const FString& Requested, const FString& Format)
-    {
-        const FString Ext = (Format == TEXT("png")) ? TEXT("png")
-                          : (Format == TEXT("exr")) ? TEXT("exr") : TEXT("jpg");
-        FString Path = Requested;
-        if (Path.IsEmpty())
-        {
-            const FString ScreenshotsDir = FPaths::ProjectSavedDir() / TEXT("Screenshots/Hayba");
-            const FString Stamp = FormatTimestamp();
-            const FString Uuid8 = FGuid::NewGuid().ToString(EGuidFormats::Digits).Left(8).ToLower();
-            Path = ScreenshotsDir / FString::Printf(TEXT("hayba_%s_%s.%s"), *Stamp, *Uuid8, *Ext);
-        }
-        else if (FPaths::IsRelative(Path))
-        {
-            Path = FPaths::ProjectDir() / Path;
-        }
-        return FPaths::ConvertRelativePathToFull(Path);
-    }
-
-    /** Per-format magic byte check. Returns hex of first few bytes for error reporting. */
-    static bool VerifyMagic(const TArray<uint8>& Bytes, const FString& Format, FString& OutHex)
-    {
-        OutHex.Reset();
-        const int32 N = FMath::Min<int32>(Bytes.Num(), 12);
-        for (int32 i = 0; i < N; i++)
-        {
-            OutHex += FString::Printf(TEXT("%02x"), Bytes[i]);
-        }
-        if (Bytes.Num() < 4) return false;
-        if (Format == TEXT("png"))
-        {
-            return Bytes[0] == 0x89 && Bytes[1] == 0x50 && Bytes[2] == 0x4E && Bytes[3] == 0x47;
-        }
-        if (Format == TEXT("jpg"))
-        {
-            return Bytes[0] == 0xFF && Bytes[1] == 0xD8 && Bytes[2] == 0xFF;
-        }
-        if (Format == TEXT("exr"))
-        {
-            // OpenEXR magic 0x762f3101
-            return Bytes[0] == 0x76 && Bytes[1] == 0x2F && Bytes[2] == 0x31 && Bytes[3] == 0x01;
-        }
-        return false;
-    }
-
-    /**
-     * Parses width/height out of a PNG IHDR chunk (offset 16, 4 bytes each, BE).
-     * Returns true on success and writes (W, H) to outputs. Doesn't handle EXR
-     * or JPG header parsing — those skip dimension verification in v1.
-     */
-    static bool ParsePngDims(const TArray<uint8>& Bytes, int32& OutW, int32& OutH)
-    {
-        if (Bytes.Num() < 24) return false;
-        const auto BE32 = [&](int32 Offset) {
-            return (uint32(Bytes[Offset]) << 24) | (uint32(Bytes[Offset+1]) << 16)
-                 | (uint32(Bytes[Offset+2]) <<  8) |  uint32(Bytes[Offset+3]);
-        };
-        OutW = (int32)BE32(16);
-        OutH = (int32)BE32(20);
-        return OutW > 0 && OutH > 0;
     }
 
     struct FCameraSpec
@@ -160,23 +92,11 @@ namespace HaybaRender
         FString EngineHint;
         double WaitMs = 0.0;
         double RenderMs = 0.0;
+        int64 FileBytes = 0;
         // True when world_tick was dropped from the wait set because Handle()
         // ran inline on the game thread (see RunOnGameThread wait phase).
         bool bSkippedWorldTickInline = false;
-        // FEvent:
-        FEvent* DoneEvent = nullptr;
-
-        // Returned to the pool only when the LAST owner (caller OR the async
-        // game-thread task, whichever finishes last) drops its shared ref — so
-        // the event is never recycled while the task may still Trigger() it.
-        ~FRenderState()
-        {
-            if (DoneEvent)
-            {
-                FPlatformProcess::ReturnSynchEventToPool(DoneEvent);
-                DoneEvent = nullptr;
-            }
-        }
+        TSharedPtr<HaybaRenderSafety::FLease, ESPMode::ThreadSafe> Lease;
     };
 
     using FRenderStatePtr = TSharedPtr<FRenderState, ESPMode::ThreadSafe>;
@@ -186,23 +106,37 @@ namespace HaybaRender
         if (!World) return nullptr;
         for (TActorIterator<AHaybaMCPCaptureActor> It(World); It; ++It)
         {
-            return *It;
+            if (IsValid(*It) && !It->IsActorBeingDestroyed()) return *It;
         }
         return World->SpawnActor<AHaybaMCPCaptureActor>(AHaybaMCPCaptureActor::StaticClass());
     }
 
-    /** Game-thread render execution. Takes a shared ref so the state stays
-     *  alive for the whole task even if the caller's bounded wait timed out. */
+    /** Synchronous game-thread render execution. The shared state keeps the
+     *  lease and cleanup data together for the duration of this call. */
     static void RunOnGameThread(FRenderStatePtr S)
     {
-        const double T0 = FPlatformTime::Seconds();
-        UWorld* World = ActiveEditorWorld();
-        if (!World)
+        auto Fail = [&S](const FString& Kind, const FString& Hint)
         {
             S->bRendered = false;
-            S->FailReason = TEXT("file_not_written");
-            S->EngineHint = TEXT("no editor world");
-            if (S->DoneEvent) S->DoneEvent->Trigger();
+            S->FailReason = Kind;
+            S->EngineHint = Hint;
+        };
+
+        if (!IsInGameThread())
+        {
+            Fail(TEXT("render_lifecycle"), TEXT("render task was not executing on the game thread"));
+            return;
+        }
+        FString LifecycleError;
+        if (!S->Lease.IsValid() || !S->Lease->Advance(HaybaRenderSafety::EStage::WaitingForIdle, LifecycleError))
+        {
+            Fail(TEXT("render_lifecycle"), LifecycleError);
+            return;
+        }
+        UWorld* World = ActiveEditorWorld();
+        if (!IsValid(World) || World->bIsTearingDown)
+        {
+            Fail(TEXT("render_lifecycle"), TEXT("no stable editor world (missing or tearing down)"));
             return;
         }
 
@@ -218,14 +152,16 @@ namespace HaybaRender
         if (S->Camera.bIsActor)
         {
             FSoftObjectPath Soft(S->Camera.ActorPath);
-            UObject* Loaded = Soft.TryLoad();
+            // Camera actors must already belong to the active world. TryLoad()
+            // could synchronously load arbitrary caller-named content while a
+            // render lease is held, broadening both crash and deadline scope.
+            UObject* Loaded = Soft.ResolveObject();
             UserActor = Cast<AActor>(Loaded);
-            if (!UserActor)
+            if (!IsValid(UserActor) || UserActor->IsActorBeingDestroyed() || UserActor->GetWorld() != World)
             {
                 S->bRendered = false;
                 S->FailReason = TEXT("actor_not_found");
-                S->EngineHint = S->Camera.ActorPath;
-                if (S->DoneEvent) S->DoneEvent->Trigger();
+                S->EngineHint = S->Camera.ActorPath + TEXT(" (actor must already exist in the active editor world)");
                 return;
             }
             // Prefer an existing SceneCapture component on the actor; otherwise
@@ -238,10 +174,7 @@ namespace HaybaRender
                     InternalActor = GetOrSpawnCaptureActor(World);
                     if (!InternalActor)
                     {
-                        S->bRendered = false;
-                        S->FailReason = TEXT("file_not_written");
-                        S->EngineHint = TEXT("failed to spawn capture actor");
-                        if (S->DoneEvent) S->DoneEvent->Trigger();
+                        Fail(TEXT("render_lifecycle"), TEXT("failed to spawn capture actor"));
                         return;
                     }
                     Capture = InternalActor->Capture;
@@ -255,7 +188,6 @@ namespace HaybaRender
                     S->bRendered = false;
                     S->FailReason = TEXT("actor_not_found");
                     S->EngineHint = TEXT("no camera or scene-capture component on actor");
-                    if (S->DoneEvent) S->DoneEvent->Trigger();
                     return;
                 }
             }
@@ -265,31 +197,50 @@ namespace HaybaRender
             InternalActor = GetOrSpawnCaptureActor(World);
             if (!InternalActor)
             {
-                S->bRendered = false;
-                S->FailReason = TEXT("file_not_written");
-                S->EngineHint = TEXT("failed to spawn capture actor");
-                if (S->DoneEvent) S->DoneEvent->Trigger();
+                Fail(TEXT("render_lifecycle"), TEXT("failed to spawn capture actor"));
                 return;
             }
             Capture = InternalActor->Capture;
             InternalActor->SetActorLocationAndRotation(Loc, Rot);
         }
 
-        if (Capture)
+        if (!IsValid(Capture))
         {
-            Capture->FOVAngle = Fov;
-            Capture->bCaptureEveryFrame = false;
-            Capture->bCaptureOnMovement = false;
+            Fail(TEXT("render_lifecycle"), TEXT("camera has no valid scene-capture component"));
+            return;
         }
+
+        const float PreviousFov = Capture->FOVAngle;
+        const bool bPreviousEveryFrame = Capture->bCaptureEveryFrame;
+        const bool bPreviousOnMovement = Capture->bCaptureOnMovement;
+        UTextureRenderTarget2D* PreviousTarget = Capture->TextureTarget;
+        UTextureRenderTarget2D* OperationTarget = nullptr;
+        ON_SCOPE_EXIT
+        {
+            if (IsValid(Capture))
+            {
+                Capture->TextureTarget = PreviousTarget;
+                Capture->FOVAngle = PreviousFov;
+                Capture->bCaptureEveryFrame = bPreviousEveryFrame;
+                Capture->bCaptureOnMovement = bPreviousOnMovement;
+            }
+            if (IsValid(OperationTarget))
+            {
+                OperationTarget->ReleaseResource();
+                FlushRenderingCommands();
+            }
+        };
+        Capture->FOVAngle = Fov;
+        Capture->bCaptureEveryFrame = false;
+        Capture->bCaptureOnMovement = false;
 
         // ── Wait phase (game thread, 250ms granularity) ───────────────────────
         const double WaitT0 = FPlatformTime::Seconds();
         const uint64 StartFrame = GFrameCounter;
         const int32 WorldTicksRequired = 1;
         TSet<FString> Remaining(S->WaitSubsystems);
-        // RunOnGameThread always executes on the game thread — either inline
-        // (Handle() was already on it) or as the body of AsyncTask(GameThread).
-        // While this single task Sleeps below, the game thread is occupied and
+        // RunOnGameThread always executes inline on the game thread. While this
+        // call Sleeps below, the game thread is occupied and
         // GFrameCounter cannot advance, so world_tick's predicate
         // ((GFrameCounter - StartFrame) < 1) can never settle from here: it
         // would spin to the full timeout and write no image. Drop it from the
@@ -302,6 +253,11 @@ namespace HaybaRender
         }
         while (Remaining.Num() > 0)
         {
+            if (!S->Lease->Advance(HaybaRenderSafety::EStage::WaitingForIdle, LifecycleError))
+            {
+                Fail(TEXT("render_lifecycle"), LifecycleError);
+                return;
+            }
             const double Now = FPlatformTime::Seconds();
             if ((Now - WaitT0) >= S->TimeoutSeconds)
             {
@@ -309,7 +265,6 @@ namespace HaybaRender
                 S->TimedOutSubsystems = Remaining.Array();
                 S->WaitMs = (Now - WaitT0) * 1000.0;
                 S->bRendered = false;
-                if (S->DoneEvent) S->DoneEvent->Trigger();
                 return;
             }
             TArray<FString> Settled;
@@ -326,85 +281,90 @@ namespace HaybaRender
         }
         S->WaitMs = (FPlatformTime::Seconds() - WaitT0) * 1000.0;
 
+        if (!S->Lease->Advance(HaybaRenderSafety::EStage::AllocatingTarget, LifecycleError))
+        {
+            Fail(TEXT("render_lifecycle"), LifecycleError);
+            return;
+        }
+
         // ── Render ────────────────────────────────────────────────────────────
         const double RenderT0 = FPlatformTime::Seconds();
         UTextureRenderTarget2D* RT = NewObject<UTextureRenderTarget2D>(World);
-        RT->RenderTargetFormat = (S->Format == TEXT("exr"))
-            ? ETextureRenderTargetFormat::RTF_RGBA16f
-            : ETextureRenderTargetFormat::RTF_RGBA8;
+        if (!RT)
+        {
+            Fail(TEXT("render_lifecycle"), TEXT("render-target allocation returned null"));
+            return;
+        }
+        OperationTarget = RT;
+        RT->RenderTargetFormat = ETextureRenderTargetFormat::RTF_RGBA8;
         RT->InitAutoFormat(S->Width, S->Height);
         RT->UpdateResourceImmediate(true);
         Capture->TextureTarget = RT;
+
+        if (!S->Lease->Advance(HaybaRenderSafety::EStage::Capturing, LifecycleError))
+        {
+            Fail(TEXT("render_lifecycle"), LifecycleError);
+            return;
+        }
         Capture->CaptureScene();
 
         FTextureRenderTargetResource* Res = RT->GameThread_GetRenderTargetResource();
         if (!Res)
         {
-            S->bRendered = false;
-            S->FailReason = TEXT("file_not_written");
-            S->EngineHint = TEXT("no render target resource");
-            if (S->DoneEvent) S->DoneEvent->Trigger();
+            Fail(TEXT("render_lifecycle"), TEXT("render target has no game-thread resource"));
             return;
         }
 
-        // Ensure parent dir exists.
-        const FString ParentDir = FPaths::GetPath(S->OutPath);
-        IFileManager::Get().MakeDirectory(*ParentDir, /*Tree=*/true);
-
-        bool bWrote = false;
-        if (S->Format == TEXT("exr"))
+        if (!S->Lease->Advance(HaybaRenderSafety::EStage::ReadingBack, LifecycleError))
         {
-            TArray<FFloat16Color> HdrPixels;
-            Res->ReadFloat16Pixels(HdrPixels);
-            // FImageUtils EXR path varies by UE version; use simple linear PNG fallback
-            // and rename if SaveImageByExtension isn't available. For 5.7 we use
-            // FImageUtils::SaveImageByExtension when present, else fall back to PNG.
-            // Conservative: serialize as PNG when EXR helper isn't available.
-            TArray<FColor> Pixels;
-            Res->ReadPixels(Pixels);
-            // NOTE (smoke-caught): ThumbnailCompressImageArray emits JPEG, and
-            // in UE 5.x CompressImageArray is a deprecated alias for it — both
-            // put JPEG bytes behind a .png extension, which the magic-byte
-            // verifier below correctly rejected as file_invalid. The real PNG
-            // encoder is PNGCompressImageArray (TArray64 API).
-            TArray64<uint8> CompressedPng;
-            FImageUtils::PNGCompressImageArray(S->Width, S->Height, Pixels, CompressedPng);
-            bWrote = FFileHelper::SaveArrayToFile(CompressedPng, *S->OutPath);
-            if (!bWrote) S->EngineHint = TEXT("png write failed (EXR fallback)");
+            Fail(TEXT("render_lifecycle"), LifecycleError);
+            return;
+        }
+        TArray<FColor> Pixels;
+        if (!Res->ReadPixels(Pixels) || Pixels.Num() != int64(S->Width) * int64(S->Height))
+        {
+            Fail(TEXT("render_readback"), FString::Printf(TEXT("pixel readback returned %d pixels, expected %lld"),
+                Pixels.Num(), int64(S->Width) * int64(S->Height)));
+            return;
+        }
+
+        if (!S->Lease->Advance(HaybaRenderSafety::EStage::Encoding, LifecycleError))
+        {
+            Fail(TEXT("render_lifecycle"), LifecycleError);
+            return;
+        }
+        TArray64<uint8> Encoded;
+        if (S->Format == TEXT("jpg"))
+        {
+            TArray<uint8> Narrow;
+            FImageUtils::ThumbnailCompressImageArray(S->Width, S->Height, Pixels, Narrow);
+            Encoded.Append(Narrow.GetData(), Narrow.Num());
         }
         else
         {
-            TArray<FColor> Pixels;
-            Res->ReadPixels(Pixels);
-            if (S->Format == TEXT("jpg"))
-            {
-                // JPEG requested: the thumbnail compressor's JPEG output matches
-                // the .jpg extension + magic-byte expectation.
-                TArray<uint8> Compressed;
-                FImageUtils::ThumbnailCompressImageArray(S->Width, S->Height, Pixels, Compressed);
-                bWrote = FFileHelper::SaveArrayToFile(Compressed, *S->OutPath);
-            }
-            else
-            {
-                // png (default): emit real PNG bytes (see NOTE above).
-                TArray64<uint8> CompressedPng;
-                FImageUtils::PNGCompressImageArray(S->Width, S->Height, Pixels, CompressedPng);
-                bWrote = FFileHelper::SaveArrayToFile(CompressedPng, *S->OutPath);
-            }
-            if (!bWrote) S->EngineHint = TEXT("file write failed");
+            FImageUtils::PNGCompressImageArray(S->Width, S->Height, Pixels, Encoded);
+        }
+
+        if (!S->Lease->Advance(HaybaRenderSafety::EStage::Publishing, LifecycleError))
+        {
+            Fail(TEXT("render_lifecycle"), LifecycleError);
+            return;
+        }
+        FString PublishError;
+        if (!HaybaRenderSafety::PublishVerifiedImage(
+            Encoded, S->Format, S->Width, S->Height, S->OutPath, S->FileBytes, PublishError))
+        {
+            Fail(TEXT("file_invalid"), PublishError);
+            return;
+        }
+        if (!S->Lease->Advance(HaybaRenderSafety::EStage::Complete, LifecycleError))
+        {
+            Fail(TEXT("render_lifecycle"), LifecycleError);
+            return;
         }
         S->RenderMs = (FPlatformTime::Seconds() - RenderT0) * 1000.0;
 
-        if (!bWrote)
-        {
-            S->bRendered = false;
-            S->FailReason = TEXT("file_not_written");
-            if (S->DoneEvent) S->DoneEvent->Trigger();
-            return;
-        }
-
         S->bRendered = true;
-        if (S->DoneEvent) S->DoneEvent->Trigger();
     }
 }
 
@@ -437,6 +397,10 @@ FHaybaHandlerResult FHaybaMCPRenderHandler::Handle(const FString& /*Command*/,
     {
         S->Camera.bIsActor = true;
         (*CameraObj)->TryGetStringField(TEXT("actor"), S->Camera.ActorPath);
+        if (S->Camera.ActorPath.IsEmpty() || S->Camera.ActorPath.Len() > 1024)
+        {
+            return FHaybaHandlerResult::Err(TEXT("render_camera: camera.actor must be a non-empty object path under 1024 characters"));
+        }
     }
     else if (Kind == TEXT("transform"))
     {
@@ -464,6 +428,11 @@ FHaybaHandlerResult FHaybaMCPRenderHandler::Handle(const FString& /*Command*/,
 
         if (Loc)
         {
+            for (const TSharedPtr<FJsonValue>& Value : *Loc)
+            {
+                if (!Value.IsValid() || Value->Type != EJson::Number || !FMath::IsFinite(Value->AsNumber()))
+                    return FHaybaHandlerResult::Err(TEXT("render_camera: camera.location must contain 3 finite numbers"));
+            }
             S->Camera.Location = FVector((*Loc)[0]->AsNumber(), (*Loc)[1]->AsNumber(), (*Loc)[2]->AsNumber());
         }
         if (Rot)
@@ -478,10 +447,20 @@ FHaybaHandlerResult FHaybaMCPRenderHandler::Handle(const FString& /*Command*/,
             // Two commands that look like the same operation and are not; stated
             // here so the next person does not "fix" one to match the other by
             // accident. See #320.
+            for (const TSharedPtr<FJsonValue>& Value : *Rot)
+            {
+                if (!Value.IsValid() || Value->Type != EJson::Number || !FMath::IsFinite(Value->AsNumber()))
+                    return FHaybaHandlerResult::Err(TEXT("render_camera: camera.rotation must contain 3 finite numbers"));
+            }
             S->Camera.Rotation = FRotator((*Rot)[0]->AsNumber(), (*Rot)[1]->AsNumber(), (*Rot)[2]->AsNumber());
         }
         double FovD = 90.0;
-        if ((*CameraObj)->TryGetNumberField(TEXT("fov"), FovD)) S->Camera.Fov = (float)FovD;
+        if ((*CameraObj)->TryGetNumberField(TEXT("fov"), FovD))
+        {
+            if (!FMath::IsFinite(FovD) || FovD < 5.0 || FovD > 170.0)
+                return FHaybaHandlerResult::Err(TEXT("render_camera: camera.fov must be finite and in [5,170] degrees"));
+            S->Camera.Fov = (float)FovD;
+        }
     }
     else
     {
@@ -491,147 +470,112 @@ FHaybaHandlerResult FHaybaMCPRenderHandler::Handle(const FString& /*Command*/,
     // ── Other params ──────────────────────────────────────────────────────
     FString OutPathReq;
     Params->TryGetStringField(TEXT("output_path"), OutPathReq);
-    int32 W = 1920, H = 1080;
-    int64 W64 = 0, H64 = 0;
-    if (Params->TryGetNumberField(TEXT("width"), W64))  W = (int32)W64;
-    if (Params->TryGetNumberField(TEXT("height"), H64)) H = (int32)H64;
-    S->Width = W; S->Height = H;
+    double RequestedWidth = 1920.0;
+    double RequestedHeight = 1080.0;
+    Params->TryGetNumberField(TEXT("width"), RequestedWidth);
+    Params->TryGetNumberField(TEXT("height"), RequestedHeight);
+    FString ValidationError;
+    if (!HaybaRenderSafety::ValidateDimensions(
+        RequestedWidth, RequestedHeight, S->Width, S->Height, ValidationError))
+    {
+        return FHaybaHandlerResult::Err(TEXT("render_camera: ") + ValidationError);
+    }
 
     FString Format = TEXT("png");
     Params->TryGetStringField(TEXT("format"), Format);
+    Format.ToLowerInline();
     S->Format = Format;
 
     double TimeoutD = 30.0;
     Params->TryGetNumberField(TEXT("wait_timeout_s"), TimeoutD);
+    if (!FMath::IsFinite(TimeoutD) || TimeoutD < 0.0 || TimeoutD > 60.0)
+        return FHaybaHandlerResult::Err(TEXT("render_camera: wait_timeout_s must be finite and in [0,60]"));
     S->TimeoutSeconds = TimeoutD;
 
     const TArray<TSharedPtr<FJsonValue>>* Subs = nullptr;
     if (Params->TryGetArrayField(TEXT("wait_for_subsystems"), Subs) && Subs)
     {
-        for (const TSharedPtr<FJsonValue>& V : *Subs) S->WaitSubsystems.Add(V->AsString());
+        if (Subs->Num() > 5)
+            return FHaybaHandlerResult::Err(TEXT("render_camera: wait_for_subsystems accepts at most 5 entries"));
+        static const TSet<FString> Allowed = {
+            TEXT("shaders"), TEXT("assets"), TEXT("gc"), TEXT("pcg"), TEXT("world_tick")
+        };
+        for (const TSharedPtr<FJsonValue>& V : *Subs)
+        {
+            if (!V.IsValid() || V->Type != EJson::String || !Allowed.Contains(V->AsString()))
+                return FHaybaHandlerResult::Err(TEXT("render_camera: wait_for_subsystems entries must be shaders, assets, gc, pcg, or world_tick"));
+            S->WaitSubsystems.AddUnique(V->AsString());
+        }
     }
     if (S->WaitSubsystems.Num() == 0)
     {
         S->WaitSubsystems = { TEXT("shaders"), TEXT("assets"), TEXT("world_tick") };
     }
 
-    S->OutPath = ResolveOutputPath(OutPathReq, S->Format);
-
-    // ── Cross-thread event ────────────────────────────────────────────────
-    S->DoneEvent = FPlatformProcess::GetSynchEventFromPool(/*bIsManualReset=*/ false);
-    if (!S->DoneEvent)
+    if (!HaybaRenderSafety::ResolveOutputPath(
+        OutPathReq, S->Format, TEXT("hayba_camera"), S->OutPath, ValidationError))
     {
-        return FHaybaHandlerResult::Err(TEXT("render_camera: failed to allocate FEvent"));
+        return FHaybaHandlerResult::Err(TEXT("render_camera: ") + ValidationError);
     }
 
-    // ProcessCommand already runs on the game thread, so run INLINE. The old
-    // AsyncTask(GameThread)+Wait queued a task the blocked game thread could
-    // never run -> deadlock -> always timed out (render never produced output).
-    // Only marshal when genuinely called from off the game thread; the shared
-    // ref keeps S alive across that hop even if the wait times out.
-    bool bSignaled = true;
-    if (IsInGameThread())
+    // wait_timeout_s is the idle phase. Encoding/publishing receives another
+    // bounded 15 seconds, with a hard policy ceiling of 75 seconds.
+    S->Lease = HaybaRenderSafety::FLease::TryAcquire(
+        TEXT("render_camera"), FMath::Max(15.0, TimeoutD + 15.0), ValidationError);
+    if (!S->Lease.IsValid())
     {
-        RunOnGameThread(S);
+        return FHaybaHandlerResult::Err(TEXT("render_camera: ") + ValidationError);
     }
-    else
+
+    // ProcessCommand is a game-thread boundary. Do not recreate the former
+    // off-thread marshal here: if its bounded wait elapsed, the queued lambda
+    // still retained this module's code and render lease while module shutdown
+    // continued. That is an unload-time UAF, not a recoverable timeout. A
+    // future non-TCP caller must marshal the whole command before entering the
+    // handler, where ownership and cancellation can be tracked centrally.
+    if (!IsInGameThread())
     {
-        AsyncTask(ENamedThreads::GameThread, [S]() { RunOnGameThread(S); });
-        const uint32 BlockTimeoutMs = (uint32)((S->TimeoutSeconds + 60.0) * 1000.0);
-        bSignaled = S->DoneEvent->Wait(BlockTimeoutMs);
+        return FHaybaHandlerResult::Err(
+            TEXT("render_camera: must run on the game thread; no render work was queued"));
     }
+    RunOnGameThread(S);
 
     // ── Build response ────────────────────────────────────────────────────
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
 
-    if (!bSignaled)
-    {
-        // The game-thread task is still running (busy/hitched/deadlocked). Do
-        // NOT read S's task-written fields here — that would race the game
-        // thread. The task keeps its own shared ref and will free S when it
-        // finishes; we just report the timeout.
-        Out->SetBoolField(TEXT("ok"), false);
-        TSharedPtr<FJsonObject> Err = MakeShared<FJsonObject>();
-        Err->SetStringField(TEXT("kind"), TEXT("render_timeout"));
-        Err->SetStringField(TEXT("engineHint"), TEXT("render did not complete within wait_timeout_s + 60s; the game thread may be blocked"));
-        Out->SetObjectField(TEXT("error"), Err);
-        return FHaybaHandlerResult::Ok(Out);
-    }
-
     if (S->bWaitTimedOut)
     {
-        Out->SetBoolField(TEXT("ok"), false);
-        TSharedPtr<FJsonObject> Err = MakeShared<FJsonObject>();
-        Err->SetStringField(TEXT("kind"), TEXT("wait_timeout"));
-        TArray<TSharedPtr<FJsonValue>> TimedOut;
-        for (const FString& Sub : S->TimedOutSubsystems) TimedOut.Add(MakeShared<FJsonValueString>(Sub));
-        Err->SetArrayField(TEXT("timedOut"), TimedOut);
-        Out->SetObjectField(TEXT("error"), Err);
+        return FHaybaHandlerResult::Err(FString::Printf(
+            TEXT("render_camera: idle wait timed out after %.0f ms (%s). Increase wait_timeout_s within the 60-second cap, or wait for those subsystems before retrying."),
+            S->WaitMs, *FString::Join(S->TimedOutSubsystems, TEXT(", "))));
     }
     else if (!S->bRendered)
     {
-        Out->SetBoolField(TEXT("ok"), false);
-        TSharedPtr<FJsonObject> Err = MakeShared<FJsonObject>();
-        Err->SetStringField(TEXT("kind"), S->FailReason.IsEmpty() ? TEXT("file_not_written") : S->FailReason);
-        Err->SetStringField(TEXT("attempted"), S->OutPath);
-        if (!S->EngineHint.IsEmpty()) Err->SetStringField(TEXT("engineHint"), S->EngineHint);
-        Out->SetObjectField(TEXT("error"), Err);
+        return FHaybaHandlerResult::Err(FString::Printf(
+            TEXT("render_camera: %s at lifecycle stage %s; attempted '%s'. %s"),
+            S->FailReason.IsEmpty() ? TEXT("render failed") : *S->FailReason,
+            S->Lease.IsValid() ? HaybaRenderSafety::StageName(S->Lease->GetStage()) : TEXT("unknown"),
+            *S->OutPath, *S->EngineHint));
     }
     else
     {
-        // ── Verify ──
-        TArray<uint8> FileBytes;
-        const bool bRead = FFileHelper::LoadFileToArray(FileBytes, *S->OutPath);
-        const int64 SizeBytes = bRead ? FileBytes.Num() : 0;
-
-        FString FirstHex;
-        const bool bMagic = bRead && VerifyMagic(FileBytes, S->Format, FirstHex);
-
-        bool bDimsOk = true;
-        int32 PngW = 0, PngH = 0;
-        if (bMagic && S->Format == TEXT("png"))
+        Out->SetBoolField(TEXT("ok"), true);
+        Out->SetBoolField(TEXT("artifact_verified"), true);
+        Out->SetStringField(TEXT("path"), S->OutPath);
+        Out->SetStringField(TEXT("format"), S->Format);
+        Out->SetNumberField(TEXT("width"), S->Width);
+        Out->SetNumberField(TEXT("height"), S->Height);
+        Out->SetNumberField(TEXT("fileBytes"), (double)S->FileBytes);
+        Out->SetNumberField(TEXT("renderDurationMs"), S->RenderMs);
+        Out->SetNumberField(TEXT("waitMs"), S->WaitMs);
+        if (S->bSkippedWorldTickInline)
         {
-            if (ParsePngDims(FileBytes, PngW, PngH))
-            {
-                bDimsOk = (PngW == S->Width && PngH == S->Height);
-            }
-        }
-
-        if (!bRead || SizeBytes < 8 || !bMagic || !bDimsOk)
-        {
-            Out->SetBoolField(TEXT("ok"), false);
-            TSharedPtr<FJsonObject> Err = MakeShared<FJsonObject>();
-            Err->SetStringField(TEXT("kind"), TEXT("file_invalid"));
-            Err->SetStringField(TEXT("attempted"), S->OutPath);
-            Err->SetNumberField(TEXT("sizeBytes"), (double)SizeBytes);
-            Err->SetStringField(TEXT("firstBytesHex"), FirstHex);
-            Err->SetStringField(TEXT("expectedFormat"), S->Format);
-            if (!bDimsOk)
-            {
-                Err->SetNumberField(TEXT("actualWidth"), (double)PngW);
-                Err->SetNumberField(TEXT("actualHeight"), (double)PngH);
-            }
-            Out->SetObjectField(TEXT("error"), Err);
-        }
-        else
-        {
-            Out->SetBoolField(TEXT("ok"), true);
-            Out->SetStringField(TEXT("path"), S->OutPath);
-            Out->SetNumberField(TEXT("width"), S->Width);
-            Out->SetNumberField(TEXT("height"), S->Height);
-            Out->SetNumberField(TEXT("fileBytes"), (double)SizeBytes);
-            Out->SetNumberField(TEXT("renderDurationMs"), S->RenderMs);
-            Out->SetNumberField(TEXT("waitMs"), S->WaitMs);
-            if (S->bSkippedWorldTickInline)
-            {
-                Out->SetBoolField(TEXT("skippedWorldTickInline"), true);
-            }
+            Out->SetBoolField(TEXT("skippedWorldTickInline"), true);
         }
     }
 
-    // No manual cleanup: when this function's shared ref to S drops (and the
-    // async task's ref, whichever is last), ~FRenderState returns the FEvent to
-    // the pool. This is safe because we reached here only after the event was
-    // signaled, i.e. the task is done with S.
+    // Render resources are released by the scope-exit guard inside
+    // RunOnGameThread. Dropping S here releases only ordinary response/lease
+    // state; no queued task or pooled event can outlive the handler.
     return FHaybaHandlerResult::Ok(Out);
 }

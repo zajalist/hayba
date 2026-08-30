@@ -375,11 +375,11 @@
           "required": false,
           "description": "Restrict to SmokeFilter-tagged tests"
         },
-        {
-          "name": "timeout_seconds",
-          "type": "number",
-          "required": false,
-          "description": "Per-test latent-command drain timeout (default 120)"
+          {
+            "name": "timeout_seconds",
+            "type": "number",
+            "required": false,
+            "description": "For allowlisted in-process tests: per-test latent drain timeout. For owned-child runs: total process deadline, default 300 and hard-capped at 900 seconds."
         }
       ],
       "returns": {
@@ -394,6 +394,21 @@
             "name": "status",
             "type": "string",
             "description": "'running' immediately; 'busy' if another run is already in flight"
+          },
+          {
+            "name": "execution_mode",
+            "type": "string",
+            "description": "'in_process_allowlisted' only for exact audited Hayba contracts; otherwise 'owned_child'"
+          },
+          {
+            "name": "ownership_token",
+            "type": "string",
+            "description": "Unique command-line tag proving ownership of a disposable child"
+          },
+          {
+            "name": "child_pid",
+            "type": "number",
+            "description": "PID of the owned UnrealEditor-Cmd child when execution_mode is owned_child"
           },
           {
             "name": "total",
@@ -422,7 +437,48 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "JOB ENVELOPE (async, non-freezing): run explicit test_names, 'all', or the same filter/filter_pattern/category selectors accepted by test_list. Selectors are case-insensitive and cannot be combined with explicit names; an empty or zero-match selection is an error rather than a false green run. Returns { job_id, status:'running' } immediately and runs tests on the editor's game-thread core ticker. Poll build_status for { passed, failed, skipped, elapsed_seconds, total }, or test_get_log for detailed entries. Only one pollable run may be active; busy errors include its job_id, while orphaned/done ownership is recovered automatically."
+      "notes": "JOB ENVELOPE (async, non-freezing): unknown project, engine, plugin, and future Hayba tests default to a tagged owned UnrealEditor-Cmd child. Only exact lifecycle-audited pure Hayba contracts use the serving editor's core ticker. Empty or unmatched selections fail closed instead of producing a false green. Poll build_status for structured counts plus execution_mode, child PID/token, exit code, report validity, crash, timeout, cancellation, output-bound, and crash-artifact-count evidence. A crash or never-started child is failed, never skipped. Only one run may be active."
+    },
+    "test_cancel": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPTestHandler::Handle",
+      "params": [
+        {
+          "name": "job_id",
+          "type": "string",
+          "required": true,
+          "description": "Active owned-child test_run job id"
+        }
+      ],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {
+            "name": "job_id",
+            "type": "string"
+          },
+          {
+            "name": "status",
+            "type": "string",
+            "description": "'cancelling'; poll build_status for terminal evidence"
+          },
+          {
+            "name": "child_pid",
+            "type": "number"
+          },
+          {
+            "name": "ownership_token",
+            "type": "string"
+          },
+          {
+            "name": "cancel_requested",
+            "type": "boolean"
+          }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": "Cancels only the tagged UnrealEditor-Cmd child owned by the matching active test_run job. It never enumerates or terminates arbitrary editor processes."
     },
     "test_get_log": {
       "aliases": [],
@@ -2295,12 +2351,64 @@
           {
             "name": "path",
             "type": "string"
+          },
+          {
+            "name": "class",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "type": "string"
+          },
+          {
+            "name": "create_call_succeeded",
+            "type": "boolean"
+          },
+          {
+            "name": "dirty_marked",
+            "type": "boolean"
+          },
+          {
+            "name": "pre_save_re_resolved",
+            "type": "boolean"
+          },
+          {
+            "name": "save_attempted",
+            "type": "boolean"
+          },
+          {
+            "name": "saved",
+            "type": "boolean"
+          },
+          {
+            "name": "target_re_resolved",
+            "type": "boolean"
+          },
+          {
+            "name": "dirty_known",
+            "type": "boolean"
+          },
+          {
+            "name": "dirty",
+            "type": "boolean"
+          },
+          {
+            "name": "ok",
+            "type": "boolean"
+          },
+          {
+            "name": "error",
+            "type": "string"
+          },
+          {
+            "name": "save_note",
+            "type": "string"
           }
         ]
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Create a DataAsset of a class inheriting UDataAsset. Data assets are the standard home for designer-tunable config that should live in the content browser rather than in code."
+      "notes": "Create and persist a concrete, current UDataAsset subclass after bounded path/name/class preflight. MarkPackageDirty and SaveLoadedAsset are callback boundaries: no raw creation pointer crosses either one, and the target path/class is freshly re-resolved before save and again afterward. Inspect ok, dirty_marked, pre_save_re_resolved, save_attempted, saved (present only when attempted), target_re_resolved, and dirty_known. If any identity, dirty-mark, save, or final readback fact is not trustworthy, nested ok:false plus data_create_unknown_outcome makes the top-level response unknown_outcome; query the exact path before retrying."
     },
     "data_get": {
       "aliases": [],
@@ -2316,14 +2424,66 @@
         "shape": "object",
         "fields": [
           {
+            "name": "path",
+            "type": "string"
+          },
+          {
+            "name": "class",
+            "type": "string"
+          },
+          {
             "name": "properties",
+            "type": "object"
+          },
+          {
+            "name": "reflection_complete",
+            "type": "boolean"
+          },
+          {
+            "name": "reflection_truncated",
+            "type": "boolean"
+          },
+          {
+            "name": "properties_examined",
+            "type": "number"
+          },
+          {
+            "name": "properties_returned",
+            "type": "number"
+          },
+          {
+            "name": "properties_omitted_at_least",
+            "type": "number"
+          },
+          {
+            "name": "omitted_count_exact",
+            "type": "boolean"
+          },
+          {
+            "name": "unsupported_values",
+            "type": "number"
+          },
+          {
+            "name": "large_integers_as_strings",
+            "type": "number"
+          },
+          {
+            "name": "reflection_limit_reason",
+            "type": "string"
+          },
+          {
+            "name": "omitted_property_names",
+            "type": "array"
+          },
+          {
+            "name": "reflection_limits",
             "type": "object"
           }
         ]
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Read every property off a DataAsset. Use this to discover the property names data_set expects rather than guessing them."
+      "notes": "Read a bounded property snapshot from a DataAsset. Always inspect reflection_complete, reflection_truncated, properties_omitted_at_least, unsupported_values, and large_integers_as_strings before treating it as complete. Set/map item counts and physical sparse-slot ranges are both capped before iteration, so a small live count cannot hide an unbounded hole scan. Integers outside the exact JSON-number range are decimal strings, never rounded. Soft, weak, lazy, and soft-class wrapper references are reported unsupported/partial instead of falsely serializing an unloaded non-null path as null. Properties with native getters or setters are also unsupported/partial: raw bytes may not be their logical value, and invoking an accessor would execute unaudited code."
     },
     "data_set": {
       "aliases": [],
@@ -2349,14 +2509,94 @@
         "shape": "object",
         "fields": [
           {
+            "name": "path",
+            "type": "string"
+          },
+          {
+            "name": "property",
+            "type": "string"
+          },
+          {
+            "name": "copy_completed",
+            "type": "boolean"
+          },
+          {
             "name": "ok",
             "type": "boolean"
+          },
+          {
+            "name": "error",
+            "type": "string"
+          },
+          {
+            "name": "verified",
+            "type": "boolean"
+          },
+          {
+            "name": "target_re_resolved",
+            "type": "boolean"
+          },
+          {
+            "name": "dirty_marked",
+            "type": "boolean"
+          },
+          {
+            "name": "save_requested",
+            "type": "boolean"
+          },
+          {
+            "name": "dirty_known",
+            "type": "boolean"
+          },
+          {
+            "name": "dirty",
+            "type": "boolean"
+          },
+          {
+            "name": "observed_value",
+            "type": "any"
+          },
+          {
+            "name": "observed_value_omitted",
+            "type": "boolean"
+          },
+          {
+            "name": "observed_value_reason",
+            "type": "string"
+          },
+          {
+            "name": "observed_value_truncated",
+            "type": "boolean"
+          },
+          {
+            "name": "observed_value_nodes",
+            "type": "number"
+          },
+          {
+            "name": "observed_value_string_chars",
+            "type": "number"
+          },
+          {
+            "name": "observed_value_unsupported_values",
+            "type": "number"
+          },
+          {
+            "name": "observed_value_large_integers_as_strings",
+            "type": "number"
+          },
+          {
+            "name": "warning",
+            "type": "string"
+          },
+          {
+            "name": "persistence_tip",
+            "type": "string"
           }
         ]
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Write one property on a DataAsset by name. Read it back with data_get — a name the asset does not have is reported, but confirming the value is how you know it took."
+      "notes": "Write one bounded scalar property on a DataAsset by name, then inspect copy_completed, ok, verified, target_re_resolved, dirty_marked, dirty_known, dirty (when known), and observed_value or observed_value_omitted. Only exact built-in numeric, enum, bool, string, and name property classes without native getters/setters are accepted and assigned through direct typed setters; JsonValueToUProperty and ImportText are never entered. Fixed arrays, dynamic containers, structs (including user-defined structs), wrapper/object references, interfaces, delegates, optionals, text, field paths, SkipSerialization fields, accessor-backed fields, custom property subclasses, and every other extensible type are refused before staging. Staging and all property pointers end before dirty notification; the command then re-resolves the target/class/property and repeats the accessor/schema gate before fresh bounded readback. It deliberately skips transactions, UObject editor hooks, and persistence. save_requested is always false. If any final identity/verification/dirty fact is untrustworthy, nested ok:false plus stable error makes the top-level response unknown_outcome with mandatory readback; ErrorsOnly cannot hide it."
     },
     "level_create": {
       "aliases": [],
@@ -2573,26 +2813,100 @@
         {
           "name": "source_file",
           "type": "string",
-          "required": true
+          "required": true,
+          "description": "One absolute regular file below the fixed OS-temp/hayba-asset-connectors source/request cache. Links, reparse points, hardlinks, device/UNC paths, traversal, and files outside that authority are rejected."
         },
         {
           "name": "destination_path",
           "type": "string",
-          "required": true
+          "required": true,
+          "description": "Canonical /Game folder. The exact asset name is the strict ASCII source basename; an existing registry/live/disk package is refused, never overwritten."
+        },
+        {
+          "name": "asset_type",
+          "type": "string",
+          "required": true,
+          "description": "Exact type intent: texture for PNG/JPEG, sound_wave for WAV, or static_mesh for binary FBX. glTF/GLB/OBJ/USD and dependency-reading formats are rejected."
         }
       ],
       "returns": {
         "shape": "object",
         "fields": [
           {
+            "name": "code",
+            "type": "string",
+            "description": "Stable HAI_* result/refusal code."
+          },
+          {
+            "name": "mutation_status",
+            "type": "string",
+            "description": "not_started, applied_unsaved/applied, partially_applied, or unknown."
+          },
+          {
+            "name": "failure_kind",
+            "type": "string",
+            "description": "Machine-actionable refusal/retry/unknown/session classification on failure."
+          },
+          {
             "name": "path",
-            "type": "string"
+            "type": "string",
+            "description": "Exact freshly AssetRegistry-read object path; present only on verified success."
+          },
+          {
+            "name": "class",
+            "type": "string",
+            "description": "Exact freshly AssetRegistry-read class."
+          },
+          {
+            "name": "verified",
+            "type": "boolean",
+            "description": "True only after exact object path, package, asset name, class, and live package re-resolution."
+          },
+          {
+            "name": "saved",
+            "type": "boolean",
+            "description": "Whether the exact package is present on disk after import; asset_import itself does not request a save."
+          },
+          {
+            "name": "save_attempted",
+            "type": "boolean",
+            "description": "Always false: asset_import deliberately leaves persistence to an explicit asset_save call."
+          },
+          {
+            "name": "dirty_known",
+            "type": "boolean",
+            "description": "Whether dirty is backed by a freshly re-resolved live package."
+          },
+          {
+            "name": "dirty",
+            "type": "boolean",
+            "description": "Fresh live-package dirty state; interpret only with dirty_known."
+          },
+          {
+            "name": "partial",
+            "type": "boolean",
+            "description": "Failure fact: some mutation evidence exists despite failed exact readback."
+          },
+          {
+            "name": "unknown_outcome",
+            "type": "boolean",
+            "description": "Failure fact: callbacks returned without proof of one exact result; do not retry unchanged."
+          },
+          {
+            "name": "session_suspect",
+            "type": "boolean",
+            "description": "True for impossible return/readback invariants or unexpected returned outputs; stop further mutations and restart/inspect."
+          },
+          {
+            "name": "crafted_format_safety",
+            "type": "string",
+            "description": "Always not_proven: bounded header checks cannot contain an in-process engine parser."
           }
         ]
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Import a file from disk (FBX, texture, audio) into the content browser. The imported asset is NOT saved to disk automatically — follow with asset_save, or a rebuild will lose it."
+      "notes": "Fail-closed, single-file native import. It pins the fixed connector-cache ancestor/file handles, enforces kind-specific size+magic policy and an exact factory, refuses collisions/overwrite, then discards callback-returned UObject pointers and re-resolves the exact registry path/class/package. Successful imports are normally dirty_in_memory: follow with asset_save on the returned exact path. These checks reduce exposure but do NOT prove crafted files safe for an in-process UE parser; untrusted remote files still require an isolated sanitizer. Future connector continuation additionally requires an opaque single-use grant bound to one enumerated file; directory assertions are not authority."
     },
     "asset_duplicate": {
       "aliases": [],

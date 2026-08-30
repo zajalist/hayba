@@ -1,0 +1,73 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>
+    body { margin: 0; font-family: system-ui, sans-serif; }
+    a { color: #C47A28; } a:hover { color: #D88A30; }
+  </style>
+</helmet>
+<div style="width: 960px; height: 1150px; background: #20252B; padding: 40px; box-sizing: border-box; display: flex; flex-direction: column; gap: 26px;">
+  <div style="display: flex; align-items: center; gap: 18px;">
+    <img src="HaybaLogo.svg" style="width: 50px; height: 60px;" alt="Hayba">
+    <div style="display: flex; flex-direction: column; gap: 2px;">
+      <div style="color: #E5E9ED; font-size: 22px; font-weight: 650;">Foundations</div>
+      <div style="color: #AAB3BD; font-size: 13px;">Cool neutral chrome. Ochre is spent only on meaning. The logo stays warm and untouched.</div>
+    </div>
+  </div>
+
+  <div style="color: #77828E; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; font-weight: 600;">Surfaces &amp; lines</div>
+  <div style="display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px;">
+    <div style="display: flex; flex-direction: column; gap: 6px;"><div style="height: 52px; border-radius: 8px; background: #20252B; border: 1px solid #3A424B;"></div><div style="color: #AAB3BD; font-size: 11px;">surface.panel</div><div style="color: #77828E; font-size: 10px; font-family: ui-monospace, monospace;">#20252B</div></div>
+    <div style="display: flex; flex-direction: column; gap: 6px;"><div style="height: 52px; border-radius: 8px; background: #292F36;"></div><div style="color: #AAB3BD; font-size: 11px;">surface.raised</div><div style="color: #77828E; font-size: 10px; font-family: ui-monospace, monospace;">#292F36</div></div>
+    <div style="display: flex; flex-direction: column; gap: 6px;"><div style="height: 52px; border-radius: 8px; background: #171B20;"></div><div style="color: #AAB3BD; font-size: 11px;">surface.sunken</div><div style="color: #77828E; font-size: 10px; font-family: ui-monospace, monospace;">#171B20</div></div>
+    <div style="display: flex; flex-direction: column; gap: 6px;"><div style="height: 52px; border-radius: 8px; background: #3A424B;"></div><div style="color: #AAB3BD; font-size: 11px;">border.subtle</div><div style="color: #77828E; font-size: 10px; font-family: ui-monospace, monospace;">#3A424B</div></div>
+    <div style="display: flex; flex-direction: column; gap: 6px;"><div style="height: 52px; border-radius: 8px; background: #515B66;"></div><div style="color: #AAB3BD; font-size: 11px;">border.strong</div><div style="color: #77828E; font-size: 10px; font-family: ui-monospace, monospace;">#515B66</div></div>
+  </div>
+
+  <div style="color: #77828E; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; font-weight: 600;">Text &amp; semantics</div>
+  <div style="display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 12px;">
+    <div style="display: flex; flex-direction: column; gap: 6px;"><div style="height: 44px; border-radius: 8px; background: #E5E9ED;"></div><div style="color: #AAB3BD; font-size: 11px;">text.primary</div><div style="color: #77828E; font-size: 10px; font-family: ui-monospace, monospace;">#E5E9ED</div></div>
+    <div style="display: flex; flex-direction: column; gap: 6px;"><div style="height: 44px; border-radius: 8px; background: #AAB3BD;"></div><div style="color: #AAB3BD; font-size: 11px;">text.secondary</div><div style="color: #77828E; font-size: 10px; font-family: ui-monospace, monospace;">#AAB3BD</div></div>
+    <div style="display: flex; flex-direction: column; gap: 6px;"><div style="height: 44px; border-radius: 8px; background: #77828E;"></div><div style="color: #AAB3BD; font-size: 11px;">text.muted</div><div style="color: #77828E; font-size: 10px; font-family: ui-monospace, monospace;">#77828E</div></div>
+    <div style="display: flex; flex-direction: column; gap: 6px;"><div style="height: 44px; border-radius: 8px; background: #C47A28;"></div><div style="color: #C47A28; font-size: 11px; font-weight: 600;">accent.ochre</div><div style="color: #77828E; font-size: 10px; font-family: ui-monospace, monospace;">#C47A28</div></div>
+    <div style="display: flex; flex-direction: column; gap: 6px;"><div style="height: 44px; border-radius: 8px; background: #7EA58A;"></div><div style="color: #AAB3BD; font-size: 11px;">status.pass</div><div style="color: #77828E; font-size: 10px; font-family: ui-monospace, monospace;">#7EA58A</div></div>
+    <div style="display: flex; flex-direction: column; gap: 6px;"><div style="height: 44px; border-radius: 8px; background: #C46E68;"></div><div style="color: #AAB3BD; font-size: 11px;">status.fail</div><div style="color: #77828E; font-size: 10px; font-family: ui-monospace, monospace;">#C46E68</div></div>
+  </div>
+
+  <div style="background: #292F36; border-left: 3px solid #C47A28; border-radius: 6px; padding: 14px 18px; color: #E5E9ED; font-size: 13px; line-height: 1.55;">
+    <span style="font-weight: 650; color: #C47A28;">The ochre rule.</span> #C47A28 appears only when it means something: active destination, pending approval, unsaved change, or a rule needing attention. Never decoration, never a second brand color. The logo keeps its own #B56A1D — brand mark and UI accent are siblings, not the same token.
+  </div>
+
+  <div style="color: #77828E; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; font-weight: 600;">Type ramp (Slate, UE default face)</div>
+  <div style="background: #292F36; border: 1px solid #3A424B; border-radius: 10px; padding: 20px 24px; display: flex; flex-direction: column; gap: 12px;">
+    <div style="display: flex; align-items: baseline; gap: 18px;"><div style="color: #E5E9ED; font-size: 20px; font-weight: 650;">Title 20</div><div style="color: #77828E; font-size: 10px; font-family: ui-monospace, monospace;">Hayba.Text.Title</div></div>
+    <div style="display: flex; align-items: baseline; gap: 18px;"><div style="color: #E5E9ED; font-size: 18px; font-weight: 600;">App title 18</div><div style="color: #77828E; font-size: 10px; font-family: ui-monospace, monospace;">Hayba.Text.AppTitle</div></div>
+    <div style="display: flex; align-items: baseline; gap: 18px;"><div style="color: #AAB3BD; font-size: 15px; font-weight: 600;">Heading 15</div><div style="color: #77828E; font-size: 10px; font-family: ui-monospace, monospace;">Hayba.Text.Heading</div></div>
+    <div style="display: flex; align-items: baseline; gap: 18px;"><div style="color: #AAB3BD; font-size: 12px;">Body 12 — the default reading size for panel content.</div><div style="color: #77828E; font-size: 10px; font-family: ui-monospace, monospace;">Hayba.Text.Body</div></div>
+    <div style="display: flex; align-items: baseline; gap: 18px;"><div style="color: #AAB3BD; font-size: 11px;">Tab label 11</div><div style="color: #77828E; font-size: 10px; font-family: ui-monospace, monospace;">Hayba.Text.TabLabel</div></div>
+    <div style="display: flex; align-items: baseline; gap: 18px;"><div style="color: #77828E; font-size: 10px;">Caption 10 — timestamps, counts, tertiary context.</div><div style="color: #77828E; font-size: 10px; font-family: ui-monospace, monospace;">Hayba.Text.Caption</div></div>
+  </div>
+
+  <div style="color: #77828E; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; font-weight: 600;">Shape &amp; spacing</div>
+  <div style="display: flex; gap: 14px;">
+    <div style="background: #292F36; border: 1px solid #3A424B; border-radius: 10px; padding: 16px 20px; color: #AAB3BD; font-size: 12px; line-height: 1.6; flex-grow: 1;">
+      Radii: <span style="color: #E5E9ED;">8px</span> cards &amp; rows · <span style="color: #E5E9ED;">6px</span> chips &amp; inputs · <span style="color: #E5E9ED;">10px</span> panels.<br>
+      Spacing steps: <span style="color: #E5E9ED;">4 · 8 · 12 · 18 · 28 · 40</span>. Icon sizes: <span style="color: #E5E9ED;">28</span> sidebar · <span style="color: #E5E9ED;">16</span> inline.<br>
+      Active row: surface.raised + 3px ochre inset edge. Icons never change geometry with state — state marks composite bottom-right.
+    </div>
+  </div>
+
+  <div style="color: #77828E; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; font-weight: 600;">Voice</div>
+  <div style="background: #292F36; border: 1px solid #3A424B; border-radius: 10px; padding: 16px 20px; color: #AAB3BD; font-size: 12px; line-height: 1.6;">
+    Five nouns, always the same words: <span style="color: #E5E9ED;">World · Library · Rules · Activity · Chat</span>. A verdict is a number with a direction ("−0.32 m, move +Z"), never a bare red X. Nothing in the UI lists a check that will not run, and nothing says "coming soon".
+  </div>
+</div>
+</x-dc>
+</body>
+</html>

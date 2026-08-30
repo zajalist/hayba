@@ -111,9 +111,13 @@ By default the server exposes only **three meta-tools** instead of the full
   Zod registry on demand, with a "did you mean" suggestion on a miss
   ([`src/tools/code-mode/get-tool-signature.ts`](src/tools/code-mode/get-tool-signature.ts)).
 - **`python_run`** — executes a script through UE's `PythonScriptPlugin` over
-  the TCP seam for anything the typed commands don't cover
+  the TCP seam for constrained embedded editor scripting
   ([`src/tools/python/python-run.ts`](src/tools/python/python-run.ts));
-  filesystem/subprocess (Tier 3) access is gated behind `allow_unsafe`.
+  Tier-3 host I/O (filesystem writes, subprocesses, and sockets) is always
+  refused before interpreter execution. The legacy `allow_unsafe` boolean is
+  accepted only for compatibility and is deprecated and ineffective. Use typed
+  brokered tools for supported host work (#412/#415). This in-process boundary
+  does not make arbitrary Python safe or provide process isolation (#392/#414).
 
 The full catalog is registered eagerly only when `HAYBA_CODE_MODE=off`
 (see the `if (config.codeMode) return;` guard in

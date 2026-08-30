@@ -1,5 +1,6 @@
 #pragma once
 #include "CoreMinimal.h"
+#include "HaybaMCPAdvisoryTypes.h"
 
 // ── BYOK provider catalog mirror ────────────────────────────────────────────
 // MIRROR of mcp-tools/hayba-mcp/src/agents/providers.ts (Task 1 catalog).
@@ -82,12 +83,20 @@ public:
     FString CapabilityToken;
     // Append every command execution to Saved/hayba-execution.log.
     bool bEnableExecutionJournal = true;
-    // Allow Tier 3 Python scripts (filesystem, subprocess, socket).
-    bool bAllowUnsafePython = false;
 
     // Mirrored from UHaybaMCPDeveloperSettings (Project Settings UI)
     int32 RateLimitPerMinute = 60;
+    int32 TcpMaxRequestBytes = 1024 * 1024;
+    int32 TcpMaxResponseBytes = 8 * 1024 * 1024;
+    int32 TcpMaxClientConnections = 16;
+    int32 TcpMaxPendingCommands = 128;
+    int32 TcpMaxJsonNestingDepth = 64;
+    int32 TcpFrameReadTimeoutMs = 5000;
+    int32 TcpSendTimeoutMs = 1000;
     bool bCodeModeEnabled = true;
+    // Optional response guidance. Errors and mandatory recovery instructions
+    // remain visible at every level.
+    EHaybaMCPAdvisoryVerbosity AdvisoryVerbosity = EHaybaMCPAdvisoryVerbosity::ErrorsAndWarnings;
     float ToolCacheTTLSeconds = 2.0f;
     FString SidecarURL = TEXT("http://localhost:7821");
     // Auto-start the Node chat sidecar at editor startup (on the SidecarURL port)
@@ -118,6 +127,11 @@ public:
     // Written to Saved/HaybaMCP/disabled-tools.json on every Save(); the Node
     // MCP server watches this file and rebuilds its disabled set from it.
     void WriteDisabledToolsFile() const;
+
+    // Canonical spelling shared by the settings mirror and the diagnostic
+    // get_setting command. Keep the wire contract in one place so a new enum
+    // value cannot be advertised differently to the Node sidecar.
+    static const TCHAR* AdvisoryVerbosityWireName(EHaybaMCPAdvisoryVerbosity Value);
 
     // Legacy single-key accessors. Retained for the in-editor chat client;
     // now route through the DPAPI vault under the currently-selected provider id.

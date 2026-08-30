@@ -7,14 +7,13 @@ import { installToolStreamMirror, wrapToolHandlerForStream } from './tool-stream
 import { installLiveSender, executeCommand } from './tool-executor.js';
 import { registerToolMeta } from './tool-meta-registry.js';
 import { readSettings } from './routing/settings-watcher.js';
-import { registerDeferredRouting, type CapturedTool, type RoutingHandle, type DeferredRoutingOptions } from './routing/register.js';
 import {
-  defineTool,
-  materializeTool,
-  registerTool,
-  recordToolSchema,
-  type ToolDescriptor,
-} from './register-tool.js';
+  registerDeferredRouting,
+  type CapturedTool,
+  type RoutingHandle,
+  type DeferredRoutingOptions,
+} from './routing/register.js';
+import { defineTool, materializeTool, registerTool, recordToolSchema, type ToolDescriptor } from './register-tool.js';
 import { resolveAliases } from './param-aliases.js';
 import { TOOL_ALIASES } from './tool-aliases.js';
 import { AUDIO_DESCRIPTORS } from './audio/audio-tools.js';
@@ -153,6 +152,7 @@ import {
   uiListWidgetTypesHandler,
 } from './ui/ui-list-widget-types.js';
 import { meta as docsSearchMeta, schema as docsSearchSchema, docsSearchHandler } from './docs/docs-search.js';
+import { meta as queryUeDocsMeta, schema as queryUeDocsSchema, queryUeDocsHandler } from './docs/query-ue-docs.js';
 import {
   meta as docsLookupClassMeta,
   schema as docsLookupClassSchema,
@@ -178,7 +178,11 @@ import {
   schema as assetGetReferencesSchema,
   assetGetReferencesHandler,
 } from './asset-graph/asset-get-references.js';
-import { meta as assetRenameMeta, schema as assetRenameSchema, assetRenameHandler } from './asset-graph/asset-rename.js';
+import {
+  meta as assetRenameMeta,
+  schema as assetRenameSchema,
+  assetRenameHandler,
+} from './asset-graph/asset-rename.js';
 import { meta as assetMoveMeta, schema as assetMoveSchema, assetMoveHandler } from './asset-graph/asset-move.js';
 import {
   meta as assetFixRedirectorsMeta,
@@ -191,33 +195,75 @@ import {
   assetValidateHandler,
 } from './asset-graph/asset-validate.js';
 import {
-  meta as foliageListTypesMeta, schema as foliageListTypesSchema, foliageListTypesHandler,
+  meta as foliageListTypesMeta,
+  schema as foliageListTypesSchema,
+  foliageListTypesHandler,
 } from './foliage/foliage-list-types.js';
 import {
-  meta as foliageAddInstanceMeta, schema as foliageAddInstanceSchema, foliageAddInstanceHandler,
+  meta as foliageAddInstanceMeta,
+  schema as foliageAddInstanceSchema,
+  foliageAddInstanceHandler,
 } from './foliage/foliage-add-instance.js';
 import {
-  meta as foliagePaintAtMeta, schema as foliagePaintAtSchema, foliagePaintAtHandler,
+  meta as foliagePaintAtMeta,
+  schema as foliagePaintAtSchema,
+  foliagePaintAtHandler,
 } from './foliage/foliage-paint-at.js';
 import {
-  meta as foliageRemoveInstancesMeta, schema as foliageRemoveInstancesSchema, foliageRemoveInstancesHandler,
+  meta as foliageRemoveInstancesMeta,
+  schema as foliageRemoveInstancesSchema,
+  foliageRemoveInstancesHandler,
 } from './foliage/foliage-remove-instances.js';
-import { meta as pieWidgetTreeMeta, schema as pieWidgetTreeSchema, pieWidgetTreeHandler } from './pie/pie-widget-tree.js';
-import { meta as pieClickWidgetMeta, schema as pieClickWidgetSchema, pieClickWidgetHandler } from './pie/pie-click-widget.js';
+import {
+  meta as pieWidgetTreeMeta,
+  schema as pieWidgetTreeSchema,
+  pieWidgetTreeHandler,
+} from './pie/pie-widget-tree.js';
+import {
+  meta as pieClickWidgetMeta,
+  schema as pieClickWidgetSchema,
+  pieClickWidgetHandler,
+} from './pie/pie-click-widget.js';
 import { meta as pieMouseMeta, schema as pieMouseSchema, pieMouseHandler } from './pie/pie-mouse.js';
 import { meta as pieTypeTextMeta, schema as pieTypeTextSchema, pieTypeTextHandler } from './pie/pie-type-text.js';
 import { meta as pieSetTextMeta, schema as pieSetTextSchema, pieSetTextHandler } from './pie/pie-set-text.js';
 import { meta as pieAxisMeta, schema as pieAxisSchema, pieAxisHandler } from './pie/pie-axis.js';
 import { meta as piePressKeyMeta, schema as piePressKeySchema, piePressKeyHandler } from './pie/pie-press-key.js';
-import { meta as pieScreenshotMeta, schema as pieScreenshotSchema, pieScreenshotHandler } from './pie/pie-screenshot.js';
-import { meta as pieActorListMeta, schema as pieActorListSchema, pieActorListHandler } from './pie/pie-actor-list.js';
-import { meta as pieActorInspectMeta, schema as pieActorInspectSchema, pieActorInspectHandler } from './pie/pie-actor-inspect.js';
-import { meta as pieProjectWorldMeta, schema as pieProjectWorldSchema, pieProjectWorldHandler } from './pie/pie-project-world.js';
-import { meta as pieClickActorMeta, schema as pieClickActorSchema, pieClickActorHandler } from './pie/pie-click-actor.js';
-import { meta as textureAuditMeta, schema as textureAuditSchema, textureAuditHandler } from './content/texture-audit.js';
+import {
+  meta as pieScreenshotMeta,
+  schema as pieScreenshotSchema,
+  pieScreenshotHandler,
+} from './pie/pie-screenshot.js';
+import {
+  meta as pieActorListMeta,
+  schema as pieActorListSchema,
+  pieActorListHandler,
+} from './pie/pie-actor-list.js';
+import {
+  meta as pieActorInspectMeta,
+  schema as pieActorInspectSchema,
+  pieActorInspectHandler,
+} from './pie/pie-actor-inspect.js';
+import {
+  meta as pieProjectWorldMeta,
+  schema as pieProjectWorldSchema,
+  pieProjectWorldHandler,
+} from './pie/pie-project-world.js';
+import {
+  meta as pieClickActorMeta,
+  schema as pieClickActorSchema,
+  pieClickActorHandler,
+} from './pie/pie-click-actor.js';
+import {
+  meta as textureAuditMeta,
+  schema as textureAuditSchema,
+  textureAuditHandler,
+} from './content/texture-audit.js';
 import { meta as meshAuditMeta, schema as meshAuditSchema, meshAuditHandler } from './content/mesh-audit.js';
 import {
-  meta as contentValidateMeta, schema as contentValidateSchema, contentValidateHandler,
+  meta as contentValidateMeta,
+  schema as contentValidateSchema,
+  contentValidateHandler,
 } from './content/content-validate.js';
 import { meta as uiBuildTreeMeta, schema as uiBuildTreeSchema, uiBuildTreeHandler } from './ui/ui-build-tree.js';
 import {
@@ -225,31 +271,43 @@ import {
   schema as uiDuplicateElementSchema,
   uiDuplicateElementHandler,
 } from './ui/ui-duplicate-element.js';
-import { meta as uiMoveElementMeta, schema as uiMoveElementSchema, uiMoveElementHandler } from './ui/ui-move-element.js';
+import {
+  meta as uiMoveElementMeta,
+  schema as uiMoveElementSchema,
+  uiMoveElementHandler,
+} from './ui/ui-move-element.js';
 import {
   meta as uiRenameElementMeta,
   schema as uiRenameElementSchema,
   uiRenameElementHandler,
 } from './ui/ui-rename-element.js';
-import { meta as uiSetVariableMeta, schema as uiSetVariableSchema, uiSetVariableHandler } from './ui/ui-set-variable.js';
-import { meta as uiBindPropertyMeta, schema as uiBindPropertySchema, uiBindPropertyHandler } from './ui/ui-bind-property.js';
+import {
+  meta as uiSetVariableMeta,
+  schema as uiSetVariableSchema,
+  uiSetVariableHandler,
+} from './ui/ui-set-variable.js';
+import {
+  meta as uiBindPropertyMeta,
+  schema as uiBindPropertySchema,
+  uiBindPropertyHandler,
+} from './ui/ui-bind-property.js';
 import {
   meta as uiListWidgetBlueprintsMeta,
   schema as uiListWidgetBlueprintsSchema,
   uiListWidgetBlueprintsHandler,
 } from './ui/ui-list-widget-blueprints.js';
 import { meta as uiValidateMeta, schema as uiValidateSchema, uiValidateHandler } from './ui/ui-validate.js';
-import { meta as uiMeasureTextMeta, schema as uiMeasureTextSchema, uiMeasureTextHandler } from './ui/ui-measure-text.js';
+import {
+  meta as uiMeasureTextMeta,
+  schema as uiMeasureTextSchema,
+  uiMeasureTextHandler,
+} from './ui/ui-measure-text.js';
 import {
   meta as uiLayoutSnapshotMeta,
   schema as uiLayoutSnapshotSchema,
   uiLayoutSnapshotHandler,
 } from './ui/ui-layout-snapshot.js';
-import {
-  meta as uiCopyStyleMeta,
-  schema as uiCopyStyleSchema,
-  uiCopyStyleHandler,
-} from './ui/ui-copy-style.js';
+import { meta as uiCopyStyleMeta, schema as uiCopyStyleSchema, uiCopyStyleHandler } from './ui/ui-copy-style.js';
 import {
   meta as editorSaveAllAndQuitMeta,
   schema as editorSaveAllAndQuitSchema,
@@ -524,7 +582,7 @@ export const VALIDATOR_DESCRIPTORS: ToolDescriptor[] = [
   {
     name: 'validator_run',
     description:
-      'CATCHES SILENT WRONGNESS YOU CANNOT SEE: runs the validator rules over the current scene and returns concrete post-condition findings \u2014 actors floating above ground, interpenetrating meshes, off-grid/mis-scaled placements, missing expected results, and PLUMB constraint violations. Pass scope=\'all\' (default) or { rule_ids: [...] }; findings persist to history and the Validation panel. WHY: you have no viewport \u2014 this is how you verify placement actually landed correctly instead of assuming it did.',
+      "CATCHES SILENT WRONGNESS YOU CANNOT SEE: runs the validator rules over the current scene and returns concrete post-condition findings \u2014 actors floating above ground, interpenetrating meshes, off-grid/mis-scaled placements, missing expected results, and PLUMB constraint violations. Pass scope='all' (default) or { rule_ids: [...] }; findings persist to history and the Validation panel. WHY: you have no viewport \u2014 this is how you verify placement actually landed correctly instead of assuming it did.",
     meta: {
       cost: 'high',
       effects: ['persists_validator_findings'],
@@ -628,7 +686,8 @@ export const VALIDATOR_DESCRIPTORS: ToolDescriptor[] = [
       cost: 'low',
       effects: ['modifies_validator_config'],
       when: 'tuning how much the validator reports, globally or for one category',
-      not_when: 'you only want to read the current mode \u2014 that is the same call with no arguments, and it writes nothing',
+      not_when:
+        'you only want to read the current mode \u2014 that is the same call with no arguments, and it writes nothing',
     },
     schema: validatorStrictnessSchema,
     cost: 'low',
@@ -637,7 +696,6 @@ export const VALIDATOR_DESCRIPTORS: ToolDescriptor[] = [
       okResult(await validatorStrictnessHandler(args as Parameters<typeof validatorStrictnessHandler>[0])),
   },
 ];
-
 
 // ── PLUMB tools ────────────────────────────────────────────────────
 //
@@ -648,7 +706,8 @@ export const VALIDATOR_DESCRIPTORS: ToolDescriptor[] = [
 export const PLUMB_DESCRIPTORS: ToolDescriptor[] = [
   {
     name: 'plumb_primitives',
-    description: 'List the COMPLETE closed constraint grammar — the 10 primitives, their gate, hard/soft default, params, and docs. Author constraints by picking one and filling params.',
+    description:
+      'List the COMPLETE closed constraint grammar — the 10 primitives, their gate, hard/soft default, params, and docs. Author constraints by picking one and filling params.',
     meta: {
       cost: 'low',
       effects: [],
@@ -662,7 +721,8 @@ export const PLUMB_DESCRIPTORS: ToolDescriptor[] = [
   },
   {
     name: 'plumb_profile_bake',
-    description: 'Bake the deterministic geometry/physics half of a Physical Asset Profile. Pass just the asset to auto-fetch bounds from UE (mesh_get_info), or supply origin_cm + extent_cm (+ optional pivot_to_base_cm) explicitly. Persists to the profile store.',
+    description:
+      'Bake the deterministic geometry/physics half of a Physical Asset Profile. Pass just the asset to auto-fetch bounds from UE (mesh_get_info), or supply origin_cm + extent_cm (+ optional pivot_to_base_cm) explicitly. Persists to the profile store.',
     meta: {
       cost: 'low',
       effects: ['bakes_plumb_profile'],
@@ -672,11 +732,19 @@ export const PLUMB_DESCRIPTORS: ToolDescriptor[] = [
     schema: plumbProfileBakeSchema,
     cost: 'low',
     returns: '{ok, asset, profile:{bounds,sockets,attrs}}',
-    handler: async (a) => okResult(await plumbProfileBakeHandler(a as Parameters<typeof plumbProfileBakeHandler>[0], new Date().toISOString(), fetchMeshBounds)),
+    handler: async (a) =>
+      okResult(
+        await plumbProfileBakeHandler(
+          a as Parameters<typeof plumbProfileBakeHandler>[0],
+          new Date().toISOString(),
+          fetchMeshBounds,
+        ),
+      ),
   },
   {
     name: 'plumb_profile_annotate',
-    description: 'Layer AI/human qualitative semantics (class, up/front vectors, named affordance regions) onto a baked profile, with optional field locks. Qualitative constraints can only hard-gate on locked fields.',
+    description:
+      'Layer AI/human qualitative semantics (class, up/front vectors, named affordance regions) onto a baked profile, with optional field locks. Qualitative constraints can only hard-gate on locked fields.',
     meta: {
       cost: 'low',
       effects: ['modifies_plumb_profile'],
@@ -686,7 +754,8 @@ export const PLUMB_DESCRIPTORS: ToolDescriptor[] = [
     schema: plumbProfileAnnotateSchema,
     cost: 'low',
     returns: '{ok, asset, annotations}',
-    handler: async (a) => okResult(await plumbProfileAnnotateHandler(a as Parameters<typeof plumbProfileAnnotateHandler>[0])),
+    handler: async (a) =>
+      okResult(await plumbProfileAnnotateHandler(a as Parameters<typeof plumbProfileAnnotateHandler>[0])),
   },
   {
     name: 'plumb_profile_list',
@@ -709,7 +778,7 @@ export const PLUMB_DESCRIPTORS: ToolDescriptor[] = [
       cost: 'low',
       effects: [],
       when: "you need one asset's baked bounds, sockets and attributes",
-      not_when: "you only want to know whether it exists - plumb_profile_list is cheaper",
+      not_when: 'you only want to know whether it exists - plumb_profile_list is cheaper',
     },
     schema: plumbProfileGetSchema,
     cost: 'low',
@@ -718,7 +787,8 @@ export const PLUMB_DESCRIPTORS: ToolDescriptor[] = [
   },
   {
     name: 'plumb_constraint_define',
-    description: 'Author/upsert a bound constraint: a primitive id + params + a binding (exactly one of {asset, tag}). Validated against the closed primitive set — invalid primitives/params/bindings are rejected.',
+    description:
+      'Author/upsert a bound constraint: a primitive id + params + a binding (exactly one of {asset, tag}). Validated against the closed primitive set — invalid primitives/params/bindings are rejected.',
     meta: {
       cost: 'low',
       effects: ['modifies_plumb_constraints'],
@@ -728,7 +798,8 @@ export const PLUMB_DESCRIPTORS: ToolDescriptor[] = [
     schema: plumbConstraintDefineSchema,
     cost: 'low',
     returns: '{ok, id, constraint, validated}',
-    handler: async (a) => okResult(await plumbConstraintDefineHandler(a as Parameters<typeof plumbConstraintDefineHandler>[0])),
+    handler: async (a) =>
+      okResult(await plumbConstraintDefineHandler(a as Parameters<typeof plumbConstraintDefineHandler>[0])),
   },
   {
     name: 'plumb_constraint_list',
@@ -742,7 +813,8 @@ export const PLUMB_DESCRIPTORS: ToolDescriptor[] = [
     schema: plumbConstraintListSchema,
     cost: 'low',
     returns: '{constraints:[{id,kind,bound_to}]}',
-    handler: async (a) => okResult(await plumbConstraintListHandler(a as Parameters<typeof plumbConstraintListHandler>[0])),
+    handler: async (a) =>
+      okResult(await plumbConstraintListHandler(a as Parameters<typeof plumbConstraintListHandler>[0])),
   },
   {
     name: 'plumb_constraint_remove',
@@ -756,11 +828,13 @@ export const PLUMB_DESCRIPTORS: ToolDescriptor[] = [
     schema: plumbConstraintRemoveSchema,
     cost: 'low',
     returns: '{ok, id, removed}',
-    handler: async (a) => okResult(await plumbConstraintRemoveHandler(a as Parameters<typeof plumbConstraintRemoveHandler>[0])),
+    handler: async (a) =>
+      okResult(await plumbConstraintRemoveHandler(a as Parameters<typeof plumbConstraintRemoveHandler>[0])),
   },
   {
     name: 'plumb_constraint_propose',
-    description: 'Draft (does not save) constraints for an asset from its baked profile, using only closed primitives. Review/edit then call plumb_constraint_define.',
+    description:
+      'Draft (does not save) constraints for an asset from its baked profile, using only closed primitives. Review/edit then call plumb_constraint_define.',
     meta: {
       cost: 'low',
       effects: [],
@@ -770,11 +844,13 @@ export const PLUMB_DESCRIPTORS: ToolDescriptor[] = [
     schema: plumbConstraintProposeSchema,
     cost: 'low',
     returns: '{proposals:[{constraint,support,confidence}]} - nothing is persisted',
-    handler: async (a) => okResult(await plumbConstraintProposeHandler(a as Parameters<typeof plumbConstraintProposeHandler>[0])),
+    handler: async (a) =>
+      okResult(await plumbConstraintProposeHandler(a as Parameters<typeof plumbConstraintProposeHandler>[0])),
   },
   {
     name: 'plumb_validate',
-    description: 'VERIFY PLACEMENT IS ACTUALLY CORRECT: runs the PLUMB constraint library over a set of instances and returns a directional Verdict — per-gate ok, signed value_m (how far off, and which way), and a FixVector telling you exactly how to move each instance to satisfy it. Catches grounding, clearance, alignment, spacing and interpenetration violations the viewport would reveal but you cannot. Hard fails set stopped_at; soft fails accumulate soft_cost. WHY: this is the quantified check that turns "looks placed" into "provably grounded and non-overlapping".',
+    description:
+      'VERIFY PLACEMENT IS ACTUALLY CORRECT: runs the PLUMB constraint library over a set of instances and returns a directional Verdict — per-gate ok, signed value_m (how far off, and which way), and a FixVector telling you exactly how to move each instance to satisfy it. Catches grounding, clearance, alignment, spacing and interpenetration violations the viewport would reveal but you cannot. Hard fails set stopped_at; soft fails accumulate soft_cost. WHY: this is the quantified check that turns "looks placed" into "provably grounded and non-overlapping".',
     meta: {
       cost: 'medium',
       effects: ['persists_validator_findings'],
@@ -788,7 +864,8 @@ export const PLUMB_DESCRIPTORS: ToolDescriptor[] = [
   },
   {
     name: 'plumb_mask_add',
-    description: 'Add or update a mask (surface = triangle set; volume = translucent shape) on a baked profile. Surface/volume masks are the regions constraints reference.',
+    description:
+      'Add or update a mask (surface = triangle set; volume = translucent shape) on a baked profile. Surface/volume masks are the regions constraints reference.',
     meta: {
       cost: 'low',
       effects: ['modifies_plumb_profile'],
@@ -812,12 +889,12 @@ export const PLUMB_DESCRIPTORS: ToolDescriptor[] = [
     schema: plumbMaskRemoveSchema,
     cost: 'low',
     returns: '{ok, asset, mask_id, removed}',
-    handler: async (a) =>
-    okResult(await plumbMaskRemoveHandler(a as Parameters<typeof plumbMaskRemoveHandler>[0])),
+    handler: async (a) => okResult(await plumbMaskRemoveHandler(a as Parameters<typeof plumbMaskRemoveHandler>[0])),
   },
   {
     name: 'plumb_lesson_add',
-    description: 'Add/update a lesson — the durable [[slug]] knowledge that explains WHY a constraint exists (browsed in the Studio Lessons panel; cited by constraint/validator refs).',
+    description:
+      'Add/update a lesson — the durable [[slug]] knowledge that explains WHY a constraint exists (browsed in the Studio Lessons panel; cited by constraint/validator refs).',
     meta: {
       cost: 'low',
       effects: ['modifies_plumb_lessons'],
@@ -827,7 +904,8 @@ export const PLUMB_DESCRIPTORS: ToolDescriptor[] = [
     schema: plumbLessonAddSchema,
     cost: 'low',
     returns: '{ok, slug, title}',
-    handler: async (a) => okResult(await plumbLessonAddHandler(a as Parameters<typeof plumbLessonAddHandler>[0], new Date().toISOString())),
+    handler: async (a) =>
+      okResult(await plumbLessonAddHandler(a as Parameters<typeof plumbLessonAddHandler>[0], new Date().toISOString())),
   },
   {
     name: 'plumb_lesson_list',
@@ -841,8 +919,7 @@ export const PLUMB_DESCRIPTORS: ToolDescriptor[] = [
     schema: plumbLessonListSchema,
     cost: 'low',
     returns: '{lessons:[{slug,title,refs}]}',
-    handler: async () =>
-    okResult(await plumbLessonListHandler()),
+    handler: async () => okResult(await plumbLessonListHandler()),
   },
   {
     name: 'plumb_lesson_remove',
@@ -856,12 +933,12 @@ export const PLUMB_DESCRIPTORS: ToolDescriptor[] = [
     schema: plumbLessonRemoveSchema,
     cost: 'low',
     returns: '{ok, slug, removed}',
-    handler: async (a) =>
-    okResult(await plumbLessonRemoveHandler(a as Parameters<typeof plumbLessonRemoveHandler>[0])),
+    handler: async (a) => okResult(await plumbLessonRemoveHandler(a as Parameters<typeof plumbLessonRemoveHandler>[0])),
   },
   {
     name: 'plumb_study',
-    description: "AI study entry point: returns the asset's baked profile (if any) + the closed primitive grammar + mask kinds + guidance, so the agent can propose masks (plumb_mask_add) and constraints (plumb_constraint_define).",
+    description:
+      "AI study entry point: returns the asset's baked profile (if any) + the closed primitive grammar + mask kinds + guidance, so the agent can propose masks (plumb_mask_add) and constraints (plumb_constraint_define).",
     meta: {
       cost: 'low',
       effects: [],
@@ -875,7 +952,8 @@ export const PLUMB_DESCRIPTORS: ToolDescriptor[] = [
   },
   {
     name: 'plumb_study_take',
-    description: 'Drain pending "Study with AI" requests from the Semantic Studio button. Returns the assets to study (then call plumb_study + author masks/constraints for each).',
+    description:
+      'Drain pending "Study with AI" requests from the Semantic Studio button. Returns the assets to study (then call plumb_study + author masks/constraints for each).',
     meta: {
       cost: 'low',
       effects: ['modifies_plumb_lessons'],
@@ -889,7 +967,8 @@ export const PLUMB_DESCRIPTORS: ToolDescriptor[] = [
   },
   {
     name: 'plumb_segment',
-    description: "AI-segment a studied asset: given the study_render color passes, the agent's themed part labels + a box/points per view, runs SAM in the visual sidecar and back-projects to geometry-hugging surface masks (triangles via the world-position pass + a UV display texture), written into the profile. Replaces hand-placed blocky masks.",
+    description:
+      "AI-segment a studied asset: given the study_render color passes, the agent's themed part labels + a box/points per view, runs SAM in the visual sidecar and back-projects to geometry-hugging surface masks (triangles via the world-position pass + a UV display texture), written into the profile. Replaces hand-placed blocky masks.",
     meta: {
       cost: 'low',
       effects: [],
@@ -903,7 +982,8 @@ export const PLUMB_DESCRIPTORS: ToolDescriptor[] = [
   },
   {
     name: 'plumb_production_define',
-    description: 'Author/upsert a grammar production rule: an LHS symbol kind (+ optional attribute guards) → an RHS sequence of emit ops (shell/asset/symbol/scatter/decal/fill). Guards are constraint ids that must pass before the production fires.',
+    description:
+      'Author/upsert a grammar production rule: an LHS symbol kind (+ optional attribute guards) → an RHS sequence of emit ops (shell/asset/symbol/scatter/decal/fill). Guards are constraint ids that must pass before the production fires.',
     meta: {
       cost: 'low',
       effects: ['modifies_plumb_grammar'],
@@ -913,7 +993,8 @@ export const PLUMB_DESCRIPTORS: ToolDescriptor[] = [
     schema: plumbProductionDefineSchema,
     cost: 'low',
     returns: '{ok, id, production}',
-    handler: async (a) => okResult(await plumbProductionDefineHandler(a as Parameters<typeof plumbProductionDefineHandler>[0])),
+    handler: async (a) =>
+      okResult(await plumbProductionDefineHandler(a as Parameters<typeof plumbProductionDefineHandler>[0])),
   },
   {
     name: 'plumb_production_list',
@@ -942,7 +1023,7 @@ export const PLUMB_DESCRIPTORS: ToolDescriptor[] = [
     cost: 'low',
     returns: '{ok, id, removed}',
     handler: async (a) =>
-    okResult(await plumbProductionRemoveHandler(a as Parameters<typeof plumbProductionRemoveHandler>[0])),
+      okResult(await plumbProductionRemoveHandler(a as Parameters<typeof plumbProductionRemoveHandler>[0])),
   },
   {
     name: 'plumb_socket_add',
@@ -960,7 +1041,8 @@ export const PLUMB_DESCRIPTORS: ToolDescriptor[] = [
   },
   {
     name: 'plumb_grammar_expand',
-    description: 'Expand a seed symbol using the stored production rules + the PLUMB constraint store as guards. Returns a PlacementPlan. In dry-run (no UE scene), geometry-dependent constraints self-skip — rejections only reflect TS-evaluable constraints.',
+    description:
+      'Expand a seed symbol using the stored production rules + the PLUMB constraint store as guards. Returns a PlacementPlan. In dry-run (no UE scene), geometry-dependent constraints self-skip — rejections only reflect TS-evaluable constraints.',
     meta: {
       cost: 'low',
       effects: [],
@@ -970,10 +1052,10 @@ export const PLUMB_DESCRIPTORS: ToolDescriptor[] = [
     schema: plumbGrammarExpandSchema,
     cost: 'low',
     returns: '{expansion:[{symbol,parts}]} - computed, nothing placed',
-    handler: async (a) => okResult(await plumbGrammarExpandHandler(a as Parameters<typeof plumbGrammarExpandHandler>[0])),
+    handler: async (a) =>
+      okResult(await plumbGrammarExpandHandler(a as Parameters<typeof plumbGrammarExpandHandler>[0])),
   },
 ];
-
 
 // ── PCG authoring, conventions, zones and landscape ─────────────────
 //
@@ -991,7 +1073,8 @@ export const PLUMB_DESCRIPTORS: ToolDescriptor[] = [
 export const PCG_DESCRIPTORS: ToolDescriptor[] = [
   defineTool({
     name: 'hayba_propose_plan',
-    description: 'Propose a step-by-step plan to the user before performing destructive operations. Required when Plan Mode is on. Steps may be strings or {title, description, tool} objects.',
+    description:
+      'Propose a step-by-step plan to the user before performing destructive operations. Required when Plan Mode is on. Steps may be strings or {title, description, tool} objects.',
     meta: {
       cost: 'low',
       effects: ['modifies_plan_state'],
@@ -1034,7 +1117,8 @@ export const PCG_DESCRIPTORS: ToolDescriptor[] = [
   }),
   defineTool({
     name: 'hayba_mark_plan_step',
-    description: 'Update the status of a single step in the proposed plan shown in the UE Plan panel. Marking a step "completed" auto-advances the next step to "running". Call this as you work through an approved plan so the user sees live progress.',
+    description:
+      'Update the status of a single step in the proposed plan shown in the UE Plan panel. Marking a step "completed" auto-advances the next step to "running". Call this as you work through an approved plan so the user sees live progress.',
     meta: {
       cost: 'low',
       effects: ['modifies_plan_state'],
@@ -1103,7 +1187,8 @@ export const PCG_DESCRIPTORS: ToolDescriptor[] = [
   }),
   defineTool({
     name: 'hayba_search_node_catalog',
-    description: 'Find a PCG or PCGEx node by what you want it to DO, searching the node catalog by intent rather than by exact type name.',
+    description:
+      'Find a PCG or PCGEx node by what you want it to DO, searching the node catalog by intent rather than by exact type name.',
     meta: {
       cost: 'low',
       effects: [],
@@ -1125,14 +1210,14 @@ export const PCG_DESCRIPTORS: ToolDescriptor[] = [
       cost: 'low',
       effects: [],
       when: "you need a node's exact pin names and properties before wiring it",
-      not_when: "you are still looking for the right node - hayba_search_node_catalog",
+      not_when: 'you are still looking for the right node - hayba_search_node_catalog',
     },
     schema: { class: z.string().describe('PCGEx node class name') },
     cost: 'low',
     returns: '{type, pins:[{name,direction,type}], properties}',
     handler: async (params) => {
-    const result = await getNodeDetails({ class: params.class });
-    return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+      const result = await getNodeDetails({ class: params.class });
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     },
   }),
   defineTool({
@@ -1293,7 +1378,8 @@ export const PCG_DESCRIPTORS: ToolDescriptor[] = [
   }),
   defineTool({
     name: 'hayba_scrape_node_registry',
-    description: 'Rebuild the PCGEx node registry from the installed plugin - the SQLite catalog that node search reads.',
+    description:
+      'Rebuild the PCGEx node registry from the installed plugin - the SQLite catalog that node search reads.',
     meta: {
       cost: 'high',
       effects: ['rebuilds_node_registry'],
@@ -1407,7 +1493,8 @@ export const PCG_DESCRIPTORS: ToolDescriptor[] = [
   }),
   defineTool({
     name: 'hayba_abstract_to_subgraph',
-    description: 'Extract a repeated node cluster into a reusable subgraph. Transforms the graph object in memory and writes nothing.',
+    description:
+      'Extract a repeated node cluster into a reusable subgraph. Transforms the graph object in memory and writes nothing.',
     meta: {
       cost: 'low',
       effects: [],
@@ -1428,7 +1515,8 @@ export const PCG_DESCRIPTORS: ToolDescriptor[] = [
   }),
   defineTool({
     name: 'hayba_parameterize_graph_inputs',
-    description: 'Promote hard-coded values in a graph to named inputs. Transforms the graph object in memory and writes nothing.',
+    description:
+      'Promote hard-coded values in a graph to named inputs. Transforms the graph object in memory and writes nothing.',
     meta: {
       cost: 'low',
       effects: [],
@@ -1460,7 +1548,7 @@ export const PCG_DESCRIPTORS: ToolDescriptor[] = [
     meta: {
       cost: 'low',
       effects: [],
-      when: "you need PCGEx reference material while authoring a graph",
+      when: 'you need PCGEx reference material while authoring a graph',
       not_when: "the question is about this project's own graphs - search the catalog",
     },
     schema: {
@@ -1480,7 +1568,8 @@ export const PCG_DESCRIPTORS: ToolDescriptor[] = [
   }),
   defineTool({
     name: 'hayba_initiate_infrastructure_brainstorm',
-    description: 'Plan complex graph architectures. IMPORTANT: After calling this tool, do NOT call hayba_create_pcg_graph, hayba_validate_pcg_graph, or any graph-mutation tool until the user explicitly approves an approach from the proposal.',
+    description:
+      'Plan complex graph architectures. IMPORTANT: After calling this tool, do NOT call hayba_create_pcg_graph, hayba_validate_pcg_graph, or any graph-mutation tool until the user explicitly approves an approach from the proposal.',
     meta: {
       cost: 'low',
       effects: [],
@@ -1538,7 +1627,8 @@ export const PCG_DESCRIPTORS: ToolDescriptor[] = [
   }),
   defineTool({
     name: 'hayba_analyze_conventions',
-    description: 'Scan a UE project Content directory and infer conventions from existing folder structure and asset naming.',
+    description:
+      'Scan a UE project Content directory and infer conventions from existing folder structure and asset naming.',
     meta: {
       cost: 'low',
       effects: [],
@@ -1626,7 +1716,8 @@ export const PCG_DESCRIPTORS: ToolDescriptor[] = [
   }),
   defineTool({
     name: 'hayba_import_landscape',
-    description: 'Import a heightmap (PNG or R16) as an UE Landscape actor. Wraps the UE-side landscape_import handler. The heightmap is sampled 0..uint16-max -> 0..maxHeightM (m). Spawns one Landscape covering worldSizeKm x worldSizeKm.',
+    description:
+      'Import a heightmap (PNG or R16) as an UE Landscape actor. Wraps the UE-side landscape_import handler. The heightmap is sampled 0..uint16-max -> 0..maxHeightM (m). Spawns one Landscape covering worldSizeKm x worldSizeKm.',
     meta: {
       cost: 'high',
       effects: ['imports_landscape', 'modifies_level'],
@@ -1684,7 +1775,8 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
   // ── Actor domain ────────────────────────────────────────────────────────
   {
     name: 'actor_spawn',
-    description: 'Place a new actor in the active level by class — a light, a volume, a blueprint actor, or any registered UClass. To place a StaticMesh or other content asset by its path instead, use actor_spawn_from_asset.',
+    description:
+      'Place a new actor in the active level by class — a light, a volume, a blueprint actor, or any registered UClass. To place a StaticMesh or other content asset by its path instead, use actor_spawn_from_asset.',
     meta: actorSpawnMeta,
     handler: actorSpawnHandler,
     cost: 'medium',
@@ -1699,7 +1791,8 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
   },
   {
     name: 'actor_list',
-    description: 'List what is in the scene: every actor in the active level with its label, class and transform. Start here when you need to know what already exists before changing anything.',
+    description:
+      'List what is in the scene: every actor in the active level with its label, class and transform. Start here when you need to know what already exists before changing anything.',
     meta: actorListMeta,
     handler: actorListHandler,
     cost: 'low',
@@ -1740,26 +1833,39 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
   // nothing — see the issue for why it is being surfaced now.
   {
     name: 'memory_write',
-    description: 'Write a memory block: an intent, its content, which agent role wrote it, and whether it is private or shared with other agents. Runs bounded retention (age + count) after every write and reports what (if anything) it pruned.',
+    description:
+      'Write a memory block: an intent, its content, which agent role wrote it, and whether it is private or shared with other agents. Runs bounded retention (age + count) after every write and reports what (if anything) it pruned.',
     meta: memoryWriteMeta,
     handler: memoryWriteHandler,
     cost: 'low',
     returns: '{ok, id, retention:{pruned_by_age, pruned_by_count, pruned_total, remaining}}',
     schema: {
       agentRole: z.string().min(1).describe('Role of the writing agent, e.g. "director", "asset-manager"'),
-      scope: z.enum(['private', 'shared']).describe('"private" = only this agentRole sees it via recall/list filters; "shared" = any role can'),
+      scope: z
+        .enum(['private', 'shared'])
+        .describe('"private" = only this agentRole sees it via recall/list filters; "shared" = any role can'),
       intent: z.string().min(1).describe('Short label for what this block is about'),
       content: z.string().min(1).describe('The memory content itself'),
-      accessedResources: z.array(z.string()).optional().describe('Resource paths/ids touched while forming this memory'),
+      accessedResources: z
+        .array(z.string())
+        .optional()
+        .describe('Resource paths/ids touched while forming this memory'),
       tokenCost: z.number().optional().describe('Approximate token cost of the content, for budget tracking'),
       provenance: z.record(z.string(), z.unknown()).optional().describe('Free-form provenance, e.g. {tool, cursor}'),
-      id: z.string().optional().describe('Explicit id (default: a generated UUID) — mainly for re-inserting/overwriting a known block'),
-      timestamp: z.number().optional().describe('Explicit epoch-ms timestamp (default: now) — mainly for import/migration'),
+      id: z
+        .string()
+        .optional()
+        .describe('Explicit id (default: a generated UUID) — mainly for re-inserting/overwriting a known block'),
+      timestamp: z
+        .number()
+        .optional()
+        .describe('Explicit epoch-ms timestamp (default: now) — mainly for import/migration'),
     },
   },
   {
     name: 'memory_recall',
-    description: 'Search memory blocks by keyword against their intent and content, most recent match first. Use when you remember roughly what a past block was about but not its id.',
+    description:
+      'Search memory blocks by keyword against their intent and content, most recent match first. Use when you remember roughly what a past block was about but not its id.',
     meta: memoryRecallMeta,
     handler: memoryRecallHandler,
     cost: 'low',
@@ -1773,7 +1879,8 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
   },
   {
     name: 'memory_list',
-    description: 'List recent memory blocks for a role/scope, most-recent-first, with no keyword filter. Use to browse what has been written, not to search for something specific.',
+    description:
+      'List recent memory blocks for a role/scope, most-recent-first, with no keyword filter. Use to browse what has been written, not to search for something specific.',
     meta: memoryListMeta,
     handler: memoryListHandler,
     cost: 'low',
@@ -1786,7 +1893,8 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
   },
   {
     name: 'memory_delete',
-    description: 'Delete memory blocks: a single block by id, every block from one agentRole, or (with confirm_all) the entire store. Exactly one of id / agentRole / confirm_all is required.',
+    description:
+      'Delete memory blocks: a single block by id, every block from one agentRole, or (with confirm_all) the entire store. Exactly one of id / agentRole / confirm_all is required.',
     meta: memoryDeleteMeta,
     handler: memoryDeleteHandler,
     cost: 'low',
@@ -1799,7 +1907,8 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
   },
   {
     name: 'memory_export',
-    description: 'Dump memory blocks (optionally filtered by scope/agentRole) to a portable JSON file for backup or transfer to another store via memory_import.',
+    description:
+      'Dump memory blocks (optionally filtered by scope/agentRole) to a portable JSON file for backup or transfer to another store via memory_import.',
     meta: memoryExportMeta,
     handler: memoryExportHandler,
     cost: 'low',
@@ -1812,26 +1921,40 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
   },
   {
     name: 'memory_import',
-    description: 'Load a memory_export JSON file back into the store. Reports exactly what happened per row: inserted, skipped (malformed), or conflicted (id already existed — left alone under "skip", overwritten under "replace").',
+    description:
+      'Load a memory_export JSON file back into the store. Reports exactly what happened per row: inserted, skipped (malformed), or conflicted (id already existed — left alone under "skip", overwritten under "replace").',
     meta: memoryImportMeta,
     handler: memoryImportHandler,
     cost: 'low',
     returns: '{ok, total_read, inserted, skipped, conflicted, errors:[string]}',
     schema: {
       path: z.string().min(1).describe('File path previously written by memory_export'),
-      on_conflict: z.enum(['skip', 'replace']).optional().describe('How to handle an id that already exists (default "skip")'),
+      on_conflict: z
+        .enum(['skip', 'replace'])
+        .optional()
+        .describe('How to handle an id that already exists (default "skip")'),
     },
   },
   {
     name: 'memory_prune',
-    description: 'Force retention to run now with an explicit (or default-configured) age/count bound. memory_write already does this automatically after every insert — use this only to prune on demand with a tighter one-off bound.',
+    description:
+      'Force retention to run now with an explicit (or default-configured) age/count bound. memory_write already does this automatically after every insert — use this only to prune on demand with a tighter one-off bound.',
     meta: memoryPruneMeta,
     handler: memoryPruneHandler,
     cost: 'low',
     returns: '{ok, pruned_by_age, pruned_by_count, pruned_total, remaining}',
     schema: {
-      max_count: z.number().int().positive().optional().describe('Keep at most this many blocks (default: configured HAYBA_MEMORY_MAX_COUNT)'),
-      max_age_days: z.number().positive().optional().describe('Delete blocks older than this many days (default: configured HAYBA_MEMORY_MAX_AGE_DAYS)'),
+      max_count: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .describe('Keep at most this many blocks (default: configured HAYBA_MEMORY_MAX_COUNT)'),
+      max_age_days: z
+        .number()
+        .positive()
+        .optional()
+        .describe('Delete blocks older than this many days (default: configured HAYBA_MEMORY_MAX_AGE_DAYS)'),
     },
   },
 
@@ -2526,7 +2649,8 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
     meta: uiReparentElementMeta,
     handler: uiReparentElementHandler,
     cost: 'medium',
-    returns: '{widget_blueprint_path, operation, widget_name, old_parent, old_child_index, new_parent, new_child_index, new_slot_class, unknown_slot_props?}',
+    returns:
+      '{widget_blueprint_path, operation, widget_name, old_parent, old_child_index, new_parent, new_child_index, new_slot_class, unknown_slot_props?}',
     niche: UI,
     schema: uiReparentElementSchema.shape,
   },
@@ -2661,7 +2785,8 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
     meta: uiSetDefaultFontMeta,
     handler: uiSetDefaultFontHandler,
     cost: 'high',
-    returns: '{widget_blueprint_path, font_asset, typeface, changed:[{widget, from}], changed_count, failed:[{widget, error}], failed_count, note}',
+    returns:
+      '{widget_blueprint_path, font_asset, typeface, changed:[{widget, from}], changed_count, failed:[{widget, error}], failed_count, note}',
     niche: UI,
     schema: uiSetDefaultFontSchema.shape,
   },
@@ -2708,6 +2833,18 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
   // handler existed and worked; it simply had no wrapper, so the catalogue
   // reported the whole domain as unavailable.
   {
+    name: 'query_ue_docs',
+    description:
+      'SEARCH THE INDEXED UE C++ API BEFORE GENERATING CODE. Returns signatures, declaring types, include paths, short source docs and explicit deprecation metadata from the configured versioned Engine/Source database. USE_WHEN: you need source-level intent or want to avoid a deprecated API. NOT_WHEN: you need properties reflected by the currently loaded editor; use docs_lookup_api. Search is deterministic keyword mode; semantic search is reported unavailable until an embedding corpus is installed.',
+    meta: queryUeDocsMeta,
+    handler: queryUeDocsHandler,
+    cost: 'low',
+    returns:
+      '{ok, query, mode:"keyword", semantic_available:false, corpus:{engine_version,indexer_version,schema_version,fingerprint_sha256,complete}, results:[{kind,name,owner?,signature,include,source_relpath,line,doc?,deprecated,deprecation?,score}], returned, matched, capped, cap_reasons, warnings?, tips?}',
+    niche: DOCS,
+    schema: queryUeDocsSchema.shape,
+  },
+  {
     name: 'docs_search',
     description:
       'FIND THE REAL NAME OF A UE CLASS instead of guessing. Substring search over every class loaded in the running editor. USE_WHEN: you are about to write a class name from memory. NOT_WHEN: you already have the exact path.',
@@ -2736,7 +2873,8 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
     meta: docsLookupApiMeta,
     handler: docsLookupApiHandler,
     cost: 'low',
-    returns: '{name, properties:[{name, type, category, tooltip, is_editable, is_blueprint_visible}], functions:[{name, is_blueprint_callable, is_event, tooltip}]}',
+    returns:
+      '{name, properties:[{name, type, category, tooltip, is_editable, is_blueprint_visible}], functions:[{name, is_blueprint_callable, is_event, tooltip}]}',
     niche: DOCS,
     schema: docsLookupApiSchema.shape,
   },
@@ -3022,7 +3160,8 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
     meta: textureAuditMeta,
     handler: textureAuditHandler,
     cost: 'medium',
-    returns: '{textures:[{path, size_x, size_y, format, memory_kb, lod_group, compression, outlier}], scanned, count, top_n_total_kb}',
+    returns:
+      '{textures:[{path, size_x, size_y, format, memory_kb, lod_group, compression, outlier}], scanned, count, top_n_total_kb}',
     niche: CONTENT,
     schema: textureAuditSchema.shape,
   },
@@ -3033,7 +3172,8 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
     meta: meshAuditMeta,
     handler: meshAuditHandler,
     cost: 'medium',
-    returns: '{meshes:[{path, tris_lod0, lod_count, missing_lods, material_slot_count, referencer_count}], scanned, count}',
+    returns:
+      '{meshes:[{path, tris_lod0, lod_count, missing_lods, material_slot_count, referencer_count}], scanned, count}',
     niche: CONTENT,
     schema: meshAuditSchema.shape,
   },
@@ -3517,6 +3657,17 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
   },
 ];
 
+// python_run's script namespace is worth stating at call time: the script does
+// NOT run in the editor's `__main__`. It gets a fresh dict per call containing
+// only `print` and builtins, and that one dict is used for BOTH globals and
+// locals — so module-scope comprehensions, generator expressions, and closures
+// resolve names exactly as they would in a normal module (pinned by
+// python-namespace-contract.test.ts). Nothing carries over between calls.
+const PYTHON_SCRIPT_FIELD_DESCRIPTION =
+  'Python source to execute. Runs in a FRESH namespace per call (__name__ == "__hayba_user__"): ' +
+  'nothing is pre-imported, so `import unreal` explicitly, and no state survives from a previous ' +
+  'python_run. Only print() output and stderr come back — assign nothing and you observe nothing.';
+
 // Single-source tool descriptor list = hand-written entries + the sidecar-
 // generated legacy tools. The generator surfaces every sidecar command that is
 // agent_callable:true && has_ts_wrapper:false (~55) as a first-class tool,
@@ -3595,22 +3746,22 @@ export const CODE_MODE_DESCRIPTORS: ToolDescriptor[] = [
       'Execute a Python script inside UE via PythonScriptPlugin. Universal escape hatch for invoking any UE command not otherwise exposed.',
     meta: pyMeta,
     schema: {
-      script: z.string().describe('Python source to execute'),
+      script: z.string().describe(PYTHON_SCRIPT_FIELD_DESCRIPTION),
       allow_unsafe: z
         .boolean()
         .optional()
         .describe(
-          'Override only the Tier 3 filesystem/subprocess policy (DANGEROUS). It cannot bypass crash, deadlock, editor-lifetime, or execution-deadline guards.',
+          'Deprecated compatibility field; accepted but always ineffective. Embedded python_run permanently refuses Tier 3 host filesystem, subprocess, and network access. Use typed brokered tools (#412/#415).',
         ),
     },
     wireSchema: {
-      script: z.string().optional().describe('Python source to execute'),
+      script: z.string().optional().describe(PYTHON_SCRIPT_FIELD_DESCRIPTION),
       code: z.string().optional().describe('Alias for "script".'),
       allow_unsafe: z
         .boolean()
         .optional()
         .describe(
-          'Override only the Tier 3 filesystem/subprocess policy (DANGEROUS). It cannot bypass crash, deadlock, editor-lifetime, or execution-deadline guards.',
+          'Deprecated compatibility field; accepted but always ineffective. Embedded python_run permanently refuses Tier 3 host filesystem, subprocess, and network access. Use typed brokered tools (#412/#415).',
         ),
     },
     cost: 'high',
@@ -3677,9 +3828,7 @@ export const STATIC_TOOL_CATALOGUE: ReadonlyArray<ToolDescriptor> = [
  * Convert the static catalogue directly into the deferred-routing value map.
  * No registration code runs and no real or fake `server.tool` is involved.
  */
-export function captureStaticToolCatalogue(
-  session: SessionManagerStub,
-): Map<string, CapturedTool> {
+export function captureStaticToolCatalogue(session: SessionManagerStub): Map<string, CapturedTool> {
   const captured = new Map<string, CapturedTool>();
   for (const descriptor of STATIC_TOOL_CATALOGUE) {
     if (captured.has(descriptor.name)) {
@@ -3779,6 +3928,7 @@ const fetchMeshBounds = async (asset: string) => {
 };
 
 export function inferDir(name: string): string | null {
+  if (name === 'query_ue_docs') return 'docs';
   if (name.startsWith('actor_')) return 'actor';
   if (name.startsWith('scene_')) return 'scene';
   if (name.startsWith('editor_')) return 'editor';

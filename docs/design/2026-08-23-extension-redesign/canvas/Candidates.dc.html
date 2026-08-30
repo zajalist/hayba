@@ -1,0 +1,62 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>
+    body { margin: 0; font-family: system-ui, sans-serif; }
+    a { color: #C47A28; } a:hover { color: #D88A30; }
+  </style>
+</helmet>
+<div style="width: 760px; height: 1180px; background: #20252B; padding: 32px; box-sizing: border-box; display: flex; flex-direction: column; gap: 20px;">
+  <div style="color: #E5E9ED; font-size: 18px; font-weight: 650;">v3b candidates — picks marked</div>
+
+  <div style="color: #77828E; font-size: 11px; font-family: ui-monospace, monospace;">activity</div>
+  <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px;">
+    <div style="background: #292F36; border: 2px solid #C47A28; border-radius: 10px; padding: 12px; display: flex; flex-direction: column; align-items: center; gap: 8px;"><img src="activity-a.png" style="width: 72px; height: 72px;" alt=""><div style="color: #C47A28; font-size: 11px;">A · picked</div></div>
+    <div style="background: #292F36; border: 1px solid #3A424B; border-radius: 10px; padding: 12px; display: flex; flex-direction: column; align-items: center; gap: 8px;"><img src="activity-b.png" style="width: 72px; height: 72px;" alt=""><div style="color: #77828E; font-size: 11px;">B</div></div>
+    <div style="background: #292F36; border: 1px solid #3A424B; border-radius: 10px; padding: 12px; display: flex; flex-direction: column; align-items: center; gap: 8px;"><img src="activity-c.png" style="width: 72px; height: 72px;" alt=""><div style="color: #77828E; font-size: 11px;">C</div></div>
+  </div>
+
+  <div style="color: #77828E; font-size: 11px; font-family: ui-monospace, monospace;">recipe</div>
+  <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px;">
+    <div style="background: #292F36; border: 2px solid #C47A28; border-radius: 10px; padding: 12px; display: flex; flex-direction: column; align-items: center; gap: 8px;"><img src="recipe-a.png" style="width: 72px; height: 72px;" alt=""><div style="color: #C47A28; font-size: 11px;">A · picked</div></div>
+    <div style="background: #292F36; border: 1px solid #3A424B; border-radius: 10px; padding: 12px; display: flex; flex-direction: column; align-items: center; gap: 8px;"><img src="recipe-b.png" style="width: 72px; height: 72px;" alt=""><div style="color: #77828E; font-size: 11px;">B</div></div>
+    <div style="background: #292F36; border: 1px solid #3A424B; border-radius: 10px; padding: 12px; display: flex; flex-direction: column; align-items: center; gap: 8px;"><img src="recipe-c.png" style="width: 72px; height: 72px;" alt=""><div style="color: #77828E; font-size: 11px;">C</div></div>
+  </div>
+
+  <div style="color: #77828E; font-size: 11px; font-family: ui-monospace, monospace;">plan-pending</div>
+  <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px;">
+    <div style="background: #292F36; border: 1px solid #3A424B; border-radius: 10px; padding: 12px; display: flex; flex-direction: column; align-items: center; gap: 8px;"><img src="plan-pending-a.png" style="width: 72px; height: 72px;" alt=""><div style="color: #77828E; font-size: 11px;">A</div></div>
+    <div style="background: #292F36; border: 2px solid #C47A28; border-radius: 10px; padding: 12px; display: flex; flex-direction: column; align-items: center; gap: 8px;"><img src="plan-pending-b.png" style="width: 72px; height: 72px;" alt=""><div style="color: #C47A28; font-size: 11px;">B · picked</div></div>
+    <div style="background: #292F36; border: 1px solid #3A424B; border-radius: 10px; padding: 12px; display: flex; flex-direction: column; align-items: center; gap: 8px;"><img src="plan-pending-c.png" style="width: 72px; height: 72px;" alt=""><div style="color: #77828E; font-size: 11px;">C</div></div>
+  </div>
+
+  <div style="color: #77828E; font-size: 11px; font-family: ui-monospace, monospace;">rules</div>
+  <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px;">
+    <div style="background: #292F36; border: 2px solid #C47A28; border-radius: 10px; padding: 12px; display: flex; flex-direction: column; align-items: center; gap: 8px;"><img src="rules-a.png" style="width: 72px; height: 72px;" alt=""><div style="color: #C47A28; font-size: 11px;">A · picked</div></div>
+    <div style="background: #292F36; border: 1px solid #3A424B; border-radius: 10px; padding: 12px; display: flex; flex-direction: column; align-items: center; gap: 8px;"><img src="rules-b.png" style="width: 72px; height: 72px;" alt=""><div style="color: #77828E; font-size: 11px;">B</div></div>
+    <div style="background: #292F36; border: 1px solid #3A424B; border-radius: 10px; padding: 12px; display: flex; flex-direction: column; align-items: center; gap: 8px;"><img src="rules-c.png" style="width: 72px; height: 72px;" alt=""><div style="color: #77828E; font-size: 11px;">C</div></div>
+  </div>
+
+  <div style="color: #77828E; font-size: 11px; font-family: ui-monospace, monospace;">profile</div>
+  <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px;">
+    <div style="background: #292F36; border: 2px solid #C47A28; border-radius: 10px; padding: 12px; display: flex; flex-direction: column; align-items: center; gap: 8px;"><img src="profile-a.png" style="width: 72px; height: 72px;" alt=""><div style="color: #C47A28; font-size: 11px;">A · picked</div></div>
+    <div style="background: #292F36; border: 1px solid #3A424B; border-radius: 10px; padding: 12px; display: flex; flex-direction: column; align-items: center; gap: 8px;"><img src="profile-b.png" style="width: 72px; height: 72px;" alt=""><div style="color: #77828E; font-size: 11px;">B</div></div>
+    <div style="background: #292F36; border: 1px solid #3A424B; border-radius: 10px; padding: 12px; display: flex; flex-direction: column; align-items: center; gap: 8px;"><img src="profile-c.png" style="width: 72px; height: 72px;" alt=""><div style="color: #77828E; font-size: 11px;">C</div></div>
+  </div>
+
+  <div style="color: #77828E; font-size: 11px; font-family: ui-monospace, monospace;">diff</div>
+  <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px;">
+    <div style="background: #292F36; border: 1px solid #3A424B; border-radius: 10px; padding: 12px; display: flex; flex-direction: column; align-items: center; gap: 8px;"><img src="diff-a.png" style="width: 72px; height: 72px;" alt=""><div style="color: #77828E; font-size: 11px;">A</div></div>
+    <div style="background: #292F36; border: 2px solid #C47A28; border-radius: 10px; padding: 12px; display: flex; flex-direction: column; align-items: center; gap: 8px;"><img src="diff-b.png" style="width: 72px; height: 72px;" alt=""><div style="color: #C47A28; font-size: 11px;">B · picked</div></div>
+    <div style="background: #292F36; border: 1px solid #3A424B; border-radius: 10px; padding: 12px; display: flex; flex-direction: column; align-items: center; gap: 8px;"><img src="diff-c.png" style="width: 72px; height: 72px;" alt=""><div style="color: #77828E; font-size: 11px;">C</div></div>
+  </div>
+</div>
+</x-dc>
+</body>
+</html>

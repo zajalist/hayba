@@ -179,6 +179,8 @@ bool FHaybaMCPMaterialUsageTest::RunTest(const FString& Parameters)
     TestTrue(TEXT("material compile/save succeeds"), Compiled.bOk && Compiled.Data.IsValid());
     if (Compiled.Data.IsValid())
     {
+        TestTrue(TEXT("compiled material reports effective success"), Compiled.Data->GetBoolField(TEXT("ok")));
+        TestTrue(TEXT("compiled material reports a clean compile"), Compiled.Data->GetBoolField(TEXT("compiled_clean")));
         TestTrue(TEXT("compiled material is saved"), Compiled.Data->GetBoolField(TEXT("saved")));
         TestFalse(TEXT("compiled material has no shader errors"), Compiled.Data->GetBoolField(TEXT("has_errors")));
         TestEqual(TEXT("compile response correlates material path"), Compiled.Data->GetStringField(TEXT("material_path")), ObjectPath);

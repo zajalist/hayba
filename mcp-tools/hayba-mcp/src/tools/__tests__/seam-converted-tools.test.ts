@@ -70,14 +70,15 @@ describe('scene_validate_physics', () => {
 
 describe('python_run', () => {
   it('preserves the tier-3 sandbox message, which lives in the failure payload', async () => {
-    // The old code read resp.data.tier off a non-ok response. The seam throws,
-    // so this only still works because the thrown error carries uePayload —
-    // the exact detail a conversion loses silently, turning an actionable
-    // "here is the setting to change" into a bare error string.
+    // Use a native-only alias spelling so the sidecar mirror reaches the
+    // scripted UE failure. The thrown error must retain its payload while
+    // replacing the retired setting advice with stable non-authority facts.
     ue = scriptedUe().failsWithData('python_run', 'open() denied', { tier: 3 });
-    const r = await pythonRunHandler({ script: 'open("/etc/passwd")' }, {} as never);
+    const r = await pythonRunHandler({ script: 'import os as files\nfiles.remove(target)' }, {} as never);
     expect(r.isError).toBe(true);
-    expect(textOf(r)).toContain('bAllowUnsafePython');
+    expect(textOf(r)).toContain('allow_unsafe_effective');
+    expect(textOf(r)).toContain('false');
+    expect(textOf(r)).toContain('#412/#415');
     expect(textOf(r)).toContain('open() denied');
   });
 
@@ -86,7 +87,7 @@ describe('python_run', () => {
     const r = await pythonRunHandler({ script: 'foo' }, {} as never);
     expect(r.isError).toBe(true);
     expect(textOf(r)).toContain('NameError');
-    expect(textOf(r)).not.toContain('bAllowUnsafePython');
+    expect(textOf(r)).not.toContain('allow_unsafe_effective');
   });
 
   it('returns the payload on success', async () => {

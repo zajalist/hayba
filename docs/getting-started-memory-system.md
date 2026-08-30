@@ -7,23 +7,18 @@ SQLite-backed shared-memory layer referenced by `hayba.agents.json`'s
 says "Record every spatial decision to memory with a clear `intent`
 string").
 
-**Status up front:** the class and its schema exist, are implemented, and
-have a unit test — but nothing in the current codebase instantiates or calls
-this class outside its own test file. There is no MCP tool that writes to
-or reads from it, and no retention policy or export/import support exists
-at all. Treat this page as a description of the schema for someone who wants
-to wire it up, not as a working feature.
+**Status up front:** this is a working MCP feature. Eight `memory_*` tools
+share a lazy process-wide SQLite store, enforce retention after writes, and
+support portable JSON export/import.
 
 ## Where it lives
 
 [`mcp-tools/hayba-mcp/src/gaea/memory/hayba-memory.ts`](../mcp-tools/hayba-mcp/src/gaea/memory/hayba-memory.ts),
-class `HaybaMemory`, backed by `better-sqlite3`. It lives under `src/gaea/`
-— the Gaea tool surface, which is currently parked (its tool-registration
-block was deleted from `src/tools/index.ts`; see the comment block in
-`mcp-tools/hayba-mcp/vitest.config.ts`). Its test,
-`mcp-tools/hayba-mcp/tests/gaea/memory/hayba-memory.test.ts`, exists but is
-excluded from the active suite by the same `vitest.config.ts` exclude entry
-(`'**/tests/gaea/**'`), so it does not currently run as part of `npm test`.
+class `HaybaMemory`, backed by Node's built-in `node:sqlite` API. The wiring
+lives in
+[`src/tools/memory/store.ts`](../mcp-tools/hayba-mcp/src/tools/memory/store.ts),
+which lazily opens one shared connection. The active memory-tool suite is in
+`src/tools/memory/memory-tools.test.ts`.
 
 ## Schema
 
@@ -54,15 +49,15 @@ JSON strings, not native SQLite JSON — they round-trip through
 
 ```ts
 class HaybaMemory {
-  constructor(path: string)             // opens/creates a better-sqlite3 db at `path`
-  write(b: MemoryBlock): string         // returns the row id (uuid if not supplied)
+  constructor(path: string); // opens/creates a better-sqlite3 db at `path`
+  write(b: MemoryBlock): string; // returns the row id (uuid if not supplied)
   query(opts: {
     scope?: 'private' | 'shared';
     agentRole?: string;
-    limit?: number;                     // default 50
-  }): MemoryBlock[]                     // ORDER BY timestamp DESC
-  clear(agentRole?: string): void       // delete all rows, or all rows for one role
-  close(): void
+    limit?: number; // default 50
+  }): MemoryBlock[]; // ORDER BY timestamp DESC
+  clear(agentRole?: string): void; // delete all rows, or all rows for one role
+  close(): void;
 }
 ```
 
@@ -82,32 +77,36 @@ interface MemoryBlock {
 }
 ```
 
+## MCP tools
+
+- `memory_write` stores one block and then applies retention.
+- `memory_recall` searches by keyword; `memory_list` paginates without search.
+- `memory_delete` deletes by id or role and requires `confirm_all=true` to clear all.
+- `memory_prune` applies explicit age/count bounds on demand.
+- `memory_export` writes a portable versioned JSON envelope.
+- `memory_import` restores or merges an export with explicit conflict policy.
+
 ## Retention policy
 
-**Not implemented.** There is no TTL, no row-count cap, no scheduled
-pruning, and no code path that ever calls `clear()` automatically — `clear`
-is available to a caller but nothing in this repo calls it. Rows accumulate
-indefinitely for as long as something is calling `write()`.
+Every `memory_write` prunes to the configured limits. Defaults are 2,000 rows
+and 90 days. Override them with `HAYBA_MEMORY_MAX_COUNT` and
+`HAYBA_MEMORY_MAX_AGE_DAYS`; use `memory_prune` for a tighter one-off cleanup.
 
 ## Export / import
 
-**Not implemented.** `HaybaMemory` has no export or dump method and no
-import/load method. There is no CLI script or MCP tool in this repo for
-copying a memory database in or out. Because it's a plain SQLite file, the
-generic route (`sqlite3 <path> .dump`, or copying the `.db` file while no
-process holds it open) works at the filesystem level, but that is not
-something the codebase provides or documents — it follows from "it's a
-SQLite file," not from a shipped feature.
+Use `memory_export` and `memory_import`; both report row-level outcomes rather
+than treating a partial operation as success. Export writes JSON rather than a
+live SQLite-file copy, so it is safe to use while the process owns the database.
 
 ## Where the filename convention comes from
 
 `hayba.agents.json`'s `shared_memory` field (default `"hayba-memory.db"`,
 "relative to project root" per the doc comment on `AgentsManifest` in
 `src/agents/types.ts`) is presumably meant to be the path passed to
-`new HaybaMemory(path)`. No code in this repo reads that field or
-constructs a `HaybaMemory` from it — see
-[Getting started — Swarm agents](getting-started-swarm-agents.md) for the
-matching gap on the archetype-loader side.
+`new HaybaMemory(path)`. The runtime store currently uses `HAYBA_MEMORY_DB`
+instead; otherwise it defaults to `data/hayba-memory.db` beside the built MCP
+server. The manifest field is validated metadata and does not redirect the
+store.
 
 ## A naming collision worth knowing about
 

@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { HaybaToolMeta } from '../hayba-tool-meta.js';
 import {
   createUniqueCacheDir,
+  connectorErrorResult,
   downloadExtractThen,
   fetchJsonBounded,
   importIntoUe,
@@ -88,20 +89,22 @@ export async function handleAmbientCgDownload(params: AmbientCgDownloadParams) {
       archivePath: zipPath,
       extractDir,
       failureCleanupRoot: cacheDir,
-      afterVerified: () => importIntoUe(extractDir, gamePath),
+      afterVerified: () => importIntoUe(extractDir, gamePath, cacheDir),
     });
+    const verify = importResult.ok ? await verifyAndMarkDelta(gamePath) : { verified: false, reason: 'import_failed' };
     const data: DownloadedAsset = {
       assetId: asset_id,
       source: 'ambientcg',
       cachePath: cacheDir,
       files,
-      imported: importResult.ok,
+      imported: importResult.ok && verify.verified,
       importGamePath: gamePath,
       importNote: importResult.note,
+      verified: verify.verified,
+      verifyReason: verify.reason,
     };
-    return { content: [{ type: 'text' as const, text: JSON.stringify(data, null, 2) }] };
+    return { content: [{ type: 'text' as const, text: JSON.stringify(data, null, 2) }], isError: !data.imported };
   } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : String(e);
-    return { content: [{ type: 'text' as const, text: `ambientCG download error: ${msg}` }], isError: true };
+    return connectorErrorResult('ambientcg', e);
   }
 }

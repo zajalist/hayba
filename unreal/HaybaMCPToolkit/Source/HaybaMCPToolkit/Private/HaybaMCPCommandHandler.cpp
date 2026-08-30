@@ -4,6 +4,8 @@
 #include "HaybaMCPSeh.h"
 #include "HaybaMCPSecurityManager.h"
 #include "HaybaMCPResponseBuilder.h"
+#include "HaybaMCPAdvisory.h"
+#include "HaybaMCPSecretRedaction.h"
 #include "HaybaMCPSettings.h"
 #include "HaybaMCPDeveloperSettings.h"
 #include "HaybaMCPModule.h"
@@ -15,7 +17,6 @@
 #include "HaybaMCPMemoryPanel.h"
 #include "HaybaMCPDiffPanel.h"
 #include "Json.h"
-#include "Async/Async.h"
 #include "Editor.h"
 #include "EngineUtils.h"
 #include "GameFramework/Actor.h"
@@ -24,6 +25,376 @@
 #include "Widgets/Notifications/SNotificationList.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogHaybaMCPCmd, Log, All);
+
+static bool IsDestructiveCommand(const FString& Cmd);
+
+namespace
+{
+    constexpr int32 MaxPromotedFailureChars = 4096;
+
+    FString BoundFailureDiagnostic(const FString& Input)
+    {
+        FString Diagnostic = Input;
+        Diagnostic.TrimStartAndEndInline();
+        if (Diagnostic.IsEmpty()) return FString();
+        return HaybaMCPSecretRedaction::RedactTextForLog(
+            Diagnostic,
+            MaxPromotedFailureChars);
+    }
+
+    FString LogicalFailureDiagnostic(const TSharedPtr<FJsonObject>& Data)
+    {
+        if (Data.IsValid())
+        {
+            FString Diagnostic;
+            if (Data->TryGetStringField(TEXT("error"), Diagnostic))
+            {
+                Diagnostic = BoundFailureDiagnostic(Diagnostic);
+                if (!Diagnostic.IsEmpty()) return Diagnostic;
+            }
+
+            const TArray<TSharedPtr<FJsonValue>>* Errors = nullptr;
+            if (Data->TryGetArrayField(TEXT("errors"), Errors) && Errors)
+            {
+                FString Joined;
+                for (const TSharedPtr<FJsonValue>& Value : *Errors)
+                {
+                    FString Item;
+                    if (!Value.IsValid() || !Value->TryGetString(Item)) continue;
+                    Item.TrimStartAndEndInline();
+                    if (Item.IsEmpty()) continue;
+                    if (!Joined.IsEmpty()) Joined += TEXT("; ");
+                    const int32 Remaining = MaxPromotedFailureChars - Joined.Len();
+                    if (Remaining <= 0) break;
+                    Joined += Item.Left(Remaining);
+                }
+                Joined = BoundFailureDiagnostic(Joined);
+                if (!Joined.IsEmpty()) return Joined;
+            }
+
+            if (Data->TryGetStringField(TEXT("stderr"), Diagnostic))
+            {
+                Diagnostic = BoundFailureDiagnostic(Diagnostic);
+                if (!Diagnostic.IsEmpty()) return Diagnostic;
+            }
+        }
+
+        return TEXT("The handler reported a logical failure without a diagnostic; the operation's final state is unknown.");
+    }
+
+    void CopyStringGuidanceField(
+        const TSharedPtr<FJsonObject>& Data,
+        const TCHAR* Singular,
+        const TCHAR* Plural,
+        TArray<FString>& Out)
+    {
+        if (!Data.IsValid()) return;
+        FString One;
+        if (Data->TryGetStringField(Singular, One) && !One.IsEmpty()) Out.AddUnique(One);
+        const TArray<TSharedPtr<FJsonValue>>* Many = nullptr;
+        if (Data->TryGetArrayField(Plural, Many) && Many)
+        {
+            for (const TSharedPtr<FJsonValue>& Value : *Many)
+            {
+                FString Text;
+                if (Value.IsValid() && Value->TryGetString(Text) && !Text.IsEmpty()) Out.AddUnique(Text);
+            }
+        }
+    }
+
+    FHaybaMCPAdvisorySignals SignalsForSuccess(
+        const FString& Operation,
+        const TSharedPtr<FJsonObject>& Data)
+    {
+        FHaybaMCPAdvisorySignals Signals;
+        Signals.Operation = Operation;
+        Signals.Phase = EHaybaMCPCommandPhase::Verify;
+        Signals.bOperationSucceeded = true;
+
+        if (!Data.IsValid()) return Signals;
+
+        double Succeeded = 0.0;
+        double Failed = 0.0;
+        if (Data->TryGetNumberField(TEXT("succeeded"), Succeeded)
+            && FMath::IsFinite(Succeeded) && Succeeded >= 0.0)
+        {
+            Signals.SucceededCount = FMath::Clamp(
+                static_cast<int32>(FMath::Min(Succeeded, static_cast<double>(MAX_int32))), 0, MAX_int32);
+        }
+        if (Data->TryGetNumberField(TEXT("failed"), Failed)
+            && FMath::IsFinite(Failed) && Failed >= 0.0)
+        {
+            Signals.FailedCount = FMath::Clamp(
+                static_cast<int32>(FMath::Min(Failed, static_cast<double>(MAX_int32))), 0, MAX_int32);
+        }
+        if (Signals.FailedCount > 0)
+        {
+            if (Signals.SucceededCount > 0)
+            {
+                Signals.MutationStatus = EHaybaMCPMutationStatus::PartiallyApplied;
+            }
+            else
+            {
+                // An all-rejected batch is not a successful partial mutation.
+                // Several legacy handlers historically returned ok:true with
+                // succeeded:0, which teaches an agent the exact opposite of
+                // what happened.
+                Signals.bOperationSucceeded = false;
+                Signals.FailureKind = EHaybaMCPFailureKind::InputRejected;
+                Signals.Code = TEXT("all_items_rejected");
+                Signals.Error = TEXT("Every requested item was rejected; no item was applied.");
+                Signals.MutationStatus = EHaybaMCPMutationStatus::NotStarted;
+            }
+        }
+        else if (Signals.SucceededCount > 0)
+        {
+            Signals.MutationStatus = EHaybaMCPMutationStatus::Applied;
+        }
+
+        bool bSaved = true;
+        if (Data->HasField(TEXT("saved")) && Data->TryGetBoolField(TEXT("saved"), bSaved))
+        {
+            bool bSaveAttempted = true;
+            Data->TryGetBoolField(TEXT("save_attempted"), bSaveAttempted);
+            Signals.bSaveAttempted = bSaveAttempted;
+            Signals.bSaveSucceeded = bSaved;
+            if (!bSaved) Signals.MutationStatus = EHaybaMCPMutationStatus::AppliedUnsaved;
+        }
+
+        bool bDirty = false;
+        if (Data->TryGetBoolField(TEXT("dirty"), bDirty) && bDirty)
+        {
+            Signals.bDirtyAfterOperation = true;
+        }
+        double DirtyCount = 0.0;
+        if (Data->TryGetNumberField(TEXT("dirty_count"), DirtyCount)
+            && FMath::IsFinite(DirtyCount) && DirtyCount > 0.0)
+        {
+            Signals.bDirtyAfterOperation = true;
+        }
+
+        bool bCompiledClean = true;
+        if (Data->HasField(TEXT("compiled_clean"))
+            && Data->TryGetBoolField(TEXT("compiled_clean"), bCompiledClean))
+        {
+            Signals.bVerificationAttempted = true;
+            Signals.bVerificationSucceeded = bCompiledClean;
+            Signals.bNeedsVerification = !bCompiledClean;
+            if (!bCompiledClean && Signals.Code.IsEmpty()) Signals.Code = TEXT("compile_not_clean");
+        }
+
+        // A handler can explicitly prove its readback/verification. Absent
+        // that evidence, successful destructive commands stay honest:
+        // success_needs_verification is optional guidance and therefore
+        // disappears entirely for users who selected ErrorsOnly.
+        bool bVerified = false;
+        const bool bHasVerified = Data->TryGetBoolField(TEXT("verified"), bVerified)
+            || Data->TryGetBoolField(TEXT("readback_verified"), bVerified);
+        if (bHasVerified)
+        {
+            Signals.bVerificationAttempted = true;
+            Signals.bVerificationSucceeded = bVerified;
+            Signals.bNeedsVerification = !bVerified;
+            if (!bVerified && Signals.Code.IsEmpty()) Signals.Code = TEXT("verification_failed");
+        }
+        else if (Signals.bOperationSucceeded && !Signals.bVerificationAttempted
+            && IsDestructiveCommand(Operation))
+        {
+            Signals.bNeedsVerification = true;
+            if (Signals.MutationStatus == EHaybaMCPMutationStatus::None)
+            {
+                Signals.MutationStatus = EHaybaMCPMutationStatus::Applied;
+            }
+        }
+
+        // Some handlers return structured diagnostics even when their inner
+        // operation failed. Preserve that data, but never infer success solely
+        // because the native handler returned a data object. Promote the most
+        // useful bounded diagnostic without assuming which handler produced it.
+        bool bExplicitHandlerOk = true;
+        if (Data->TryGetBoolField(TEXT("ok"), bExplicitHandlerOk) && !bExplicitHandlerOk)
+        {
+            Signals.bOperationSucceeded = false;
+            Signals.FailureKind = EHaybaMCPFailureKind::UnknownOutcome;
+            Signals.Code = TEXT("handler_reported_failure");
+            Signals.Error = LogicalFailureDiagnostic(Data);
+            Signals.MutationStatus = IsDestructiveCommand(Operation)
+                ? EHaybaMCPMutationStatus::Unknown
+                : EHaybaMCPMutationStatus::None;
+        }
+
+        // Handlers that cross a callback-heavy mutation boundary can report
+        // exact lifecycle facts instead of making this layer infer them from
+        // prose. Values outside this fixed vocabulary are ignored.
+        FString ExplicitCode;
+        if (Data->TryGetStringField(TEXT("code"), ExplicitCode)
+            && !ExplicitCode.IsEmpty() && ExplicitCode.Len() <= 64)
+        {
+            Signals.Code = ExplicitCode;
+        }
+        FString Phase;
+        if (Data->TryGetStringField(TEXT("phase"), Phase))
+        {
+            if (Phase == TEXT("parse")) Signals.Phase = EHaybaMCPCommandPhase::Parse;
+            else if (Phase == TEXT("preflight")) Signals.Phase = EHaybaMCPCommandPhase::Preflight;
+            else if (Phase == TEXT("execute")) Signals.Phase = EHaybaMCPCommandPhase::Execute;
+            else if (Phase == TEXT("verify")) Signals.Phase = EHaybaMCPCommandPhase::Verify;
+            else if (Phase == TEXT("shape")) Signals.Phase = EHaybaMCPCommandPhase::Shape;
+        }
+        FString MutationStatus;
+        if (Data->TryGetStringField(TEXT("mutation_status"), MutationStatus))
+        {
+            if (MutationStatus == TEXT("not_started"))
+                Signals.MutationStatus = EHaybaMCPMutationStatus::NotStarted;
+            else if (MutationStatus == TEXT("applied"))
+                Signals.MutationStatus = EHaybaMCPMutationStatus::Applied;
+            else if (MutationStatus == TEXT("partially_applied"))
+                Signals.MutationStatus = EHaybaMCPMutationStatus::PartiallyApplied;
+            else if (MutationStatus == TEXT("applied_unsaved"))
+                Signals.MutationStatus = EHaybaMCPMutationStatus::AppliedUnsaved;
+            else if (MutationStatus == TEXT("unknown"))
+                Signals.MutationStatus = EHaybaMCPMutationStatus::Unknown;
+        }
+        FString FailureKind;
+        if (!bExplicitHandlerOk && Data->TryGetStringField(TEXT("failure_kind"), FailureKind))
+        {
+            if (FailureKind == TEXT("input_rejected"))
+                Signals.FailureKind = EHaybaMCPFailureKind::InputRejected;
+            else if (FailureKind == TEXT("policy_blocked"))
+                Signals.FailureKind = EHaybaMCPFailureKind::PolicyBlocked;
+            else if (FailureKind == TEXT("retryable"))
+            {
+                Signals.FailureKind = EHaybaMCPFailureKind::Retryable;
+                Signals.bRetryUnchangedSafe = Signals.MutationStatus == EHaybaMCPMutationStatus::NotStarted;
+            }
+            else if (FailureKind == TEXT("unknown_outcome"))
+                Signals.FailureKind = EHaybaMCPFailureKind::UnknownOutcome;
+            else if (FailureKind == TEXT("session_suspect"))
+                Signals.FailureKind = EHaybaMCPFailureKind::SessionSuspect;
+            else if (FailureKind == TEXT("fatal"))
+                Signals.FailureKind = EHaybaMCPFailureKind::Fatal;
+        }
+        bool bUnknownOutcome = false;
+        if (Data->TryGetBoolField(TEXT("unknown_outcome"), bUnknownOutcome) && bUnknownOutcome)
+        {
+            Signals.bOperationSucceeded = false;
+            Signals.FailureKind = EHaybaMCPFailureKind::UnknownOutcome;
+            if (Signals.MutationStatus == EHaybaMCPMutationStatus::None)
+                Signals.MutationStatus = EHaybaMCPMutationStatus::Unknown;
+        }
+
+        bool bSessionSuspect = false;
+        if (Data->TryGetBoolField(TEXT("session_suspect"), bSessionSuspect)
+            && bSessionSuspect)
+        {
+            Signals.bOperationSucceeded = false;
+            Signals.bStructuredException = true;
+            Signals.FailureKind = EHaybaMCPFailureKind::SessionSuspect;
+            Signals.Code = TEXT("structured_exception");
+            Signals.Error = LogicalFailureDiagnostic(Data);
+            if (Signals.Phase != EHaybaMCPCommandPhase::Verify)
+                Signals.Phase = EHaybaMCPCommandPhase::Execute;
+            if (Signals.MutationStatus != EHaybaMCPMutationStatus::PartiallyApplied)
+                Signals.MutationStatus = EHaybaMCPMutationStatus::Unknown;
+        }
+
+        FString Status;
+        if (Data->TryGetStringField(TEXT("status"), Status)
+            && Status.Equals(TEXT("plan_mode_required"), ESearchCase::IgnoreCase))
+        {
+            Signals.bOperationSucceeded = false;
+            Signals.FailureKind = EHaybaMCPFailureKind::PolicyBlocked;
+            Signals.Code = TEXT("plan_mode_required");
+            Signals.Error = TEXT("The command requires an approved plan before execution.");
+            Signals.MutationStatus = EHaybaMCPMutationStatus::NotStarted;
+        }
+
+        CopyStringGuidanceField(Data, TEXT("warning"), TEXT("warnings"), Signals.Warnings);
+        CopyStringGuidanceField(Data, TEXT("tip"), TEXT("tips"), Signals.Tips);
+        CopyStringGuidanceField(Data, TEXT("hint"), TEXT("hints"), Signals.Tips);
+        return Signals;
+    }
+
+    FHaybaMCPAdvisorySignals SignalsForError(
+        const FString& Operation,
+        const FString& Error,
+        bool bSessionSuspect,
+        bool bKnownPreflight)
+    {
+        FHaybaMCPAdvisorySignals Signals;
+        Signals.Operation = Operation;
+        Signals.bOperationSucceeded = false;
+        Signals.Error = Error;
+        Signals.Phase = bKnownPreflight
+            ? EHaybaMCPCommandPhase::Preflight
+            : EHaybaMCPCommandPhase::Execute;
+        Signals.MutationStatus = bKnownPreflight
+            ? EHaybaMCPMutationStatus::NotStarted
+            : EHaybaMCPMutationStatus::Unknown;
+
+        const FString Lower = Error.ToLower();
+        if (bSessionSuspect || Lower.Contains(TEXT("structured exception"))
+            || Lower.Contains(TEXT("session as suspect")) || Lower.Contains(TEXT("seh")))
+        {
+            Signals.bStructuredException = true;
+            Signals.FailureKind = EHaybaMCPFailureKind::SessionSuspect;
+            Signals.Code = TEXT("structured_exception");
+            Signals.Phase = EHaybaMCPCommandPhase::Execute;
+            Signals.MutationStatus = EHaybaMCPMutationStatus::Unknown;
+        }
+        else if (Lower.Contains(TEXT("hcr-")) || (bKnownPreflight && (
+            Lower.Contains(TEXT("policy_blocked")) || Lower.Contains(TEXT("blocked permanently"))
+            || Lower.Contains(TEXT("not permitted")) || Lower.Contains(TEXT("forbidden"))
+            || Lower.Contains(TEXT("approval")) || Lower.Contains(TEXT("plan mode"))
+            || Lower.Contains(TEXT("unauthorized")) || Lower.Contains(TEXT("authentication")))))
+        {
+            Signals.bCrashGuardRejected = Lower.Contains(TEXT("hcr-"))
+                || Lower.Contains(TEXT("crash")) || Lower.Contains(TEXT("deadlock"));
+            Signals.FailureKind = EHaybaMCPFailureKind::PolicyBlocked;
+            Signals.Code = Signals.bCrashGuardRejected ? TEXT("crash_guard_blocked") : TEXT("policy_blocked");
+            // Stable HCR codes are emitted only by guards that reject before
+            // Execute. Generic handler prose is never allowed to make this
+            // claim, but a named crash guard is an authoritative phase fact.
+            Signals.Phase = EHaybaMCPCommandPhase::Preflight;
+            Signals.MutationStatus = EHaybaMCPMutationStatus::NotStarted;
+        }
+        else if (bKnownPreflight && (Lower.Contains(TEXT("missing")) || Lower.Contains(TEXT("invalid"))
+            || Lower.Contains(TEXT("required")) || Lower.Contains(TEXT("must be"))
+            || Lower.Contains(TEXT("not found")) || Lower.Contains(TEXT("unknown command"))
+            || Lower.Contains(TEXT("out of range")) || Lower.Contains(TEXT("rejected"))))
+        {
+            Signals.FailureKind = EHaybaMCPFailureKind::InputRejected;
+            Signals.Code = TEXT("invalid_request");
+            Signals.bRetryUnchangedSafe = false;
+        }
+        else if (Lower.Contains(TEXT("timeout")) || Lower.Contains(TEXT("timed out"))
+            || Lower.Contains(TEXT("disconnect")))
+        {
+            Signals.FailureKind = EHaybaMCPFailureKind::UnknownOutcome;
+            Signals.Code = Lower.Contains(TEXT("disconnect")) ? TEXT("disconnected") : TEXT("timeout");
+            Signals.Phase = EHaybaMCPCommandPhase::Execute;
+            Signals.MutationStatus = EHaybaMCPMutationStatus::Unknown;
+        }
+        else if (bKnownPreflight && (Lower.Contains(TEXT("busy")) || Lower.Contains(TEXT("not ready"))
+            || Lower.Contains(TEXT("already running")) || Lower.Contains(TEXT("try again"))))
+        {
+            Signals.FailureKind = EHaybaMCPFailureKind::Retryable;
+            Signals.Code = TEXT("temporarily_unavailable");
+            Signals.bRetryUnchangedSafe = true;
+        }
+        else
+        {
+            // Legacy handlers do not yet expose phase/mutation facts. Do not
+            // invent a clean retry or call every domain error fatal; state is
+            // conservatively unknown until that handler adopts typed signals.
+            Signals.FailureKind = EHaybaMCPFailureKind::UnknownOutcome;
+            Signals.Code = TEXT("unclassified_handler_failure");
+            Signals.Phase = EHaybaMCPCommandPhase::Execute;
+            Signals.MutationStatus = EHaybaMCPMutationStatus::Unknown;
+        }
+        return Signals;
+    }
+}
 
 static bool IsDestructiveCommand(const FString& Cmd)
 {
@@ -212,6 +583,14 @@ bool FHaybaMCPCommandHandler::ShouldCreateEditorTransaction(const FString& Cmd)
     // buffer here: that would silently destroy unrelated undo history.
     if (Cmd == TEXT("ui_compile_widget") || Cmd == TEXT("editor_pie_click_actor")) return false;
 
+    // data_set deliberately performs one bounded scalar copy without Modify(),
+    // editor property notifications, or persistence. A global transaction would
+    // serialize the entire attacker-selected DataAsset before its handler runs,
+    // defeating that crash-safety boundary through unrelated properties or
+    // custom serialization. The explicit asset_save command is the persistence
+    // boundary once the caller has inspected data_set's bounded readback.
+    if (Cmd == TEXT("data_set")) return false;
+
     return true;
 }
 
@@ -226,13 +605,10 @@ static void MaybeShowPlanModePrompt()
 
     S.bShownPlanModePrompt = true;
     S.Save();
-    AsyncTask(ENamedThreads::GameThread, []()
-    {
-        FNotificationInfo Info(NSLOCTEXT("Hayba", "PlanModePrompt",
-            "You've been using Plan Mode for a while — consider disabling it from the toolbar if you trust your workflow."));
-        Info.ExpireDuration = 10.f;
-        FSlateNotificationManager::Get().AddNotification(Info);
-    });
+    FNotificationInfo Info(NSLOCTEXT("Hayba", "PlanModePrompt",
+        "You've been using Plan Mode for a while — consider disabling it from the toolbar if you trust your workflow."));
+    Info.ExpireDuration = 10.f;
+    FSlateNotificationManager::Get().AddNotification(Info);
 }
 
 static EHaybaNodeSemantic SemanticFromString(const FString& S)
@@ -303,16 +679,13 @@ static void PushSceneGraphToPanel(const TSharedPtr<FJsonObject>& Data)
         }
     }
 
-    AsyncTask(ENamedThreads::GameThread, [Nodes = MoveTemp(Nodes), Edges = MoveTemp(Edges)]()
+    if (FHaybaMCPModule* M = FModuleManager::GetModulePtr<FHaybaMCPModule>("HaybaMCPToolkit"))
     {
-        if (FHaybaMCPModule* M = FModuleManager::GetModulePtr<FHaybaMCPModule>("HaybaMCPToolkit"))
+        if (TSharedPtr<SHaybaMCPSceneMapPanel> Panel = M->SceneMapPanel.Pin())
         {
-            if (TSharedPtr<SHaybaMCPSceneMapPanel> Panel = M->SceneMapPanel.Pin())
-            {
-                Panel->LoadSceneGraph(Nodes, Edges);
-            }
+            Panel->LoadSceneGraph(Nodes, Edges);
         }
-    });
+    }
 }
 
 /** Push findings produced OUTSIDE the editor into the Validation panel.
@@ -360,17 +733,14 @@ static void PushExternalFindingsToPanel(const TSharedPtr<FJsonObject>& Data)
     bool bAppend = false;
     Data->TryGetBoolField(TEXT("append"), bAppend);
 
-    AsyncTask(ENamedThreads::GameThread, [Issues = MoveTemp(Issues), bAppend]()
+    if (FHaybaMCPModule* M = FModuleManager::GetModulePtr<FHaybaMCPModule>("HaybaMCPToolkit"))
     {
-        if (FHaybaMCPModule* M = FModuleManager::GetModulePtr<FHaybaMCPModule>("HaybaMCPToolkit"))
+        if (TSharedPtr<SHaybaMCPValidationPanel> Panel = M->ValidationPanel.Pin())
         {
-            if (TSharedPtr<SHaybaMCPValidationPanel> Panel = M->ValidationPanel.Pin())
-            {
-                if (!bAppend) Panel->Clear();
-                for (const auto& I : Issues) Panel->AddIssue(I);
-            }
+            if (!bAppend) Panel->Clear();
+            for (const auto& I : Issues) Panel->AddIssue(I);
         }
-    });
+    }
 }
 
 static void PushPhysicsResultsToPanel(const TSharedPtr<FJsonObject>& Data)
@@ -395,33 +765,27 @@ static void PushPhysicsResultsToPanel(const TSharedPtr<FJsonObject>& Data)
             Issues.Add(MoveTemp(I));
         }
     }
-    AsyncTask(ENamedThreads::GameThread, [Issues = MoveTemp(Issues)]()
+    if (FHaybaMCPModule* M = FModuleManager::GetModulePtr<FHaybaMCPModule>("HaybaMCPToolkit"))
     {
-        if (FHaybaMCPModule* M = FModuleManager::GetModulePtr<FHaybaMCPModule>("HaybaMCPToolkit"))
+        if (TSharedPtr<SHaybaMCPValidationPanel> Panel = M->ValidationPanel.Pin())
         {
-            if (TSharedPtr<SHaybaMCPValidationPanel> Panel = M->ValidationPanel.Pin())
-            {
-                Panel->Clear();
-                for (const auto& I : Issues) Panel->AddIssue(I);
-            }
+            Panel->Clear();
+            for (const auto& I : Issues) Panel->AddIssue(I);
         }
-    });
+    }
 }
 
 static void PushMemoryResultsToPanel(const TSharedPtr<FJsonObject>& Data)
 {
     // The Semantic Library now reads the PLUMB stores directly; a memory_query
     // just asks it to refresh from disk on the game thread.
-    AsyncTask(ENamedThreads::GameThread, []()
+    if (FHaybaMCPModule* M = FModuleManager::GetModulePtr<FHaybaMCPModule>("HaybaMCPToolkit"))
     {
-        if (FHaybaMCPModule* M = FModuleManager::GetModulePtr<FHaybaMCPModule>("HaybaMCPToolkit"))
+        if (TSharedPtr<SHaybaMCPMemoryPanel> Panel = M->MemoryPanel.Pin())
         {
-            if (TSharedPtr<SHaybaMCPMemoryPanel> Panel = M->MemoryPanel.Pin())
-            {
-                Panel->RefreshLibrary();
-            }
+            Panel->RefreshLibrary();
         }
-    });
+    }
 }
 
 /**
@@ -620,16 +984,13 @@ static void PushDiffEntries(const FString& Cmd, const TSharedPtr<FJsonObject>& P
 
     if (Entries.IsEmpty()) return;
 
-    AsyncTask(ENamedThreads::GameThread, [Entries = MoveTemp(Entries)]()
+    if (FHaybaMCPModule* M = FModuleManager::GetModulePtr<FHaybaMCPModule>("HaybaMCPToolkit"))
     {
-        if (FHaybaMCPModule* M = FModuleManager::GetModulePtr<FHaybaMCPModule>("HaybaMCPToolkit"))
+        if (TSharedPtr<SHaybaMCPDiffPanel> Panel = M->DiffPanel.Pin())
         {
-            if (TSharedPtr<SHaybaMCPDiffPanel> Panel = M->DiffPanel.Pin())
-            {
-                for (const auto& E : Entries) Panel->AddEntry(E);
-            }
+            for (const auto& E : Entries) Panel->AddEntry(E);
         }
-    });
+    }
 }
 
 static FString HandleProposePlan(const FString& Id, const TSharedPtr<FJsonObject>& Params)
@@ -663,31 +1024,59 @@ static FString HandleProposePlan(const FString& Id, const TSharedPtr<FJsonObject
     int32 AwaitSecs = 30;
     if (Params.IsValid()) Params->TryGetNumberField(TEXT("await_seconds"), AwaitSecs);
 
-    AsyncTask(ENamedThreads::GameThread, [Steps, AwaitSecs]()
+    if (FHaybaMCPModule* M = FModuleManager::GetModulePtr<FHaybaMCPModule>("HaybaMCPToolkit"))
     {
-        if (FHaybaMCPModule* M = FModuleManager::GetModulePtr<FHaybaMCPModule>("HaybaMCPToolkit"))
+        if (TSharedPtr<SHaybaMCPPlanPanel> Panel = M->PlanPanel.Pin())
         {
-            if (TSharedPtr<SHaybaMCPPlanPanel> Panel = M->PlanPanel.Pin())
-            {
-                Panel->LoadPlan(Steps, AwaitSecs);
-            }
+            Panel->LoadPlan(Steps, AwaitSecs);
         }
-    });
+    }
 
     auto Data = MakeShared<FJsonObject>();
     Data->SetBoolField(TEXT("received"), true);
     Data->SetNumberField(TEXT("step_count"), Steps.Num());
-    return FHaybaMCPCommandHandler::MakeOkResponse(Id, Data);
+    return FHaybaMCPCommandHandler::MakeOkResponse(Id, Data, TEXT("hayba_propose_plan"));
 }
 
 // Helper: serialize FJsonObject to compact string
 static FString JsonToString(const TSharedRef<FJsonObject>& Obj)
 {
+    const TSharedPtr<FJsonObject> Safe = HaybaMCPSecretRedaction::RedactFinalEnvelope(Obj);
     FString Output;
     TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer =
         TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&Output);
-    FJsonSerializer::Serialize(Obj, Writer);
+    FJsonSerializer::Serialize(Safe.ToSharedRef(), Writer);
     return Output;
+}
+
+// ProcessCommand can be called directly by tests or future integrations, but
+// all editor-facing dispatch must stay on the game thread. This response is
+// intentionally a fixed literal: the refusal must not parse caller-controlled
+// JSON or consult response settings/editor singletons from the wrong thread.
+static FString MakeOffGameThreadResponse()
+{
+    return TEXT("{\"id\":\"\",\"ok\":false,\"error\":\"Request rejected: Hayba command dispatch must run on the Unreal game thread; no operation was started.\",\"data\":{}}");
+}
+
+static FString ShapeOkResponse(
+    const FString& Id,
+    const TSharedPtr<FJsonObject>& Data,
+    const FHaybaMCPAdvisorySignals& Signals)
+{
+    TSharedRef<FJsonObject> Response = MakeShared<FJsonObject>();
+    Response->SetStringField(TEXT("id"), Id);
+    Response->SetBoolField(TEXT("ok"), Signals.bOperationSucceeded);
+    if (!Signals.bOperationSucceeded && !Signals.Error.IsEmpty())
+    {
+        Response->SetStringField(TEXT("error"), Signals.Error);
+    }
+    Response->SetObjectField(TEXT("data"),
+        Data.IsValid() ? Data.ToSharedRef() : MakeShared<FJsonObject>());
+    HaybaMCPAdvisory::ApplyToResponse(
+        Response,
+        Signals,
+        FHaybaMCPSettings::Get().AdvisoryVerbosity);
+    return JsonToString(Response);
 }
 
 FHaybaMCPCommandHandler::FHaybaMCPCommandHandler() {}
@@ -746,12 +1135,19 @@ TArray<FString> FHaybaMCPCommandHandler::GetAllCommands() const
 
 FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
 {
+    // This must remain the first branch. Even JSON parsing and the normal
+    // response helpers are outside the supported off-thread contract.
+    if (!IsInGameThread())
+    {
+        return MakeOffGameThreadResponse();
+    }
+
     TSharedPtr<FJsonObject> Parsed;
     TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(CommandJson);
     if (!FJsonSerializer::Deserialize(Reader, Parsed) || !Parsed.IsValid())
     {
         UE_LOG(LogHaybaMCPCmd, Warning, TEXT("Failed to parse command JSON"));
-        return MakeErrorResponse(TEXT(""), TEXT("Invalid JSON"));
+        return MakeErrorResponse(TEXT(""), TEXT("Invalid JSON"), TEXT("protocol"), false, true);
     }
 
     // Use TryGet* so a missing field doesn't spam LogJson warnings, and so
@@ -771,13 +1167,14 @@ FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
         UE_LOG(LogHaybaMCPCmd, Warning,
             TEXT("Rejected request with missing/empty id (cmd='%s')"), *Cmd);
         return MakeErrorResponse(TEXT(""),
-            TEXT("Request rejected: 'id' field is required and must be non-empty"));
+            TEXT("Request rejected: 'id' field is required and must be non-empty"),
+            Cmd.IsEmpty() ? FString(TEXT("protocol")) : Cmd, false, true);
     }
 
     if (Cmd.IsEmpty())
     {
         return MakeErrorResponse(Id,
-            TEXT("Request rejected: 'cmd' field is required and must be non-empty"));
+            TEXT("Request rejected: 'cmd' field is required and must be non-empty"), TEXT("protocol"), false, true);
     }
 
     TSharedPtr<FJsonObject> Params;
@@ -794,7 +1191,7 @@ FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
     FString AuthReason;
     if (!FHaybaMCPSecurityManager::Get().ValidateRequest(Parsed, AuthReason))
     {
-        return MakeErrorResponse(Id, AuthReason);
+        return MakeErrorResponse(Id, AuthReason, Cmd, false, true);
     }
 
     // Special-case: hayba_propose_plan pushes to the UI Plan panel (no domain handler).
@@ -810,7 +1207,7 @@ FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
         PushMemoryResultsToPanel(Params);
         auto Data = MakeShared<FJsonObject>();
         Data->SetBoolField(TEXT("received"), true);
-        return MakeOkResponse(Id, Data);
+        return MakeOkResponse(Id, Data, Cmd);
     }
 
     // Special-case: ui_tool_stream_new_turn — the Node mirror detected an
@@ -818,19 +1215,16 @@ FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
     // a fresh collapsible turn group.
     if (Cmd == TEXT("ui_tool_stream_new_turn"))
     {
-        AsyncTask(ENamedThreads::GameThread, []()
+        if (FHaybaMCPModule* M = FModuleManager::GetModulePtr<FHaybaMCPModule>("HaybaMCPToolkit"))
         {
-            if (FHaybaMCPModule* M = FModuleManager::GetModulePtr<FHaybaMCPModule>("HaybaMCPToolkit"))
+            if (TSharedPtr<SHaybaMCPToolStreamPanel> Panel = M->ToolStreamPanel.Pin())
             {
-                if (TSharedPtr<SHaybaMCPToolStreamPanel> Panel = M->ToolStreamPanel.Pin())
-                {
-                    Panel->BeginNewTurn();
-                }
+                Panel->BeginNewTurn();
             }
-        });
+        }
         auto Data = MakeShared<FJsonObject>();
         Data->SetBoolField(TEXT("received"), true);
-        return MakeOkResponse(Id, Data);
+        return MakeOkResponse(Id, Data, Cmd);
     }
 
     // Special-case: ui_tool_stream lets the Node MCP side mirror its own
@@ -844,23 +1238,36 @@ FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
         Params->TryGetStringField(TEXT("tool"), TName);
         Params->TryGetStringField(TEXT("params"), PStr);
         Params->TryGetStringField(TEXT("result"), RStr);
+
+        // This route is normally called by the Node mirror after its own final
+        // redaction boundary, but it is also reachable over raw TCP.  Treating
+        // the caller's strings as already safe let a direct client place a
+        // credential in native Tool Stream history.  Redact the two dynamic
+        // fields again at this native observability boundary; exact markers are
+        // idempotent, so the ordinary Node path remains stable.
+        TSharedPtr<FJsonObject> MirrorText = MakeShared<FJsonObject>();
+        MirrorText->SetStringField(TEXT("params"), PStr);
+        MirrorText->SetStringField(TEXT("result"), RStr);
+        const HaybaMCPSecretRedaction::FResult SafeMirror =
+            HaybaMCPSecretRedaction::Redact(MirrorText);
+        if (!SafeMirror.Value.IsValid() ||
+            !SafeMirror.Value->TryGetStringField(TEXT("params"), PStr) ||
+            !SafeMirror.Value->TryGetStringField(TEXT("result"), RStr))
+        {
+            PStr = TEXT("[TRUNCATED:nodes]");
+            RStr = TEXT("[TRUNCATED:nodes]");
+        }
         if (FHaybaMCPModule* M = FModuleManager::GetModulePtr<FHaybaMCPModule>("HaybaMCPToolkit"))
         {
             M->RecordToolCall(TName, PStr, RStr);
-            AsyncTask(ENamedThreads::GameThread, [TName, PStr, RStr]()
+            if (TSharedPtr<SHaybaMCPToolStreamPanel> Panel = M->ToolStreamPanel.Pin())
             {
-                if (FHaybaMCPModule* Mod = FModuleManager::GetModulePtr<FHaybaMCPModule>("HaybaMCPToolkit"))
-                {
-                    if (TSharedPtr<SHaybaMCPToolStreamPanel> Panel = Mod->ToolStreamPanel.Pin())
-                    {
-                        Panel->AddToolCall(TName, PStr, RStr);
-                    }
-                }
-            });
+                Panel->AddToolCall(TName, PStr, RStr);
+            }
         }
         auto Data = MakeShared<FJsonObject>();
         Data->SetBoolField(TEXT("received"), true);
-        return MakeOkResponse(Id, Data);
+        return MakeOkResponse(Id, Data, Cmd);
     }
 
     // Plan Mode safety gate: destructive commands require an approved plan.
@@ -888,7 +1295,7 @@ FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
                              "earlier approval in this sequence has already been used. Set "
                              "bPlanApprovalStrictConsume=false in the Hayba settings for one Approve to cover a whole plan."));
                 }
-                return MakeOkResponse(Id, Data);
+                return MakeOkResponse(Id, Data, Cmd);
             }
             // How long one Approve lasts is now a SETTING rather than a
             // commented-out line, because both answers are right for different
@@ -951,7 +1358,7 @@ FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
         return MakeErrorResponse(Id, FString::Printf(
             TEXT("Unknown command: %s. If this command was just added to the plugin, its handler class may be new ")
             TEXT("since the editor started — Live Coding cannot register a handler that did not exist at module load, ")
-            TEXT("so restart the editor."), *Cmd));
+            TEXT("so restart the editor."), *Cmd), Cmd, false, true);
     }
 
     // Capture actor before-state for destructive ops so the Diff panel shows true Before -> After.
@@ -1023,7 +1430,7 @@ FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
             Result = FHaybaHandlerResult::Err(FString::Printf(
                 TEXT("handler crashed (SEH): command '%s' faulted with a structured exception ")
                 TEXT("(e.g. a null/stale UObject in the handler, or a stale Python-registered editor delegate ")
-                TEXT("firing on a GC'd target). Post-processing was skipped and the operation did NOT complete. ")
+                TEXT("firing on a GC'd target). Post-processing was skipped; completion cannot be proven and the outcome is unknown. ")
                 TEXT("Treat the editor session as suspect and restart it before mutating more state."),
                 *Cmd));
         }
@@ -1045,24 +1452,42 @@ FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
         FHaybaJournalEntry CrashEntry{
             FDateTime::UtcNow(), Cmd, ParamsHash, DurMs, false, Result.ErrorMessage };
         FHaybaMCPSecurityManager::Get().Journal(CrashEntry);
-        return MakeErrorResponse(Id, Result.ErrorMessage);
+        return MakeErrorResponse(Id, Result.ErrorMessage, Cmd, /*bSessionSuspect=*/true);
     }
+
+    // Classify the handler's complete typed result before ANY success-dependent
+    // side effect. A native bOk=true is only transport-level success: handlers
+    // can truthfully return diagnostics with data.ok=false, all-rejected counts,
+    // or a policy status. Those logical failures must cancel the transaction and
+    // be recorded consistently as failures everywhere, not merely be corrected
+    // later while shaping the TCP envelope.
+    const TSharedPtr<FJsonObject> DataObj =
+        Result.Data.IsValid() ? Result.Data : MakeShared<FJsonObject>();
+    FHaybaMCPAdvisorySignals SuccessSignals;
+    if (Result.bOk)
+    {
+        SuccessSignals = SignalsForSuccess(Cmd, DataObj);
+    }
+    const bool bEffectiveOk = Result.bOk && SuccessSignals.bOperationSucceeded;
+    const FString EffectiveError = BoundFailureDiagnostic(Result.bOk && !bEffectiveOk
+        ? SuccessSignals.Error
+        : Result.ErrorMessage);
 
     if (bCreateEditorTransaction && GEditor && !bInPIE)
     {
-        // Cancel the transaction if the handler reported failure — leaves no
-        // empty undo entry. Otherwise end normally so Ctrl+Z reverts the op.
-        if (Result.bOk) GEditor->EndTransaction();
-        else            GEditor->CancelTransaction(0);
+        // A nested logical failure is a failure here too: never commit an undo
+        // record for an operation whose own result says it did not succeed.
+        if (bEffectiveOk) GEditor->EndTransaction();
+        else              GEditor->CancelTransaction(0);
     }
 
-    // Journal using result directly — no need to re-parse the response string
+    // Journal the effective outcome, not merely the handler envelope flag.
     FHaybaJournalEntry E{ FDateTime::UtcNow(), Cmd,
-        ParamsHash, DurMs, Result.bOk, Result.ErrorMessage };
+        ParamsHash, DurMs, bEffectiveOk, EffectiveError };
     FHaybaMCPSecurityManager::Get().Journal(E);
 
     // Push scene-shaped results into their dedicated panels.
-    if (Result.bOk && Result.Data.IsValid())
+    if (bEffectiveOk && Result.Data.IsValid())
     {
         if (Cmd == TEXT("scene_get_graph"))           PushSceneGraphToPanel(Result.Data);
         else if (Cmd == TEXT("scene_validate_physics")) PushPhysicsResultsToPanel(Result.Data);
@@ -1072,7 +1497,7 @@ FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
         else if (Cmd == TEXT("ui_report_findings"))      PushExternalFindingsToPanel(Params);
     }
     // Log destructive ops to the Diff panel with true Before / requested After.
-    if (Result.bOk)
+    if (bEffectiveOk)
     {
         PushDiffEntries(Cmd, Params, BeforeState);
     }
@@ -1084,15 +1509,38 @@ FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
     {
         const FString ParamsStr = JsonToString(Params.ToSharedRef());
         FString ResultStr;
-        if (Result.bOk && Result.Data.IsValid()) ResultStr = JsonToString(Result.Data.ToSharedRef());
-        else if (!Result.bOk) ResultStr = FString::Printf(TEXT("ERROR: %s"), *Result.ErrorMessage);
+        if (bEffectiveOk && Result.Data.IsValid())
+        {
+            ResultStr = JsonToString(Result.Data.ToSharedRef());
+        }
+        else
+        {
+            // The tool stream is a second output boundary.  Passing a raw
+            // error string here bypassed the final-envelope secret redactor
+            // even though the TCP reply was safe.  Shape it as JSON and send
+            // it through the same bounded redaction path before recording.
+            TSharedRef<FJsonObject> StreamError = MakeShared<FJsonObject>();
+            StreamError->SetStringField(TEXT("error"), EffectiveError);
+            if (Result.Data.IsValid())
+            {
+                // Keep bounded stdout/stderr and structured handler diagnostics
+                // visible even though the lifecycle entry is correctly failed.
+                StreamError->SetObjectField(TEXT("data"), Result.Data.ToSharedRef());
+            }
+            ResultStr = JsonToString(StreamError);
+        }
 
         if (FHaybaMCPModule* M = FModuleManager::GetModulePtr<FHaybaMCPModule>("HaybaMCPToolkit"))
         {
             M->RecordToolCall(Cmd, ParamsStr, ResultStr);
         }
 
-        AsyncTask(ENamedThreads::GameThread, [Cmd, ParamsStr, ResultStr]()
+        // ProcessRequest is drained by the TCP server's game-thread ticker.
+        // Updating the mounted panel synchronously avoids leaving a plugin-code
+        // lambda in the task graph that could run after a hot unload. A direct
+        // off-thread caller still reaches the durable history above, but never
+        // touches Slate and never queues plugin code with an unbounded lifetime.
+        if (IsInGameThread())
         {
             if (FHaybaMCPModule* M = FModuleManager::GetModulePtr<FHaybaMCPModule>("HaybaMCPToolkit"))
             {
@@ -1101,18 +1549,31 @@ FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
                     Panel->AddToolCall(Cmd, ParamsStr, ResultStr);
                 }
             }
-        });
+        }
+        else
+        {
+            UE_LOG(LogHaybaMCPCmd, Warning,
+                TEXT("Skipped live Tool Stream panel update for off-game-thread command '%s'; history was still recorded."),
+                *Cmd);
+        }
     }
 
     if (Result.bOk)
     {
-        // Apply response limits via FHaybaMCPResponseBuilder before serializing
-        TSharedPtr<FJsonObject> DataObj = Result.Data.IsValid() ? Result.Data : MakeShared<FJsonObject>();
+        // Apply response limits only after classification. Correctness facts
+        // also live on the response builder's fixed never-drop allowlist so
+        // callers retain their raw machine values alongside the advisory.
         FHaybaResponseLimits Limits;
         Limits.MaxArrayItems = 50;
         Limits.MaxStringChars = 512;
         Limits.MaxTopLevelFields = 20;
-        if (Cmd == TEXT("python_run"))
+        if (Cmd == TEXT("asset_import"))
+        {
+            // Import is callback-heavy and its compact lifecycle/readback facts
+            // are correctness, not presentation. Keep the full bounded object.
+            Limits.MaxTopLevelFields = 32;
+        }
+        else if (Cmd == TEXT("python_run"))
         {
             // python_run's stdout carries the HAYBA_JSON result line for every
             // python-factory tool; the 512-char cap clipped it mid-JSON
@@ -1138,28 +1599,37 @@ FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
         }
         FHaybaMCPResponseBuilder Builder(Limits);
         TSharedRef<FJsonObject> Trimmed = Builder.Build(DataObj.ToSharedRef());
-        return MakeOkResponse(Id, Trimmed);
+        return ShapeOkResponse(Id, Trimmed, SuccessSignals);
     }
     else
     {
-        return MakeErrorResponse(Id, Result.ErrorMessage);
+        return MakeErrorResponse(Id, EffectiveError, Cmd);
     }
 }
 
-FString FHaybaMCPCommandHandler::MakeOkResponse(const FString& Id, const TSharedPtr<FJsonObject>& Data)
+FString FHaybaMCPCommandHandler::MakeOkResponse(
+    const FString& Id,
+    const TSharedPtr<FJsonObject>& Data,
+    const FString& Operation)
 {
-    TSharedRef<FJsonObject> Response = MakeShareable(new FJsonObject());
-    Response->SetStringField(TEXT("id"), Id);
-    Response->SetBoolField(TEXT("ok"), true);
-    Response->SetObjectField(TEXT("data"), Data.IsValid() ? Data.ToSharedRef() : MakeShareable(new FJsonObject()));
-    return JsonToString(Response);
+    const FHaybaMCPAdvisorySignals Signals = SignalsForSuccess(Operation, Data);
+    return ShapeOkResponse(Id, Data, Signals);
 }
 
-FString FHaybaMCPCommandHandler::MakeErrorResponse(const FString& Id, const FString& ErrorMessage)
+FString FHaybaMCPCommandHandler::MakeErrorResponse(
+    const FString& Id,
+    const FString& ErrorMessage,
+    const FString& Operation,
+    bool bSessionSuspect,
+    bool bKnownPreflight)
 {
     TSharedRef<FJsonObject> Response = MakeShareable(new FJsonObject());
     Response->SetStringField(TEXT("id"), Id);
     Response->SetBoolField(TEXT("ok"), false);
     Response->SetStringField(TEXT("error"), ErrorMessage);
+    HaybaMCPAdvisory::ApplyToResponse(
+        Response,
+        SignalsForError(Operation, ErrorMessage, bSessionSuspect, bKnownPreflight),
+        FHaybaMCPSettings::Get().AdvisoryVerbosity);
     return JsonToString(Response);
 }

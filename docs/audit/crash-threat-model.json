@@ -1,16 +1,16 @@
 {
   "schema_version": 1,
   "model_id": "hayba-editor-crash-threats-v1",
-  "generated_utc": "2026-08-10T00:00:00Z",
+  "generated_utc": "2026-08-10T09:16:24.715Z",
   "corpus": {
     "evidence_window": {
       "start_utc": "2026-07-20T03:01:17.209Z",
-      "end_utc": "2026-08-10T03:38:37.898Z"
+      "end_utc": "2026-08-10T09:16:24.715Z"
     },
-    "raw_artifact_count": 264,
+    "raw_artifact_count": 269,
     "missing_signature_artifact_count": 0,
     "deduplication_key": "CrashContext.RuntimeProperties.PCallStackHash",
-    "distinct_signature_count": 97,
+    "distinct_signature_count": 101,
     "classification_semantics": "First matching rule wins. Counts are observed crash-report artifacts; distinct counts are unique non-empty engine stack hashes. Reproduced and source-audit threats have no corpus count unless the classifier also matched them.",
     "classification_order": [
       "stale-umg-guid-map",
@@ -30,8 +30,8 @@
       {
         "category": "stale-umg-guid-map",
         "threat_id": "HCR-UMG-001",
-        "observed_artifact_count": 153,
-        "observed_distinct_signature_count": 57
+        "observed_artifact_count": 157,
+        "observed_distinct_signature_count": 60
       },
       {
         "category": "pie-teardown-reference",
@@ -48,8 +48,8 @@
       {
         "category": "unsafe-automation-execution",
         "threat_id": "HCR-AUTO-001",
-        "observed_artifact_count": 17,
-        "observed_distinct_signature_count": 16
+        "observed_artifact_count": 18,
+        "observed_distinct_signature_count": 17
       },
       {
         "category": "rhi-render-teardown",
@@ -126,12 +126,18 @@
       "evidence": {
         "classification": "observed",
         "kind": "crash_corpus",
-        "observed_artifact_count": 153,
-        "observed_distinct_signature_count": 57,
+        "observed_artifact_count": 157,
+        "observed_distinct_signature_count": 60,
         "source_refs": ["docs/handoffs/HANDOFF-umg-validation.md"]
       },
       "trigger": "A UI tree mutation adds, removes, renames, duplicates, or reparents a variable widget without keeping the blueprint variable-name-to-GUID map synchronized.",
-      "affected_commands": ["ui_create_widget", "ui_add_element", "ui_mutate_tree", "ui_build_tree"],
+      "affected_commands": [
+        "ui_create_widget",
+        "ui_add_element",
+        "ui_mutate_tree",
+        "ui_set_widget_properties",
+        "ui_build_tree"
+      ],
       "guard_layer": [
         "ui-handler structural mutation seam",
         "widget GUID registration and subtree purge",
@@ -146,7 +152,7 @@
         "sources": ["unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/Tests/HaybaMCPUIHandlerTest.cpp"],
         "runtime": ["docs/handoffs/HANDOFF-umg-validation.md"]
       },
-      "status": "resolved"
+      "status": "open"
     },
     {
       "id": "HCR-PIE-001",
@@ -205,8 +211,8 @@
       "evidence": {
         "classification": "observed",
         "kind": "crash_corpus",
-        "observed_artifact_count": 17,
-        "observed_distinct_signature_count": 16,
+        "observed_artifact_count": 18,
+        "observed_distinct_signature_count": 17,
         "source_refs": ["docs/audit/2026-08-09-test-run-seh-double-fault.md"]
       },
       "trigger": "The MCP runner re-enters discovery, advances or stops a test outside the framework lifecycle, or a selected test constructs an engine object with an invalid owner.",
@@ -229,7 +235,7 @@
         ],
         "runtime": ["docs/audit/2026-08-09-test-run-seh-double-fault.md"]
       },
-      "status": "resolved"
+      "status": "mitigated"
     },
     {
       "id": "HCR-RHI-001",
@@ -250,14 +256,24 @@
         "action": "Restart with a real RHI, inspect the new crash signature, and do not classify a NullRHI-only result as render success or failure."
       },
       "test_evidence": {
-        "regressions": [],
+        "regressions": [
+          "Hayba.MCP.RenderSafety.Policy",
+          "render/RHI lifecycle source contract",
+          "Hayba.MCP.UI.RenderWidgetToPng"
+        ],
         "sources": [
+          "unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/HaybaMCPRenderSafety.cpp",
+          "unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/Tests/HaybaMCPRenderSafetyTest.cpp",
+          "mcp-tools/hayba-mcp/src/tools/render-rhi-safety-contract.test.ts",
           "mcp-tools/hayba-mcp/src/tools/render-camera.test.ts",
           "mcp-tools/hayba-mcp/src/tools/ui/ui-render-widget-to-png.test.ts"
         ],
-        "runtime": ["docs/handoffs/HANDOFF-architecture-cleanup.md"]
+        "runtime": [
+          "docs/handoffs/HANDOFF-architecture-cleanup.md",
+          "docs/audit/2026-08-10-render-rhi-lifecycle.md"
+        ]
       },
-      "status": "open"
+      "status": "mitigated"
     },
     {
       "id": "HCR-CTOR-001",
@@ -383,23 +399,33 @@
         "observed_distinct_signature_count": 1,
         "source_refs": ["mcp-tools/hayba-mcp/scripts/audit-crash-threat-model.mjs"]
       },
-      "trigger": "data_create accepts a UDataAsset-derived class that is abstract and passes it into AssetTools::CreateAsset.",
+      "trigger": "Historically, data_create accepted an abstract UDataAsset-derived class and passed it into AssetTools::CreateAsset; hostile path/name/class strings could also reach path and class/module lookup boundaries without command-local bounds.",
       "affected_commands": ["data_create"],
       "guard_layer": [
+        "bounded typed path/name/class parameter preflight",
+        "control/NUL/traversal refusal before path concatenation or lookup",
         "data asset class preflight",
         "abstract/deprecated/newer-version class flags",
-        "pre-AssetTools refusal"
+        "pre-AssetTools refusal",
+        "non-checked AssetTools module acquisition"
       ],
       "recovery": {
         "session_health": "healthy",
-        "action": "Reject the class before asset creation and retry with a concrete UDataAsset subclass; remove any transient package shell left by the failed call."
+        "action": "Correct the bounded path/name/class diagnostics and retry with a current concrete UDataAsset subclass. The preflight returns before AssetTools and creates no transient package shell."
       },
       "test_evidence": {
-        "regressions": [],
-        "sources": ["unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/handlers/HaybaMCPDataAssetHandler.cpp"],
+        "regressions": [
+          "Hayba.MCP.DataAsset.CreatePreflight",
+          "mutation-atomicity-contract: bounds data_create strings and refuses unsafe classes before AssetTools"
+        ],
+        "sources": [
+          "unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/handlers/HaybaMCPDataAssetHandler.cpp",
+          "unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/Tests/HaybaMCPDataAssetPreflightTest.cpp",
+          "mcp-tools/hayba-mcp/src/tools/mutation-atomicity-contract.test.ts"
+        ],
         "runtime": []
       },
-      "status": "open"
+      "status": "mitigated"
     },
     {
       "id": "HCR-IMPORT-001",

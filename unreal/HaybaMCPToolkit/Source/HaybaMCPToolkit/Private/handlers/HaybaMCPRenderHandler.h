@@ -8,9 +8,10 @@
 //
 // Companion spec: docs/superpowers/specs/2026-05-21-render-camera-design.md
 //
-// All scene-graph + render-target work happens on the game thread via
-// AsyncTask(ENamedThreads::GameThread). The TCP handler thread blocks on an
-// FEvent until the game-thread render completes, same pattern as IdleHandler.
+// All scene-graph + render-target work happens on the game thread. Handle()
+// runs inline when the router already dispatched there; direct off-thread
+// callers marshal once and use a bounded event wait. A process-wide render
+// lease remains owned by the queued task even if that outer wait expires.
 
 #pragma once
 #include "IHaybaMCPHandler.h"

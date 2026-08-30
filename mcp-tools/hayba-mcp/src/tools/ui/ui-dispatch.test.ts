@@ -530,7 +530,13 @@ describe('ui_duplicate_element deep clone (C++ invariant)', () => {
       handlerSrc.indexOf('Operation == TEXT("duplicate")'),
       handlerSrc.indexOf('Operation == TEXT("replace")'),
     );
-    expect(dup).toContain('MarkBlueprintAsStructurallyModified');
+    // #406 centralizes the notification behind the invariant gate. Duplicate
+    // must call that gate, and must not be able to compile a raw/stale GUID map.
+    expect(dup).toContain('FinalizeWidgetTreeMutation');
+    expect(dup).not.toContain('MarkBlueprintAsStructurallyModified');
+    expect(handlerSrc).toMatch(
+      /FinalizeWidgetTreeMutation[\s\S]{0,2000}ReconcileWidgetVariableGuids[\s\S]{0,2000}MarkBlueprintAsStructurallyModified/,
+    );
   });
 
   it('verifies its own post-condition rather than trusting the operation', () => {

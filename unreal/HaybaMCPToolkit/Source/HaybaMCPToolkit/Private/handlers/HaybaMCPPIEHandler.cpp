@@ -597,6 +597,34 @@ FHaybaHandlerResult FHaybaMCPPIEHandler::PIEScreenshot(const TSharedPtr<FJsonObj
     // ended up polling a file that was never going to be the one checked.
     if (Filename.IsEmpty() && P.IsValid()) P->TryGetStringField(TEXT("path"), Filename);
 
+    // Resolve a relative filename ONCE, here, so the capture and the existence
+    // check cannot disagree about which file they mean.
+    //
+    // Both FScreenshotRequest and FPaths::FileExists resolve a relative path
+    // against the PROCESS working directory, which for an editor launched from
+    // the launcher is Engine/Binaries/Win64. So `filename:"gauntlet/shot.png"`
+    // wrote a real, correct capture into the UNREAL INSTALL TREE, and check_only
+    // then found it there and answered captured:true — truthfully, about a file
+    // in a place no caller would ever look. Four attempts and a wrong bug report
+    // came out of that: the response echoed the caller's relative string back,
+    // so nothing in it said where the image had actually gone.
+    //
+    // Anchor relative names to the project's screenshot directory, which is what
+    // a caller passing a bare name means every time, and never write into the
+    // engine installation.
+    // Guarded on non-empty throughout: an EMPTY filename must stay empty so the
+    // check_only branch can still refuse it and the default-name branch below can
+    // still fire. ConvertRelativePathToFull("") returns the working directory,
+    // which would silently defeat both.
+    if (!Filename.IsEmpty())
+    {
+        if (FPaths::IsRelative(Filename))
+        {
+            Filename = FPaths::Combine(FPaths::ScreenShotDir(), Filename);
+        }
+        Filename = FPaths::ConvertRelativePathToFull(Filename);
+    }
+
     // `check_only` reports whether a previously requested file has landed, so a
     // caller can poll without issuing another capture.
     bool bCheckOnly = false;
@@ -634,16 +662,24 @@ FHaybaHandlerResult FHaybaMCPPIEHandler::PIEScreenshot(const TSharedPtr<FJsonObj
 
     if (Filename.IsEmpty())
     {
-        Filename = FPaths::ProjectSavedDir() / TEXT("Screenshots") /
-                   FString::Printf(TEXT("HaybaPIE_%s.png"),
-                                   *FDateTime::Now().ToString(TEXT("%Y%m%d_%H%M%S")));
+        // Same anchor as a caller-supplied relative name, so the default and the
+        // explicit case land in one directory rather than two neighbouring ones.
+        Filename = FPaths::ConvertRelativePathToFull(
+            FPaths::Combine(FPaths::ScreenShotDir(),
+                            FString::Printf(TEXT("HaybaPIE_%s.png"),
+                                            *FDateTime::Now().ToString(TEXT("%Y%m%d_%H%M%S")))));
     }
 
     // Default to INCLUDING the UI: a PIE screenshot is almost always taken to see the
     // UMG/HUD, and bShowUI=false yields a black frame for UI-only screens. Callers can
     // pass show_ui:false for a scene-only capture.
     bool bShowUI = true;
-    if (P.IsValid()) P->TryGetBoolField(TEXT("show_ui"), bShowUI);
+    // TryGetBoolField assigns false when the field is absent. Guard presence so
+    // an omitted optional field preserves the documented UI-inclusive default.
+    if (P.IsValid() && P->HasTypedField<EJson::Boolean>(TEXT("show_ui")))
+    {
+        P->TryGetBoolField(TEXT("show_ui"), bShowUI);
+    }
     FScreenshotRequest::RequestScreenshot(Filename, bShowUI, /*bAddFilenameSuffix=*/false);
 
     // Returns immediately. The old code pumped the core ticker for up to three
@@ -658,7 +694,10 @@ FHaybaHandlerResult FHaybaMCPPIEHandler::PIEScreenshot(const TSharedPtr<FJsonObj
     R->SetBoolField(TEXT("requested"), true);
     R->SetBoolField(TEXT("captured"), FPaths::FileExists(Filename));
     R->SetStringField(TEXT("note"), TEXT("Capture requested. The engine writes the file on a later frame — ")
-                                    TEXT("call again with check_only:true (and the same filename) to see when it lands."));
+                                    TEXT("call again with check_only:true (and the same filename) to see when it lands. ")
+                                    TEXT("'filename' is the RESOLVED ABSOLUTE path, which is where the image will be; ")
+                                    TEXT("a relative name you passed was anchored to the project screenshot directory, ")
+                                    TEXT("not to the editor's working directory. Poll with the value returned here."));
 
     // Name what is being photographed.
     //
