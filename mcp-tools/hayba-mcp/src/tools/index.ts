@@ -394,6 +394,16 @@ import { abstractToSubgraph, type AbstractToSubgraphParams } from './abstract-to
 import { parameterizeGraphInputs } from './parameterize-graph-inputs.js';
 import { queryPcgexDocs, type QueryPcgexDocsParams } from './query-pcgex-docs.js';
 import { initiateInfrastructureBrainstorm } from './initiate-infrastructure-brainstorm.js';
+import {
+  catalogDiffHandler,
+  catalogDiffSchema,
+  compatiblePinsHandler,
+  compatiblePinsSchema,
+  patternTemplateHandler,
+  patternTemplateSchema,
+  semanticSearchHandler,
+  semanticSearchSchema,
+} from './pcg-registry-moat.js';
 
 // ── Agent-ergonomics tools (HANDOFF postmortem) ───────────────────────────────
 import { introspectDescriptor } from './introspect/hayba-introspect.js';
@@ -1207,6 +1217,74 @@ export const PCG_DESCRIPTORS: ToolDescriptor[] = [
     returns: '{type, pins:[{name,direction,type}], properties}',
     handler: async (params) => {
       const result = await getNodeDetails({ class: params.class });
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    },
+  }),
+  defineTool({
+    name: 'hayba_search_node_catalog_semantic',
+    description: 'Rank PCG and PCGEx nodes by fuzzy intent using a CPU-local semantic vector over catalog descriptions, pins, properties, and categories.',
+    meta: {
+      cost: 'low',
+      effects: [],
+      when: 'keyword search misses the concept you mean, such as road generation or terrain scattering',
+      not_when: 'you already know the node class - hayba_get_node_details',
+    },
+    schema: semanticSearchSchema.shape,
+    cost: 'low',
+    returns: '{query,results:[{node,score}]}',
+    handler: async (params) => {
+      const result = await semanticSearchHandler(params);
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    },
+  }),
+  defineTool({
+    name: 'hayba_compatible_pins',
+    description: 'Find catalog input pins that accept the type emitted by a specific PCG/PCGEx output pin.',
+    meta: {
+      cost: 'low',
+      effects: [],
+      when: 'choosing a valid downstream node before wiring a graph',
+      not_when: 'you already know both node classes and only need their exact labels - hayba_match_pin_names',
+    },
+    schema: compatiblePinsSchema.shape,
+    cost: 'low',
+    returns: '{from_class,from_pin,matches:[{node_class,pin,type,compatibility}]}',
+    handler: async (params) => {
+      const result = await compatiblePinsHandler(params);
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    },
+  }),
+  defineTool({
+    name: 'hayba_get_pattern_template',
+    description: 'Return a small, annotated PCG/PCGEx graph template selected by authoring intent.',
+    meta: {
+      cost: 'low',
+      effects: [],
+      when: 'starting a common road, scatter, or cluster-refinement graph',
+      not_when: 'you need a project-specific graph exported from Unreal',
+    },
+    schema: patternTemplateSchema.shape,
+    cost: 'low',
+    returns: '{id,use_when,nodes,edges} or {template:null,available}',
+    handler: async (params) => {
+      const result = await patternTemplateHandler(params);
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    },
+  }),
+  defineTool({
+    name: 'hayba_diff_node_catalog_versions',
+    description: 'Compare a prior PCG node catalog snapshot with the currently loaded catalog and report added, removed, and field-level modified classes.',
+    meta: {
+      cost: 'low',
+      effects: [],
+      when: 'PCG or PCGEx has been upgraded and you need to audit registry changes',
+      not_when: 'you only need to rebuild the current registry - hayba_scrape_node_registry',
+    },
+    schema: catalogDiffSchema.shape,
+    cost: 'low',
+    returns: '{from_version,to_version,added,removed,modified:[{class,fields}]}',
+    handler: async (params) => {
+      const result = await catalogDiffHandler(params);
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     },
   }),

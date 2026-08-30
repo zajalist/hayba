@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { searchNodes } from './catalog.js';
+import { parseCatalogData, searchNodes } from './catalog.js';
 import type { CatalogNode } from './types.js';
 
 describe('Catalog (structure validation)', () => {
@@ -74,5 +74,44 @@ describe('searchNodes — query tokenization', () => {
 
   it('whitespace-only / empty query returns []', () => {
     expect(searchNodes(NODES, '   ')).toEqual([]);
+  });
+});
+
+describe('parseCatalogData', () => {
+  it('normalizes a shipped nested registry snapshot for version diffing', () => {
+    const parsed = parseCatalogData({
+      _meta: { version_support: ['5.7'], generated: '2026-08-28' },
+      categories: {
+        Paths: {
+          nodes: [{
+            class: 'UPathSettings',
+            description: 'Build paths',
+            input_pins: [{ name: 'Seeds', type: 'point', required: true }],
+            output_pins: [{ name: 'Paths', type: 'spline' }],
+            properties: { Mode: { type: 'enum', default: 'Shortest' } },
+          }],
+        },
+      },
+    });
+
+    expect(parsed).toEqual({
+      version: '5.7',
+      categories: ['Paths'],
+      nodes: [{
+        class: 'UPathSettings',
+        category: 'Paths',
+        description: 'Build paths',
+        inputs: [{ pin: 'Seeds', type: 'point', required: true, description: '' }],
+        outputs: [{ pin: 'Paths', type: 'spline', description: '' }],
+        key_properties: [{
+          name: 'Mode',
+          type: 'enum',
+          default: 'Shortest',
+          description: '',
+          enum_values: undefined,
+        }],
+        common_patterns: [],
+      }],
+    });
   });
 });

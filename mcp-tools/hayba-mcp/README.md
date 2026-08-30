@@ -77,6 +77,28 @@ Resource paths (`node_catalog.json`, `pcgex_registry.db`) are resolved by
 walking a fallback list — new plugin layout, workspace `Resources/`, legacy
 `Hayba_PcgEx_MCP` layout — so existing installs keep working.
 
+### PCG registry intelligence
+
+The node catalog supports four read-only authoring queries in addition to
+exact lookup and keyword search:
+
+- `hayba_search_node_catalog_semantic({ query, k? })` ranks nodes with a
+  deterministic CPU-local semantic vector built from descriptions, classes,
+  categories, pins, and properties. It requires no model download or sidecar.
+- `hayba_compatible_pins({ from_class, from_pin })` resolves the source output
+  type and returns exact-type and `Any` input pins in deterministic order.
+- `hayba_get_pattern_template({ intent })` returns an annotated starter graph
+  for road networks, surface scattering, or cluster refinement. Unknown
+  intents return the available template IDs instead of guessing.
+- `hayba_diff_node_catalog_versions({ baseline_path })` compares a saved
+  `node_catalog.json` (the shipped nested format or a flat snapshot) with the
+  currently loaded catalog and reports added, removed, and field-level
+  modified node classes. Save the old catalog before upgrading PCGEx, rebuild
+  with `hayba_scrape_node_registry`, then pass the saved path to this tool.
+
+These tools inspect catalog metadata only; they do not require a running Unreal
+Editor and do not mutate the registry.
+
 ## Code Mode (the deep interface)
 
 By default the server exposes only **three meta-tools** instead of the full
