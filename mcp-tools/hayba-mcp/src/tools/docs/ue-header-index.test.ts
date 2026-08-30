@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   buildUeHeaderIndex,
+  containsOnlyReflectionMacros,
   parseUeHeader,
   resolveUeHeaderIndexBudgets,
   searchUeHeaderIndex,
@@ -122,6 +123,23 @@ describe('parseUeHeader', () => {
       source_scope: 'classes',
       include: 'OldThing.h',
     });
+  });
+
+  it('scans reflection macro chains without backtracking across malformed repetitions', () => {
+    expect(containsOnlyReflectionMacros('UCLASS() UENUM(meta=(Bitflags))')).toBe(true);
+    expect(containsOnlyReflectionMacros(')UENUM('.repeat(5_000))).toBe(false);
+
+    const valid = parseUeHeader(
+      `/** Reflected and deprecated. */\nUCLASS() UE_DEPRECATED(5.8, "Use UNewThing")\nclass UOldThing {};`,
+      'Runtime/Engine/Public/OldThing.h',
+    );
+    expect(valid[0]?.doc).toContain('Reflected and deprecated');
+
+    const malformed = parseUeHeader(
+      `/** Must not attach. */\n${')UENUM('.repeat(5_000)}\nclass UMalformedThing {};`,
+      'Runtime/Engine/Public/MalformedThing.h',
+    );
+    expect(malformed.some((symbol) => symbol.name === 'UMalformedThing')).toBe(true);
   });
 
   it('redacts private absolute paths embedded in otherwise public comments and signatures', () => {

@@ -348,17 +348,25 @@ function docForLine(docs: readonly CommentBlock[], codeLines: readonly string[],
       .slice(doc.endLine, line - 1)
       .join('\n')
       .trim();
-    if (
-      between &&
-      !/^(?:(?:UCLASS|USTRUCT|UENUM|UFUNCTION|UE_DEPRECATED(?:_FORGAME)?)\s*\([^;{}]*\)\s*)+$/u.test(
-        compactWhitespace(between),
-      )
-    ) {
+    if (between && !containsOnlyReflectionMacros(compactWhitespace(between))) {
       return undefined;
     }
     return doc.text;
   }
   return undefined;
+}
+
+const REFLECTION_MACRO = /(?:UCLASS|USTRUCT|UENUM|UFUNCTION|UE_DEPRECATED(?:_FORGAME)?)\s*\([^;{}]*\)\s*/uy;
+
+export function containsOnlyReflectionMacros(value: string): boolean {
+  let offset = 0;
+  while (offset < value.length) {
+    REFLECTION_MACRO.lastIndex = offset;
+    const match = REFLECTION_MACRO.exec(value);
+    if (!match || match.index !== offset) return false;
+    offset = REFLECTION_MACRO.lastIndex;
+  }
+  return offset > 0;
 }
 
 function unquoteCpp(value: string): string {
