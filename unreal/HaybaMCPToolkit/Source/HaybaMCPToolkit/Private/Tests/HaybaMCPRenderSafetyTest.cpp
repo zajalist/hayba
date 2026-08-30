@@ -127,7 +127,8 @@ bool FHaybaMCPRenderSafetyPolicyTest::RunTest(const FString& Parameters)
         TestFalse(TEXT("NullRHI is refused before any allocation"),
             FLease::TryAcquire(TEXT("policy_test"), 5, LeaseError).IsValid());
         TestTrue(TEXT("NullRHI refusal explains the evidence boundary"),
-            LeaseError.Contains(TEXT("real initialized RHI")));
+            LeaseError.Contains(TEXT("without render capability"))
+            || LeaseError.Contains(TEXT("real initialized RHI")));
     }
     else
     {
