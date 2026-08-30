@@ -14,7 +14,9 @@ const renderTest = read('unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/T
 describe('native regressions observed in the 2026-08-28 Aphrosia NullRHI run', () => {
   it('exercises advisory shaping with the registered destructive actor command', () => {
     expect(command).toContain('TEXT("actor_set_transform")');
-    expect(advisoryTest).toContain('MakeOkResponse(\n                TEXT("2c"), MakeShared<FJsonObject>(), TEXT("actor_set_transform"))');
+    expect(advisoryTest).toMatch(
+      /MakeOkResponse\(\s*TEXT\("2c"\),\s*MakeShared<FJsonObject>\(\),\s*TEXT\("actor_set_transform"\)\)/,
+    );
     expect(advisoryTest).not.toContain('TEXT("actor_transform")');
   });
 
