@@ -1,5 +1,5 @@
 import { mkdir } from 'node:fs/promises';
-import { basename, dirname, resolve } from 'node:path';
+import { posix, resolve, win32 } from 'node:path';
 import { UeHeaderDatabaseError, rebuildUeHeaderDatabase } from './ue-header-database.js';
 
 export const UE_DOCS_REBUILD_HELP = `Rebuild Hayba's bounded UE C++ documentation database.
@@ -85,7 +85,7 @@ export function parseUeDocsRebuildArgs(argv: readonly string[]): UeDocsRebuildCl
         throw new Error('--engine-version expects a portable version label');
       }
       engineVersion = value;
-    } else if (flag === '--output') output = resolve(safePathArgument(value, flag));
+    } else if (flag === '--output') output = safePathArgument(value, flag);
     else if (flag === '--max-files') maxFiles = boundedPositiveInteger(value, flag);
     else maxSymbols = boundedPositiveInteger(value, flag);
   }
@@ -100,6 +100,11 @@ export function parseUeDocsRebuildArgs(argv: readonly string[]): UeDocsRebuildCl
     maxSymbols,
     help,
   };
+}
+
+export function splitOutputPath(output: string): { outputRoot: string; databaseFileName: string } {
+  const pathApi = /^[A-Za-z]:[\\/]/u.test(output) || output.includes('\\') ? win32 : posix;
+  return { outputRoot: pathApi.dirname(output), databaseFileName: pathApi.basename(output) };
 }
 
 export async function runUeDocsRebuildCli(
@@ -126,8 +131,7 @@ export async function runUeDocsRebuildCli(
     return 0;
   }
 
-  const outputRoot = dirname(options.output);
-  const databaseFileName = basename(options.output);
+  const { outputRoot, databaseFileName } = splitOutputPath(options.output);
   try {
     await dependencies.ensureDirectory(outputRoot);
     const result = await dependencies.rebuild({

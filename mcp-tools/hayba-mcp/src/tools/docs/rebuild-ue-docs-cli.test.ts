@@ -3,8 +3,20 @@ import { UeHeaderDatabaseError, type UeHeaderDatabasePublishResult } from './ue-
 import {
   parseUeDocsRebuildArgs,
   runUeDocsRebuildCli,
+  splitOutputPath,
   type UeDocsRebuildCliDependencies,
 } from './rebuild-ue-docs-cli.js';
+
+it('splits caller paths by their own flavor instead of the runner operating system', () => {
+  expect(splitOutputPath('C:\\Private\\Output\\ue.sqlite')).toEqual({
+    outputRoot: 'C:\\Private\\Output',
+    databaseFileName: 'ue.sqlite',
+  });
+  expect(splitOutputPath('/private/output/ue.sqlite')).toEqual({
+    outputRoot: '/private/output',
+    databaseFileName: 'ue.sqlite',
+  });
+});
 
 const RESULT: UeHeaderDatabasePublishResult = {
   database_file: 'ue.sqlite',
