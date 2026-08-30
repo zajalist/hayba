@@ -21,15 +21,15 @@
     "gen:plumb-enums": "npx tsx scripts/gen-plumb-enums.ts"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.115.0",
+    "@anthropic-ai/sdk": "^0.121.0",
     "@distube/ytdl-core": "^4.16.12",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "cheerio": "^1.2.0",
     "express": "^5.2.1",
     "express-rate-limit": "8.6.2",
-    "js-yaml": "5.2.3",
+    "js-yaml": "5.4.1",
     "minisearch": "^7.2.0",
-    "openai": "^7.4.0",
+    "openai": "^7.8.0",
     "youtube-transcript-api": "^3.0.6",
     "zod": "^4.4.3"
   },
