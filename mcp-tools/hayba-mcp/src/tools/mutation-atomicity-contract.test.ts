@@ -191,6 +191,24 @@ describe('stateful handler atomicity contracts (#369)', () => {
     expect(dataAsset).toContain('GetIndexByNameString');
     expect(dataAsset).toContain('GetValueByIndex');
     expect(dataAsset).toContain('Tokens.Num() > 1 && !Enum->HasAnyEnumFlags(EEnumFlags::Flags)');
+    const enumNativeTest = readFileSync(
+      join(
+        root,
+        'unreal',
+        'HaybaMCPToolkit',
+        'Source',
+        'HaybaMCPToolkit',
+        'Private',
+        'Tests',
+        'HaybaMCPDataAssetPreflightTest.cpp',
+      ),
+      'utf8',
+    );
+    expect(enumNativeTest).toContain('SignedEnum->GetName() + TEXT("::MinusOne")');
+    expect(enumNativeTest).toContain('FlagsEnum->GetName() + TEXT("::First")');
+    expect(enumNativeTest).toContain('FlagsEnum->GetName() + TEXT("::Second")');
+    expect(enumNativeTest).not.toContain('EHaybaSignedProbe::MinusOne');
+    expect(enumNativeTest).not.toContain('EHaybaFlagsProbe::First');
     expect(dataAsset).toContain('CPF_SkipSerialization');
     expect(dataAsset).toContain('has a native getter or setter; raw storage would bypass its semantics');
     expect(set.match(/ValidateMutationPropertyGraph\(/g)).toHaveLength(2);

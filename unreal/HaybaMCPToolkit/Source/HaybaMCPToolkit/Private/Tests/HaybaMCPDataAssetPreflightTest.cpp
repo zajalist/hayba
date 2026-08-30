@@ -565,8 +565,8 @@ bool FHaybaMCPDataAssetReadWritePreflightTest::RunTest(const FString& Parameters
         if (SignedEnum)
         {
             TArray<TPair<FName, int64>> Names = {
-                { FName(TEXT("EHaybaSignedProbe::MinusOne")), -1 },
-                { FName(TEXT("EHaybaSignedProbe::Zero")), 0 },
+                { FName(*(SignedEnum->GetName() + TEXT("::MinusOne"))), -1 },
+                { FName(*(SignedEnum->GetName() + TEXT("::Zero"))), 0 },
             };
             TestTrue(TEXT("signed enum resolver fixture was initialized"),
                 SignedEnum->SetEnums(
@@ -586,8 +586,8 @@ bool FHaybaMCPDataAssetReadWritePreflightTest::RunTest(const FString& Parameters
         if (FlagsEnum)
         {
             TArray<TPair<FName, int64>> Names = {
-                { FName(TEXT("EHaybaFlagsProbe::First")), 1 },
-                { FName(TEXT("EHaybaFlagsProbe::Second")), 2 },
+                { FName(*(FlagsEnum->GetName() + TEXT("::First"))), 1 },
+                { FName(*(FlagsEnum->GetName() + TEXT("::Second"))), 2 },
             };
             TestTrue(TEXT("enum flags resolver fixture was initialized"),
                 FlagsEnum->SetEnums(

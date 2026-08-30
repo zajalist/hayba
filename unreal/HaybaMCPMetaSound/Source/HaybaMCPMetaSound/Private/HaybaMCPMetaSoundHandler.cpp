@@ -492,8 +492,16 @@ static FHaybaHandlerResult MSInspect(const TSharedPtr<FJsonObject>& P)
 static FHaybaHandlerResult MSCompile(const TSharedPtr<FJsonObject>& P)
 {
     bool bSave = true;
-    if (P.IsValid() && P->HasField(TEXT("save")) && !P->TryGetBoolField(TEXT("save"), bSave))
-        return FHaybaHandlerResult::Err(TEXT("metasound_compile: save must be a boolean"));
+    if (P.IsValid() && P->HasField(TEXT("save")))
+    {
+        const TSharedPtr<FJsonValue> SaveValue = P->TryGetField(TEXT("save"));
+        // UE 5.8's FJsonValueString::TryGetBool coercively succeeds for every
+        // string. Check the JSON kind explicitly so malformed input is refused
+        // before LoadMetaSound can perform asset-registry or loading work.
+        if (!SaveValue.IsValid() || SaveValue->Type != EJson::Boolean)
+            return FHaybaHandlerResult::Err(TEXT("metasound_compile: save must be a boolean"));
+        bSave = SaveValue->AsBool();
+    }
     FString Path, Error; UObject* Asset = LoadMetaSound(P, Path, Error, /*bRequireGameContent=*/true); if (!Asset) return FHaybaHandlerResult::Err(TEXT("metasound_compile: ") + Error);
     UMetaSoundBuilderBase* Builder=AttachBuilder(*Asset); if (!Builder) return FHaybaHandlerResult::Err(TEXT("metasound_compile: builder unavailable"));
     const FMetaSoundFrontendDocumentBuilder& DocBuilder = Builder->GetConstBuilder();
