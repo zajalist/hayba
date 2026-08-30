@@ -89,4 +89,17 @@ describe('known-crashers', () => {
     expect(scanPythonForCrashers('input("blocks")')?.code).toBe('HCR-BLOCK-001');
     expect(scanPythonForCrashers('compile(source, "<x>", "exec")')?.code).toBe('HCR-DYNAMIC-001');
   });
+
+  it('keeps specific blocking and deadline classifications ahead of broad dynamic guards', () => {
+    expect(scanPythonForCrashers('builtins.input("blocks")')?.code).toBe('HCR-BLOCK-001');
+    expect(
+      scanPythonForCrashers(
+        "import inspect\ninspect.currentframe().f_back.f_locals['_hb_deadline'] = 999999999",
+      )?.code,
+    ).toBe('HCR-TIME-001');
+  });
+
+  it('does not classify policy vocabulary inside inert string literals', () => {
+    expect(scanPythonForCrashers("module_name = 'importlib.util'; similarly_named_inspector = 1")).toBeNull();
+  });
 });

@@ -1021,6 +1021,38 @@ namespace
             return true;
         };
 
+        const FString CompactCode = CompactPythonSource(Code);
+        if (CompactCode.Contains(TEXT(".f_locals['_hb_deadline']")))
+        {
+            OutPattern = TEXT("f_locals['_hb_deadline']");
+            OutPolicyCode = TEXT("HCR-TIME-001");
+            OutReason = TEXT("attempts to mutate reserved cooperative-deadline state through a private frame");
+            OutAlternative = TEXT("use application-owned variable names and leave private wrapper frames inaccessible");
+            return true;
+        }
+
+        // Specific deadline-state access outranks the broader module used to
+        // reach it. Diagnose the attempted effect, not merely `import inspect`.
+        for (const FPythonPolicyToken& Token : Tokens)
+        {
+            if (Token.Kind != EPythonPolicyTokenKind::Identifier
+                || !Token.Text.StartsWith(TEXT("_hb_")))
+            {
+                continue;
+            }
+            if (Token.Text.Contains(TEXT("deadline"))
+                || Token.Text.Contains(TEXT("trace"))
+                || Token.Text == TEXT("_hb_sys")
+                || Token.Text == TEXT("_hb_time"))
+            {
+                OutPattern = Token.Text;
+                OutPolicyCode = TEXT("HCR-TIME-001");
+                OutReason = TEXT("attempts to access reserved cooperative-deadline state");
+                OutAlternative = TEXT("use application-owned variable names and leave the deadline hook private");
+                return true;
+            }
+        }
+
         // This bounded, incident-driven stdlib list is not a claim that source
         // preflight can make arbitrary in-process Python complete or safe.
         // These modules can recover hidden attributes, load code, or
@@ -1468,32 +1500,6 @@ namespace
             }
         }
 
-        // The wrapper deliberately reserves every _hb_* identifier. These
-        // tokens are checked lexically, rather than in CompactPythonSource, so
-        // documentation such as print("_hb_deadline") and comments remain
-        // harmless. Check deadline identifiers first so an expression such as
-        // __main__._hb_deadline gets the more useful HCR-TIME diagnosis.
-        for (const FPythonPolicyToken& Token : Tokens)
-        {
-            if (Token.Kind != EPythonPolicyTokenKind::Identifier
-                || !Token.Text.StartsWith(TEXT("_hb_")))
-            {
-                continue;
-            }
-
-            if (Token.Text.Contains(TEXT("deadline"))
-                || Token.Text.Contains(TEXT("trace"))
-                || Token.Text == TEXT("_hb_sys")
-                || Token.Text == TEXT("_hb_time"))
-            {
-                OutPattern = Token.Text;
-                OutPolicyCode = TEXT("HCR-TIME-001");
-                OutReason = TEXT("attempts to access reserved cooperative-deadline state");
-                OutAlternative = TEXT("use application-owned variable names and leave the deadline hook private");
-                return true;
-            }
-        }
-
         for (const FPythonPolicyToken& Token : Tokens)
         {
             if (Token.Kind != EPythonPolicyTokenKind::Identifier) continue;
@@ -1515,6 +1521,14 @@ namespace
             }
             if (Token.Text == TEXT("builtins"))
             {
+                if (AliasExpandedCalls.Contains(TEXT("builtins.input(")))
+                {
+                    OutPattern = TEXT("builtins.input(");
+                    OutPolicyCode = TEXT("HCR-BLOCK-001");
+                    OutReason = TEXT("waits for stdin that an unattended editor cannot provide");
+                    OutAlternative = TEXT("request input through the MCP user-prompt tool before python_run");
+                    return true;
+                }
                 OutPattern = Token.Text;
                 OutPolicyCode = TEXT("HCR-DYNAMIC-001");
                 OutReason = TEXT("can mutate process-global Python helpers used after the request");
@@ -1684,7 +1698,9 @@ namespace
             // using it here would reject print("sys.settrace(None)") even
             // though no instrumentation access is executable.
             const bool bDeadlineRule = FCString::Strcmp(Rule.PolicyCode, TEXT("HCR-TIME-001")) == 0;
-            if ((!bDeadlineRule && CompactContainsPolicyPattern(Compact, Rule.Pattern))
+            const bool bLexicalOnlyDynamicImport = FCString::Strcmp(Rule.Pattern, TEXT("importlib.")) == 0;
+            if ((!bDeadlineRule && !bLexicalOnlyDynamicImport
+                    && CompactContainsPolicyPattern(Compact, Rule.Pattern))
                 || CompactContainsPolicyPattern(AliasExpandedCalls, Rule.Pattern))
             {
                 OutPattern = Rule.Pattern;
