@@ -263,6 +263,27 @@ bool FHaybaMCPUIReplacePreservesChildrenTest::RunTest(const FString& Parameters)
     TestEqual(TEXT("nested Font.LetterSpacing lands on FSlateFontInfo"), TrackingText->GetFont().LetterSpacing, 125);
     TestEqual(TEXT("partial font patch preserves existing size"), TrackingText->GetFont().Size, 37.0f);
 
+    int32 ScratchSourceCount = 0;
+    int32 MissingSourceGuidCount = 0;
+    WBP->ForEachSourceWidget([&](UWidget* SourceWidget)
+    {
+        if (!SourceWidget) return;
+        const FString SourceName = SourceWidget->GetName();
+        if (SourceName.StartsWith(TEXT("HaybaMCP_ReplacementStaging"))
+            || SourceName.StartsWith(TEXT("HaybaMCP_RetiredWidget")))
+        {
+            ++ScratchSourceCount;
+        }
+        const FGuid* Guid = WBP->WidgetVariableNameToGuidMap.Find(SourceWidget->GetFName());
+        if (!Guid || !Guid->IsValid()) ++MissingSourceGuidCount;
+    });
+    TestEqual(TEXT("replacement leaves no staging/retired object in the compiler source population"),
+        ScratchSourceCount, 0);
+    TestEqual(TEXT("property preflight repairs every newly attached source GUID before compile"),
+        MissingSourceGuidCount, 0);
+    TestTrue(TEXT("TrackingText receives a compiler GUID"),
+        WBP->WidgetVariableNameToGuidMap.FindRef(TEXT("TrackingText")).IsValid());
+
     FKismetEditorUtilities::CompileBlueprint(WBP);
     TestEqual(TEXT("widget blueprint compiles after safe and destructive replacements"), WBP->Status, BS_UpToDate);
 

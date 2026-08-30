@@ -19,6 +19,22 @@ const handlerPath = join(
   'HaybaMCPUIHandler.cpp',
 );
 const source = readFileSync(handlerPath, 'utf8');
+const opsSource = readFileSync(
+  join(
+    here,
+    '..',
+    '..',
+    '..',
+    '..',
+    'unreal',
+    'HaybaMCPToolkit',
+    'Source',
+    'HaybaMCPToolkit',
+    'Private',
+    'HaybaUIOps.cpp',
+  ),
+  'utf8',
+);
 
 function bodyOf(signature: string, nextSignature: string): string {
   const start = source.indexOf(signature);
@@ -77,6 +93,43 @@ describe('UMG GUID invariant crash boundary (#406)', () => {
     ]) {
       expect(source, marker).toContain(marker);
     }
+  });
+
+  it('retires discarded widget objects out of the WidgetTree source population', () => {
+    const retire = bodyOf(
+      'bool RetireWidgetTreeObject(',
+      '/** Remove every object allocated for a staged operation',
+    );
+    expect(retire).toContain('GetTransientPackage()');
+    expect(retire).toContain('Widget->Rename(');
+
+    const discard = bodyOf(
+      'bool DiscardStagedWidgets(',
+      '/** Copy every property the two widgets share',
+    );
+    expect(discard).toContain('RetireWidgetTreeObject(WBP, Widget)');
+  });
+
+  it('retires the outgoing replacement subtree before final GUID reconciliation', () => {
+    const replace = bodyOf(
+      'else if (Operation == TEXT("replace"))',
+      'FHaybaHandlerResult FHaybaMCPUIHandler::HandleCompile(',
+    );
+    const retire = replace.indexOf('RetireWidgetTreeObject(WBP, Widget)');
+    const finalize = replace.indexOf(
+      'FinalizeWidgetTreeMutation(WBP, TEXT("ui_mutate_tree replace")',
+    );
+    expect(retire).toBeGreaterThanOrEqual(0);
+    expect(finalize).toBeGreaterThan(retire);
+  });
+
+  it('keeps missing and stale GUID repair behavior pinned in the pure planner', () => {
+    expect(opsSource).toMatch(
+      /if \(!ExistingGuid\)[\s\S]{0,300}Missing\.Add\(Name\)[\s\S]{0,300}FreshGuid\(Name, Used\)[\s\S]{0,300}Reconciled\.Add\(Name, NewGuid\)/,
+    );
+    expect(opsSource).toMatch(
+      /for \(const TPair<FName, FGuid>& Pair : Existing\)[\s\S]{0,200}!LiveNames\.Contains\(Pair\.Key\)[\s\S]{0,100}Stale\.Add\(Pair\.Key\)/,
+    );
   });
 
   it('keeps rollback diagnostics compatible with UE checked format strings', () => {

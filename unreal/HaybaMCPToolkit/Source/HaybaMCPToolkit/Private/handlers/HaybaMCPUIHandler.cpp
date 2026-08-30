@@ -402,6 +402,24 @@ namespace
         }
     }
 
+    /** Remove an editor-only staging/discard object from the compiler's source
+     *  population. UBaseWidgetBlueprint::ForEachSourceWidget enumerates every
+     *  direct UObject outer of WidgetTree, not merely the attached hierarchy;
+     *  UWidgetTree::RemoveWidget therefore is not sufficient on its own. */
+    bool RetireWidgetTreeObject(UWidgetBlueprint* WBP, UWidget* Widget)
+    {
+        if (!WBP || !WBP->WidgetTree || !Widget) return false;
+        if (Widget->GetOuter() != WBP->WidgetTree) return true;
+
+        UObject* const RetiredOuter = GetTransientPackage();
+        const FName RetiredName = MakeUniqueObjectName(
+            RetiredOuter, Widget->GetClass(), TEXT("HaybaMCP_RetiredWidget"));
+        return Widget->Rename(
+                *RetiredName.ToString(), RetiredOuter,
+                REN_DontCreateRedirectors | REN_DoNotDirty)
+            && Widget->GetOuter() == RetiredOuter;
+    }
+
     /** Remove every object allocated for a staged operation and prove none is
      *  still a source widget. Returning false means the caller must report an
      *  unknown recovery state, never claim the original tree was restored. */
@@ -409,12 +427,14 @@ namespace
     {
         if (!WBP || !WBP->WidgetTree) return false;
 
+        bool bAllRetired = true;
         for (int32 Index = Staged.Num() - 1; Index >= 0; --Index)
         {
             UWidget* Widget = Staged[Index];
             if (!Widget) continue;
             if (UPanelWidget* Parent = Widget->GetParent()) Parent->RemoveChild(Widget);
             WBP->WidgetTree->RemoveWidget(Widget);
+            bAllRetired = RetireWidgetTreeObject(WBP, Widget) && bAllRetired;
         }
 
         bool bAnyRemain = false;
@@ -422,7 +442,7 @@ namespace
         {
             if (Staged.Contains(Widget)) bAnyRemain = true;
         });
-        return !bAnyRemain;
+        return bAllRetired && !bAnyRemain;
     }
 
     /** Copy every property the two widgets share by name and type. Used by
@@ -2584,7 +2604,7 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleMutateTree(const TSharedPtr<FJsonO
                     if (!Entry.Key) { bRestored = false; continue; }
                     if (Entry.Key->GetFName() == Entry.Value) continue;
                     bRestored = Entry.Key->Rename(
-                        *Entry.Value.ToString(), Entry.Key->GetOuter(),
+                        *Entry.Value.ToString(), WBP->WidgetTree,
                         REN_DontCreateRedirectors | REN_DoNotDirty)
                         && Entry.Key->GetFName() == Entry.Value
                         && bRestored;
@@ -2612,7 +2632,7 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleMutateTree(const TSharedPtr<FJsonO
                 const bool bDiscardedNamesRestored = RestoreDiscardedNames();
                 const bool bOriginalNameRestored = Widget->GetFName() == OriginalName
                     || (Widget->Rename(
-                            *OriginalName.ToString(), Widget->GetOuter(),
+                            *OriginalName.ToString(), WBP->WidgetTree,
                             REN_DontCreateRedirectors | REN_DoNotDirty)
                         && Widget->GetFName() == OriginalName);
 
@@ -2785,6 +2805,22 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleMutateTree(const TSharedPtr<FJsonO
                         *MakeUniqueObjectName(Descendant->GetOuter(), Descendant->GetClass(), TEXT("HaybaMCP_Discarded")).ToString(),
                         Descendant->GetOuter(), REN_DontCreateRedirectors | REN_DoNotDirty);
                 }
+            }
+
+            bool bOutgoingRetired = true;
+            for (const TPair<UWidget*, FName>& Entry : DiscardedDescendants)
+            {
+                bOutgoingRetired = Entry.Key
+                    && RetireWidgetTreeObject(WBP, Entry.Key)
+                    && bOutgoingRetired;
+            }
+            bOutgoingRetired = RetireWidgetTreeObject(WBP, Widget) && bOutgoingRetired;
+            if (!bOutgoingRetired)
+            {
+                const bool bRecovered = RestoreOriginal();
+                return FHaybaHandlerResult::Err(bRecovered
+                    ? TEXT("ui_mutate_tree replace: outgoing widget retirement failed; original state restored and no compile attempted")
+                    : TEXT("ui_mutate_tree replace: outgoing widget retirement failed and recovery is unknown; reload the asset before any further UI command"));
             }
 
             if (!FinalizeWidgetTreeMutation(WBP, TEXT("ui_mutate_tree replace"), InvariantError))
