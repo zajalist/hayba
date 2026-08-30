@@ -235,6 +235,43 @@ export function compactPythonPolicySource(script: string): string {
     .replace(/[\t\f\v ]+/g, '');
 }
 
+/** Remove inert comments and quoted string bodies while retaining executable
+ * punctuation and identifiers. This is intentionally a small lexical pass,
+ * not a Python parser; it exists for rules whose vocabulary is otherwise
+ * indistinguishable from harmless documentation strings. */
+function executablePythonPolicySource(script: string): string {
+  let result = '';
+  let index = 0;
+  while (index < script.length) {
+    const ch = script[index];
+    if (ch === '#') {
+      while (index < script.length && script[index] !== '\n' && script[index] !== '\r') index += 1;
+      continue;
+    }
+    if (ch === "'" || ch === '"') {
+      const quote = ch;
+      const triple = script.slice(index, index + 3) === quote.repeat(3);
+      index += triple ? 3 : 1;
+      while (index < script.length) {
+        if (script[index] === '\\') {
+          index += 2;
+          continue;
+        }
+        if (triple ? script.slice(index, index + 3) === quote.repeat(3) : script[index] === quote) {
+          index += triple ? 3 : 1;
+          break;
+        }
+        index += 1;
+      }
+      result += "''";
+      continue;
+    }
+    result += ch;
+    index += 1;
+  }
+  return result;
+}
+
 /** Bare call patterns must begin at a token boundary. Without this,
  * `set_input()` matches `input(` and `.recompile()` matches `compile(`. */
 function compactContainsPolicyPattern(compact: string, pattern: string): boolean {
@@ -253,6 +290,7 @@ function compactContainsPolicyPattern(compact: string, pattern: string): boolean
 /** Return the first fatal policy match, or null for a script safe to forward. */
 export function scanPythonForCrashers(script: string): CrashGuardHit | null {
   const compact = compactPythonPolicySource(script);
+  const executableCompact = compactPythonPolicySource(executablePythonPolicySource(script));
   // Wildcard imports erase the callable spellings that both policy boundaries
   // rely on for alias analysis. The native lexer remains authoritative; this
   // is the matching early-feedback refusal for ordinary executable syntax.
@@ -265,9 +303,21 @@ export function scanPythonForCrashers(script: string): CrashGuardHit | null {
       alternative: 'import only the specific policy-visible names required by the request',
     };
   }
+
+  const compactDeadlineFrameWrite = compact.includes(".f_locals['_hb_deadline']");
+  if (executableCompact.includes('_hb_deadline') || compactDeadlineFrameWrite) {
+    return {
+      pattern: '_hb_deadline',
+      code: 'HCR-TIME-001',
+      family: 'deadline_tampering',
+      reason: 'it attempts to access reserved cooperative-deadline state',
+      alternative: 'use application-owned variable names and leave the deadline hook private',
+    };
+  }
   for (const rule of PYTHON_CRASH_RULES) {
     for (const pattern of rule.patterns) {
-      if (compactContainsPolicyPattern(compact, pattern)) {
+      const policySource = pattern === 'importlib.' ? executableCompact : compact;
+      if (compactContainsPolicyPattern(policySource, pattern)) {
         return { ...rule, pattern };
       }
     }

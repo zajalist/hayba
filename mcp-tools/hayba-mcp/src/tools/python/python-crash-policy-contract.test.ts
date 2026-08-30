@@ -57,6 +57,30 @@ function cppPairs(): string[] {
 }
 
 describe('python_run native/TS crash policy contract', () => {
+  it('orders effect-specific native classifications before broad runtime guards', () => {
+    const reservedBoundary = cpp.slice(
+      cpp.indexOf('bool FindReservedPythonRuntimeAccess('),
+      cpp.indexOf('bool CompactContainsPolicyPattern('),
+    );
+    expect(reservedBoundary.indexOf(".f_locals['_hb_deadline']")).toBeGreaterThan(-1);
+    expect(reservedBoundary.indexOf(".f_locals['_hb_deadline']")).toBeLessThan(
+      reservedBoundary.indexOf('HighRiskDynamicPythonModules'),
+    );
+    const frameDeadlineBoundary = reservedBoundary.slice(
+      reservedBoundary.indexOf('if (CompactCode.Contains(TEXT(".f_locals'),
+      reservedBoundary.indexOf('// Specific deadline-state access'),
+    );
+    expect(frameDeadlineBoundary).toContain('OutPolicyCode = TEXT("HCR-TIME-001")');
+    const builtinsBoundary = reservedBoundary.slice(reservedBoundary.indexOf('if (Token.Text == TEXT("builtins"))'));
+    expect(builtinsBoundary.indexOf('AliasExpandedCalls.Contains(TEXT("builtins.input("))')).toBeLessThan(
+      builtinsBoundary.indexOf('OutPattern = Token.Text'),
+    );
+
+    const ruleBoundary = cpp.slice(cpp.indexOf('for (const FFatalPythonRule& Rule : FatalPythonRules())'));
+    expect(ruleBoundary).toContain('bLexicalOnlyDynamicImport');
+    expect(ruleBoundary).toContain('!bLexicalOnlyDynamicImport');
+  });
+
   it('keeps every fatal rule and stable code identical at both boundaries', () => {
     expect(cppPairs()).toEqual(tsPairs());
   });
