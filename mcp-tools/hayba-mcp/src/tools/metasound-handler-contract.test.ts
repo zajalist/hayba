@@ -155,6 +155,11 @@ describe('editor-safe MetaSound handler contract', () => {
     expect(handler).toContain('type must be a string');
     expect(handler).toContain('node_id must be a valid GUID when supplied');
     expect(handler).toContain('save must be a boolean');
+    expect(handler).toContain('SaveValue->Type != EJson::Boolean');
+    expect(handler).toMatch(
+      /SaveValue->Type != EJson::Boolean[\s\S]*LoadMetaSound\(P, Path, Error/,
+    );
+    expect(handler).not.toContain('TryGetBoolField(TEXT("save"), bSave)');
     expect(handler).toContain('path_prefix must be a string');
     expect(handler).toMatch(/bool bSave = true;[\s\S]*LoadMetaSound\(P, Path, Error/);
   });
