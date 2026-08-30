@@ -99,7 +99,8 @@ public:
         {
             Missing(Key, TEXT("string"));
         }
-        else if (!bParamsMissing && !Params->TryGetStringField(Key, Out))
+        else if (!bParamsMissing && (!HasJsonKind(Key, EJson::String)
+            || !Params->TryGetStringField(Key, Out)))
         {
             WrongKind(Key, TEXT("string"));
         }
@@ -174,7 +175,7 @@ public:
     {
         FString Out;
         if (bParamsMissing || !Params->HasField(Key)) return Default;
-        if (!Params->TryGetStringField(Key, Out))
+        if (!HasJsonKind(Key, EJson::String) || !Params->TryGetStringField(Key, Out))
         {
             WrongKind(Key, TEXT("string"));
             return Default;
@@ -224,7 +225,7 @@ public:
     {
         bool Out = false;
         if (bParamsMissing || !Params->HasField(Key)) return Default;
-        if (!Params->TryGetBoolField(Key, Out))
+        if (!HasJsonKind(Key, EJson::Boolean) || !Params->TryGetBoolField(Key, Out))
         {
             WrongKind(Key, TEXT("boolean"));
             return Default;
@@ -597,6 +598,13 @@ public:
     }
 
 private:
+    bool HasJsonKind(const TCHAR* Key, EJson Expected) const
+    {
+        const TSharedPtr<FJsonValue> Value = Params.IsValid()
+            ? Params->TryGetField(Key) : nullptr;
+        return Value.IsValid() && Value->Type == Expected;
+    }
+
     static FString JsonKind(const TSharedPtr<FJsonValue>& Value)
     {
         if (!Value.IsValid()) return TEXT("invalid/null value");

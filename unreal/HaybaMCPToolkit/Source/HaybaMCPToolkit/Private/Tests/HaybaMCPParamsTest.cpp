@@ -274,6 +274,7 @@ bool FHaybaMCPParamReaderTest::RunTest(const FString& Parameters)
         TSharedPtr<FJsonObject> P = MakeShared<FJsonObject>();
         P->SetNumberField(TEXT("maybe_string"), 1.0);
         P->SetStringField(TEXT("maybe_bool"), TEXT("true"));
+        P->SetBoolField(TEXT("required_string"), true);
         P->SetStringField(TEXT("maybe_array"), TEXT("not-an-array"));
         P->SetArrayField(TEXT("maybe_object"), {});
         P->SetStringField(TEXT("maybe_vec"), TEXT("1,2,3"));
@@ -302,6 +303,8 @@ bool FHaybaMCPParamReaderTest::RunTest(const FString& Parameters)
         TestEqual(TEXT("wrong optional string uses default"),
             R.OptionalString(TEXT("maybe_string"), TEXT("fallback")), FString(TEXT("fallback")));
         TestTrue(TEXT("wrong optional bool uses default"), R.OptionalBool(TEXT("maybe_bool"), true));
+        TestEqual(TEXT("wrong required string is rejected"),
+            R.RequiredString(TEXT("required_string")), FString());
         TestNull(TEXT("wrong optional array is unset"), R.OptionalArray(TEXT("maybe_array")));
         TestFalse(TEXT("wrong optional object is unset"), R.OptionalObject(TEXT("maybe_object")).IsValid());
         TestFalse(TEXT("wrong optional vector is unset"), R.OptionalVec3(TEXT("maybe_vec")).IsSet());
@@ -323,7 +326,8 @@ bool FHaybaMCPParamReaderTest::RunTest(const FString& Parameters)
         TestTrue(TEXT("all malformed present optionals are errors"), R.HasErrors());
         const FString Msg = R.ErrorMessage();
         for (const TCHAR* Field : {
-            TEXT("maybe_string"), TEXT("maybe_bool"), TEXT("maybe_array"), TEXT("maybe_object"),
+            TEXT("maybe_string"), TEXT("maybe_bool"), TEXT("required_string"),
+            TEXT("maybe_array"), TEXT("maybe_object"),
             TEXT("maybe_vec"), TEXT("bounded_string"), TEXT("bounded_array"), TEXT("bounded_object"),
             TEXT("four_vector"), TEXT("radius"), TEXT("steps"), TEXT("required_range"),
             TEXT("required_integer"), TEXT("required_vector") })

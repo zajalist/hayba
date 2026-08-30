@@ -122,7 +122,7 @@ bool FHaybaMCPAdvisoryBoundaryTest::RunTest(const FString&)
     {
         const TSharedPtr<FJsonObject> Envelope = ParseEnvelope(
             FHaybaMCPCommandHandler::MakeOkResponse(
-                TEXT("2c"), MakeShared<FJsonObject>(), TEXT("actor_transform")));
+                TEXT("2c"), MakeShared<FJsonObject>(), TEXT("actor_set_transform")));
         TestEqual(TEXT("unverified mutation warns by default"),
             Envelope->GetObjectField(TEXT("advisory"))->GetStringField(TEXT("state")),
             FString(TEXT("success_needs_verification")));
@@ -130,7 +130,7 @@ bool FHaybaMCPAdvisoryBoundaryTest::RunTest(const FString&)
         TSharedPtr<FJsonObject> VerifiedData = MakeShared<FJsonObject>();
         VerifiedData->SetBoolField(TEXT("readback_verified"), true);
         const TSharedPtr<FJsonObject> VerifiedEnvelope = ParseEnvelope(
-            FHaybaMCPCommandHandler::MakeOkResponse(TEXT("2d"), VerifiedData, TEXT("actor_transform")));
+            FHaybaMCPCommandHandler::MakeOkResponse(TEXT("2d"), VerifiedData, TEXT("actor_set_transform")));
         TestFalse(TEXT("verified mutation does not emit optional warning noise"),
             VerifiedEnvelope->HasField(TEXT("advisory")));
     }
