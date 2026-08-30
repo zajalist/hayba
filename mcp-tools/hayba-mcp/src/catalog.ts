@@ -27,6 +27,16 @@ export function loadCatalog(): NodeCatalog {
   const path = getCatalogPath();
   const raw = JSON.parse(readFileSync(path, 'utf-8'));
 
+  catalog = parseCatalogData(raw);
+  return catalog;
+}
+
+/** Normalize either the shipped category-nested JSON or a flat NodeCatalog snapshot. */
+export function parseCatalogData(raw: any): NodeCatalog {
+  if (typeof raw?.version === 'string' && Array.isArray(raw?.nodes)) {
+    return raw as NodeCatalog;
+  }
+
   // The JSON has: { categories: { "Name": { description, nodes: [...] } } }
   // Each node has: class, display_name, description, input_pins, output_pins, properties
   // We flatten into: { categories: string[], nodes: CatalogNode[] }
@@ -70,8 +80,7 @@ export function loadCatalog(): NodeCatalog {
     }
   }
 
-  catalog = { version: raw._meta?.version_support?.[0] || '1.0', categories: categoryNames, nodes };
-  return catalog;
+  return { version: raw._meta?.version_support?.[0] || '1.0', categories: categoryNames, nodes };
 }
 
 /**
