@@ -4,6 +4,12 @@ All notable changes to Hayba MCP Toolkit are documented here. Format based on [K
 
 ## [Unreleased]
 
+### Deprecated
+- `hayba_import_landscape` and `import_landscape` remain callable for one release
+  as adapters to `world_ingest`. Responses include staged workflow results and
+  `deprecation` metadata; migrate legacy terrain fields using the
+  [MCP Tool Reference](docs/wiki/MCP-Tool-Reference.md#results-interruption-and-migration).
+
 ### Fixed
 - `material_get_info` now reports each graph parameter's authored name, exact
   parameter type, and typed default value, with explicit availability flags
@@ -21,6 +27,15 @@ All notable changes to Hayba MCP Toolkit are documented here. Format based on [K
 - `asset_registry_query` now uses a native, read-only AssetRegistry handler instead of blocked dynamic Python reflection, with deterministic bounded pagination, strict input checks, and fail-closed response validation.
 
 ### Added
+- Generalized `world_inspect`, `world_ingest` and `asset_prepare` workflows,
+  alongside the existing `asset_inspect` metadata tool. World ingestion reports
+  ordered stages, dry-run plans, retained resources and explicit unsupported
+  capabilities. The current native success path imports one heightmap into an
+  existing writable non-partitioned world and verifies map saving and landscape
+  presence. Asset preparation supports editing existing LOD reductions; native
+  mesh-terrain/managed-update ingestion, partition/HLOD configuration and
+  Nanite/collision/lightmap/material writers remain unavailable. Contract tests
+  cover success, refusal, partial failure and programmatic cancellation.
 - `editor_pie_click_actor` performs exact OS-input-free world interaction
   against a live visible PIE viewport without moving the desktop cursor or
   foregrounding its window. It reuses player-controller projection, rejects
