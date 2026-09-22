@@ -144,6 +144,39 @@ describe('SessionStore', () => {
     expect(store.list()).toHaveLength(1);
   });
 
+  it('replaces message history through redaction while preserving activities, artifacts, and usage', () => {
+    const store = new SessionStore(directory);
+    const { id } = store.create();
+    store.append(id, {
+      messages: [
+        { role: 'user', content: 'Old prompt' },
+        { role: 'assistant', content: 'Old answer' },
+      ],
+      activity: { activityId: 'a', title: 'Work', status: 'succeeded', steps: [] },
+      artifacts: [{ kind: 'asset', id: 'tree', path: '/Game/Tree' }],
+      usage: { inputTokens: 12, outputTokens: 3 },
+    });
+    const before = store.load(id)!;
+    const replaced = store.replaceMessages(id, [
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'New prompt api_key=SENTINEL_REPLACEMENT' },
+          { type: 'tool_result', tool_use_id: 'call', content: 'SENTINEL_RESULT' },
+        ],
+      },
+    ]);
+    expect(replaced.messages).toEqual([
+      { role: 'user', content: expect.stringMatching(/^New prompt api_key=\[REDACTED:/) },
+    ]);
+    expect(replaced.activities).toEqual(before.activities);
+    expect(replaced.artifacts).toEqual(before.artifacts);
+    expect(replaced.usage).toEqual({ inputTokens: 12, outputTokens: 3 });
+    expect(readFileSync(join(directory, `${id}.json`), 'utf8')).not.toContain('SENTINEL');
+    expect(store.replaceMessages(id, []).messages).toEqual([]);
+    expect(store.load(id)?.activities).toEqual(before.activities);
+  });
+
   it('writes redacted temporary bytes and preserves the old JSON if atomic replacement fails', () => {
     const store = new SessionStore(directory);
     const { id } = store.create();

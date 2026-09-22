@@ -56,13 +56,7 @@ import { createChatDispatcher } from './tool-dispatch.js';
 import { getArchetype } from '../agents/agent-registry.js';
 import { installExpressJsonRedaction, redactBoundaryValue } from '../security/secret-redaction.js';
 import { jsonObjectBody, stringQuery } from '../http/express-boundary.js';
-import {
-  SessionStore,
-  isValidSessionId,
-  sessionMessages,
-  type SavedActivity,
-  type SavedSession,
-} from './session-store.js';
+import { SessionStore, isValidSessionId, type SavedActivity, type SavedSession } from './session-store.js';
 import type { AgentStreamEvent } from './activity-events.js';
 
 // ---------------------------------------------------------------------------
@@ -636,18 +630,10 @@ export function registerChatRoutes(app: Express, options: ChatRoutesOptions = {}
     }
     session.messages = messages;
     try {
-      const textMessages = sessionMessages(messages);
-      // Clients may send the full transcript; append only the suffix shared
-      // with saved history. Prompt-only callers use restored history above.
-      let shared = 0;
-      while (
-        shared < (saved?.messages.length ?? 0) &&
-        shared < textMessages.length &&
-        saved!.messages[shared].role === textMessages[shared].role &&
-        saved!.messages[shared].content === textMessages[shared].content
-      )
-        shared += 1;
-      sessionStore.append(sessionId, { messages: textMessages.slice(shared) });
+      // An explicit client transcript is authoritative, including edits and
+      // deletions. Prompt-only callers already include restored history above.
+      // Replace the text snapshot so an older divergent suffix cannot survive.
+      sessionStore.replaceMessages(sessionId, messages);
     } catch {
       emit(session, 'error', { error: 'Unable to save session history', kind: 'persistence' });
       finalize(session, 'error');

@@ -154,6 +154,15 @@ export class SessionStore {
     return this.write(session);
   }
 
+  /** Install the authoritative transcript without changing activity or usage history. */
+  replaceMessages(id: string, input: unknown): SavedSession {
+    const session = this.load(id);
+    if (!session) throw new Error('unknown session');
+    session.messages = sessionMessages(input);
+    session.updatedAt = new Date().toISOString();
+    return this.write(session);
+  }
+
   remove(id: string): boolean {
     try {
       unlinkSync(this.path(id));

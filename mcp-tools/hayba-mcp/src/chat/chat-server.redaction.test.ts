@@ -258,6 +258,67 @@ describe('chat HTTP/SSE redaction boundary', () => {
     expect(sessionStore.load(id)?.messages).toHaveLength(8);
   });
 
+  it('replaces divergent explicit history and uses only that transcript on later turns and after restart', async () => {
+    const { id } = sessionStore.create();
+    sessionStore.append(id, {
+      messages: [
+        { role: 'user', content: 'A' },
+        { role: 'assistant', content: 'B' },
+      ],
+    });
+    const requests: LLMCompleteParams[] = [];
+    const client: LLMClient = {
+      provider: 'mock',
+      model: 'fake',
+      protocol: 'anthropic',
+      async complete() {
+        throw new Error('unused');
+      },
+      async *stream(params) {
+        requests.push(params);
+        yield { type: 'done', response: { content: null, toolCalls: [], stopReason: 'end_turn' } };
+      },
+    };
+    const app = express();
+    app.use(express.json());
+    registerChatRoutes(app, { sessionStore, createClient: () => client, tools: [] });
+    server = app.listen(0);
+    const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    const turn = async (body: unknown) =>
+      collectSse(
+        await fetch(`${url}/chat/stream`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(body),
+        }),
+      );
+    await turn({
+      session_id: id,
+      messages: [
+        { role: 'user', content: 'A' },
+        { role: 'assistant', content: 'B-edited' },
+        { role: 'user', content: 'C' },
+      ],
+    });
+    expect(sessionStore.load(id)?.messages).toEqual([
+      { role: 'user', content: 'A' },
+      { role: 'assistant', content: 'B-edited' },
+      { role: 'user', content: 'C' },
+    ]);
+    await turn({ session_id: id, prompt: 'D' });
+    expect(requests[1].messages.map((message) => message.content)).toEqual(['A', 'B-edited', 'C', 'D']);
+    __resetChatState();
+    await turn({ session_id: id, prompt: 'E' });
+    expect(requests[2].messages.map((message) => message.content)).toEqual(['A', 'B-edited', 'C', 'D', 'E']);
+    expect(new SessionStore(directory).load(id)?.messages.map((message) => message.content)).toEqual([
+      'A',
+      'B-edited',
+      'C',
+      'D',
+      'E',
+    ]);
+  });
+
   it('rejects malformed session identifiers before starting a stream', async () => {
     const app = express();
     app.use(express.json());
