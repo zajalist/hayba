@@ -100,7 +100,7 @@ public:
 	 * a follow-up turn on the same session; the config push is skipped after the
 	 * first success.
 	 */
-	void SendPrompt(const FString& UserPrompt);
+	void SendPrompt(const FString& UserPrompt, const FString& WorkMode = TEXT("production"));
 
 	/**
 	 * Plan-mode resume: after the user Approves a gated action in the Plan tab,
@@ -134,6 +134,8 @@ public:
 
 	/** The session id used against the sidecar (stable for this client). */
 	const FString& GetSessionId() const { return SessionId; }
+	/** Continue a saved text session. Provider credentials are always reconfigured. */
+	bool AdoptSavedSession(const FString& InSessionId);
 
 	/** Strict semantic JSON decoder; requires matching SSE and payload event types. */
 	static bool DecodeActivityEvent(const FString& EventType, const FString& Json, TSharedPtr<FJsonObject>& OutEvent);
@@ -181,6 +183,8 @@ private:
 	int32 ParseCursor = 0;
 	/** Accumulated assistant text (for partial_text on local cancel). */
 	FString AccumulatedText;
+	/** Explicit composer mode, sent on every stream request (including resumes). */
+	FString WorkMode = TEXT("production");
 	/** Unresolved identities owned by this client, retained across approval resume requests. */
 	TSet<FString> StreamActivityIds;
 };

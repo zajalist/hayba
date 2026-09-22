@@ -10,7 +10,9 @@
 #include "HaybaMCPMainPanel.h"
 #include "HaybaMCPClaudeClient.h"
 #include "HaybaMCPAgentClient.h"
+#include "HaybaMCPActivityModel.h"
 #include "HaybaMCPPlanPanel.h"
+#include "Slate/SHaybaActivityCard.h"
 #include "HaybaMCPSettings.h"
 #include "HaybaMCPWizardPrompt.h"
 
@@ -38,6 +40,8 @@
 #include "JsonUtilities.h"
 #include "Editor.h"
 #include "Styling/AppStyle.h"
+#include "HttpModule.h"
+#include "Interfaces/IHttpResponse.h"
 
 #define LOCTEXT_NAMESPACE "HaybaMCPToolkit"
 
@@ -112,36 +116,18 @@ void SHaybaMCPChatPanel::Construct(const FArguments& InArgs, FHaybaMCPModule* In
     ];
 
     RebuildChat();
+    RefreshRecentSessions();
 }
 
 SHaybaMCPChatPanel::~SHaybaMCPChatPanel()
 {
-    // Drop the legacy module tool-call subscription.
-    if (Module && ToolCallSubscription.IsValid())
-    {
-        Module->OnToolCallRecorded.Remove(ToolCallSubscription);
-        ToolCallSubscription.Reset();
-    }
-    // Drop the plan-approval subscription.
-    if (Module && PlanApprovedSubscription.IsValid())
-    {
-        Module->OnPlanApproved.Remove(PlanApprovedSubscription);
-        PlanApprovedSubscription.Reset();
-    }
-    if (Module && PlanRejectedSubscription.IsValid())
-    {
-        Module->OnPlanRejected.Remove(PlanRejectedSubscription);
-        PlanRejectedSubscription.Reset();
-    }
     // Tear down the streaming client: clear our delegate bindings so a late HTTP
     // tick can't fan out into this destroyed panel, then cancel the stream. The
     // client itself captures a weak ptr, so the ordering is belt-and-braces.
     if (AgentClient.IsValid())
     {
         AgentClient->OnTextDelta.RemoveAll(this);
-        AgentClient->OnToolCall.RemoveAll(this);
-        AgentClient->OnToolResult.RemoveAll(this);
-        AgentClient->OnPlanRequest.RemoveAll(this);
+        AgentClient->OnActivityEvent.RemoveAll(this);
         AgentClient->OnDone.RemoveAll(this);
         AgentClient->OnError.RemoveAll(this);
         AgentClient->Cancel();
@@ -189,16 +175,100 @@ TSharedRef<SWidget> SHaybaMCPChatPanel::BuildToolbar()
 
 TSharedRef<SWidget> SHaybaMCPChatPanel::BuildRecentSessionsMenu()
 {
-    // Recent sessions list is gated on the disk-persistence work (Q8-b),
-    // which lives in the module. Until that lands, surface a clear placeholder
-    // so users understand the affordance exists.
     FMenuBuilder Menu(true, nullptr);
-    Menu.AddMenuEntry(
-        LOCTEXT("RecentEmpty", "Recent conversations — coming soon"),
-        LOCTEXT("RecentEmptyTT", "Session persistence (Q8-b) lands in a follow-up commit."),
-        FSlateIcon(),
-        FUIAction(FExecuteAction(), FCanExecuteAction::CreateLambda([](){ return false; })));
+    Menu.AddMenuEntry(LOCTEXT("RefreshRecent", "Refresh conversations"), FText::GetEmpty(), FSlateIcon(),
+        FUIAction(FExecuteAction::CreateSP(this, &SHaybaMCPChatPanel::RefreshRecentSessions)));
+    if (RecentSessions.IsEmpty())
+        Menu.AddMenuEntry(LOCTEXT("RecentEmpty", "No saved conversations"), FText::GetEmpty(), FSlateIcon(),
+            FUIAction(FExecuteAction(), FCanExecuteAction::CreateLambda([]() { return false; })));
+    for (const FRecentSession& Recent : RecentSessions)
+    {
+        const FString Id = Recent.Id;
+        Menu.AddMenuEntry(FText::FromString(Recent.Title), FText::FromString(Recent.UpdatedAt), FSlateIcon(),
+            FUIAction(FExecuteAction::CreateLambda([this, Id]() { OpenSavedSession(Id); }),
+                FCanExecuteAction::CreateLambda([this]() { return !bIsStreaming && !bAwaitingPlanApproval && !bLoadingSession; })));
+    }
     return Menu.MakeWidget();
+}
+
+void SHaybaMCPChatPanel::RefreshRecentSessions()
+{
+    TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();
+    Request->SetURL(FHaybaMCPSettings::Get().SidecarURL / TEXT("chat/sessions"));
+    Request->SetVerb(TEXT("GET"));
+    TWeakPtr<SHaybaMCPChatPanel> WeakSelf = SharedThis(this);
+    Request->OnProcessRequestComplete().BindLambda([WeakSelf](FHttpRequestPtr, FHttpResponsePtr Response, bool bConnected)
+    {
+        TSharedPtr<SHaybaMCPChatPanel> Self = WeakSelf.Pin();
+        if (!Self.IsValid() || !bConnected || !Response.IsValid() || Response->GetResponseCode() != 200) return;
+        TSharedPtr<FJsonObject> Root;
+        if (!FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Response->GetContentAsString()), Root) || !Root.IsValid()) return;
+        const TArray<TSharedPtr<FJsonValue>>* Items = nullptr;
+        if (!Root->TryGetArrayField(TEXT("sessions"), Items)) return;
+        TArray<FRecentSession> Loaded;
+        for (const TSharedPtr<FJsonValue>& Item : *Items)
+        {
+            const TSharedPtr<FJsonObject> Object = Item.IsValid() ? Item->AsObject() : nullptr;
+            if (!Object.IsValid()) continue;
+            FRecentSession Recent;
+            if (!Object->TryGetStringField(TEXT("id"), Recent.Id) || Recent.Id.IsEmpty()) continue;
+            Object->TryGetStringField(TEXT("title"), Recent.Title);
+            Object->TryGetStringField(TEXT("updatedAt"), Recent.UpdatedAt);
+            if (Recent.Title.IsEmpty()) Recent.Title = TEXT("New conversation");
+            Loaded.Add(MoveTemp(Recent));
+        }
+        Self->RecentSessions = MoveTemp(Loaded);
+    });
+    Request->ProcessRequest();
+}
+
+void SHaybaMCPChatPanel::OpenSavedSession(const FString& SavedId)
+{
+    if (bIsStreaming || bAwaitingPlanApproval || bLoadingSession) return;
+    bLoadingSession = true;
+    PendingSessionId = SavedId;
+    TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();
+    Request->SetURL(FHaybaMCPSettings::Get().SidecarURL / TEXT("chat/sessions") / SavedId);
+    Request->SetVerb(TEXT("GET"));
+    TWeakPtr<SHaybaMCPChatPanel> WeakSelf = SharedThis(this);
+    Request->OnProcessRequestComplete().BindLambda([WeakSelf, SavedId](FHttpRequestPtr, FHttpResponsePtr Response, bool bConnected)
+    {
+        TSharedPtr<SHaybaMCPChatPanel> Self = WeakSelf.Pin();
+        if (!Self.IsValid() || Self->PendingSessionId != SavedId) return;
+        Self->PendingSessionId.Empty();
+        Self->bLoadingSession = false;
+        TSharedPtr<FJsonObject> Root;
+        if (!bConnected || !Response.IsValid() || Response->GetResponseCode() != 200 ||
+            !FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Response->GetContentAsString()), Root) || !Root.IsValid())
+        {
+            Self->AddSystemError(TEXT("Could not load the saved conversation."), TEXT(""));
+            return;
+        }
+        FString ReturnedId;
+        const TArray<TSharedPtr<FJsonValue>>* Messages = nullptr;
+        if (!Root->TryGetStringField(TEXT("id"), ReturnedId) || ReturnedId != SavedId ||
+            !Root->TryGetArrayField(TEXT("messages"), Messages)) return;
+        Self->OnNewConversation();
+        Self->EnsureAgentClient();
+        if (!Self->AgentClient->AdoptSavedSession(SavedId)) return;
+        for (const TSharedPtr<FJsonValue>& Value : *Messages)
+        {
+            const TSharedPtr<FJsonObject> Message = Value.IsValid() ? Value->AsObject() : nullptr;
+            if (!Message.IsValid()) continue;
+            FString Role, Content;
+            if (!Message->TryGetStringField(TEXT("role"), Role) || !Message->TryGetStringField(TEXT("content"), Content)) continue;
+            if (Role != TEXT("user") && Role != TEXT("assistant")) continue;
+            FHaybaMCPChatMessage Row{};
+            Row.bFromUser = Role == TEXT("user");
+            Row.Text = Content;
+            Self->Session.Messages.Add(MoveTemp(Row));
+            if (Self->Session.Goal.IsEmpty() && Role == TEXT("user")) Self->Session.Goal = Content;
+        }
+        Self->Session.SessionId = SavedId;
+        Self->RebuildChat();
+        Self->ScrollToBottomIfPinned();
+    });
+    Request->ProcessRequest();
 }
 
 // ── Chat scroll ───────────────────────────────────────────────────────────
@@ -351,6 +421,22 @@ TSharedRef<SWidget> SHaybaMCPChatPanel::BuildInput()
                         return bEmpty ? EVisibility::HitTestInvisible : EVisibility::Collapsed;
                     })
                 ]
+            ]
+            + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Bottom).Padding(6.f, 0.f, 0.f, 0.f)
+            [
+                SNew(SComboButton)
+                .ButtonStyle(FAppStyle::Get(), "SimpleButton")
+                .ToolTipText(LOCTEXT("WorkModeTip", "Choose how cautiously the agent may work"))
+                .ButtonContent()
+                [ SNew(STextBlock).Text_Lambda([this]() { return FText::FromString(WorkMode == TEXT("explore") ? TEXT("Explore") : WorkMode == TEXT("draft") ? TEXT("Draft") : TEXT("Production")); }) ]
+                .OnGetMenuContent_Lambda([this]()
+                {
+                    FMenuBuilder Menu(true, nullptr);
+                    Menu.AddMenuEntry(LOCTEXT("ExploreMode", "Explore"), LOCTEXT("ExploreModeTip", "Read-only by default: inspect, explain, and compare."), FSlateIcon(), FUIAction(FExecuteAction::CreateLambda([this]() { OnSetWorkMode(TEXT("explore")); })));
+                    Menu.AddMenuEntry(LOCTEXT("DraftMode", "Draft"), LOCTEXT("DraftModeTip", "Provisional and plan-gated work."), FSlateIcon(), FUIAction(FExecuteAction::CreateLambda([this]() { OnSetWorkMode(TEXT("draft")); })));
+                    Menu.AddMenuEntry(LOCTEXT("ProductionMode", "Production"), LOCTEXT("ProductionModeTip", "Plan Mode, verification, and normal production safeguards."), FSlateIcon(), FUIAction(FExecuteAction::CreateLambda([this]() { OnSetWorkMode(TEXT("production")); })));
+                    return Menu.MakeWidget();
+                })
             ]
             + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Bottom).Padding(6.f, 0.f, 0.f, 0.f)
             [
@@ -698,6 +784,31 @@ void SHaybaMCPChatPanel::RebuildChat()
     {
         ChatScrollBox->AddSlot() [ BuildMessageRow(Session.Messages[i], i) ];
     }
+    ChatScrollBox->AddSlot().Padding(8.f, 4.f) [ BuildActivityCards() ];
+}
+
+TSharedRef<SWidget> SHaybaMCPChatPanel::BuildActivityCards()
+{
+    TSharedRef<SVerticalBox> Cards = SNew(SVerticalBox);
+    if (!Module) return Cards;
+    const FHaybaActivityModel& Model = Module->GetActivityModel();
+    for (const FHaybaActivity& Activity : Model.GetActivities())
+    {
+        const FString Id = Activity.ActivityId;
+        TSharedRef<SHaybaActivityCard> Card = SNew(SHaybaActivityCard)
+            .ActivityModel(&Model)
+            .ActivityId(Id)
+            .InitiallyExpanded(ExpandedActivityIds.Contains(Id))
+            .OnExpansionChanged(FOnHaybaActivityExpansionChanged::CreateLambda([this](const FString& ChangedId, bool bExpanded)
+            {
+                if (bExpanded) ExpandedActivityIds.Add(ChangedId);
+                else ExpandedActivityIds.Remove(ChangedId);
+            }))
+            .OnApprove(FSimpleDelegate::CreateLambda([this, Id]() { ApproveActivity(Id); }))
+            .OnReject(FSimpleDelegate::CreateLambda([this, Id]() { RejectActivity(Id); }));
+        Cards->AddSlot().AutoHeight().Padding(0.f, 3.f) [ Card ];
+    }
+    return Cards;
 }
 
 void SHaybaMCPChatPanel::ScrollToBottomIfPinned()
@@ -781,22 +892,21 @@ bool SHaybaMCPChatPanel::CanSend() const
     // /chat/stream that server-side replaces session.messages — orphaning the
     // paused plan and losing transcript context. Stay disabled until the user
     // Approves (resume) or Rejects (cancel) the pending plan.
-    return !Session.bWaitingForAI && !bAwaitingPlanApproval;
+    return !Session.bWaitingForAI && !bAwaitingPlanApproval && !bLoadingSession;
 }
 
 // ── New / recent ──────────────────────────────────────────────────────────
 
 FReply SHaybaMCPChatPanel::OnNewConversation()
 {
-    // TODO: when persistence lands, save current Session to disk before reset.
+    PendingSessionId.Empty();
+    bLoadingSession = false;
     // Abort any in-flight stream and drop the client so the next send opens a
     // FRESH server session (new session_id, new transcript).
     if (AgentClient.IsValid())
     {
         AgentClient->OnTextDelta.RemoveAll(this);
-        AgentClient->OnToolCall.RemoveAll(this);
-        AgentClient->OnToolResult.RemoveAll(this);
-        AgentClient->OnPlanRequest.RemoveAll(this);
+        AgentClient->OnActivityEvent.RemoveAll(this);
         AgentClient->OnDone.RemoveAll(this);
         AgentClient->OnError.RemoveAll(this);
         AgentClient->Cancel();
@@ -805,10 +915,11 @@ FReply SHaybaMCPChatPanel::OnNewConversation()
     bAwaitingPlanApproval = false;
     bIsStreaming = false;
     InProgressMessageIndex = INDEX_NONE;
-    InProgressTrace.Reset();
     InProgressAssistantText.Reset();
 
     Session = FHaybaMCPWizardSession{};
+    ExpandedActivityIds.Reset();
+    if (Module) Module->GetActivityModel().Clear();
     UnseenWhileScrolledUp = 0;
     RebuildChat();
     return FReply::Handled();
@@ -968,28 +1079,10 @@ void SHaybaMCPChatPanel::EnsureAgentClient()
     // multi-turn conversation reuses one server session. RemoveAll(this) in the
     // destructor drops these. Handlers all fire on the game thread.
     AgentClient->OnTextDelta.AddSP(this, &SHaybaMCPChatPanel::HandleTextDelta);
-    AgentClient->OnToolCall.AddSP(this, &SHaybaMCPChatPanel::HandleToolCall);
-    AgentClient->OnToolResult.AddSP(this, &SHaybaMCPChatPanel::HandleToolResult);
-    AgentClient->OnPlanRequest.AddSP(this, &SHaybaMCPChatPanel::HandlePlanRequest);
+    AgentClient->OnActivityEvent.AddSP(this, &SHaybaMCPChatPanel::HandleActivityEvent);
     AgentClient->OnDone.AddSP(this, &SHaybaMCPChatPanel::HandleStreamDone);
     AgentClient->OnError.AddSP(this, &SHaybaMCPChatPanel::HandleStreamError);
 
-    // Watch for Plan-tab approvals so a paused turn can resume. One-shot per
-    // pending plan (guarded by bAwaitingPlanApproval in the handler).
-    if (Module && !PlanApprovedSubscription.IsValid())
-    {
-        PlanApprovedSubscription = Module->OnPlanApproved.AddSP(
-            this, &SHaybaMCPChatPanel::HandlePlanApproved);
-    }
-
-    // Watch for Plan-tab rejections so a paused turn is cancelled and this panel
-    // disarms — otherwise it stays armed and a later, unrelated Approve resumes
-    // the rejected turn. Also guarded by bAwaitingPlanApproval in the handler.
-    if (Module && !PlanRejectedSubscription.IsValid())
-    {
-        PlanRejectedSubscription = Module->OnPlanRejected.AddSP(
-            this, &SHaybaMCPChatPanel::HandlePlanRejected);
-    }
 }
 
 void SHaybaMCPChatPanel::StartAgentTurn(const FString& Prompt)
@@ -1009,12 +1102,11 @@ void SHaybaMCPChatPanel::StartAgentTurn(const FString& Prompt)
     // Server owns the system prompt (see HaybaMCPWizardPrompt.h) — send only the
     // user turn. Provider/model/key are resolved by the client from the vault
     // and pushed to the sidecar via /chat/config on the first turn.
-    AgentClient->SendPrompt(Prompt);
+    AgentClient->SendPrompt(Prompt, WorkMode);
 }
 
 void SHaybaMCPChatPanel::BeginInProgressBubble()
 {
-    InProgressTrace.Reset();
     InProgressAssistantText.Reset();
 
     FHaybaMCPChatMessage Placeholder;
@@ -1031,18 +1123,7 @@ void SHaybaMCPChatPanel::RefreshInProgressBubble()
 {
     if (!Session.Messages.IsValidIndex(InProgressMessageIndex)) return;
 
-    // Tool-step trace (if any) sits above the streaming answer so the user sees
-    // what the agent is doing, then the prose it produces.
-    FString Composed;
-    if (InProgressTrace.Num() > 0)
-    {
-        Composed = FString::Join(InProgressTrace, TEXT("\n"));
-    }
-    if (!InProgressAssistantText.IsEmpty())
-    {
-        if (!Composed.IsEmpty()) Composed += TEXT("\n\n");
-        Composed += InProgressAssistantText;
-    }
+    FString Composed = InProgressAssistantText;
     if (Composed.IsEmpty()) Composed = TEXT("…");
 
     Session.Messages[InProgressMessageIndex].Text = Composed;
@@ -1060,7 +1141,7 @@ void SHaybaMCPChatPanel::FinalizeInProgressBubble(const FString& FallbackText)
     }
     // If nothing streamed (e.g. immediate error), drop or substitute the
     // placeholder so we don't leave a lone "…" bubble.
-    const bool bEmpty = InProgressTrace.Num() == 0 && InProgressAssistantText.IsEmpty();
+    const bool bEmpty = InProgressAssistantText.IsEmpty();
     if (bEmpty)
     {
         if (FallbackText.IsEmpty())
@@ -1081,7 +1162,6 @@ void SHaybaMCPChatPanel::FinalizeInProgressBubble(const FString& FallbackText)
         }
     }
     InProgressMessageIndex = INDEX_NONE;
-    InProgressTrace.Reset();
     InProgressAssistantText.Reset();
     RebuildChat();
 }
@@ -1095,61 +1175,46 @@ void SHaybaMCPChatPanel::HandleTextDelta(const FString& Text)
     RefreshInProgressBubble();
 }
 
-void SHaybaMCPChatPanel::HandleToolCall(const FHaybaChatToolCall& Call)
+void SHaybaMCPChatPanel::HandleActivityEvent(const FJsonObject& Event)
 {
-    if (InProgressMessageIndex == INDEX_NONE) BeginInProgressBubble();
-    // Collapsible-step affordance: a compact one-liner per tool call. (Full
-    // arg/result inspection lives in the Tool Stream panel.)
-    InProgressTrace.Add(FString::Printf(TEXT("→ %s"),
-        Call.Name.IsEmpty() ? TEXT("tool") : *Call.Name));
-    RefreshInProgressBubble();
+    FString Type;
+    Event.TryGetStringField(TEXT("type"), Type);
+    if (Type == TEXT("approval_requested"))
+    {
+        bAwaitingPlanApproval = true;
+        Toast(LOCTEXT("AgentApproval", "Review the proposed action in this conversation."));
+    }
+    const bool bPinned = IsScrolledNearBottom();
+    RebuildChat();
+    if (bPinned) ScrollToBottomIfPinned();
+    else ++UnseenWhileScrolledUp;
 }
 
-void SHaybaMCPChatPanel::HandleToolResult(const FHaybaChatToolResult& Result)
+FReply SHaybaMCPChatPanel::OnSetWorkMode(FString NewMode)
 {
-    if (InProgressMessageIndex == INDEX_NONE) BeginInProgressBubble();
-    const TCHAR* Glyph = Result.bIsError ? TEXT("✕") : TEXT("✓");
-    InProgressTrace.Add(FString::Printf(TEXT("  %s %s"),
-        Glyph, Result.Name.IsEmpty() ? TEXT("tool") : *Result.Name));
-    RefreshInProgressBubble();
+    if (NewMode == TEXT("explore") || NewMode == TEXT("draft") || NewMode == TEXT("production"))
+        WorkMode = MoveTemp(NewMode);
+    return FReply::Handled();
 }
 
-void SHaybaMCPChatPanel::HandlePlanRequest(const FHaybaChatPlanRequest& Plan)
+void SHaybaMCPChatPanel::ApproveActivity(const FString& ActivityId)
 {
-    // Surface the gated action in the Plan tab for EXPLICIT human approval.
-    // NEVER auto-approve. The paused turn stays parked server-side until the
-    // user clicks Approve (→ OnPlanApproved → HandlePlanApproved → resume).
-    bAwaitingPlanApproval = true;
+    if (!Module || !AgentClient.IsValid() || !bAwaitingPlanApproval) return;
+    const FHaybaActivity* Activity = Module->GetActivityModel().FindActivity(ActivityId);
+    if (!Activity || !Activity->Approval.IsSet() ||
+        !Module->GetActivityModel().CanResolveApproval(ActivityId, Activity->Approval->ApprovalId)) return;
+    HandlePlanApproved();
+}
 
-    if (InProgressMessageIndex != INDEX_NONE)
-    {
-        InProgressTrace.Add(FString::Printf(
-            TEXT("⏸ Needs approval: %s — see the Plan tab."),
-            Plan.Name.IsEmpty() ? TEXT("action") : *Plan.Name));
-        RefreshInProgressBubble();
-    }
-
-    if (Module)
-    {
-        if (TSharedPtr<SHaybaMCPPlanPanel> PP = Module->PlanPanel.Pin())
-        {
-            FHaybaPlanStep Step;
-            Step.Index       = 0;
-            Step.Title       = Plan.Name.IsEmpty() ? TEXT("Proposed action") : Plan.Name;
-            Step.Description = Plan.Hint.IsEmpty()
-                ? FString::Printf(TEXT("Input: %s"), *Plan.InputJson)
-                : Plan.Hint;
-            Step.Tool        = Plan.Name;
-            TArray<FHaybaPlanStep> Steps; Steps.Add(Step);
-            PP->LoadPlan(Steps, /*AwaitSeconds*/ 120);
-        }
-    }
-
-    // Route the user to the Plan tab so the Approve/Reject bar is in front of
-    // them. This does not approve anything.
-    if (MainPanel) MainPanel->ShowPanel(EHaybaPanel::Plan);
-
-    Toast(LOCTEXT("PlanPause", "Action needs approval — review it in the Plan tab."));
+void SHaybaMCPChatPanel::RejectActivity(const FString& ActivityId)
+{
+    if (!Module || !bAwaitingPlanApproval) return;
+    const FHaybaActivity* Activity = Module->GetActivityModel().FindActivity(ActivityId);
+    if (!Activity || !Activity->Approval.IsSet() ||
+        !Module->GetActivityModel().CanResolveApproval(ActivityId, Activity->Approval->ApprovalId)) return;
+    Module->GetActivityModel().MarkDisconnected(ActivityId);
+    HandlePlanRejected();
+    RebuildChat();
 }
 
 void SHaybaMCPChatPanel::HandlePlanApproved()
@@ -1167,7 +1232,6 @@ void SHaybaMCPChatPanel::HandlePlanApproved()
     BeginInProgressBubble();
     AgentClient->ApproveAndResume();
 
-    if (MainPanel) MainPanel->ShowPanel(EHaybaPanel::Chat);
 }
 
 void SHaybaMCPChatPanel::HandlePlanRejected()
@@ -1188,7 +1252,7 @@ void SHaybaMCPChatPanel::HandlePlanRejected()
     bIsStreaming = false;
     FinalizeInProgressBubble(TEXT("[rejected]"));
 
-    Toast(LOCTEXT("PlanRejected", "Plan rejected — the paused action was cancelled."));
+    Toast(LOCTEXT("PlanRejected", "Action rejected; the paused turn was cancelled."));
 }
 
 void SHaybaMCPChatPanel::HandleStreamDone(const FHaybaChatDone& Done)
@@ -1204,6 +1268,7 @@ void SHaybaMCPChatPanel::HandleStreamDone(const FHaybaChatDone& Done)
     }
     const FString DoneTag = Done.bCancelled ? TEXT("[stopped]") : TEXT("");
     FinalizeInProgressBubble(DoneTag);
+    RefreshRecentSessions();
 }
 
 void SHaybaMCPChatPanel::HandleStreamError(const FHaybaChatError& Error)
@@ -1241,38 +1306,7 @@ void SHaybaMCPChatPanel::SendToMCP(const FString& UserMessage)
     Session.bWaitingForAI = true;
     bIsStreaming = true;
 
-    // Q9-c: subscribe to the module's tool-call recorder while the call is in
-    // flight. Each call streams a trace line into a placeholder AI message
-    // so the user sees what the AI is actually doing.
-    InProgressTrace.Reset();
-    {
-        FHaybaMCPChatMessage Placeholder;
-        Placeholder.bFromUser = false;
-        Placeholder.Text      = TEXT("…");
-        Session.Messages.Add(Placeholder);
-        InProgressMessageIndex = Session.Messages.Num() - 1;
-        RebuildChat();
-        ScrollToBottomIfPinned();
-    }
-    if (Module)
-    {
-        TWeakPtr<SHaybaMCPChatPanel> WeakSelf = SharedThis(this);
-        ToolCallSubscription = Module->OnToolCallRecorded.AddLambda(
-            [WeakSelf](const FHaybaToolCallRecord& Rec)
-            {
-                TSharedPtr<SHaybaMCPChatPanel> Self = WeakSelf.Pin();
-                if (!Self.IsValid()) return;
-                if (Self->InProgressMessageIndex == INDEX_NONE) return;
-                Self->InProgressTrace.Add(FString::Printf(TEXT("• %s"), *Rec.ToolName));
-                if (Self->Session.Messages.IsValidIndex(Self->InProgressMessageIndex))
-                {
-                    Self->Session.Messages[Self->InProgressMessageIndex].Text =
-                        FString::Join(Self->InProgressTrace, TEXT("\n"));
-                    Self->RebuildChat();
-                    if (Self->IsScrolledNearBottom()) Self->ScrollToBottomIfPinned();
-                }
-            });
-    }
+    BeginInProgressBubble();
 
     FOnClaudeResponse Callback;
     Callback.BindSP(this, &SHaybaMCPChatPanel::OnClaudeResponse);
@@ -1285,18 +1319,12 @@ void SHaybaMCPChatPanel::OnClaudeResponse(bool bSuccess, const FString& Response
     Session.bWaitingForAI = false;
     bIsStreaming = false;
 
-    // Tear down the in-flight subscription and consume the placeholder.
-    if (Module && ToolCallSubscription.IsValid())
-    {
-        Module->OnToolCallRecorded.Remove(ToolCallSubscription);
-        ToolCallSubscription.Reset();
-    }
+    // Consume the placeholder.
     if (Session.Messages.IsValidIndex(InProgressMessageIndex))
     {
         Session.Messages.RemoveAt(InProgressMessageIndex);
         InProgressMessageIndex = INDEX_NONE;
     }
-    InProgressTrace.Reset();
 
     if (!bSuccess) { AddSystemError(ResponseText, TEXT("")); return; }
 

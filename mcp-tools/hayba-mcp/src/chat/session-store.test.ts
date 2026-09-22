@@ -50,7 +50,7 @@ describe('SessionStore', () => {
       artifacts: [{ kind: 'asset', id: 'tree', path: '/Game/Tree' }],
       usage: { inputTokens: 12, outputTokens: 3 },
     });
-    expect(reopened.list()).toEqual([expect.objectContaining({ id: session.id, messageCount: 2 })]);
+    expect(reopened.list()).toEqual([expect.objectContaining({ id: session.id, messageCount: 2, title: 'List actors' })]);
     expect(readdirSync(directory)).toEqual([`${session.id}.json`]);
     expect(reopened.remove(session.id)).toBe(true);
     expect(reopened.load(session.id)).toBeNull();

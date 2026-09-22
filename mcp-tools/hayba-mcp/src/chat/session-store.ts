@@ -56,7 +56,7 @@ const RecordSchema = z.object({
 
 export type SavedSession = z.infer<typeof SessionSchema>;
 export type SavedActivity = z.infer<typeof ActivitySchema>;
-export type SessionSummary = Pick<SavedSession, 'id' | 'createdAt' | 'updatedAt'> & { messageCount: number };
+export type SessionSummary = Pick<SavedSession, 'id' | 'createdAt' | 'updatedAt'> & { messageCount: number; title: string };
 
 export function isValidSessionId(id: unknown): id is string {
   return (
@@ -126,6 +126,7 @@ export class SessionStore {
                 createdAt: session.createdAt,
                 updatedAt: session.updatedAt,
                 messageCount: session.messages.length,
+                title: session.messages.find((message) => message.role === 'user')?.content.slice(0, 80) ?? 'New conversation',
               },
             ]
           : [];

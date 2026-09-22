@@ -140,6 +140,45 @@ describe('sidecar SSE chat server', () => {
     expect(isLoopback(undefined)).toBe(false);
   });
 
+  it('rejects an unknown work mode before opening an SSE stream', async () => {
+    ({ server, url } = startApp({ dispatchTool: async () => ({}) }));
+
+    const res = await fetch(`${url}/chat/stream`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ session_id: 'mode-invalid', prompt: 'hi', provider: 'mock', mode: 'unsafe' }),
+    });
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: 'invalid agent mode' });
+  });
+
+  it('keeps Explore mode read-only by withholding destructive tools from dispatch', async () => {
+    let dispatches = 0;
+    ({ server, url } = startApp({
+      createClient: makeFakeClientFactory([
+        { content: null, toolCalls: [{ id: 'write', name: 'actor_spawn', input: {} }], stopReason: 'tool_use' },
+        { content: 'I cannot change the world in Explore.', toolCalls: [], stopReason: 'end_turn' },
+      ]) as never,
+      tools: [{ name: 'actor_spawn', description: 'spawn an actor', input_schema: { type: 'object', properties: {} } }],
+      dispatchTool: async () => {
+        dispatches++;
+        return { ok: true };
+      },
+    }));
+
+    const res = await fetch(`${url}/chat/stream`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ session_id: 'mode-explore', prompt: 'spawn a tree', provider: 'mock', mode: 'explore' }),
+    });
+    const frames = await readAllFrames(res.body!);
+
+    expect(dispatches).toBe(0);
+    expect(frames.find((frame) => frame.event === 'tool_result')!.data).toMatchObject({ isError: true });
+    expect(frames.at(-1)!.event).toBe('done');
+  });
+
   it('streams ordered SSE frames: tool_call → tool_result → text_delta → done', async () => {
     let dispatchCount = 0;
     ({ server, url } = startApp({

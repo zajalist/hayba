@@ -2,6 +2,7 @@
 #include "HaybaMCPActivityModel.h"
 #include "HaybaMCPAgentClient.h"
 #include "HaybaMCPModule.h"
+#include "Slate/SHaybaActivityCard.h"
 #include "Serialization/JsonSerializer.h"
 
 #if WITH_DEV_AUTOMATION_TESTS
@@ -21,6 +22,46 @@ namespace HaybaActivityTests
     const TCHAR* Complete = TEXT(R"({"type":"activity_completed","activityId":"a1","outcome":"succeeded","reason":"end_turn","usage":{"inputTokens":3}})");
 }
 using namespace HaybaActivityTests;
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FHaybaActivityCardPresentationTest, "Hayba.MCP.Agent.ActivityCard.Presentation",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FHaybaActivityCardPresentationTest::RunTest(const FString&)
+{
+    const TArray<TPair<EHaybaActivityState, FString>> States = {
+        { EHaybaActivityState::Planning, TEXT("Planning") },
+        { EHaybaActivityState::AwaitingApproval, TEXT("Awaiting approval") },
+        { EHaybaActivityState::Running, TEXT("Running") },
+        { EHaybaActivityState::Succeeded, TEXT("Succeeded") },
+        { EHaybaActivityState::Failed, TEXT("Failed") },
+    };
+    for (const TPair<EHaybaActivityState, FString>& Entry : States)
+    {
+        FHaybaActivity Activity;
+        Activity.ActivityId = TEXT("card-state");
+        Activity.Title = TEXT("Inspect world");
+        Activity.State = Entry.Key;
+        if (Entry.Key == EHaybaActivityState::AwaitingApproval)
+        {
+            FHaybaActivityApproval PendingApproval;
+            PendingApproval.ApprovalId = TEXT("approval");
+            PendingApproval.Call.Name = TEXT("actor_spawn");
+            PendingApproval.Hint = TEXT("Creates one actor; reversible with Undo.");
+            Activity.Approval = PendingApproval;
+        }
+        const FHaybaActivityCardPresentation Presentation = SHaybaActivityCard::Describe(Activity);
+        TestEqual(TEXT("state is an explicit label"), Presentation.StateLabel, Entry.Value);
+        TestEqual(TEXT("title comes from the model"), Presentation.Title, FString(TEXT("Inspect world")));
+        TestEqual(TEXT("approval actions are model-driven"), Presentation.bShowsApprovalActions,
+            Entry.Key == EHaybaActivityState::AwaitingApproval);
+    }
+    FHaybaActivity Cancelled;
+    Cancelled.Title = TEXT("Cancelled import");
+    Cancelled.State = EHaybaActivityState::Failed;
+    Cancelled.Outcome = TEXT("cancelled");
+    TestEqual(TEXT("cancelled is a terminal outcome label"), SHaybaActivityCard::Describe(Cancelled).StateLabel,
+        FString(TEXT("Cancelled")));
+    return true;
+}
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FHaybaActivityLifecycleTest, "Hayba.MCP.ActivityModel.Lifecycle",
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)

@@ -258,6 +258,13 @@ bool FHaybaActivityModel::MarkDisconnected(const FString& ActivityId)
     return true;
 }
 
+void FHaybaActivityModel::Clear()
+{
+    Activities.Reset();
+    LastError.Empty();
+    OnActivityChanged.Broadcast(FString());
+}
+
 bool FHaybaActivityModel::CanResolveApproval(const FString& ActivityId, const FString& ApprovalId) const
 {
     const FHaybaActivity* Activity = FindActivity(ActivityId);

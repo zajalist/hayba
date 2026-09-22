@@ -74,6 +74,8 @@ public:
     /** Rejects malformed or invalid transitions without changing history or notifying. */
     bool ApplyEvent(const FJsonObject& Event);
     bool MarkDisconnected(const FString& ActivityId);
+    /** Discard the current conversation's activity projection on New Conversation. */
+    void Clear();
     /** UI guard only: a matching identity does not authorize or execute a call. */
     bool CanResolveApproval(const FString& ActivityId, const FString& ApprovalId) const;
     const FHaybaActivity* FindActivity(const FString& ActivityId) const;

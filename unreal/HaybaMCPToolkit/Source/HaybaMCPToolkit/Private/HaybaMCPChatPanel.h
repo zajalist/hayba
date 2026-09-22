@@ -22,6 +22,7 @@ struct FHaybaChatToolResult;
 struct FHaybaChatPlanRequest;
 struct FHaybaChatDone;
 struct FHaybaChatError;
+class FJsonObject;
 
 /**
  * Single-purpose chat surface. Conversation, input, footer status — that's it.
@@ -67,18 +68,24 @@ private:
     bool                                    bIsStreaming = false;
     int32                                   UnseenWhileScrolledUp = 0;
 
-    // In-flight tool-call trace state.
-    FDelegateHandle ToolCallSubscription;   // legacy path (module recorder)
     int32           InProgressMessageIndex = INDEX_NONE;
-    TArray<FString> InProgressTrace;        // tool-step lines for the live bubble
     FString         InProgressAssistantText;// streamed assistant deltas
+    FString         WorkMode = TEXT("production");
+    TSet<FString>    ExpandedActivityIds;
+    struct FRecentSession
+    {
+        FString Id;
+        FString Title;
+        FString UpdatedAt;
+    };
+    TArray<FRecentSession> RecentSessions;
+    FString PendingSessionId;
+    bool bLoadingSession = false;
 
     // ── Streaming agent client (Task 7/8) ────────────────────────────────────
     // Held via MakeShared (NEVER stack — AsShared asserts). One client per panel
     // = one server session; reused across turns so the transcript continues.
     TSharedPtr<FHaybaMCPAgentClient> AgentClient;
-    FDelegateHandle PlanApprovedSubscription;   // module OnPlanApproved
-    FDelegateHandle PlanRejectedSubscription;   // module OnPlanRejected
     bool            bAwaitingPlanApproval = false;
 
     void            EnsureAgentClient();
@@ -89,13 +96,13 @@ private:
 
     // Agent-client delegate handlers (all fire on the game thread).
     void            HandleTextDelta(const FString& Text);
-    void            HandleToolCall(const FHaybaChatToolCall& Call);
-    void            HandleToolResult(const FHaybaChatToolResult& Result);
-    void            HandlePlanRequest(const FHaybaChatPlanRequest& Plan);
+    void            HandleActivityEvent(const FJsonObject& Event);
     void            HandleStreamDone(const FHaybaChatDone& Done);
     void            HandleStreamError(const FHaybaChatError& Error);
     void            HandlePlanApproved();
     void            HandlePlanRejected();
+    void            ApproveActivity(const FString& ActivityId);
+    void            RejectActivity(const FString& ActivityId);
 
     // ── Layout ─────────────────────────────────────────────────────────────
     TSharedRef<SWidget> BuildToolbar();
@@ -106,6 +113,8 @@ private:
     TSharedRef<SWidget> BuildPromptCard(const FText& Title, const FText& Hint, const FString& Prompt,
                                         const FString& Glyph, const FLinearColor& AccentColor);
     TSharedRef<SWidget> BuildMessageRow(const FHaybaMCPChatMessage& Message, int32 MessageIndex);
+    TSharedRef<SWidget> BuildActivityCards();
+    FReply OnSetWorkMode(FString NewMode);
 
     // ── Message management ────────────────────────────────────────────────
     void AddUserMessage(const FString& Text);
@@ -124,6 +133,8 @@ private:
     // ── Conversation controls ─────────────────────────────────────────────
     FReply OnNewConversation();
     TSharedRef<SWidget> BuildRecentSessionsMenu();
+    void RefreshRecentSessions();
+    void OpenSavedSession(const FString& SessionId);
 
     // ── Per-row affordances ───────────────────────────────────────────────
     FReply OnCopyMessage(int32 MessageIndex);

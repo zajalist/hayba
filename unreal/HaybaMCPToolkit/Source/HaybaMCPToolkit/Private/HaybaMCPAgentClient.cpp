@@ -60,7 +60,7 @@ FString FHaybaMCPAgentClient::MakeSessionId()
 // ─────────────────────────────────────────────────────────────────────────────
 // Public entry
 // ─────────────────────────────────────────────────────────────────────────────
-void FHaybaMCPAgentClient::SendPrompt(const FString& UserPrompt)
+void FHaybaMCPAgentClient::SendPrompt(const FString& UserPrompt, const FString& InWorkMode)
 {
 	// Re-entrancy guard: a second SendPrompt while a turn is in flight would
 	// start a second /chat/stream sharing this instance's ParseCursor +
@@ -79,6 +79,7 @@ void FHaybaMCPAgentClient::SendPrompt(const FString& UserPrompt)
 		SessionId = MakeSessionId();
 	}
 	bTerminalEmitted = false;
+	WorkMode = InWorkMode;
 
 	if (bConfigDone)
 	{
@@ -168,6 +169,19 @@ void FHaybaMCPAgentClient::StartStream(const FString& UserPrompt)
 	CreateStreamRequest(UserPrompt)->ProcessRequest();
 }
 
+bool FHaybaMCPAgentClient::AdoptSavedSession(const FString& InSessionId)
+{
+	if (bStreaming || InSessionId.IsEmpty() || InSessionId.Len() > 128) return false;
+	for (TCHAR Character : InSessionId)
+	{
+		if (!FChar::IsAlnum(Character) && Character != TEXT('_') && Character != TEXT('-')) return false;
+	}
+	SessionId = InSessionId;
+	bConfigDone = false;
+	StreamActivityIds.Reset();
+	return true;
+}
+
 TSharedRef<IHttpRequest, ESPMode::ThreadSafe> FHaybaMCPAgentClient::CreateStreamRequest(const FString& UserPrompt)
 {
 	const FHaybaMCPSettings& Settings = FHaybaMCPSettings::Get();
@@ -183,6 +197,7 @@ TSharedRef<IHttpRequest, ESPMode::ThreadSafe> FHaybaMCPAgentClient::CreateStream
 	TSharedRef<FJsonObject> Body = MakeShared<FJsonObject>();
 	Body->SetStringField(TEXT("session_id"), SessionId);
 	Body->SetStringField(TEXT("prompt"), UserPrompt);
+	Body->SetStringField(TEXT("mode"), WorkMode);
 	// provider/model/key already registered via /chat/config for this session.
 
 	TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();

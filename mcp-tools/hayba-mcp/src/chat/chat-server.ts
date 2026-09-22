@@ -47,6 +47,8 @@ import { getProvider } from '../agents/providers.js';
 import {
   runLegacyAgentLoop as runAgentLoop,
   argsHash,
+  buildToolCatalog,
+  isDestructiveToolName,
   type AgentEvent,
   type ApprovedCall,
   type DispatchTool,
@@ -344,6 +346,24 @@ const DEFAULT_SYSTEM =
   'You are the Hayba in-editor copilot. You help build Unreal Engine worlds by ' +
   'calling Hayba tools. Prefer reads before writes; respect Plan Mode.';
 
+export const AGENT_WORK_MODES = ['explore', 'draft', 'production'] as const;
+export type AgentWorkMode = (typeof AGENT_WORK_MODES)[number];
+
+function isAgentWorkMode(value: unknown): value is AgentWorkMode {
+  return typeof value === 'string' && (AGENT_WORK_MODES as readonly string[]).includes(value);
+}
+
+function modeGuidance(mode: AgentWorkMode): string {
+  switch (mode) {
+    case 'explore':
+      return 'Work mode: Explore. Inspect and explain only; do not mutate the Unreal project.';
+    case 'draft':
+      return 'Work mode: Draft. Keep work provisional and reversible; mutations require an approved plan.';
+    case 'production':
+      return 'Work mode: Production. Use approved plans, transactions, save/readback, and verification for mutations.';
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Route wiring
 // ---------------------------------------------------------------------------
@@ -522,11 +542,16 @@ export function registerChatRoutes(app: Express, options: ChatRoutesOptions = {}
       model?: string;
       archetype?: string;
       archetype_filter?: string[];
+      mode?: AgentWorkMode;
       last_seq?: number;
     };
     if (body.session_id !== undefined && !isValidSessionId(body.session_id)) {
       return res.status(400).json({ error: 'invalid session id' });
     }
+    if (body.mode !== undefined && !isAgentWorkMode(body.mode)) {
+      return res.status(400).json({ error: 'invalid agent mode' });
+    }
+    const mode: AgentWorkMode = body.mode ?? 'production';
 
     // ── Branch on resume vs new turn BEFORE any SSE headers are flushed (I3) ──
     // Emitting a 409 after flushHeaders() would append JSON mid-stream (the 200 +
@@ -717,7 +742,7 @@ export function registerChatRoutes(app: Express, options: ChatRoutesOptions = {}
     // Drive the loop server-side, independent of the HTTP connection lifetime.
     void runTurn(session, {
       client,
-      system: turnSystem,
+      system: `${turnSystem}\n\n${modeGuidance(mode)}`,
       messages,
       archetypeFilter,
       pinnedSpecialistId: body.archetype,
@@ -726,6 +751,7 @@ export function registerChatRoutes(app: Express, options: ChatRoutesOptions = {}
       signal: session.abortController.signal,
       approvedCall: session.approvedCall,
       sessionStore,
+      mode,
     }).finally(() => {
       cleanup();
       // Consume the one-shot call-bound approval so a later turn re-gates.
@@ -752,6 +778,7 @@ interface RunTurnParams {
   signal: AbortSignal;
   /** Call-bound Plan-Mode approval for this turn (C1); undefined = re-gate. */
   approvedCall?: ApprovedCall;
+  mode: AgentWorkMode;
 }
 
 /** Emit the single consolidated final done frame + mark the turn finished. */
@@ -788,6 +815,9 @@ async function runTurn(session: ChatSession, params: RunTurnParams): Promise<voi
   const steps = new Map<string, SavedActivity['steps'][number]>();
   const artifacts: SavedSession['artifacts'] = [];
   const observe = (event: AgentStreamEvent): void => {
+    // The native Agent surface observes these structured frames directly. Keep
+    // legacy frames below for older clients until their migration lands.
+    emit(session, event.type, event);
     switch (event.type) {
       case 'activity_started':
         activity = {
@@ -832,7 +862,10 @@ async function runTurn(session: ChatSession, params: RunTurnParams): Promise<voi
         client: params.client,
         system: params.system,
         messages: params.messages,
-        tools: params.tools,
+        tools:
+          params.mode === 'explore'
+            ? (params.tools ?? buildToolCatalog()).filter((tool) => !isDestructiveToolName(tool.name))
+            : params.tools,
         archetypeFilter: params.archetypeFilter,
         pinnedSpecialistId: params.pinnedSpecialistId,
         dispatchTool: params.dispatchTool,
