@@ -70,7 +70,7 @@ private:
 
     int32           InProgressMessageIndex = INDEX_NONE;
     FString         InProgressAssistantText;// streamed assistant deltas
-    FString         WorkMode = TEXT("production");
+    FString         WorkMode = TEXT("explore");
     TSet<FString>    ExpandedActivityIds;
     struct FRecentSession
     {
@@ -87,6 +87,7 @@ private:
     // = one server session; reused across turns so the transcript continues.
     TSharedPtr<FHaybaMCPAgentClient> AgentClient;
     bool            bAwaitingPlanApproval = false;
+    FString         PendingActivityId;
 
     void            EnsureAgentClient();
     void            StartAgentTurn(const FString& Prompt);
@@ -110,10 +111,8 @@ private:
     TSharedRef<SWidget> BuildFooter();
     TSharedRef<SWidget> BuildInput();
     TSharedRef<SWidget> BuildEmptyState();
-    TSharedRef<SWidget> BuildPromptCard(const FText& Title, const FText& Hint, const FString& Prompt,
-                                        const FString& Glyph, const FLinearColor& AccentColor);
     TSharedRef<SWidget> BuildMessageRow(const FHaybaMCPChatMessage& Message, int32 MessageIndex);
-    TSharedRef<SWidget> BuildActivityCards();
+    TSharedRef<SWidget> BuildActivityCard(const FString& ActivityId);
     FReply OnSetWorkMode(FString NewMode);
 
     // ── Message management ────────────────────────────────────────────────

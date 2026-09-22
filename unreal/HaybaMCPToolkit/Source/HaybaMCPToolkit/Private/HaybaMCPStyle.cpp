@@ -69,8 +69,19 @@ TSharedRef<FSlateStyleSet> FHaybaMCPStyle::Create()
     Style->Set("Hayba.Logo",         new IMAGE_BRUSH_SVG(TEXT("HaybaLogo"), FVector2D(166.f, 201.f)));
     Style->Set("Hayba.Icon.Toolkit", new IMAGE_BRUSH_SVG(TEXT("HaybaLogo"), FVector2D(40.f, 48.f)));
 
-    // Tab icons (28x28 nominal — Slate scales as needed)
-    const FVector2D IconSize(28.f, 28.f);
+    // Product navigation shares one 24 px outline grid. White SVG strokes are
+    // multiplied by Slate's foreground tint, so state lives in the widget.
+    const FVector2D IconSize(24.f, 24.f);
+    Style->Set("Hayba.Icon.Agent",    new IMAGE_BRUSH_SVG(TEXT("IconAgent"), IconSize));
+    Style->Set("Hayba.Icon.World",    new IMAGE_BRUSH_SVG(TEXT("IconWorld"), IconSize));
+    Style->Set("Hayba.Icon.Library",  new IMAGE_BRUSH_SVG(TEXT("IconLibrary"), IconSize));
+    Style->Set("Hayba.Icon.Settings", new IMAGE_BRUSH_SVG(TEXT("IconSettings"), IconSize));
+    Style->Set("Hayba.Color.Active", FSlateColor(FLinearColor(0.769f, 0.478f, 0.157f)));
+    Style->Set("Hayba.Color.Pending", FSlateColor(FLinearColor(0.769f, 0.478f, 0.157f)));
+    Style->Set("Hayba.Color.Unsaved", FSlateColor(FLinearColor(0.769f, 0.478f, 0.157f)));
+    Style->Set("Hayba.Color.Violation", FSlateColor(FLinearColor(0.769f, 0.478f, 0.157f)));
+
+    // Compatibility brushes for panels that are being retired.
     Style->Set("Hayba.Icon.Chat",       new IMAGE_BRUSH_SVG(TEXT("IconChat"),        IconSize));
     Style->Set("Hayba.Icon.ToolStream", new IMAGE_BRUSH_SVG(TEXT("IconToolStream"),  IconSize));
     Style->Set("Hayba.Icon.SceneMap",   new IMAGE_BRUSH_SVG(TEXT("IconSceneMap"),    IconSize));
@@ -78,9 +89,7 @@ TSharedRef<FSlateStyleSet> FHaybaMCPStyle::Create()
     Style->Set("Hayba.Icon.Diff",       new IMAGE_BRUSH_SVG(TEXT("IconDiff"),        IconSize));
     Style->Set("Hayba.Icon.Validation", new IMAGE_BRUSH_SVG(TEXT("IconValidation"),  IconSize));
     Style->Set("Hayba.Icon.Memory",     new IMAGE_BRUSH_SVG(TEXT("IconMemory"),      IconSize));
-    Style->Set("Hayba.Icon.Library",    new IMAGE_BRUSH_SVG(TEXT("IconLibrary"),     IconSize));
     Style->Set("Hayba.Icon.Setup",      new IMAGE_BRUSH_SVG(TEXT("IconSetup"),       IconSize));
-    Style->Set("Hayba.Icon.Settings",   new IMAGE_BRUSH_SVG(TEXT("IconSettings"),    IconSize));
     Style->Set("Hayba.Icon.MCP",        new IMAGE_BRUSH_SVG(TEXT("IconMCP"),         IconSize));
     Style->Set("Hayba.Icon.Slivers",    new IMAGE_BRUSH_SVG(TEXT("IconSlivers"),     IconSize));
     Style->Set("Hayba.MCP.Hero",        new IMAGE_BRUSH_SVG(TEXT("MCPHero"),         FVector2D(72.f, 72.f)));

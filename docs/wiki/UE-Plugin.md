@@ -18,6 +18,20 @@ This page is a pointer + the handler-domain table.
 - **Provenance:** snapshot-imported; treat the directory as canonical — see
   [`../adr/0004-ue-plugin-location.md`](../adr/0004-ue-plugin-location.md).
 
+## In-editor workspace
+
+The toolkit rail has three destinations: **Agent** for chat, plans, activity
+steps, and approvals; **World** for the scene map and contextual findings; and
+**Library** for profiled assets and reusable recipes. Settings is the bottom
+gear, with preferences and tool access inside it.
+
+The Agent composer exposes **Explore**, **Draft**, and **Production**. Explore
+is the initial, read-only mode; unknown tools are withheld. Draft and
+Production route mutations through the existing exact-call approval gate.
+The current World map covers loaded actors only, so it labels unloaded World
+Partition regions as unknown rather than implying they are empty. The
+versioned scene-intent graph is a researched next step, not yet a map feature.
+
 ## Handler-domain table
 
 One `*Handler.cpp` per domain in

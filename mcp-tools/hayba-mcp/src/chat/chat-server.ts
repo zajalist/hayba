@@ -353,6 +353,12 @@ function isAgentWorkMode(value: unknown): value is AgentWorkMode {
   return typeof value === 'string' && (AGENT_WORK_MODES as readonly string[]).includes(value);
 }
 
+/** Explore exposes only known read-shaped commands. Unknown names fail closed. */
+function isExploreReadOnlyTool(name: string): boolean {
+  return !isDestructiveToolName(name) &&
+    /(?:^|_)(?:get|list|search|inspect|validate|query|read|describe|count|find|status|stats|info)(?:_|$)/.test(name);
+}
+
 function modeGuidance(mode: AgentWorkMode): string {
   switch (mode) {
     case 'explore':
@@ -864,7 +870,7 @@ async function runTurn(session: ChatSession, params: RunTurnParams): Promise<voi
         messages: params.messages,
         tools:
           params.mode === 'explore'
-            ? (params.tools ?? buildToolCatalog()).filter((tool) => !isDestructiveToolName(tool.name))
+            ? (params.tools ?? buildToolCatalog()).filter((tool) => isExploreReadOnlyTool(tool.name))
             : params.tools,
         archetypeFilter: params.archetypeFilter,
         pinnedSpecialistId: params.pinnedSpecialistId,

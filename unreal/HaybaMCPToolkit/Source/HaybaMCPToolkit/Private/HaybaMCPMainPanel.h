@@ -10,7 +10,7 @@ class SHorizontalBox;
 
 enum class EHaybaPanel : uint8
 {
-    Chat, MCP, Slivers, ToolStream, SceneMap, Plan, Diff, Validation, Memory, Lessons, Settings
+    Agent, World, Library, Settings
 };
 
 class SHaybaMCPMainPanel : public SCompoundWidget
@@ -23,12 +23,15 @@ public:
 
     void ShowPanel(EHaybaPanel Panel);
 
+    /** Product navigation; Settings is a separate bottom control. */
+    static TArray<EHaybaPanel> RailDestinations();
+
     /** Triggered by Settings → Redo Setup. Replaces the active content area with the onboarding splash flow. */
     void ShowOnboardingFromSplash();
 
 private:
     FHaybaMCPModule* Module = nullptr;
-    EHaybaPanel CurrentPanel = EHaybaPanel::Chat;
+    EHaybaPanel CurrentPanel = EHaybaPanel::Agent;
 
     TSharedPtr<SBox> ContentArea;
     TSharedPtr<SVerticalBox> Sidebar;

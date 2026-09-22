@@ -405,9 +405,9 @@ TSharedRef<SWidget> SHaybaMCPChatPanel::BuildInput()
                         // input reads as intentional, not broken.
                         if (bAwaitingPlanApproval)
                             return LOCTEXT("InputHintAwaitApproval",
-                                "Action needs approval — Approve or Reject it in the Plan tab to continue.");
+                                "Review the proposed action in this conversation to continue.");
                         return LOCTEXT("InputHint",
-                            "Describe what you want to generate…  (⏎ to send · ⇧⏎ for newline)");
+                            "Ask about your world or describe a task…  (Enter to send · Shift+Enter for newline)");
                     })
                     .ColorAndOpacity(FSlateColor(FLinearColor(0.50f, 0.52f, 0.60f)))
                     .OverflowPolicy(ETextOverflowPolicy::MiddleEllipsis)
@@ -443,6 +443,7 @@ TSharedRef<SWidget> SHaybaMCPChatPanel::BuildInput()
                 SNew(SButton)
                 .ButtonStyle(FAppStyle::Get(), "PrimaryButton")
                 .ContentPadding(FMargin(10.f, 6.f))
+                .IsEnabled_Lambda([this]() { return bIsStreaming || CanSend(); })
                 .OnClicked(this, &SHaybaMCPChatPanel::OnSendOrStop)
                 .ToolTipText_Lambda([this]()
                 {
@@ -464,96 +465,33 @@ TSharedRef<SWidget> SHaybaMCPChatPanel::BuildInput()
 
 TSharedRef<SWidget> SHaybaMCPChatPanel::BuildEmptyState()
 {
-    // Empty state lives at the bottom of the scroll: a flexible spacer above
-    // pushes the cards down to where the input is, so the visual centre of
-    // attention starts right where the user's cursor is going next.
-    // TODO: returning user variant lists recent saved sessions instead of cards.
     return SNew(SVerticalBox)
         + SVerticalBox::Slot().FillHeight(1.f) [ SNew(SBox) ]
-        + SVerticalBox::Slot().AutoHeight().Padding(20.f, 16.f, 20.f, 10.f)
+        + SVerticalBox::Slot().AutoHeight().Padding(22.f, 10.f, 22.f, 7.f)
         [
             SNew(STextBlock)
-            .Text(LOCTEXT("EmptyTitle", "Start a conversation"))
-            .ColorAndOpacity(FSlateColor(ColorMuted))
-            .Justification(ETextJustify::Center)
+            .Text(LOCTEXT("EmptyTitle", "What are we making?"))
+            .TextStyle(&FAppStyle::Get().GetWidgetStyle<FTextBlockStyle>("DetailsView.CategoryTextStyle"))
         ]
-        + SVerticalBox::Slot().AutoHeight().Padding(20.f, 0.f, 20.f, 20.f)
+        + SVerticalBox::Slot().AutoHeight().Padding(22.f, 0.f, 22.f, 14.f)
         [
-            SNew(SHorizontalBox)
-            + SHorizontalBox::Slot().FillWidth(1.f).Padding(0.f, 0.f, 8.f, 0.f)
-            [ BuildPromptCard(
-                LOCTEXT("PCard1Title", "Mini city"),
-                LOCTEXT("PCard1Hint",  "Organic roads, parcels, building footprints"),
-                TEXT("Generate a mini city with organic roads and parcels."),
-                TEXT("MC"),
-                FLinearColor(0.30f, 0.55f, 0.85f)) ]
-            + SHorizontalBox::Slot().FillWidth(1.f).Padding(4.f, 0.f, 4.f, 0.f)
-            [ BuildPromptCard(
-                LOCTEXT("PCard2Title", "Dungeon"),
-                LOCTEXT("PCard2Hint",  "Connected rooms with corridor topology"),
-                TEXT("Generate a dungeon with connected rooms."),
-                TEXT("DG"),
-                FLinearColor(0.65f, 0.30f, 0.55f)) ]
-            + SHorizontalBox::Slot().FillWidth(1.f).Padding(8.f, 0.f, 0.f, 0.f)
-            [ BuildPromptCard(
-                LOCTEXT("PCard3Title", "Forest path"),
-                LOCTEXT("PCard3Hint",  "Branching path network through dense foliage"),
-                TEXT("Generate a forest path network with branching trails."),
-                TEXT("FP"),
-                FLinearColor(0.30f, 0.65f, 0.40f)) ]
-        ];
-}
-
-TSharedRef<SWidget> SHaybaMCPChatPanel::BuildPromptCard(const FText& Title, const FText& Hint, const FString& Prompt,
-                                                       const FString& Glyph, const FLinearColor& AccentColor)
-{
-    return SNew(SButton)
-        .ButtonStyle(FAppStyle::Get(), "SimpleButton")
-        .ContentPadding(FMargin(0.f))
-        .OnClicked_Lambda([this, Prompt]() { return OnPromptCardClicked(Prompt); })
+            SNew(STextBlock)
+            .Text(LOCTEXT("EmptyDescription", "Plan a scene, inspect the current world, or prepare an asset. You can review every action before it changes the project."))
+            .ColorAndOpacity(FSlateColor(ColorMuted))
+            .AutoWrapText(true)
+        ]
+        + SVerticalBox::Slot().AutoHeight().Padding(18.f, 0.f, 18.f, 20.f)
         [
-            SNew(SBorder)
-            .BorderImage(FAppStyle::GetBrush("Brushes.Panel"))
-            .Padding(FMargin(0.f))
-            [
-                SNew(SVerticalBox)
-                // Themed visual area — flat color rectangle with the glyph
-                // centered, sized for visual weight. No external image asset
-                // so this stays copyright-clean and ships in the plugin
-                // without binary deps.
-                + SVerticalBox::Slot().AutoHeight()
-                [
-                    SNew(SBorder)
-                    .BorderImage(FAppStyle::Get().GetBrush("WhiteBrush"))
-                    .BorderBackgroundColor(FSlateColor(AccentColor))
-                    .Padding(FMargin(0.f, 24.f))
-                    [
-                        SNew(STextBlock)
-                        .Text(FText::FromString(Glyph))
-                        .Justification(ETextJustify::Center)
-                        .ColorAndOpacity(FSlateColor(FLinearColor::White))
-                        .Font(FCoreStyle::GetDefaultFontStyle("Bold", 36))
-                    ]
-                ]
-                // Title + hint below the visual.
-                + SVerticalBox::Slot().AutoHeight().Padding(FMargin(14.f, 12.f, 14.f, 14.f))
-                [
-                    SNew(SVerticalBox)
-                    + SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 4.f)
-                    [
-                        SNew(STextBlock)
-                        .Text(Title)
-                        .TextStyle(&FAppStyle::Get().GetWidgetStyle<FTextBlockStyle>("DetailsView.CategoryTextStyle"))
-                    ]
-                    + SVerticalBox::Slot().AutoHeight()
-                    [
-                        SNew(STextBlock)
-                        .Text(Hint)
-                        .ColorAndOpacity(FSlateColor(ColorMuted))
-                        .AutoWrapText(true)
-                    ]
-                ]
-            ]
+            SNew(SVerticalBox)
+            + SVerticalBox::Slot().AutoHeight()
+              [ SNew(SButton).ButtonStyle(FAppStyle::Get(), "SimpleButton").Text(LOCTEXT("PromptScenePlan", "Plan a scene layout"))
+                .OnClicked_Lambda([this]() { return OnPromptCardClicked(TEXT("Plan a scene layout for the selected area. Start by inspecting the world and propose an editable blockout.")); }) ]
+            + SVerticalBox::Slot().AutoHeight()
+              [ SNew(SButton).ButtonStyle(FAppStyle::Get(), "SimpleButton").Text(LOCTEXT("PromptInspectWorld", "Inspect the current world"))
+                .OnClicked_Lambda([this]() { return OnPromptCardClicked(TEXT("Inspect the current world, including partition status and validation findings. Summarize what is known and unknown.")); }) ]
+            + SVerticalBox::Slot().AutoHeight()
+              [ SNew(SButton).ButtonStyle(FAppStyle::Get(), "SimpleButton").Text(LOCTEXT("PromptAsset", "Prepare selected assets"))
+                .OnClicked_Lambda([this]() { return OnPromptCardClicked(TEXT("Inspect the selected assets and propose production preparation for Nanite, LODs, collision, and materials.")); }) ]
         ];
 }
 
@@ -644,7 +582,7 @@ FReply SHaybaMCPChatPanel::OnDrop(const FGeometry& /*MyGeometry*/, const FDragDr
 TSharedRef<SWidget> SHaybaMCPChatPanel::BuildMessageRow(const FHaybaMCPChatMessage& Msg, int32 MessageIndex)
 {
     const FText RoleLabel = Msg.bFromUser ? LOCTEXT("RoleYou", "You")
-                                          : LOCTEXT("RoleAI",  "AI");
+                                          : LOCTEXT("RoleAI",  "Hayba");
     const FLinearColor RoleColor = Msg.bFromUser ? ColorMuted : ColorRoleAI;
 
     TSharedRef<SVerticalBox> Stack = SNew(SVerticalBox)
@@ -663,6 +601,7 @@ TSharedRef<SWidget> SHaybaMCPChatPanel::BuildMessageRow(const FHaybaMCPChatMessa
                 .Text(FText::FromString(Msg.Text))
                 .ColorAndOpacity(FSlateColor(RoleColor))
                 .AutoWrapText(true)
+                .Visibility(Msg.Text.IsEmpty() ? EVisibility::Collapsed : EVisibility::Visible)
             ]
             // Hover copy icon (Q12-c).
             + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Top).Padding(6.f, 0.f, 0.f, 0.f)
@@ -721,6 +660,10 @@ TSharedRef<SWidget> SHaybaMCPChatPanel::BuildMessageRow(const FHaybaMCPChatMessa
         ];
     }
 
+    if (!Msg.ActivityId.IsEmpty())
+        Stack->AddSlot().AutoHeight().Padding(28.f, 4.f, 0.f, 1.f)
+        [ BuildActivityCard(Msg.ActivityId) ];
+
     return SNew(SBorder)
         .BorderImage(FAppStyle::GetBrush("NoBrush"))
         .Padding(FMargin(8.f, 4.f))
@@ -731,7 +674,7 @@ TSharedRef<SWidget> SHaybaMCPChatPanel::BuildMessageRow(const FHaybaMCPChatMessa
 
 void SHaybaMCPChatPanel::AddUserMessage(const FString& Text)
 {
-    FHaybaMCPChatMessage Msg;
+    FHaybaMCPChatMessage Msg{};
     Msg.bFromUser = true;
     Msg.Text      = Text;
     Session.Messages.Add(Msg);
@@ -740,7 +683,7 @@ void SHaybaMCPChatPanel::AddUserMessage(const FString& Text)
 
 void SHaybaMCPChatPanel::AddAIMessage(const FString& Text, TSharedPtr<FJsonObject> Graph)
 {
-    FHaybaMCPChatMessage Msg;
+    FHaybaMCPChatMessage Msg{};
     Msg.bFromUser     = false;
     Msg.Text          = Text;
     Msg.AttachedGraph = Graph;
@@ -756,7 +699,7 @@ void SHaybaMCPChatPanel::AddAIMessage(const FString& Text, TSharedPtr<FJsonObjec
 
 void SHaybaMCPChatPanel::AddSystemError(const FString& Reason, const FString& RetryPrompt)
 {
-    FHaybaMCPChatMessage Msg;
+    FHaybaMCPChatMessage Msg{};
     Msg.bFromUser    = false;
     Msg.Text         = FString::Printf(TEXT("⚠ %s"), *Reason);
     Msg.bShowActions = false;
@@ -784,31 +727,30 @@ void SHaybaMCPChatPanel::RebuildChat()
     {
         ChatScrollBox->AddSlot() [ BuildMessageRow(Session.Messages[i], i) ];
     }
-    ChatScrollBox->AddSlot().Padding(8.f, 4.f) [ BuildActivityCards() ];
 }
 
-TSharedRef<SWidget> SHaybaMCPChatPanel::BuildActivityCards()
+TSharedRef<SWidget> SHaybaMCPChatPanel::BuildActivityCard(const FString& ActivityId)
 {
-    TSharedRef<SVerticalBox> Cards = SNew(SVerticalBox);
-    if (!Module) return Cards;
+    if (!Module) return SNullWidget::NullWidget;
     const FHaybaActivityModel& Model = Module->GetActivityModel();
-    for (const FHaybaActivity& Activity : Model.GetActivities())
-    {
-        const FString Id = Activity.ActivityId;
-        TSharedRef<SHaybaActivityCard> Card = SNew(SHaybaActivityCard)
-            .ActivityModel(&Model)
-            .ActivityId(Id)
-            .InitiallyExpanded(ExpandedActivityIds.Contains(Id))
-            .OnExpansionChanged(FOnHaybaActivityExpansionChanged::CreateLambda([this](const FString& ChangedId, bool bExpanded)
-            {
-                if (bExpanded) ExpandedActivityIds.Add(ChangedId);
-                else ExpandedActivityIds.Remove(ChangedId);
-            }))
-            .OnApprove(FSimpleDelegate::CreateLambda([this, Id]() { ApproveActivity(Id); }))
-            .OnReject(FSimpleDelegate::CreateLambda([this, Id]() { RejectActivity(Id); }));
-        Cards->AddSlot().AutoHeight().Padding(0.f, 3.f) [ Card ];
-    }
-    return Cards;
+    if (!Model.FindActivity(ActivityId)) return SNullWidget::NullWidget;
+    FSimpleDelegate CancelAction;
+    if (AgentClient.IsValid() && AgentClient->IsStreaming() &&
+        Session.Messages.IsValidIndex(InProgressMessageIndex) &&
+        Session.Messages[InProgressMessageIndex].ActivityId == ActivityId)
+        CancelAction = FSimpleDelegate::CreateLambda([this]() { StopGeneration(); });
+    return SNew(SHaybaActivityCard)
+        .ActivityModel(&Model)
+        .ActivityId(ActivityId)
+        .InitiallyExpanded(ExpandedActivityIds.Contains(ActivityId))
+        .OnExpansionChanged(FOnHaybaActivityExpansionChanged::CreateLambda([this](const FString& ChangedId, bool bExpanded)
+        {
+            if (bExpanded) ExpandedActivityIds.Add(ChangedId);
+            else ExpandedActivityIds.Remove(ChangedId);
+        }))
+        .OnApprove(FSimpleDelegate::CreateLambda([this, ActivityId]() { ApproveActivity(ActivityId); }))
+        .OnReject(FSimpleDelegate::CreateLambda([this, ActivityId]() { RejectActivity(ActivityId); }))
+        .OnCancel(CancelAction);
 }
 
 void SHaybaMCPChatPanel::ScrollToBottomIfPinned()
@@ -845,7 +787,7 @@ FReply SHaybaMCPChatPanel::OnSendOrStop()
 
 FReply SHaybaMCPChatPanel::OnSendCurrentInput()
 {
-    if (!InputBox.IsValid()) return FReply::Handled();
+    if (!CanSend() || !InputBox.IsValid()) return FReply::Handled();
     FString Text = InputBox->GetText().ToString().TrimStartAndEnd();
     if (Text.IsEmpty()) return FReply::Handled();
 
@@ -874,6 +816,7 @@ void SHaybaMCPChatPanel::StopGeneration()
     // Defensively disarm the plan gate too, in case Stop is pressed while parked
     // at the approval gate (Cancel() above already notifies the server).
     bAwaitingPlanApproval = false;
+    PendingActivityId.Empty();
     // Belt-and-braces if there is no live client (shouldn't happen while
     // bIsStreaming): tag the partial reply and reset local flags.
     if (!AgentClient.IsValid())
@@ -914,6 +857,7 @@ FReply SHaybaMCPChatPanel::OnNewConversation()
     }
     bAwaitingPlanApproval = false;
     bIsStreaming = false;
+    PendingActivityId.Empty();
     InProgressMessageIndex = INDEX_NONE;
     InProgressAssistantText.Reset();
 
@@ -1109,7 +1053,7 @@ void SHaybaMCPChatPanel::BeginInProgressBubble()
 {
     InProgressAssistantText.Reset();
 
-    FHaybaMCPChatMessage Placeholder;
+    FHaybaMCPChatMessage Placeholder{};
     Placeholder.bFromUser = false;
     Placeholder.Text      = TEXT("…");
     Session.Messages.Add(Placeholder);
@@ -1144,7 +1088,7 @@ void SHaybaMCPChatPanel::FinalizeInProgressBubble(const FString& FallbackText)
     const bool bEmpty = InProgressAssistantText.IsEmpty();
     if (bEmpty)
     {
-        if (FallbackText.IsEmpty())
+        if (FallbackText.IsEmpty() && Session.Messages[InProgressMessageIndex].ActivityId.IsEmpty())
         {
             Session.Messages.RemoveAt(InProgressMessageIndex);
         }
@@ -1179,9 +1123,18 @@ void SHaybaMCPChatPanel::HandleActivityEvent(const FJsonObject& Event)
 {
     FString Type;
     Event.TryGetStringField(TEXT("type"), Type);
+    FString ActivityId;
+    Event.TryGetStringField(TEXT("activityId"), ActivityId);
+    if (Type == TEXT("activity_started") && !ActivityId.IsEmpty())
+    {
+        if (InProgressMessageIndex == INDEX_NONE) BeginInProgressBubble();
+        if (Session.Messages.IsValidIndex(InProgressMessageIndex))
+            Session.Messages[InProgressMessageIndex].ActivityId = ActivityId;
+    }
     if (Type == TEXT("approval_requested"))
     {
         bAwaitingPlanApproval = true;
+        PendingActivityId = ActivityId;
         Toast(LOCTEXT("AgentApproval", "Review the proposed action in this conversation."));
     }
     const bool bPinned = IsScrolledNearBottom();
@@ -1226,10 +1179,16 @@ void SHaybaMCPChatPanel::HandlePlanApproved()
 
     if (!AgentClient.IsValid()) return;
 
-    // Resume the paused turn into a fresh in-progress bubble.
+    // Continue in the same transcript row so the activity does not jump to the
+    // end or duplicate its approval card after the resume.
     Session.bWaitingForAI = true;
     bIsStreaming = true;
-    BeginInProgressBubble();
+    InProgressMessageIndex = Session.Messages.IndexOfByPredicate([this](const FHaybaMCPChatMessage& Message)
+    {
+        return Message.ActivityId == PendingActivityId;
+    });
+    if (InProgressMessageIndex == INDEX_NONE) BeginInProgressBubble();
+    else InProgressAssistantText = Session.Messages[InProgressMessageIndex].Text;
     AgentClient->ApproveAndResume();
 
 }

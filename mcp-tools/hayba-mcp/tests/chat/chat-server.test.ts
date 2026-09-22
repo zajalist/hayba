@@ -179,6 +179,25 @@ describe('sidecar SSE chat server', () => {
     expect(frames.at(-1)!.event).toBe('done');
   });
 
+  it('withholds unclassified tools in Explore mode', async () => {
+    let dispatches = 0;
+    ({ server, url } = startApp({
+      createClient: makeFakeClientFactory([
+        { content: null, toolCalls: [{ id: 'unknown', name: 'custom_action', input: {} }], stopReason: 'tool_use' },
+        { content: 'That action is unavailable in Explore.', toolCalls: [], stopReason: 'end_turn' },
+      ]) as never,
+      tools: [{ name: 'custom_action', description: 'unknown effect', input_schema: { type: 'object', properties: {} } }],
+      dispatchTool: async () => { dispatches++; return { ok: true }; },
+    }));
+    const res = await fetch(`${url}/chat/stream`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ session_id: 'mode-unknown', prompt: 'do it', provider: 'mock', mode: 'explore' }),
+    });
+    const frames = await readAllFrames(res.body!);
+    expect(dispatches).toBe(0);
+    expect(frames.find((frame) => frame.event === 'tool_result')!.data).toMatchObject({ isError: true });
+  });
+
   it('streams ordered SSE frames: tool_call → tool_result → text_delta → done', async () => {
     let dispatchCount = 0;
     ({ server, url } = startApp({
