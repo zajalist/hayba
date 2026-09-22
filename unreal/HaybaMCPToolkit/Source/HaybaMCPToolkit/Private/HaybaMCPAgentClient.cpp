@@ -165,13 +165,19 @@ void FHaybaMCPAgentClient::PostConfig(const FString& UserPrompt)
 // ─────────────────────────────────────────────────────────────────────────────
 void FHaybaMCPAgentClient::StartStream(const FString& UserPrompt)
 {
+	CreateStreamRequest(UserPrompt)->ProcessRequest();
+}
+
+TSharedRef<IHttpRequest, ESPMode::ThreadSafe> FHaybaMCPAgentClient::CreateStreamRequest(const FString& UserPrompt)
+{
 	const FHaybaMCPSettings& Settings = FHaybaMCPSettings::Get();
 	const FString StreamUrl = Settings.SidecarURL / TEXT("chat/stream");
 
 	// Reset per-turn parse state.
 	ParseCursor = 0;
 	AccumulatedText.Empty();
-	StreamActivityIds.Empty();
+	// An approval resume may fail before its first semantic frame. Keep its
+	// unresolved identity across requests so that loss can still mark it Unknown.
 	bStreaming = true;
 
 	TSharedRef<FJsonObject> Body = MakeShared<FJsonObject>();
@@ -238,7 +244,7 @@ void FHaybaMCPAgentClient::StartStream(const FString& UserPrompt)
 		});
 
 	UE_LOG(LogHaybaAgentClient, Verbose, TEXT("POST /chat/stream session=%s"), *SessionId);
-	Request->ProcessRequest();
+	return Request;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -348,7 +354,11 @@ void FHaybaMCPAgentClient::DispatchFrame(const FString& FrameBlock)
 		if (!DecodeActivityEvent(EventType, DataStr, Event)) return;
 		FHaybaMCPModule* Module = FModuleManager::GetModulePtr<FHaybaMCPModule>(TEXT("HaybaMCPToolkit"));
 		if (!Module || !Module->GetActivityModel().ApplyEvent(*Event)) return;
-		StreamActivityIds.Add(Event->GetStringField(TEXT("activityId")));
+		const FString ActivityId = Event->GetStringField(TEXT("activityId"));
+		if (EventType == TEXT("activity_completed") || EventType == TEXT("error"))
+			StreamActivityIds.Remove(ActivityId);
+		else
+			StreamActivityIds.Add(ActivityId);
 		// A pause is an intentional stream boundary, not a disconnect.
 		if (EventType == TEXT("approval_requested") || EventType == TEXT("activity_completed") || EventType == TEXT("error"))
 			bTerminalEmitted = true;

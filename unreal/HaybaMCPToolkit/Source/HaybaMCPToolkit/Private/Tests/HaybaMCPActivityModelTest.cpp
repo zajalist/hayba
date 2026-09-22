@@ -277,4 +277,44 @@ bool FHaybaActivityClientFramesTest::RunTest(const FString&)
     TestEqual(TEXT("legacy text delegate retained"), Deltas, 1);
     return true;
 }
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FHaybaActivityResumeDisconnectTest, "Hayba.MCP.ActivityModel.ResumeDisconnect",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FHaybaActivityResumeDisconnectTest::RunTest(const FString&)
+{
+    FHaybaActivityModel& Model = FModuleManager::LoadModuleChecked<FHaybaMCPModule>(TEXT("HaybaMCPToolkit")).GetActivityModel();
+    for (const bool bResumeGap : { false, true })
+    {
+        auto Client = MakeShared<FHaybaMCPAgentClient>();
+        const FString Id = FGuid::NewGuid().ToString();
+        auto Frame = [&Id](const TCHAR* Type, const TCHAR* Payload)
+        {
+            return FString::Printf(TEXT("event: %s\ndata: %s"), Type, *FString(Payload).Replace(TEXT("a1"), *Id));
+        };
+        Client->DispatchFrame(Frame(TEXT("activity_started"), Start));
+        Client->DispatchFrame(Frame(TEXT("approval_requested"), Approval));
+        TestTrue(TEXT("approval identity is initially resolvable"), Model.CanResolveApproval(Id, TEXT("p1")));
+
+        // Same request preparation as StartStream after PostApprove succeeds.
+        // Do not send HTTP: inject the outcome through the real request callback.
+        Client->bTerminalEmitted = false;
+        const auto Request = Client->CreateStreamRequest(FString());
+        if (bResumeGap)
+        {
+            Client->DispatchFrame(TEXT("event: error\ndata: {\"code\":\"resume_gap\"}"));
+        }
+        else
+        {
+            Request->OnProcessRequestComplete().Execute(Request, nullptr, false);
+        }
+        TestTrue(bResumeGap ? TEXT("gap before semantic frame becomes Unknown") : TEXT("transport failure before semantic frame becomes Unknown"),
+            Model.FindActivity(Id)->State == EHaybaActivityState::Unknown);
+        TestFalse(TEXT("uncertain resume cannot resolve approval again"), Model.CanResolveApproval(Id, TEXT("p1")));
+        TestTrue(TEXT("approval identity retained for reconciliation"), Model.FindActivity(Id)->Approval.IsSet());
+        TestTrue(TEXT("disconnect never infers success or cancellation"), Model.FindActivity(Id)->Outcome.IsEmpty());
+        Request->OnRequestProgress64().Unbind();
+        Request->OnProcessRequestComplete().Unbind();
+        Client->StreamRequest.Reset();
+    }
+    return true;
+}
 #endif

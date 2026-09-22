@@ -149,8 +149,11 @@ public:
 
 private:
     friend class FHaybaActivityClientFramesTest;
+    friend class FHaybaActivityResumeDisconnectTest;
 	void PostConfig(const FString& UserPrompt);
 	void StartStream(const FString& UserPrompt);
+	/** Prepare callbacks/state separately from sending, so transport outcomes can be tested offline. */
+	TSharedRef<IHttpRequest, ESPMode::ThreadSafe> CreateStreamRequest(const FString& UserPrompt);
 	void PostApprove();
 
 	/** Fire-and-forget POST /chat/cancel with {session_id} (no-op if no session). */
@@ -178,6 +181,6 @@ private:
 	int32 ParseCursor = 0;
 	/** Accumulated assistant text (for partial_text on local cancel). */
 	FString AccumulatedText;
-	/** Only identities seen on this client; unrelated sessions are never invalidated. */
+	/** Unresolved identities owned by this client, retained across approval resume requests. */
 	TSet<FString> StreamActivityIds;
 };
