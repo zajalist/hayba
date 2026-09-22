@@ -128,7 +128,7 @@ function reject(code: ActivityTransitionErrorCode): never {
  * Pure single-activity reducer; null denotes an activity not started yet.
  * Resume is explicit and bound to the pending approval ID. It represents an
  * already authorized resume, not an authorization decision or tool dispatch.
- * Only an identical terminal completion can be replayed idempotently.
+ * Every event after termination is rejected, including identical completions.
  */
 export function reduceActivity(state: ActivityState | null, input: AgentStreamEvent): ActivityState {
   const event = ActivityEventSchema.parse(input);
@@ -147,8 +147,6 @@ export function reduceActivity(state: ActivityState | null, input: AgentStreamEv
   }
   if (state.activityId !== event.activityId) return reject('ACTIVITY_ID_MISMATCH');
   if (state.status === 'succeeded' || state.status === 'failed') {
-    // Both events have been schema-parsed, giving fields a canonical order.
-    if (event.type === 'activity_completed' && JSON.stringify(state.completion) === JSON.stringify(event)) return state;
     return reject('ACTIVITY_TERMINAL');
   }
   switch (event.type) {

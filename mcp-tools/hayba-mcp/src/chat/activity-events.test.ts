@@ -85,13 +85,19 @@ describe('reduceActivity', () => {
     expect(active.steps[0].status).toBe('running');
   });
 
-  it('treats an exact duplicate completion as idempotent but rejects conflicting completion', () => {
-    const state = replay(start, complete);
-    expect(reduceActivity(state, complete)).toBe(state);
-    expect(() => reduceActivity(state, { ...complete, outcome: 'failed' })).toThrowError(
-      expect.objectContaining({ code: 'ACTIVITY_TERMINAL' }),
-    );
-  });
+  it.each(['succeeded', 'failed', 'cancelled'] as const)(
+    'rejects identical and conflicting completions after %s',
+    (outcome) => {
+      const terminal = { ...complete, outcome };
+      const state = replay(start, terminal);
+      expect(() => reduceActivity(state, terminal)).toThrowError(
+        expect.objectContaining({ code: 'ACTIVITY_TERMINAL' }),
+      );
+      expect(() =>
+        reduceActivity(state, { ...terminal, outcome: outcome === 'succeeded' ? 'failed' : 'succeeded' }),
+      ).toThrowError(expect.objectContaining({ code: 'ACTIVITY_TERMINAL' }));
+    },
+  );
 
   it('pauses and resumes only with the matching approval identity', () => {
     const paused = replay(start, running, approval);
@@ -144,6 +150,7 @@ describe('reduceActivity', () => {
       error: { error: 'Disconnected', kind: 'network' },
     });
     expect(state.approval).toBeUndefined();
+    expect(() => reduceActivity(state, complete)).toThrowError(expect.objectContaining({ code: 'ACTIVITY_TERMINAL' }));
     expect(() => reduceActivity(state, { type: 'message_delta', activityId: 'a1', text: 'oops' })).toThrowError(
       expect.objectContaining({ code: 'ACTIVITY_TERMINAL' }),
     );
