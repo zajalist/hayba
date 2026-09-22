@@ -1,4 +1,3 @@
-import { isDeepStrictEqual } from 'node:util';
 import { z } from 'zod';
 import { DirectionalVerdictSchema, ResourceRefSchema } from '../tools/workflows/contracts.js';
 
@@ -156,14 +155,19 @@ export function reduceActivity(state: ActivityState | null, input: AgentStreamEv
     case 'activity_started':
       if (state.status !== 'awaiting_approval') return reject('ACTIVITY_ALREADY_STARTED');
       if (event.resumeApprovalId !== state.approval?.approvalId) return reject('APPROVAL_MISMATCH');
-      return { ...state, status: 'running', approval: undefined };
+      // The gated call never executed. Retire that request before the resumed
+      // model turn re-announces it (possibly with a new provider call ID).
+      return {
+        ...state,
+        status: 'running',
+        approval: undefined,
+        steps: state.steps.filter((step) => step.id !== state.approval?.call.id || step.status !== 'running'),
+      };
     case 'message_delta':
       return { ...state, text: state.text + event.text };
     case 'activity_step': {
       if (state.status === 'awaiting_approval') return reject('APPROVAL_REQUIRED');
       const index = state.steps.findIndex((step) => step.id === event.step.id);
-      // A resumed model turn can re-announce the same paused tool call.
-      if (event.step.status === 'running' && isDeepStrictEqual(state.steps[index], event.step)) return state;
       if (
         event.step.status === 'running'
           ? index !== -1

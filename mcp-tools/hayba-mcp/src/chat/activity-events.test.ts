@@ -103,7 +103,8 @@ describe('reduceActivity', () => {
     const resumed = reduceActivity(paused, { ...start, resumeApprovalId: 'p1' });
     expect(resumed.status).toBe('running');
     expect(resumed.approval).toBeUndefined();
-    expect(reduceActivity(resumed, finished).steps[0].status).toBe('succeeded');
+    expect(resumed.steps).toEqual([]);
+    expect(reduceActivity(reduceActivity(resumed, running), finished).steps[0].status).toBe('succeeded');
     expect(paused.approval?.approvalId).toBe('p1');
   });
 

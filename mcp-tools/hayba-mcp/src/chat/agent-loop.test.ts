@@ -143,25 +143,30 @@ describe('semantic runAgentLoop', () => {
     },
   );
 
-  it('resumes the same activity through a one-shot call-bound approval', async () => {
-    const params = baseParams({
-      activityId: 'a1',
-      planMode: true,
-      client: new FakeLLMClient([toolResponse('actor_spawn', {}, 'c1')]),
-      dispatchTool: async () => ({ ok: true }),
-    });
-    const paused = reduceStream(await collect(runSemanticAgentLoop(params)));
-    const events = await collect(
-      runSemanticAgentLoop({
-        ...params,
-        client: new FakeLLMClient([toolResponse('actor_spawn', {}, 'c1'), textResponse('Done')]),
-        resumeApprovalId: paused.approval!.approvalId,
-        approvedCall: { name: 'actor_spawn', argsHash: '{}' },
-      }),
-    );
-    expect(events[0]).toMatchObject({ type: 'activity_started', resumeApprovalId: paused.approval!.approvalId });
-    expect(reduceStream(events, paused).status).toBe('succeeded');
-  });
+  it.each(['c1', 'new-call-id'])(
+    'resumes the same activity with call ID %s through a one-shot approval',
+    async (id) => {
+      const params = baseParams({
+        activityId: 'a1',
+        planMode: true,
+        client: new FakeLLMClient([toolResponse('actor_spawn', {}, 'c1')]),
+        dispatchTool: async () => ({ ok: true }),
+      });
+      const paused = reduceStream(await collect(runSemanticAgentLoop(params)));
+      const events = await collect(
+        runSemanticAgentLoop({
+          ...params,
+          client: new FakeLLMClient([toolResponse('actor_spawn', {}, id), textResponse('Done')]),
+          resumeApprovalId: paused.approval!.approvalId,
+          approvedCall: { name: 'actor_spawn', argsHash: '{}' },
+        }),
+      );
+      expect(events[0]).toMatchObject({ type: 'activity_started', resumeApprovalId: paused.approval!.approvalId });
+      const completed = reduceStream(events, paused);
+      expect(completed.status).toBe('succeeded');
+      expect(completed.steps).toEqual([{ status: 'succeeded', id, name: 'actor_spawn', result: { ok: true } }]);
+    },
+  );
 
   it('ends cancellation with exactly one terminal event', async () => {
     const controller = new AbortController();
