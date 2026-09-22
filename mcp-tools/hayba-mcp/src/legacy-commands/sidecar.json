@@ -4774,6 +4774,26 @@
       "has_ts_wrapper": false,
       "notes": "Applies an impulse to a primitive component in the editor world and reports the resulting linear velocity. A component that is not simulating physics discards an impulse silently, so that case is REFUSED with a message naming the fix rather than answering applied:true — the old reply was true of the call and false of the world. Turn simulation on with physics_set_simulate first."
     },
+    "world_inspect": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPWorldPartitionHandler::WorldInspect",
+      "params": [],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          { "name": "world", "type": "object", "description": "type, current_level (package path), coordinate_system, scale (world_units_per_meter), cached source_control_ready, and explicit enumeration/readiness scopes" },
+          { "name": "landscape", "type": "array", "description": "Loaded landscape proxies: name, path, label, component_count; empty array if none loaded" },
+          { "name": "partition", "type": "object", "description": "enabled, runtime_grids (unique sorted grid names observed on loaded actors), enumeration_scope; not a complete runtime-hash configuration" },
+          { "name": "data_layers", "type": "array", "description": "Unique sorted short names of data-layer instances already known to the world's data-layer manager" },
+          { "name": "hlod", "type": "object", "description": "layers (unique sorted asset paths referenced by loaded actors and the world default), enumeration_scope; no asset loads" },
+          { "name": "capabilities", "type": "object", "description": "Explicit world_partition and hlod compiled-support booleans, web_browser loaded-module boolean and web_browser_scope" },
+          { "name": "save_ready", "type": "boolean", "description": "Whether the editor map has an existing writable package file; false for unsaved/transient maps. External actor packages and source-control checkout are not checked." }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": true,
+      "notes": "Read-only in-memory snapshot of the current editor world; errors when no editor world exists. Does not load/save assets, load modules, change streaming, query remote source control, or mutate the world. Empty arrays are always present. The TypeScript world_inspect wrapper normalizes this grouped snake_case wire payload into WorldCapabilityReport."
+    },
     "wp_get_cells": {
       "aliases": [],
       "handler_cpp": "FHaybaMCPWorldPartitionHandler::WpGetCells",

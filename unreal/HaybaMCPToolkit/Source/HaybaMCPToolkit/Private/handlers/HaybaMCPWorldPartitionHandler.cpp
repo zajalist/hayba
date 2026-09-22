@@ -5,6 +5,17 @@
 #include "Engine/World.h"
 #include "GameFramework/Actor.h"
 #include "WorldPartition/WorldPartition.h"
+#include "WorldPartition/DataLayer/DataLayerManager.h"
+#include "WorldPartition/DataLayer/DataLayerInstance.h"
+#include "WorldPartition/HLOD/HLODLayer.h"
+#include "LandscapeProxy.h"
+#include "GameFramework/WorldSettings.h"
+#include "HAL/FileManager.h"
+#include "Misc/PackageName.h"
+#include "Modules/ModuleManager.h"
+#include "ISourceControlModule.h"
+#include "ISourceControlProvider.h"
+#include "UObject/Package.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogHaybaMCPWP, Log, All);
 
@@ -24,6 +35,7 @@ namespace
 TArray<FString> FHaybaMCPWorldPartitionHandler::GetCommands() const
 {
     return {
+        TEXT("world_inspect"),
         TEXT("wp_get_cells"),
         TEXT("wp_load_cell"),
         TEXT("wp_get_streaming_state"),
@@ -32,10 +44,118 @@ TArray<FString> FHaybaMCPWorldPartitionHandler::GetCommands() const
 
 FHaybaHandlerResult FHaybaMCPWorldPartitionHandler::Handle(const FString& Cmd, const TSharedPtr<FJsonObject>& P)
 {
+    if (Cmd == TEXT("world_inspect"))           return WorldInspect(P);
     if (Cmd == TEXT("wp_get_cells"))            return WpGetCells(P);
     if (Cmd == TEXT("wp_load_cell"))            return WpLoadCell(P);
     if (Cmd == TEXT("wp_get_streaming_state"))  return WpGetStreamingState(P);
     return FHaybaHandlerResult::Err(FString::Printf(TEXT("WPHandler: unknown command %s"), *Cmd));
+}
+
+FHaybaHandlerResult FHaybaMCPWorldPartitionHandler::WorldInspect(const TSharedPtr<FJsonObject>& P)
+{
+    UWorld* World = EditorWorld();
+    if (!World) return FHaybaHandlerResult::Err(TEXT("world_inspect: no editor world"));
+
+    UWorldPartition* WP = World->GetWorldPartition();
+    TSet<FString> RuntimeGrids;
+    TSet<FString> HlodLayers;
+    TSet<FString> DataLayers;
+    TArray<TSharedPtr<FJsonValue>> Landscapes;
+    // This is an in-memory snapshot. Iteration does not load unloaded actors,
+    // resolve soft references, or enumerate the asset registry.
+    for (TActorIterator<AActor> It(World); It; ++It)
+    {
+        AActor* Actor = *It;
+        if (WP && !Actor->GetRuntimeGrid().IsNone())
+            RuntimeGrids.Add(Actor->GetRuntimeGrid().ToString());
+        if (WP)
+        {
+            if (const UHLODLayer* Layer = Actor->GetHLODLayer()) HlodLayers.Add(Layer->GetPathName());
+        }
+        if (const ALandscapeProxy* Landscape = Cast<ALandscapeProxy>(Actor))
+        {
+            TSharedPtr<FJsonObject> Entry = MakeShared<FJsonObject>();
+            Entry->SetStringField(TEXT("name"), Landscape->GetName());
+            Entry->SetStringField(TEXT("path"), Landscape->GetPathName());
+            Entry->SetStringField(TEXT("label"), Landscape->GetActorLabel(false));
+            Entry->SetNumberField(TEXT("component_count"), Landscape->LandscapeComponents.Num());
+            Landscapes.Add(MakeShared<FJsonValueObject>(Entry));
+        }
+    }
+    Landscapes.Sort([](const TSharedPtr<FJsonValue>& A, const TSharedPtr<FJsonValue>& B)
+    {
+        return A->AsObject()->GetStringField(TEXT("path")) < B->AsObject()->GetStringField(TEXT("path"));
+    });
+    if (WP)
+    {
+        if (const UHLODLayer* Layer = WP->GetDefaultHLODLayer()) HlodLayers.Add(Layer->GetPathName());
+    }
+    if (const UDataLayerManager* Manager = World->GetDataLayerManager())
+    {
+        Manager->ForEachDataLayerInstance([&DataLayers](UDataLayerInstance* Layer)
+        {
+            if (Layer) DataLayers.Add(Layer->GetDataLayerShortName());
+            return true;
+        });
+    }
+    auto SortedStrings = [](const TSet<FString>& Values)
+    {
+        TArray<FString> Sorted = Values.Array();
+        Sorted.Sort();
+        TArray<TSharedPtr<FJsonValue>> Result;
+        for (const FString& Value : Sorted) Result.Add(MakeShared<FJsonValueString>(Value));
+        return Result;
+    };
+
+    // GetModulePtr never loads a module or initiates a source-control operation.
+    const ISourceControlModule* SourceControl = FModuleManager::GetModulePtr<ISourceControlModule>(TEXT("SourceControl"));
+    const bool bSourceControlReady = SourceControl && SourceControl->IsEnabled()
+        && SourceControl->GetProvider().IsAvailable();
+    UPackage* Package = World->GetPackage();
+    FString MapFilename;
+    const bool bSaveReady = World->WorldType == EWorldType::Editor
+        && Package && !Package->HasAnyFlags(RF_Transient)
+        && FPackageName::DoesPackageExist(Package->GetName(), &MapFilename)
+        && !IFileManager::Get().IsReadOnly(*MapFilename);
+
+    TSharedPtr<FJsonObject> WorldInfo = MakeShared<FJsonObject>();
+    WorldInfo->SetStringField(TEXT("type"), World->WorldType == EWorldType::Editor ? TEXT("Editor") : TEXT("Other"));
+    WorldInfo->SetStringField(TEXT("current_level"), Package ? Package->GetName() : TEXT(""));
+    WorldInfo->SetStringField(TEXT("coordinate_system"), TEXT("left_handed_z_up_centimeters"));
+    if (const AWorldSettings* Settings = World->GetWorldSettings(false, false))
+        WorldInfo->SetNumberField(TEXT("scale"), Settings->WorldToMeters);
+    else
+        WorldInfo->SetField(TEXT("scale"), MakeShared<FJsonValueNull>());
+    WorldInfo->SetStringField(TEXT("scale_unit"), TEXT("world_units_per_meter"));
+    WorldInfo->SetBoolField(TEXT("source_control_ready"), bSourceControlReady);
+    WorldInfo->SetStringField(TEXT("source_control_scope"), TEXT("cached_provider_availability"));
+    WorldInfo->SetStringField(TEXT("save_readiness_scope"), TEXT("existing_writable_map_file_only; external_actor_packages_and_checkout_not_checked"));
+    WorldInfo->SetStringField(TEXT("landscape_scope"), TEXT("loaded_actors"));
+
+    TSharedPtr<FJsonObject> Partition = MakeShared<FJsonObject>();
+    Partition->SetBoolField(TEXT("enabled"), WP != nullptr);
+    Partition->SetArrayField(TEXT("runtime_grids"), SortedStrings(RuntimeGrids));
+    Partition->SetStringField(TEXT("enumeration_scope"), TEXT("loaded_actors"));
+    TSharedPtr<FJsonObject> Hlod = MakeShared<FJsonObject>();
+    Hlod->SetArrayField(TEXT("layers"), SortedStrings(HlodLayers));
+    Hlod->SetStringField(TEXT("enumeration_scope"), TEXT("loaded_actors_and_world_default"));
+    TSharedPtr<FJsonObject> Capabilities = MakeShared<FJsonObject>();
+    // Both engine features are compiled dependencies of this editor module;
+    // availability is distinct from whether this map has enabled partitioning.
+    Capabilities->SetBoolField(TEXT("world_partition"), true);
+    Capabilities->SetBoolField(TEXT("hlod"), true);
+    Capabilities->SetBoolField(TEXT("web_browser"), FModuleManager::Get().IsModuleLoaded(TEXT("WebBrowser")));
+    Capabilities->SetStringField(TEXT("web_browser_scope"), TEXT("module_loaded"));
+
+    TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
+    Out->SetObjectField(TEXT("world"), WorldInfo);
+    Out->SetArrayField(TEXT("landscape"), Landscapes);
+    Out->SetObjectField(TEXT("partition"), Partition);
+    Out->SetArrayField(TEXT("data_layers"), SortedStrings(DataLayers));
+    Out->SetObjectField(TEXT("hlod"), Hlod);
+    Out->SetObjectField(TEXT("capabilities"), Capabilities);
+    Out->SetBoolField(TEXT("save_ready"), bSaveReady);
+    return FHaybaHandlerResult::Ok(Out);
 }
 
 FHaybaHandlerResult FHaybaMCPWorldPartitionHandler::WpGetCells(const TSharedPtr<FJsonObject>& P)

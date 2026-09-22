@@ -1,99 +1,89 @@
 import { describe, expect, it } from 'vitest';
+import { getSidecar } from '../../legacy-commands/index.js';
 import { InMemoryToolExecutor, setDefaultSender } from '../tool-executor.js';
-import {
-  normalizeWorldFacts,
-  worldInspectDescriptor,
-} from './world-inspect.js';
+import { normalizeWorldFacts, worldInspectDescriptor } from './world-inspect.js';
+
+// Canonical native wire payload: the public report deliberately uses camelCase.
+function snapshot(enabled = true) {
+  return {
+    world: {
+      type: 'Editor', current_level: '/Game/Maps/OpenWorld',
+      coordinate_system: 'left_handed_z_up_centimeters', scale: 100,
+      source_control_ready: false,
+    },
+    landscape: enabled ? [{ name: 'Landscape_Main' }] : [],
+    partition: { enabled, runtime_grids: enabled ? ['MainGrid'] : [], enumeration_scope: 'loaded_actors' },
+    data_layers: enabled ? ['Gameplay'] : [],
+    hlod: { layers: enabled ? ['/Game/MainHLOD.MainHLOD'] : [], enumeration_scope: 'loaded_actors_and_world_default' },
+    capabilities: { world_partition: true, hlod: true, web_browser: true },
+    save_ready: true,
+  };
+}
 
 describe('normalizeWorldFacts', () => {
-  it('normalizes an explicitly partitioned world without inventing capability gaps', () => {
-    const report = normalizeWorldFacts({
-      worldType: 'OpenWorld',
-      currentLevel: '/Game/Maps/OpenWorld',
-      landscapeActors: [{ name: 'Landscape_Main', bounds: [0, 0, 1000, 1000] }],
-      isPartitioned: true,
-      supportsWorldPartition: true,
-      supportsHlod: true,
-      hasWebBrowser: true,
-      runtimeGrids: ['MainGrid'],
-      dataLayers: ['Gameplay'],
-      hlodLayers: ['MainHLOD'],
+  it('normalizes the native grouped snapshot into the public capability report', () => {
+    const report = normalizeWorldFacts(snapshot());
+    expect(report.facts).toEqual({
+      worldType: 'Editor', currentLevel: '/Game/Maps/OpenWorld',
+      landscapeActors: [{ name: 'Landscape_Main' }],
+      worldPartition: { enabled: true, runtimeGrids: ['MainGrid'], dataLayers: ['Gameplay'], hlodLayers: ['/Game/MainHLOD.MainHLOD'] },
+      coordinateSystem: 'left_handed_z_up_centimeters', scale: 100,
+      sourceControlReady: false, saveReady: true,
+      capabilities: { webBrowser: true, worldPartition: true, hlod: true },
     });
-
-    expect(report.facts.worldPartition).toMatchObject({ enabled: true, runtimeGrids: ['MainGrid'] });
     expect(report.blockingErrors).toEqual([]);
     expect(report.warnings).toEqual([]);
-    expect(report.recommendedDefaults).toMatchObject({ partition: { mode: 'preserve' } });
+    expect(report.recommendedDefaults.partition.mode).toBe('preserve');
   });
 
-  it('recommends configuration for a non-partitioned world when support is reported', () => {
-    const report = normalizeWorldFacts({
-      isPartitioned: false,
-      supportsWorldPartition: true,
-      supportsHlod: true,
-      hasWebBrowser: true,
-      runtimeGrids: [],
-      dataLayers: [],
-      hlodLayers: [],
-    });
-
-    expect(report.facts.worldPartition.enabled).toBe(false);
+  it('recommends configuration for an empty non-partitioned world', () => {
+    const report = normalizeWorldFacts(snapshot(false));
+    expect(report.facts.worldPartition).toEqual({ enabled: false, runtimeGrids: [], dataLayers: [], hlodLayers: [] });
+    expect(report.facts.landscapeActors).toEqual([]);
     expect(report.blockingErrors).toEqual([]);
-    expect(report.recommendedDefaults).toMatchObject({ partition: { mode: 'configure' } });
+    expect(report.recommendedDefaults.partition.mode).toBe('configure');
   });
 
-  it('reports missing WebBrowser and World Partition support with stable codes', () => {
-    const report = normalizeWorldFacts({
-      isPartitioned: false,
-      supportsWorldPartition: false,
-      supportsHlod: false,
-      hasWebBrowser: false,
-      runtimeGrids: [],
-      dataLayers: [],
-      hlodLayers: [],
-    });
-
+  it('reports unavailable capabilities with stable codes', () => {
+    const report = normalizeWorldFacts({ ...snapshot(false), capabilities: { world_partition: false, hlod: false, web_browser: false } });
     expect(report.blockingErrors.map((result) => result.code)).toContain('world_partition_unavailable');
-    expect(report.warnings.map((result) => result.code)).toEqual(
-      expect.arrayContaining(['web_browser_unavailable', 'hlod_unavailable']),
-    );
+    expect(report.warnings.map((result) => result.code)).toEqual(['hlod_unavailable', 'web_browser_unavailable']);
   });
 
-  it('treats malformed UE output as a blocking inspection failure', () => {
-    const report = normalizeWorldFacts('World Partition is probably available');
-
-    expect(report.blockingErrors.map((result) => result.code)).toContain('world_inspect_malformed');
-    expect(report.facts.worldPartition.enabled).toBe(false);
+  it.each([
+    'World Partition is probably available',
+    { ...snapshot(), capabilities: { world_partition: true, hlod: true, web_browser: 'true' } },
+    { ...snapshot(), partition: {} },
+    { ...snapshot(), landscape: undefined },
+    { ...snapshot(), data_layers: undefined },
+    { ...snapshot(), hlod: undefined },
+  ])('blocks malformed native snapshots', (raw) => {
+    expect(normalizeWorldFacts(raw).blockingErrors.map((result) => result.code)).toContain('world_inspect_malformed');
   });
 });
 
 describe('worldInspectDescriptor', () => {
-  it('executes only the world_inspect UE command and returns normalized facts', async () => {
+  it('executes world_inspect and normalizes its native grouped response', async () => {
     const executor = new InMemoryToolExecutor().on('world_inspect', (params) => {
       expect(params).toEqual({});
-      return {
-        ok: true,
-        data: {
-          isPartitioned: true,
-          supportsWorldPartition: true,
-          supportsHlod: true,
-          hasWebBrowser: true,
-          runtimeGrids: ['MainGrid'],
-          dataLayers: [],
-          hlodLayers: [],
-        },
-      };
+      return { ok: true, data: snapshot() };
     });
     setDefaultSender(executor.send);
+    try {
+      const result = await worldInspectDescriptor.handler({}, {} as never);
+      const content = result.content[0];
+      if (content.type !== 'text') throw new Error('world_inspect must return text content');
+      expect(JSON.parse(content.text)).toMatchObject({ facts: { worldPartition: { enabled: true } }, blockingErrors: [] });
+    } finally {
+      setDefaultSender(undefined as never);
+    }
+  });
 
-    const result = await worldInspectDescriptor.handler({}, {} as never);
-
-    expect(worldInspectDescriptor.name).toBe('world_inspect');
-    const content = result.content[0];
-    expect(content.type).toBe('text');
-    if (content.type !== 'text') throw new Error('world_inspect must return text content');
-    expect(JSON.parse(content.text)).toMatchObject({
-      facts: { worldPartition: { enabled: true } },
-    });
+  it('documents the native grouped result without generating a duplicate legacy wrapper', () => {
+    const entry = getSidecar().commands.world_inspect;
+    expect(entry).toMatchObject({ agent_callable: true, has_ts_wrapper: true, params: [] });
+    expect(entry.returns.fields?.map((field) => field.name)).toEqual([
+      'world', 'landscape', 'partition', 'data_layers', 'hlod', 'capabilities', 'save_ready',
+    ]);
   });
 });

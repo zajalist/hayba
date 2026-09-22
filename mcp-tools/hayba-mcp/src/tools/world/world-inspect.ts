@@ -89,37 +89,42 @@ function malformedReport(): WorldCapabilityReport {
 export function normalizeWorldFacts(raw: unknown): WorldCapabilityReport {
   if (!isRecord(raw)) return malformedReport();
 
-  const partition = isRecord(raw.worldPartition) ? raw.worldPartition : undefined;
-  const enabled = typeof raw.isPartitioned === 'boolean'
-    ? raw.isPartitioned
-    : partition?.enabled;
-  const worldPartitionSupported = typeof raw.supportsWorldPartition === 'boolean'
-    ? raw.supportsWorldPartition
-    : partition?.supported;
-  const hlodSupported = typeof raw.supportsHlod === 'boolean' ? raw.supportsHlod : raw.hlodSupported;
-  const webBrowserAvailable = typeof raw.hasWebBrowser === 'boolean' ? raw.hasWebBrowser : raw.webBrowserAvailable;
+  const world = isRecord(raw.world) ? raw.world : undefined;
+  const partition = isRecord(raw.partition) ? raw.partition : undefined;
+  const hlod = isRecord(raw.hlod) ? raw.hlod : undefined;
+  const capabilities = isRecord(raw.capabilities) ? raw.capabilities : undefined;
+  const enabled = partition?.enabled;
+  const worldPartitionSupported = capabilities?.world_partition;
+  const hlodSupported = capabilities?.hlod;
+  const webBrowserAvailable = capabilities?.web_browser;
 
   if (
-    typeof enabled !== 'boolean'
+    !world || !partition || !hlod
+    || !Array.isArray(raw.landscape)
+    || !Array.isArray(raw.data_layers)
+    || !Array.isArray(partition.runtime_grids)
+    || !Array.isArray(hlod.layers)
+    || typeof raw.save_ready !== 'boolean'
+    || typeof enabled !== 'boolean'
     || typeof worldPartitionSupported !== 'boolean'
     || typeof hlodSupported !== 'boolean'
     || typeof webBrowserAvailable !== 'boolean'
   ) return malformedReport();
 
   const facts: WorldFacts = {
-    worldType: stringOrNull(raw.worldType),
-    currentLevel: stringOrNull(raw.currentLevel),
-    landscapeActors: records(raw.landscapeActors ?? raw.landscapes),
+    worldType: stringOrNull(world.type),
+    currentLevel: stringOrNull(world.current_level),
+    landscapeActors: records(raw.landscape),
     worldPartition: {
       enabled,
-      runtimeGrids: strings(raw.runtimeGrids ?? partition?.runtimeGrids),
-      dataLayers: strings(raw.dataLayers ?? partition?.dataLayers),
-      hlodLayers: strings(raw.hlodLayers ?? partition?.hlodLayers),
+      runtimeGrids: strings(partition.runtime_grids),
+      dataLayers: strings(raw.data_layers),
+      hlodLayers: strings(hlod.layers),
     },
-    coordinateSystem: stringOrNull(raw.coordinateSystem),
-    scale: numberOrNull(raw.scale),
-    sourceControlReady: typeof raw.sourceControlReady === 'boolean' ? raw.sourceControlReady : null,
-    saveReady: typeof raw.saveReady === 'boolean' ? raw.saveReady : null,
+    coordinateSystem: stringOrNull(world.coordinate_system),
+    scale: numberOrNull(world.scale),
+    sourceControlReady: typeof world.source_control_ready === 'boolean' ? world.source_control_ready : null,
+    saveReady: raw.save_ready,
     capabilities: {
       webBrowser: webBrowserAvailable,
       worldPartition: worldPartitionSupported,
