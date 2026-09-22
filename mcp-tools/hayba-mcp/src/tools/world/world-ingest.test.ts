@@ -92,6 +92,41 @@ describe('runWorldIngest', () => {
     expect(dependencies.saveAndVerify).not.toHaveBeenCalled();
   });
 
+  it.each(['pending', 'running'] as const)('stops before HLOD and saving when partition configuration returns %s', async (status) => {
+    const { dependencies } = fixture();
+    const grid = { kind: 'runtime_grid', id: 'Main' };
+    dependencies.configurePartition.mockResolvedValue(stageResult('partition', status, { affectedResources: [grid] }));
+    const result = await runWorldIngest({
+      ...request, partition: { mode: 'configure', runtimeGrid: { name: 'Main' }, hlod: { build: 'auto' } },
+    }, dependencies);
+    expect(result.ok).toBe(false);
+    expect(result.stages.at(-1)).toMatchObject({
+      stage: 'partition', status: 'failed', code: 'stage_incomplete', affectedResources: [grid],
+    });
+    expect(result.affectedResources).toEqual([landscape, grid]);
+    expect(dependencies.configureHlod).not.toHaveBeenCalled();
+    expect(dependencies.saveAndVerify).not.toHaveBeenCalled();
+    expect(dependencies.validateWorld).not.toHaveBeenCalled();
+  });
+
+  it.each(['pending', 'running'] as const)('retains partition and HLOD resources without saving when HLOD returns %s', async (status) => {
+    const { dependencies } = fixture();
+    const grid = { kind: 'runtime_grid', id: 'Main' };
+    const hlod = { kind: 'hlod_layer', id: 'Terrain' };
+    dependencies.configurePartition.mockResolvedValue(stageResult('partition', 'succeeded', { affectedResources: [grid] }));
+    dependencies.configureHlod.mockResolvedValue(stageResult('hlod', status, { affectedResources: [hlod] }));
+    const result = await runWorldIngest({
+      ...request, partition: { mode: 'configure', runtimeGrid: { name: 'Main' }, hlod: { build: 'auto' } },
+    }, dependencies);
+    expect(result.ok).toBe(false);
+    expect(result.stages.at(-1)).toMatchObject({
+      stage: 'partition', status: 'failed', code: 'stage_incomplete', affectedResources: [grid, hlod],
+    });
+    expect(result.affectedResources).toEqual([landscape, grid, hlod]);
+    expect(dependencies.saveAndVerify).not.toHaveBeenCalled();
+    expect(dependencies.validateWorld).not.toHaveBeenCalled();
+  });
+
   it('refuses malformed inspection before import', async () => {
     const { dependencies } = fixture();
     dependencies.inspectWorld.mockResolvedValue(normalizeWorldFacts({}));

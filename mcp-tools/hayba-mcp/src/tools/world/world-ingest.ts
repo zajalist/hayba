@@ -231,14 +231,16 @@ async function partition(context: Context): Promise<WorkflowStageResult> {
   const results: WorkflowStageResult[] = [];
   if (partitionNeedsWrite(context) && !limitations.some((issue) => issue.code.startsWith('world_partition'))) {
     const { hlod: _hlod, ...configuration } = policy;
-    const result = await context.dependencies.configurePartition!(configuration);
+    const result = completedStageResult(await context.dependencies.configurePartition!(configuration));
     retain(context, result.affectedResources);
+    if (result.code === 'stage_incomplete') return result;
     results.push(result);
   }
   if (!results.some((result) => result.status === 'failed') && hlodRequested(policy)
     && !limitations.some((issue) => issue.code === 'hlod_unavailable')) {
-    const result = await context.dependencies.configureHlod!(policy.hlod!);
+    const result = completedStageResult(await context.dependencies.configureHlod!(policy.hlod!));
     retain(context, result.affectedResources);
+    if (result.code === 'stage_incomplete') return result;
     results.push(result);
   }
   const failure = results.find((result) => result.status === 'failed');
@@ -291,6 +293,12 @@ function errorMessage(error: unknown): string {
   return redactSecrets(error instanceof Error ? error.message : String(error)).value || 'Workflow stage failed';
 }
 
+function completedStageResult(result: WorkflowStageResult): WorkflowStageResult {
+  return result.status === 'pending' || result.status === 'running'
+    ? { ...result, status: 'failed', code: 'stage_incomplete', summary: 'Dependency returned without completing the stage' }
+    : result;
+}
+
 async function saveVerify(context: Context): Promise<WorkflowStageResult> {
   return context.dependencies.saveAndVerify(context.resources, context.report!);
 }
@@ -327,9 +335,7 @@ export async function runWorldIngest(request: WorldIngestRequest, dependencies: 
       }
     }
     retain(context, result.affectedResources);
-    if (result.status === 'pending' || result.status === 'running') {
-      result = { ...result, status: 'failed', code: 'stage_incomplete', summary: 'Dependency returned without completing the stage' };
-    }
+    result = completedStageResult(result);
     result = { ...result, stage: run.name, durationMs: performance.now() - started, affectedResources: [...context.stageResources] };
     stages.push(result);
     if (result.status === 'unsupported' && ['inspect', 'normalize', 'plan', 'terrain', 'saveVerify'].includes(run.name)) context.blocked = true;
