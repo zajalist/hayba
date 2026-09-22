@@ -44,7 +44,13 @@ import type { Express, Request, Response } from 'express';
 import type { AddressInfo } from 'node:net';
 import { createLLMClient, type LLMMessage } from '../agents/llm-client.js';
 import { getProvider } from '../agents/providers.js';
-import { runAgentLoop, argsHash, type AgentEvent, type ApprovedCall, type DispatchTool } from './agent-loop.js';
+import {
+  runLegacyAgentLoop as runAgentLoop,
+  argsHash,
+  type AgentEvent,
+  type ApprovedCall,
+  type DispatchTool,
+} from './agent-loop.js';
 import type { LLMTool, LLMUsage } from '../agents/llm-client.js';
 import { createChatDispatcher } from './tool-dispatch.js';
 import { getArchetype } from '../agents/agent-registry.js';

@@ -28,7 +28,9 @@
  * dispatch that also reaches TS-side captured handlers.
  */
 
+import { randomUUID } from 'node:crypto';
 import { z, type ZodRawShape, type ZodTypeAny } from 'zod';
+import type { AgentStreamEvent } from './activity-events.js';
 import type {
   LLMClient,
   LLMContentBlock,
@@ -273,6 +275,11 @@ export type AgentEvent =
   | { type: 'error'; error: string; kind?: string };
 
 export interface AgentLoopParams {
+  /** Stable identity supplied again when resuming a paused activity. */
+  activityId?: string;
+  activityTitle?: string;
+  /** Identity of the approval already authorized by the caller. */
+  resumeApprovalId?: string;
   client: LLMClient;
   system: string;
   messages: LLMMessage[];
@@ -326,21 +333,36 @@ function estimateTokens(text: string): number {
 /** Is a dispatch result the C++ Plan-Mode pause payload? */
 function isPlanModeRequired(result: unknown): result is { status: string; hint?: string } {
   if (typeof result !== 'object' || result === null) return false;
-  const payload = result as { status?: unknown; stages?: Array<{ status?: unknown; code?: unknown }>; content?: Array<{ type?: unknown; text?: string }> };
+  const payload = result as {
+    status?: unknown;
+    stages?: Array<{ status?: unknown; code?: unknown }>;
+    content?: Array<{ type?: unknown; text?: string }>;
+  };
   if (payload.status === 'plan_mode_required') return true;
-  if (Array.isArray(payload.stages) && payload.stages.some((stage) => stage?.status === 'pending' && stage.code === 'plan_mode_required')) return true;
+  if (
+    Array.isArray(payload.stages) &&
+    payload.stages.some((stage) => stage?.status === 'pending' && stage.code === 'plan_mode_required')
+  )
+    return true;
   // Direct MCP dispatch may retain text blocks instead of unwrapping JSON.
-  return Array.isArray(payload.content) && payload.content.some((block) => {
-    if (block.type !== 'text' || typeof block.text !== 'string') return false;
-    try { return isPlanModeRequired(JSON.parse(block.text)); } catch { return false; }
-  });
+  return (
+    Array.isArray(payload.content) &&
+    payload.content.some((block) => {
+      if (block.type !== 'text' || typeof block.text !== 'string') return false;
+      try {
+        return isPlanModeRequired(JSON.parse(block.text));
+      } catch {
+        return false;
+      }
+    })
+  );
 }
 
 /**
  * Run the agentic tool-calling loop. Yields normalized events; halts on
  * end_turn, maxSteps, token budget, abort, or a plan_request pause.
  */
-export async function* runAgentLoop(params: AgentLoopParams): AsyncGenerator<AgentEvent, void, unknown> {
+async function* runExecutionLoop(params: AgentLoopParams): AsyncGenerator<AgentEvent, void, unknown> {
   const {
     client,
     system,
@@ -615,5 +637,116 @@ export async function* runAgentLoop(params: AgentLoopParams): AsyncGenerator<Age
 
     // Feed the batch of tool_result blocks back to the model and continue.
     messages.push({ role: 'user', content: toolResultBlocks });
+  }
+}
+
+/** Semantic public stream. Approval pauses stay open; every other ending is terminal once. */
+export async function* runAgentLoop(params: AgentLoopParams): AsyncGenerator<AgentStreamEvent, void, unknown> {
+  const activityId = params.activityId ?? randomUUID();
+  yield {
+    type: 'activity_started',
+    activityId,
+    title: params.activityTitle ?? 'Agent activity',
+    ...(params.resumeApprovalId ? { resumeApprovalId: params.resumeApprovalId } : {}),
+  };
+  let pendingError: Extract<AgentEvent, { type: 'error' }> | undefined;
+  for await (const event of runExecutionLoop(params)) {
+    switch (event.type) {
+      case 'text_delta':
+        yield { type: 'message_delta', activityId, text: event.text };
+        break;
+      case 'tool_call':
+        yield { type: 'activity_step', activityId, step: { status: 'running', ...event.call } };
+        break;
+      case 'tool_result':
+        yield {
+          type: 'activity_step',
+          activityId,
+          step: {
+            status: event.isError ? 'failed' : 'succeeded',
+            id: event.id,
+            name: event.name,
+            result: event.result,
+          },
+        };
+        break;
+      case 'plan_request':
+        yield {
+          type: 'approval_requested',
+          activityId,
+          approvalId: randomUUID(),
+          call: event.call,
+          argsHash: event.argsHash ?? argsHash(event.call.input),
+          source: event.source,
+          hint: event.hint,
+        };
+        break;
+      case 'error':
+        // Execution may follow an error with stop/usage metadata. Fold both
+        // frames into one semantic terminal event without discarding that data.
+        pendingError = event;
+        break;
+      case 'done': {
+        const { reason, stopReason, usage } = event;
+        if (pendingError && reason !== 'aborted') {
+          yield { ...pendingError, activityId, termination: { reason, stopReason, usage } };
+        } else {
+          yield {
+            type: 'activity_completed',
+            activityId,
+            outcome: reason === 'aborted' ? 'cancelled' : reason === 'end_turn' ? 'succeeded' : 'failed',
+            reason,
+            stopReason,
+            usage,
+          };
+        }
+        pendingError = undefined;
+        break;
+      }
+    }
+  }
+  if (pendingError) yield { ...pendingError, activityId };
+}
+
+/** Temporary old-frame adapter for chat-server; all execution goes through the semantic stream. */
+export async function* runLegacyAgentLoop(params: AgentLoopParams): AsyncGenerator<AgentEvent, void, unknown> {
+  for await (const event of runAgentLoop(params)) {
+    switch (event.type) {
+      case 'message_delta':
+        yield { type: 'text_delta', text: event.text };
+        break;
+      case 'activity_step': {
+        const { step } = event;
+        if (step.status === 'running') {
+          yield { type: 'tool_call', call: { id: step.id, name: step.name, input: step.input } };
+        } else {
+          yield {
+            type: 'tool_result',
+            id: step.id,
+            name: step.name,
+            result: step.result,
+            ...(step.status === 'failed' ? { isError: true } : {}),
+          };
+        }
+        break;
+      }
+      case 'approval_requested':
+        yield {
+          type: 'plan_request',
+          call: event.call,
+          source: event.source,
+          hint: event.hint,
+          ...(event.source === 'ts' ? { argsHash: event.argsHash } : {}),
+        };
+        break;
+      case 'activity_completed':
+        if (event.outcome === 'cancelled') yield { type: 'error', error: 'aborted', kind: 'aborted' };
+        yield { type: 'done', reason: event.reason, stopReason: event.stopReason, usage: event.usage };
+        break;
+      case 'error':
+        yield { type: 'error', error: event.error, kind: event.kind };
+        if (event.termination) yield { type: 'done', ...event.termination };
+        break;
+    }
   }
 }
