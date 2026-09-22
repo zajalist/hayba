@@ -2642,12 +2642,24 @@
           {
             "name": "saved",
             "type": "boolean"
+          },
+          {
+            "name": "path",
+            "type": "string"
+          },
+          {
+            "name": "dirty",
+            "type": "boolean"
+          },
+          {
+            "name": "verified",
+            "type": "boolean"
           }
         ]
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Save the current level, or the one at `path`. Editor edits live in memory until this runs, so an unsaved level loses everything on restart or a rebuild."
+      "notes": "Save the current level. Optional path is an expected current-level package guard, not Save As; a mismatch is refused before mutation. Returns saved, path, dirty and verified readback for that package only, not external actor packages. Plan Mode gated; disk persistence is not undoable."
     },
     "level_load": {
       "aliases": [],
@@ -3776,18 +3788,26 @@
             "type": "boolean"
           },
           {
+            "name": "path",
+            "type": "string"
+          },
+          {
             "name": "lod_index",
             "type": "number"
           },
           {
             "name": "screen_size",
             "type": "number"
+          },
+          {
+            "name": "reduction_percent_triangles",
+            "type": "number"
           }
         ]
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Sets a LOD's screen size (and optionally its reduction target) on a static mesh, then rebuilds it. Editor-only, and it modifies the asset — save it afterwards. It REFUSES a mesh with any zero-UV LOD, because the rebuild would hit an engine assert and take the editor down with it; that refusal is a real limit of the asset, not a bug in this command."
+      "notes": "Sets a LOD's screen size (and optionally its reduction target) on a static mesh, then rebuilds it. Returns ok, path, lod_index, screen_size and reduction_percent_triangles readback. Plan Mode gated and transactional. Editor-only, and it modifies the asset — save it afterwards. It REFUSES a mesh with any zero-UV LOD, because the rebuild would hit an engine assert and take the editor down with it; that refusal is a real limit of the asset, not a bug in this command."
     },
     "mesh_list": {
       "aliases": [],
@@ -4781,13 +4801,13 @@
       "returns": {
         "shape": "object",
         "fields": [
-          { "name": "world", "type": "object", "description": "type, current_level (package path), coordinate_system, scale (world_units_per_meter), cached source_control_ready, and explicit enumeration/readiness scopes" },
-          { "name": "landscape", "type": "array", "description": "Loaded landscape proxies: name, path, label, component_count; empty array if none loaded" },
+          { "name": "world", "type": "object", "description": "type, package (world package), current_level (actual current-level package), coordinate_system, scale (world_units_per_meter), cached source_control_ready, and explicit enumeration/readiness scopes" },
+          { "name": "landscape", "type": "array", "description": "Loaded landscape proxies: name, path, owning package, label, component_count; empty array if none loaded" },
           { "name": "partition", "type": "object", "description": "enabled, runtime_grids (unique sorted grid names observed on loaded actors), enumeration_scope; not a complete runtime-hash configuration" },
           { "name": "data_layers", "type": "array", "description": "Unique sorted short names of data-layer instances already known to the world's data-layer manager" },
           { "name": "hlod", "type": "object", "description": "layers (unique sorted asset paths referenced by loaded actors and the world default), enumeration_scope; no asset loads" },
           { "name": "capabilities", "type": "object", "description": "Explicit world_partition and hlod compiled-support booleans, web_browser loaded-module boolean and web_browser_scope" },
-          { "name": "save_ready", "type": "boolean", "description": "Whether the editor map has an existing writable package file; false for unsaved/transient maps. External actor packages and source-control checkout are not checked." }
+          { "name": "save_ready", "type": "boolean", "description": "Whether the actual current level has an existing writable package file; false for unsaved/transient maps. External actor packages and source-control checkout are not checked." }
         ]
       },
       "agent_callable": true,

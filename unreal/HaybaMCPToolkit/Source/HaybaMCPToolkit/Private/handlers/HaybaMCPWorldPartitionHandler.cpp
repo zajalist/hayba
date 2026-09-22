@@ -3,6 +3,7 @@
 #include "Editor.h"
 #include "EngineUtils.h"
 #include "Engine/World.h"
+#include "Engine/Level.h"
 #include "GameFramework/Actor.h"
 #include "WorldPartition/WorldPartition.h"
 #include "WorldPartition/DataLayer/DataLayerManager.h"
@@ -77,6 +78,7 @@ FHaybaHandlerResult FHaybaMCPWorldPartitionHandler::WorldInspect(const TSharedPt
             TSharedPtr<FJsonObject> Entry = MakeShared<FJsonObject>();
             Entry->SetStringField(TEXT("name"), Landscape->GetName());
             Entry->SetStringField(TEXT("path"), Landscape->GetPathName());
+            Entry->SetStringField(TEXT("package"), Landscape->GetPackage()->GetName());
             Entry->SetStringField(TEXT("label"), Landscape->GetActorLabel(false));
             Entry->SetNumberField(TEXT("component_count"), Landscape->LandscapeComponents.Num());
             Landscapes.Add(MakeShared<FJsonValueObject>(Entry));
@@ -112,15 +114,17 @@ FHaybaHandlerResult FHaybaMCPWorldPartitionHandler::WorldInspect(const TSharedPt
     const bool bSourceControlReady = SourceControl && SourceControl->IsEnabled()
         && SourceControl->GetProvider().IsAvailable();
     UPackage* Package = World->GetPackage();
+    UPackage* CurrentLevelPackage = World->GetCurrentLevel() ? World->GetCurrentLevel()->GetOutermost() : nullptr;
     FString MapFilename;
     const bool bSaveReady = World->WorldType == EWorldType::Editor
-        && Package && !Package->HasAnyFlags(RF_Transient)
-        && FPackageName::DoesPackageExist(Package->GetName(), &MapFilename)
+        && CurrentLevelPackage && !CurrentLevelPackage->HasAnyFlags(RF_Transient)
+        && FPackageName::DoesPackageExist(CurrentLevelPackage->GetName(), &MapFilename)
         && !IFileManager::Get().IsReadOnly(*MapFilename);
 
     TSharedPtr<FJsonObject> WorldInfo = MakeShared<FJsonObject>();
     WorldInfo->SetStringField(TEXT("type"), World->WorldType == EWorldType::Editor ? TEXT("Editor") : TEXT("Other"));
-    WorldInfo->SetStringField(TEXT("current_level"), Package ? Package->GetName() : TEXT(""));
+    WorldInfo->SetStringField(TEXT("package"), Package ? Package->GetName() : TEXT(""));
+    WorldInfo->SetStringField(TEXT("current_level"), CurrentLevelPackage ? CurrentLevelPackage->GetName() : TEXT(""));
     WorldInfo->SetStringField(TEXT("coordinate_system"), TEXT("left_handed_z_up_centimeters"));
     if (const AWorldSettings* Settings = World->GetWorldSettings(false, false))
         WorldInfo->SetNumberField(TEXT("scale"), Settings->WorldToMeters);
@@ -129,7 +133,7 @@ FHaybaHandlerResult FHaybaMCPWorldPartitionHandler::WorldInspect(const TSharedPt
     WorldInfo->SetStringField(TEXT("scale_unit"), TEXT("world_units_per_meter"));
     WorldInfo->SetBoolField(TEXT("source_control_ready"), bSourceControlReady);
     WorldInfo->SetStringField(TEXT("source_control_scope"), TEXT("cached_provider_availability"));
-    WorldInfo->SetStringField(TEXT("save_readiness_scope"), TEXT("existing_writable_map_file_only; external_actor_packages_and_checkout_not_checked"));
+    WorldInfo->SetStringField(TEXT("save_readiness_scope"), TEXT("current_level_existing_writable_map_file_only; external_actor_packages_and_checkout_not_checked"));
     WorldInfo->SetStringField(TEXT("landscape_scope"), TEXT("loaded_actors"));
 
     TSharedPtr<FJsonObject> Partition = MakeShared<FJsonObject>();

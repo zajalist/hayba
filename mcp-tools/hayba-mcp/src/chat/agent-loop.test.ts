@@ -96,6 +96,26 @@ describe('isDestructiveToolName', () => {
 });
 
 describe('runAgentLoop', () => {
+  it.each(['world_ingest', 'asset_prepare', 'level_save'])('requests approval before dispatching %s in Plan Mode', async (name) => {
+    const dispatch = vi.fn();
+    const events = await collect(runAgentLoop(baseParams({
+      client: new FakeLLMClient([toolResponse(name)]), dispatchTool: dispatch, planMode: true,
+      tools: [{ name, description: '', input_schema: { type: 'object', properties: {} } }],
+    })));
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(events.at(-1)).toMatchObject({ type: 'plan_request', source: 'ts' });
+  });
+
+  it.each([false, true])('treats workflow approval-required stages as a pause, not a failure (MCP=%s)', async (mcp) => {
+    const result = { ok: false, stages: [{ stage: 'terrain', status: 'pending', code: 'plan_mode_required' }] };
+    const dispatch = vi.fn(async () => mcp ? { content: [{ type: 'text', text: JSON.stringify(result) }], isError: false } : result);
+    const events = await collect(runAgentLoop(baseParams({
+      client: new FakeLLMClient([toolResponse('world_ingest')]), dispatchTool: dispatch,
+      tools: [{ name: 'world_ingest', description: '', input_schema: { type: 'object', properties: {} } }],
+    })));
+    expect(events.at(-1)).toMatchObject({ type: 'plan_request', source: 'ue' });
+    expect(events.some((e) => e.type === 'tool_result')).toBe(false);
+  });
   it('runs a multi-step tool loop (2 rounds) to end_turn', async () => {
     const client = new FakeLLMClient([
       toolResponse('actor_list', {}, 'c1'),

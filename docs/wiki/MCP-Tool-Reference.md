@@ -37,13 +37,13 @@ and Code Mode registration. Use `get_tool_signature` for their current schemas.
 
 | Tool | Input and result |
 |---|---|
-| `world_inspect` | `{}`; read-only world identity, landscapes, partition/grid/layer facts, save readiness, capability flags, warnings and recommended defaults. Engine capability flags do not imply a workflow writer is available. |
+| `world_inspect` | `{}`; read-only world and current-level package identities, landscapes and owning packages, partition/grid/layer facts, save readiness, capability flags, warnings and recommended defaults. `facts.scopes` preserves native enumeration and readiness limits. Engine capability flags do not imply a workflow writer is available. |
 | `world_ingest` | Required `source` and `destination`, optional `terrain`, `partition`, `assets`, `materials`, `validation`, `execution`; returns a staged `WorkflowResult`. |
-| `asset_inspect` | `{ "asset_path": "/Game/Terrain/SM_Tile" }`; existing Python-backed metadata inspection: asset class, dirty flag, dependency/referencer counts and optional disk metadata. It does not return preparation-policy decisions. |
+| `asset_inspect` | `{ "asset_path": "/Game/Terrain/SM_Tile", "preparation_policy": { "intent": "terrain", "nanite": "auto" } }`; existing metadata remains compatible. Optional `preparation_policy` adds `preparation.decisions`, `unsupported` capabilities and native `evidence`. Nanite support, foliage usage and deformation are explicitly unknown (`null`) because the mesh reader does not establish them. |
 | `asset_prepare` | `{ "assetPath": "...", "policy": { "intent": "terrain", ... } }`; inspects a StaticMesh and applies supported preparation settings, returning a `WorkflowResult`. |
 
-The preparation-specific inspector is internal; `asset_inspect_preparation` is
-not a published tool. Note the existing `asset_path` spelling on `asset_inspect`
+There is one public `asset_inspect`; `asset_inspect_preparation` is not a published
+tool. Note the existing `asset_path` spelling on `asset_inspect`
 and `assetPath` on `asset_prepare`.
 
 ### Request policies and current support
@@ -58,19 +58,18 @@ does not guarantee native execution support.
 | `terrain` | Optional `worldSizeKm`, `maxHeightM`, `actorLabel`, `material`, `scale`. Heightmap defaults are `8`, `600`, and `Hayba_Terrain`; `material` assigns an existing landscape material. Explicit `scale` is currently unsupported. |
 | `partition.mode` | `preserve`, `configure`, `require`. `preserve` accepts no configuration fields. The other modes allow `runtimeGrid` (`name`, positive `cellSize`, positive `loadingRange`), `dataLayers` (`include`, `exclude`), and `hlod` (`layer`, `build`: `preserve`, `auto`, `require`). Native partition/HLOD writers are unavailable: optional requests report limitations; unavailable requirements stop before import. Omitted partition policy defaults to `preserve` for a partitioned world and `configure` otherwise. |
 | `assets.intent` / `policy.intent` | Required when supplying an asset policy: `environment`, `hero`, `foliage`, `terrain`, `custom`. Heightmap ingestion creates landscapes, so mesh preparation is skipped when no mesh assets were imported. Use `asset_prepare` for an existing StaticMesh. |
-| `nanite` | `preserve`, `auto`, `enable`, `disable`. No Nanite writer is available. Explicit `enable`/`disable` fail before any asset mutation; `auto` does not enable Nanite. |
-| `collision` | `preserve`, `auto`, `simple`, `complex`, `none`. No collision writer is available; these policies do not change collision. |
-| `lods` | `preserve`, `auto`, or `{ "count": positiveInteger, "reduction": numberFrom0To1 }` (both object fields optional). Only reduction of existing non-base LODs is implemented, preserving inspected screen sizes. A supplied count must match the existing count; LOD creation is unavailable. `auto` currently performs no LOD mutation. |
-| `lightmapUvs` | `preserve`, `generate`, `require`. Generation is unavailable; `generate` skips it and `require` fails before asset mutation. |
-| `materialInstances` | `preserve`, `create`, `require`. Creation is unavailable; `create` skips it and `require` fails before asset mutation. |
+| `nanite` | `preserve`, `auto`, `enable`, `disable`. No Nanite writer is available. Explicit `enable`/`disable` return `nanite_mutation_unavailable` before any asset mutation. `auto` preserves foliage intent; other intents report `nanite_eligibility_unknown` and preserve until eligibility is established. |
+| `collision` | `preserve`, `auto`, `simple`, `complex`, `none`. No collision writer is available; requests other than `preserve` report `collision_unavailable` with remediation. |
+| `lods` | `preserve`, `auto`, or `{ "count": positiveInteger, "reduction": numberFrom0To1 }` (both object fields optional). Only reduction of existing non-base LODs is implemented, preserving inspected screen sizes and verifying native setting readback for each LOD. A supplied count must match the existing count; LOD creation is unavailable. `auto` reports `lod_auto_unavailable`. |
+| `lightmapUvs` | `preserve`, `generate`, `require`. Generation reports `lightmap_uvs_unavailable`; `require` stops before any asset mutation. |
+| `materialInstances` | `preserve`, `create`, `require`. Creation reports `material_instances_unavailable`; `require` stops before any asset mutation. |
 | `materials.mode` | `preserve`, `create`, `require`. World material creation is unavailable: `create` reports unsupported and may continue; `require` stops before import. |
 | `validation.mode` | `skip`, `report`, `require`; default `report`. Native validation checks current-world identity and presence of imported landscape paths only. It does not validate geometry, performance or PLUMB constraints. |
 | `execution` | Optional booleans `dryRun`, `planMode`. `dryRun:true` performs inspection, normalization and planning, then skips execution. Unsupported requests still fail preflight in dry run. `planMode:true` returns `plan_mode_control_unavailable`; `false` does not disable native Plan Mode gates. |
 
 Native successful ingestion requires an existing writable, open, non-partitioned
-world. Partitioned worlds can reach import, but the workflow warns during
-normalization and stops at `saveVerify` with
-`external_actor_persistence_unavailable`, retaining imported resources. Map-only
+world. Partitioned worlds stop during preflight, before import, with
+`external_actor_persistence_unavailable`. Map-only
 saving cannot verify World Partition external actor packages. No partition
 conversion, runtime-grid tuning or HLOD building is implemented here.
 
@@ -110,8 +109,8 @@ For an already imported mesh, `asset_prepare` with
 also fails before mutation because the Nanite writer is unavailable. To edit
 existing LODs, use a policy such as
 `{ "intent": "terrain", "nanite": "preserve", "lods": { "count": 2, "reduction": 0.5 } }`
-on a mesh that already has two LODs. Optional unavailable asset policies may be
-skipped while `ok` is true; that result does not prove Nanite, collision, UVs or
+on a mesh that already has two LODs. Optional unavailable asset policies produce
+per-capability `unsupported` stages, verdicts and remediation alongside successful LOD work while `ok` may be true; that result does not prove Nanite, collision, UVs or
 materials changed, or that the asset package was saved and verified.
 
 ### Results, interruption and migration
@@ -123,10 +122,17 @@ an undo description. Stage statuses are `pending`, `running`, `succeeded`,
 `failed`, `skipped`, `unsupported`; incomplete dependency results are returned
 as a failed stage, not successful ingestion. Optional unsupported stages may
 coexist with `ok:true`; hard failures stop the workflow and set MCP `isError`.
+Native Plan Mode refusals remain `pending` with `code: "plan_mode_required"`,
+`ok:false` and MCP `isError:false`; Agent emits an approval request and pauses.
+LOD writes are gated and use editor transactions. Level saving is gated but
+disk persistence cannot be undone. Every asset preparation invocation has a
+unique operation ID and measured stage durations.
 
 Import verification requires newly observed landscape paths in the original
-world. Save verification requires native `saved:true`, `verified:true` and
-`dirty:false`. A partial failure retains known affected resources for inspection
+world and current level. Save verification checks every imported actor's owning
+package against the intended current level, then requires native `path` identity,
+`saved:true`, `verified:true` and `dirty:false`. A different `level_save.path` is
+refused before any write. A partial failure retains known affected resources for inspection
 and remediation; there is no automatic rollback. If post-import inspection
 fails, the outcome is explicitly unknown and resources cannot be enumerated.
 Programmatic callers of `runWorldIngest` can supply an `AbortSignal`; cancellation
@@ -139,6 +145,10 @@ and are deprecated in favor of `world_ingest`. Their responses now carry the
 staged workflow result plus
 `deprecation: { deprecated: true, replacement: "world_ingest", removal: "after_one_release" }`.
 Clients should read `ok`/`stages` rather than depend on the former import reply.
+Both aliases preserve import-only behavior: `saveVerify` is skipped with
+`legacy_import_only`, changes stay unsaved, and an unsaved map or unverified
+external-actor persistence does not block the legacy import. Only `world_ingest`
+requests mandatory save-and-verify. Both routes share the same importer and runner.
 
 | Legacy input | Generalized request |
 |---|---|

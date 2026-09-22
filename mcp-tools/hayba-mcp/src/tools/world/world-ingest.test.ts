@@ -8,7 +8,7 @@ let ue: ScriptedUe | undefined;
 afterEach(() => { ue?.restore(); ue = undefined; });
 
 const nativeWorld = {
-  world: { type: 'Editor', current_level: '/Game/Maps/Test', coordinate_system: 'left_handed_z_up_centimeters', scale: 100 },
+  world: { type: 'Editor', package: '/Game/Maps/Test', current_level: '/Game/Maps/Test', coordinate_system: 'left_handed_z_up_centimeters', scale: 100 },
   landscape: [], partition: { enabled: false, runtime_grids: [] }, data_layers: [],
   hlod: { layers: [] }, capabilities: { world_partition: true, hlod: true, web_browser: false }, save_ready: true,
 };
@@ -328,9 +328,9 @@ describe('worldIngestDescriptor native adapter', () => {
   it('passes terrain dimensions and label to the existing importer and verifies the created landscape', async () => {
     let imported = false;
     ue = scriptedUe()
-      .replies('world_inspect', () => ({ ...nativeWorld, landscape: imported ? [{ name: 'Landscape_1', path: landscape.path, label: 'Mountain' }] : [] }))
+      .replies('world_inspect', () => ({ ...nativeWorld, landscape: imported ? [{ name: 'Landscape_1', path: landscape.path, package: '/Game/Maps/Test', label: 'Mountain' }] : [] }))
       .replies('landscape_import', () => { imported = true; return { actorLabel: 'Mountain' }; })
-      .replies('level_save', { saved: true, verified: true, dirty: false });
+      .replies('level_save', { path: '/Game/Maps/Test', saved: true, verified: true, dirty: false });
     const response = await worldIngestDescriptor.handler({
       ...request, terrain: { worldSizeKm: 2.5, maxHeightM: 350, actorLabel: 'Mountain', material: '/Game/Materials/Terrain' },
     }, {});
@@ -352,8 +352,9 @@ describe('worldIngestDescriptor native adapter', () => {
     const response = await worldIngestDescriptor.handler(request, {});
     const result = WorkflowResultSchema.parse(JSON.parse(response.content.find((block) => block.type === 'text')!.text));
     expect(result.ok).toBe(false);
-    expect(result.stages.at(-1)).toMatchObject({ stage: 'saveVerify', status: 'unsupported', code: 'external_actor_persistence_unavailable' });
-    expect(result.affectedResources).toContainEqual({ kind: 'landscape', id: landscape.path, path: landscape.path });
+    expect(result.stages.at(-1)).toMatchObject({ stage: 'normalize', status: 'unsupported', code: 'external_actor_persistence_unavailable' });
+    expect(result.affectedResources).toEqual([]);
+    expect(ue.called('landscape_import')).toBe(false);
   });
 
   it('retains new landscapes observed after a native import error', async () => {
@@ -372,13 +373,14 @@ describe('worldIngestDescriptor native adapter', () => {
   it('does not accept a save reply without verified clean-package readback', async () => {
     let imported = false;
     ue = scriptedUe()
-      .replies('world_inspect', () => ({ ...nativeWorld, landscape: imported ? [{ path: landscape.path }] : [] }))
+      .replies('world_inspect', () => ({ ...nativeWorld, landscape: imported ? [{ path: landscape.path, package: '/Game/Maps/Test' }] : [] }))
       .replies('landscape_import', () => { imported = true; return {}; })
       .replies('level_save', { saved: true });
     const response = await worldIngestDescriptor.handler(request, {});
     const result = WorkflowResultSchema.parse(JSON.parse(response.content.find((block) => block.type === 'text')!.text));
     expect(result.ok).toBe(false);
     expect(result.stages.at(-1)).toMatchObject({ stage: 'saveVerify', status: 'failed' });
+    expect(ue.called('level_save')).toBe(true);
     expect(result.affectedResources).toHaveLength(1);
   });
 });

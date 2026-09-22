@@ -76,6 +76,7 @@
 //     we walk the python type MRO + CDO defaults and report what we can.
 
 import { z } from 'zod';
+import { AssetPreparationPolicySchema } from '../workflows/contracts.js';
 import type { HaybaToolMeta } from '../hayba-tool-meta.js';
 import { pyStr } from '../ue-python.js';
 import type { PyToolDescriptor } from '../py-tool-factory.js';
@@ -320,6 +321,7 @@ export const selectionGetDescriptor: PyToolDescriptor<typeof selectionGetSchema.
 // ── asset_inspect ─────────────────────────────────────────────────────────────
 export const assetInspectSchema = z.object({
   asset_path: z.string().min(1).describe('Content path of the asset, e.g. "/Game/Meshes/SM_Rock"'),
+  preparation_policy: AssetPreparationPolicySchema.optional().describe('Inspect preparation decisions and native evidence for a StaticMesh'),
 });
 export type AssetInspectParams = z.infer<typeof assetInspectSchema>;
 

@@ -1,3 +1,3 @@
 // The existing editor asset_inspect remains the public read-only inspector.
-// Preparation-specific inspection stays internal to the preparation workflow.
-export { assetPrepareDescriptor } from './asset-prepare.js';
+// Optional preparation_policy extends that same descriptor.
+export { assetPrepareDescriptor, withAssetPreparationInspection } from './asset-prepare.js';

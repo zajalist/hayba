@@ -85,6 +85,10 @@ const EXTRA_DESTRUCTIVE = new Set<string>([
   'execute_graph',
   'pcg_execute_graph',
   'import_landscape',
+  'world_ingest',
+  'asset_prepare',
+  'world_generate',
+  'level_save',
 ]);
 
 /**
@@ -321,9 +325,15 @@ function estimateTokens(text: string): number {
 
 /** Is a dispatch result the C++ Plan-Mode pause payload? */
 function isPlanModeRequired(result: unknown): result is { status: string; hint?: string } {
-  return (
-    typeof result === 'object' && result !== null && (result as { status?: unknown }).status === 'plan_mode_required'
-  );
+  if (typeof result !== 'object' || result === null) return false;
+  const payload = result as { status?: unknown; stages?: Array<{ status?: unknown; code?: unknown }>; content?: Array<{ type?: unknown; text?: string }> };
+  if (payload.status === 'plan_mode_required') return true;
+  if (Array.isArray(payload.stages) && payload.stages.some((stage) => stage?.status === 'pending' && stage.code === 'plan_mode_required')) return true;
+  // Direct MCP dispatch may retain text blocks instead of unwrapping JSON.
+  return Array.isArray(payload.content) && payload.content.some((block) => {
+    if (block.type !== 'text' || typeof block.text !== 'string') return false;
+    try { return isPlanModeRequired(JSON.parse(block.text)); } catch { return false; }
+  });
 }
 
 /**

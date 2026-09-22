@@ -38,6 +38,10 @@ function fakeServer() {
   const registered = new Map<string, unknown[]>();
   const calls = new Map<string, number>();
   const server = {
+    registerTool: (name: string, ...rest: unknown[]) => {
+      registered.set(name, rest);
+      calls.set(name, (calls.get(name) ?? 0) + 1);
+    },
     tool: (name: string, ...rest: unknown[]) => {
       registered.set(name, rest);
       calls.set(name, (calls.get(name) ?? 0) + 1);

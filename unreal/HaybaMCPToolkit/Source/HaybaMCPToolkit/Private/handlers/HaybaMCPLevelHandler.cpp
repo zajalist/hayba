@@ -246,6 +246,11 @@ FHaybaHandlerResult FHaybaMCPLevelHandler::LevelSave(const TSharedPtr<FJsonObjec
         return FHaybaHandlerResult::Err(TEXT("level_save: refusing to save the editor map while PIE/SIE is running; stop play first. Nothing was changed."));
 
     UPackage* LevelPackage = World->GetCurrentLevel()->GetOutermost();
+    FHaybaParamReader Reader(P, TEXT("level_save"));
+    const FString IntendedPath = Reader.OptionalString(TEXT("path"), TEXT(""));
+    if (Reader.HasErrors()) return FHaybaHandlerResult::Err(Reader.ErrorMessage());
+    if (!IntendedPath.IsEmpty() && (!LevelPackage || IntendedPath != LevelPackage->GetName()))
+        return FHaybaHandlerResult::Err(TEXT("level_save: requested path is not the current level package; nothing was changed"));
     const bool bWasDirty = LevelPackage && LevelPackage->IsDirty();
 
     // Strip dangling transient mesh refs (stale HLOD proxies) that would
@@ -269,6 +274,7 @@ FHaybaHandlerResult FHaybaMCPLevelHandler::LevelSave(const TSharedPtr<FJsonObjec
 
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
     Out->SetBoolField(TEXT("saved"), true);
+    Out->SetStringField(TEXT("path"), LevelPackage ? LevelPackage->GetName() : TEXT(""));
     Out->SetBoolField(TEXT("dirty"), LevelPackage && LevelPackage->IsDirty());
     const bool bVerified = LevelPackage
         && !LevelPackage->IsDirty()

@@ -11,7 +11,7 @@ let ue: ScriptedUe | undefined;
 afterEach(() => { ue?.restore(); ue = undefined; });
 
 const world = {
-  world: { type: 'Editor', current_level: '/Game/Maps/Contract', coordinate_system: 'left_handed_z_up_centimeters', scale: 100 },
+  world: { type: 'Editor', package: '/Game/Maps/Contract', current_level: '/Game/Maps/Contract', coordinate_system: 'left_handed_z_up_centimeters', scale: 100 },
   landscape: [], partition: { enabled: false, runtime_grids: [] }, data_layers: [],
   hlod: { layers: [] }, capabilities: { world_partition: true, hlod: true, web_browser: false }, save_ready: true,
 };
@@ -41,9 +41,9 @@ async function invoke(name: string, input: Record<string, unknown>) {
 function importableWorld(onImport?: () => void) {
   let imported = false;
   return scriptedUe()
-    .replies('world_inspect', () => ({ ...world, landscape: imported ? [{ path: landscapePath }] : [] }))
+    .replies('world_inspect', () => ({ ...world, landscape: imported ? [{ path: landscapePath, package: '/Game/Maps/Contract' }] : [] }))
     .replies('landscape_import', () => { imported = true; onImport?.(); return { actorLabel: 'Terrain' }; })
-    .replies('level_save', { saved: true, verified: true, dirty: false });
+    .replies('level_save', { path: '/Game/Maps/Contract', saved: true, verified: true, dirty: false });
 }
 
 describe('generalized world workflow public contracts', () => {
@@ -113,8 +113,8 @@ describe('generalized world workflow public contracts', () => {
 
   it('refuses mesh terrain ingestion and explicit Nanite preparation while allowing existing LOD edits under auto', async () => {
     ue = scriptedUe().replies('world_inspect', world).replies('mesh_get_info', {
-      supports_nanite: true, is_foliage: false, is_deforming: false, lod_count: 2, lod_screen_sizes: [1, 0.5],
-    }).replies('mesh_set_lod', { lod_index: 1, screen_size: 0.5 });
+      path: '/Game/Terrain/SM_Tile', lod_count: 2, lod_screen_sizes: [1, 0.5],
+    }).replies('mesh_set_lod', (params) => ({ ok: true, ...params }));
     const result = await invoke('world_ingest', {
       source: { kind: 'mesh_terrain', path: '/Game/Terrain/SM_Tile' },
       destination: { mode: 'open_world' }, assets: { intent: 'terrain', nanite: 'enable' },
@@ -128,14 +128,14 @@ describe('generalized world workflow public contracts', () => {
     });
     expect(explicit.ok).toBe(false);
     expect(explicit.summary).toContain('native writer that is unavailable');
-    expect(explicit.stages.at(-1)).toMatchObject({ status: 'failed', code: 'unsupported_policy' });
+    expect(explicit.stages.at(-1)).toMatchObject({ status: 'unsupported', code: 'nanite_mutation_unavailable' });
     expect(ue.calls.map((call) => call.cmd)).toEqual(['world_inspect', 'mesh_get_info']);
 
     const optional = await invoke('asset_prepare', {
       assetPath: '/Game/Terrain/SM_Tile', policy: { intent: 'terrain', nanite: 'auto', lods: { count: 2, reduction: 0.5 } },
     });
     expect(optional.ok).toBe(true);
-    expect(optional.summary).toContain('supported LOD reductions applied');
+    expect(optional.summary).toContain('Supported LOD reductions applied');
     expect(ue.paramsFor('mesh_set_lod')).toEqual({
       path: '/Game/Terrain/SM_Tile', lod_index: 1, screen_size: 0.5, reduction_percent_triangles: 0.5,
     });

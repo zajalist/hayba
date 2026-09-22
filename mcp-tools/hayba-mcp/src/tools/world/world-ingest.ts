@@ -4,6 +4,7 @@ import { prepareAsset, type AssetPreparationInput } from '../asset/asset-prepare
 import { defineTool } from '../register-tool.js';
 import { executeCommand } from '../tool-executor.js';
 import type { SessionManager } from '../types.js';
+import { approvalRequired, workflowNeedsApproval } from '../workflows/approval.js';
 import {
   WorldIngestRequestSchema, stageResult,
   type WorldIngestRequest, type WorkflowResult, type WorkflowStageResult,
@@ -31,6 +32,8 @@ export interface WorldIngestDependencies {
   saveAndVerify(resources: ResourceRef[], report: WorldCapabilityReport): Promise<WorkflowStageResult>;
   validateWorld?(resources: ResourceRef[], report: WorldCapabilityReport): Promise<WorkflowStageResult>;
   signal?: AbortSignal;
+  /** Internal compatibility seam: legacy landscape aliases never save. */
+  persistence?: 'save_and_verify' | 'legacy_import_only';
 }
 
 interface Context {
@@ -69,6 +72,11 @@ function partitionLimitations(context: Context): Array<{ code: string; required:
 
 async function inspect(context: Context): Promise<WorkflowStageResult> {
   context.report = await context.dependencies.inspectWorld();
+  if (!context.report.facts.worldPackage || !context.report.facts.currentLevel || context.report.facts.worldType !== 'Editor') {
+    context.blocked = true;
+    return context.report.blockingErrors.find((result) => result.stage === 'inspect')
+      ?? stageResult('inspect', 'failed', { code: 'world_identity_unavailable', summary: 'A usable editor world and current level are required before mutation' });
+  }
   const failure = context.report.blockingErrors.find((result) => result.stage === 'inspect');
   if (failure) {
     context.blocked = true;
@@ -113,7 +121,7 @@ async function plan(context: Context): Promise<WorkflowStageResult> {
   return stageResult('plan', 'succeeded', {
     warnings: limitations.map((issue) => issue.code),
     summary: JSON.stringify({ request: context.request, capabilities: context.report!.facts.capabilities,
-      irreversibleSteps: ['saveVerify: persists changes to disk'], automaticRollback: false }),
+      irreversibleSteps: context.dependencies.persistence === 'legacy_import_only' ? [] : ['saveVerify: persists changes to disk'], automaticRollback: false }),
   });
 }
 
@@ -122,7 +130,8 @@ async function terrain(context: Context): Promise<WorkflowStageResult> {
 }
 
 /** Current native support is deliberately narrower than the extensible request contract. */
-export function createNativeWorldIngestDependencies(session: SessionManager = {}): WorldIngestDependencies {
+export function createNativeWorldIngestDependencies(session: SessionManager = {}, options: { persistence?: WorldIngestDependencies['persistence'] } = {}): WorldIngestDependencies {
+  const importOnly = options.persistence === 'legacy_import_only';
   const inspectWorld = async (): Promise<WorldCapabilityReport> => {
     const response = await worldInspectDescriptor.handler({}, session);
     const text = response.content.find((block) => block.type === 'text');
@@ -132,16 +141,18 @@ export function createNativeWorldIngestDependencies(session: SessionManager = {}
   return {
     inspectWorld,
     prepareAsset,
+    persistence: options.persistence,
     async preflight(request, report) {
       const code = request.source.kind !== 'heightmap' ? 'source_kind_unavailable'
         : request.destination.mode !== 'open_world' ? 'destination_mode_unavailable'
         : request.terrain?.scale ? 'terrain_scale_unavailable'
         : request.execution?.planMode ? 'plan_mode_control_unavailable'
         : request.source.format && !['png', 'r16'].includes(request.source.format.toLowerCase()) ? 'heightmap_format_unavailable'
-        : report.facts.saveReady !== true ? 'world_save_not_ready'
+        : !importOnly && report.facts.worldPartition.enabled ? 'external_actor_persistence_unavailable'
+        : !importOnly && report.facts.saveReady !== true ? 'world_save_not_ready'
         : undefined;
       return stageResult('normalize', code ? 'unsupported' : 'succeeded', {
-        warnings: report.facts.worldPartition.enabled ? ['external_actor_persistence_unavailable'] : [],
+        warnings: importOnly ? ['legacy_import_only: imported changes remain unsaved'] : [],
         ...(code ? { code, remediation: [{ code: 'review_request', label: 'Use an existing writable world and a supported heightmap request' }] } : {}),
       });
     },
@@ -156,7 +167,8 @@ export function createNativeWorldIngestDependencies(session: SessionManager = {}
           actorLabel: request.terrain!.actorLabel,
           ...(request.terrain?.material === undefined ? {} : { landscapeMaterial: request.terrain.material }),
         });
-        if (reply.ok === false || reply.status === 'plan_mode_required') failure = 'Native import was refused; inspect the native Plan Mode state';
+        if (reply?.status === 'plan_mode_required') return approvalRequired('terrain');
+        if (reply?.ok === false) failure = 'Native import was refused';
       } catch (error) {
         failure = errorMessage(error);
       }
@@ -174,7 +186,8 @@ export function createNativeWorldIngestDependencies(session: SessionManager = {}
       const affectedResources = after.facts.landscapeActors
         .filter((actor) => typeof actor.path === 'string' && !previous.has(actor.path))
         .map((actor) => ({ kind: 'landscape', id: String(actor.path), path: String(actor.path) }));
-      const verified = !failure && affectedResources.length > 0 && after.facts.currentLevel === before.facts.currentLevel;
+      const verified = !failure && affectedResources.length > 0 && after.facts.currentLevel === before.facts.currentLevel
+        && after.facts.worldPackage === before.facts.worldPackage;
       return stageResult('terrain', verified ? 'succeeded' : 'failed', {
         affectedResources,
         ...(verified ? {} : { code: failure ? 'terrain_import_failed' : 'terrain_not_verified',
@@ -183,25 +196,35 @@ export function createNativeWorldIngestDependencies(session: SessionManager = {}
         }),
       });
     },
-    async saveAndVerify(_resources, before) {
+    async saveAndVerify(resources, before) {
       if (before.facts.worldPartition.enabled) return stageResult('saveVerify', 'unsupported', {
         code: 'external_actor_persistence_unavailable',
         summary: 'Native level_save verifies only the map package; external actor packages cannot be verified',
         remediation: [{ code: 'save_external_actors', label: 'Save and verify the imported external actor packages in the editor' }],
       });
       const current = await inspectWorld();
-      if (current.facts.currentLevel !== before.facts.currentLevel || current.facts.saveReady !== true) {
+      if (current.facts.currentLevel !== before.facts.currentLevel || current.facts.worldPackage !== before.facts.worldPackage || current.facts.saveReady !== true) {
         return stageResult('saveVerify', 'failed', { code: 'world_changed_before_save', summary: 'Original world is no longer open and save-ready' });
       }
-      const saved = await executeCommand<{ saved?: boolean; verified?: boolean; dirty?: boolean }>(SAVE_LEVEL_COMMAND, { path: before.facts.currentLevel });
-      return stageResult('saveVerify', saved.saved === true && saved.verified === true && saved.dirty === false ? 'succeeded' : 'failed', {
+      // Native world_inspect reports each actor's actual owning package. Never
+      // assume a world or object path identifies the package level_save writes.
+      const affected = resources.filter((resource) => resource.kind === 'landscape').map((resource) =>
+        current.facts.landscapeActors.find((actor) => actor.path === resource.path));
+      if (!affected.length || affected.some((actor) => actor?.package !== before.facts.currentLevel)) {
+        return stageResult('saveVerify', 'unsupported', { code: 'affected_package_persistence_unavailable',
+          summary: 'Imported resource packages are unknown or differ from the intended current level',
+          remediation: [{ code: 'save_affected_packages', label: 'Inspect and save the imported resource packages explicitly' }] });
+      }
+      const saved = await executeCommand<{ status?: string; ok?: boolean; path?: string; saved?: boolean; verified?: boolean; dirty?: boolean }>(SAVE_LEVEL_COMMAND, { path: before.facts.currentLevel });
+      if (saved?.status === 'plan_mode_required') return approvalRequired('saveVerify');
+      return stageResult('saveVerify', saved?.ok !== false && saved?.path === before.facts.currentLevel && saved.saved === true && saved.verified === true && saved.dirty === false ? 'succeeded' : 'failed', {
         summary: 'Save requires native readback of a clean package that exists on disk',
       });
     },
     async validateWorld(resources, before) {
       const after = await inspectWorld();
       const paths = new Set(after.facts.landscapeActors.map((actor) => actor.path));
-      const verified = after.facts.currentLevel === before.facts.currentLevel
+      const verified = after.facts.currentLevel === before.facts.currentLevel && after.facts.worldPackage === before.facts.worldPackage
         && resources.filter((resource) => resource.kind === 'landscape').every((resource) => paths.has(resource.path));
       return stageResult('validate', verified ? 'succeeded' : 'failed', {
         summary: 'Validation checks the current level and presence of imported landscapes; no geometry or performance validation',
@@ -214,6 +237,7 @@ export const worldIngestDescriptor = defineTool({
   name: 'world_ingest',
   description: 'Inspect, plan, import, prepare, save, and verify world content with explicit capability and partial-failure results.',
   schema: WorldIngestRequestSchema.shape,
+  inputSchema: WorldIngestRequestSchema,
   meta: {
     cost: 'high', effects: ['imports_landscape', 'modifies_level', 'writes-to-disk'],
     when: 'planning or ingesting terrain with explicit partition and preparation policies',
@@ -221,8 +245,8 @@ export const worldIngestDescriptor = defineTool({
   },
   cost: 'high', returns: 'WorkflowResult with ordered stages, retained resources, verdicts, and remediation.',
   handler: async (request, session) => {
-    const result = await runWorldIngest(request, createNativeWorldIngestDependencies(session));
-    return { content: [{ type: 'text', text: JSON.stringify(result) }], isError: !result.ok };
+    const result = await runWorldIngest(WorldIngestRequestSchema.parse(request), createNativeWorldIngestDependencies(session));
+    return { content: [{ type: 'text', text: JSON.stringify(result) }], isError: !result.ok && !workflowNeedsApproval(result) };
   },
 });
 
@@ -235,6 +259,7 @@ async function partition(context: Context): Promise<WorkflowStageResult> {
     const { hlod: _hlod, ...configuration } = policy;
     const result = completedStageResult(await context.dependencies.configurePartition!(configuration));
     retain(context, result.affectedResources);
+    if (result.code === 'plan_mode_required') return result;
     if (result.code === 'stage_incomplete') return result;
     results.push(result);
   }
@@ -242,6 +267,7 @@ async function partition(context: Context): Promise<WorkflowStageResult> {
     && !limitations.some((issue) => issue.code === 'hlod_unavailable')) {
     const result = completedStageResult(await context.dependencies.configureHlod!(policy.hlod!));
     retain(context, result.affectedResources);
+    if (result.code === 'plan_mode_required') return result;
     if (result.code === 'stage_incomplete') return result;
     results.push(result);
   }
@@ -269,6 +295,7 @@ async function assets(context: Context): Promise<WorkflowStageResult> {
   for (const resource of context.request.assets ? meshes : []) {
     const result = await context.dependencies.prepareAsset!({ assetPath: resource.path ?? resource.id, policy: context.request.assets! });
     retain(context, result.affectedResources);
+    if (workflowNeedsApproval(result)) return { ...approvalRequired('assets'), affectedResources: result.affectedResources };
     warnings.push(...result.stages.flatMap((stage) => stage.warnings), ...result.verdicts.filter((verdict) => verdict.severity !== 'info').map((verdict) => verdict.message));
     remediation.push(...result.remediation);
     unsupported ||= result.stages.some((stage) => stage.status === 'unsupported');
@@ -296,12 +323,16 @@ function errorMessage(error: unknown): string {
 }
 
 function completedStageResult(result: WorkflowStageResult): WorkflowStageResult {
+  if (result.status === 'pending' && result.code === 'plan_mode_required') return result;
   return result.status === 'pending' || result.status === 'running'
     ? { ...result, status: 'failed', code: 'stage_incomplete', summary: 'Dependency returned without completing the stage' }
     : result;
 }
 
 async function saveVerify(context: Context): Promise<WorkflowStageResult> {
+  if (context.dependencies.persistence === 'legacy_import_only') return stageResult('saveVerify', 'skipped', {
+    code: 'legacy_import_only', summary: 'Legacy import leaves changes unsaved; save explicitly after review',
+  });
   return context.dependencies.saveAndVerify(context.resources, context.report!);
 }
 
@@ -340,21 +371,23 @@ export async function runWorldIngest(request: WorldIngestRequest, dependencies: 
     result = completedStageResult(result);
     result = { ...result, stage: run.name, durationMs: performance.now() - started, affectedResources: [...context.stageResources] };
     stages.push(result);
+    if (result.code === 'plan_mode_required') context.blocked = true;
     if (result.status === 'unsupported' && ['inspect', 'normalize', 'plan', 'terrain', 'saveVerify'].includes(run.name)) context.blocked = true;
     if (context.blocked || result.status === 'failed') break;
   }
   const ok = !context.blocked && !stages.some((result) => result.status === 'failed');
   return {
     ok, operationId: `world-ingest:${randomUUID()}`,
-    summary: !ok ? 'World ingestion stopped; inspect retained resources before retrying'
+    summary: workflowNeedsApproval({ stages }) ? 'World ingestion awaits Plan Mode approval'
+      : !ok ? 'World ingestion stopped; inspect retained resources before retrying'
       : request.execution?.dryRun ? 'World ingestion dry run completed'
         : stages.some((result) => result.status === 'unsupported') ? 'World ingestion completed with unsupported optional capabilities'
           : 'World ingestion completed',
     stages, affectedResources: context.resources,
-    verdicts: stages.filter((result) => result.status === 'unsupported' || result.status === 'failed' || result.code === 'cancelled').map((result) => ({
+    verdicts: stages.filter((result) => result.status === 'unsupported' || result.status === 'failed' || result.code === 'cancelled' || result.code === 'plan_mode_required').map((result) => ({
       code: result.code ?? `${result.stage}_${result.status}`, message: result.summary ?? `${result.stage}: ${result.code ?? result.status}`,
-      severity: !ok && result === stages.at(-1) ? 'error' : 'warning',
-      direction: !ok && result === stages.at(-1) ? 'block' : 'review',
+      severity: !ok && result === stages.at(-1) && result.code !== 'plan_mode_required' ? 'error' : 'warning',
+      direction: !ok && result === stages.at(-1) && result.code !== 'plan_mode_required' ? 'block' : 'review',
     })),
     remediation: stages.flatMap((result) => result.remediation),
     undo: { supported: false, description: 'No automatic rollback; completed resources are retained for inspection' },

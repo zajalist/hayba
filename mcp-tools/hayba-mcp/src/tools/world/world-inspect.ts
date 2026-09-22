@@ -6,7 +6,12 @@ import { stageResult } from '../workflows/contracts.js';
 
 export interface WorldFacts {
   worldType: string | null;
+  worldPackage: string | null;
   currentLevel: string | null;
+  scopes: {
+    landscape: string | null; partition: string | null; hlod: string | null;
+    saveReadiness: string | null; sourceControl: string | null; webBrowser: string | null;
+  };
   landscapeActors: Array<Record<string, unknown>>;
   worldPartition: {
     enabled: boolean;
@@ -65,7 +70,9 @@ function malformedReport(): WorldCapabilityReport {
   return {
     facts: {
       worldType: null,
+      worldPackage: null,
       currentLevel: null,
+      scopes: { landscape: null, partition: null, hlod: null, saveReadiness: null, sourceControl: null, webBrowser: null },
       landscapeActors: [],
       worldPartition: { enabled: false, runtimeGrids: [], dataLayers: [], hlodLayers: [] },
       coordinateSystem: null,
@@ -100,6 +107,9 @@ export function normalizeWorldFacts(raw: unknown): WorldCapabilityReport {
 
   if (
     !world || !partition || !hlod
+    || typeof world.type !== 'string' || !world.type.trim()
+    || typeof world.package !== 'string' || !/^\/[^\s]+\//.test(world.package)
+    || typeof world.current_level !== 'string' || !/^\/[^\s]+\//.test(world.current_level)
     || !Array.isArray(raw.landscape)
     || !Array.isArray(raw.data_layers)
     || !Array.isArray(partition.runtime_grids)
@@ -113,7 +123,12 @@ export function normalizeWorldFacts(raw: unknown): WorldCapabilityReport {
 
   const facts: WorldFacts = {
     worldType: stringOrNull(world.type),
+    worldPackage: stringOrNull(world.package),
     currentLevel: stringOrNull(world.current_level),
+    scopes: {
+      landscape: stringOrNull(world.landscape_scope), partition: stringOrNull(partition.enumeration_scope), hlod: stringOrNull(hlod.enumeration_scope),
+      saveReadiness: stringOrNull(world.save_readiness_scope), sourceControl: stringOrNull(world.source_control_scope), webBrowser: stringOrNull(capabilities?.web_browser_scope),
+    },
     landscapeActors: records(raw.landscape),
     worldPartition: {
       enabled,

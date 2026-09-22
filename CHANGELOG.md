@@ -11,6 +11,13 @@ All notable changes to Hayba MCP Toolkit are documented here. Format based on [K
   [MCP Tool Reference](docs/wiki/MCP-Tool-Reference.md#results-interruption-and-migration).
 
 ### Fixed
+- Generalized world/asset workflows preserve Plan Mode approval pauses, validate
+  LOD readback and retain partial progress, report each unsupported preparation
+  capability, and guard saves by the actual affected level package. Partitioned
+  ingestion now refuses unsupported external-actor persistence before mutation.
+  Legacy landscape aliases keep import-only behavior. Strict eager/loaded-pack
+  schemas reject misplaced dry-run fields before execution. The existing
+  `asset_inspect` accepts optional preparation policies with explicit evidence.
 - `material_get_info` now reports each graph parameter's authored name, exact
   parameter type, and typed default value, with explicit availability flags
   for invalid/non-finite metadata instead of plausible omissions. Master

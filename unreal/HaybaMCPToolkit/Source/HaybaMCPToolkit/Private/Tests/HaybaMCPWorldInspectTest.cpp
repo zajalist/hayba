@@ -5,6 +5,8 @@
 #include "Engine/Level.h"
 #include "UObject/Package.h"
 #include "handlers/HaybaMCPWorldPartitionHandler.h"
+#include "handlers/HaybaMCPLevelHandler.h"
+#include "HaybaMCPCommandHandler.h"
 
 #if WITH_DEV_AUTOMATION_TESTS
 
@@ -47,7 +49,8 @@ bool FHaybaMCPWorldInspectTest::RunTest(const FString&)
     if (TestTrue(TEXT("World metadata is present"), Result.Data->TryGetObjectField(TEXT("world"), WorldInfo)))
     {
         TestEqual(TEXT("World type"), (*WorldInfo)->GetStringField(TEXT("type")), FString(TEXT("Editor")));
-        TestEqual(TEXT("Current level package"), (*WorldInfo)->GetStringField(TEXT("current_level")), TestWorld->GetPackage()->GetName());
+        TestEqual(TEXT("World package"), (*WorldInfo)->GetStringField(TEXT("package")), TestWorld->GetPackage()->GetName());
+        TestEqual(TEXT("Current level package"), (*WorldInfo)->GetStringField(TEXT("current_level")), TestWorld->GetCurrentLevel()->GetOutermost()->GetName());
     }
     const TSharedPtr<FJsonObject>* Hlod = nullptr;
     if (TestTrue(TEXT("HLOD object is present"), Result.Data->TryGetObjectField(TEXT("hlod"), Hlod)))
@@ -79,6 +82,30 @@ bool FHaybaMCPWorldInspectTest::RunTest(const FString&)
     TestFalse(TEXT("Transient map needs a save path"), bSaveReady);
     TestEqual(TEXT("Inspection preserves package dirty state"), TestWorld->GetPackage()->IsDirty(), bWasDirty);
     TestEqual(TEXT("Inspection preserves actors"), TestWorld->PersistentLevel->Actors.Num(), ActorCount);
+
+    // The world and current level can belong to different packages. Save must
+    // refuse a different target before sanitizing references or touching disk.
+    UPackage* SublevelPackage = CreatePackage(TEXT("/Temp/HaybaWorldInspectSublevel"));
+    ULevel* Sublevel = NewObject<ULevel>(SublevelPackage, TEXT("ReviewSublevel"));
+    ULevel* PreviousLevel = TestWorld->GetCurrentLevel();
+    TestWorld->SetCurrentLevel(Sublevel);
+    ON_SCOPE_EXIT { TestWorld->SetCurrentLevel(PreviousLevel); };
+    const FHaybaHandlerResult SublevelResult = Handler.Handle(TEXT("world_inspect"), MakeShared<FJsonObject>());
+    if (SublevelResult.bOk && SublevelResult.Data.IsValid())
+    {
+        const auto Info = SublevelResult.Data->GetObjectField(TEXT("world"));
+        TestEqual(TEXT("Sublevel is the current save target"), Info->GetStringField(TEXT("current_level")), SublevelPackage->GetName());
+        TestEqual(TEXT("World identity remains separate"), Info->GetStringField(TEXT("package")), TestWorld->GetPackage()->GetName());
+    }
+    else AddError(TEXT("Sublevel inspection failed"));
+    auto SaveParams = MakeShared<FJsonObject>();
+    SaveParams->SetStringField(TEXT("path"), TEXT("/Game/DefinitelyNotTheCurrentLevel"));
+    FHaybaMCPLevelHandler LevelHandler;
+    const bool bSublevelWasDirty = SublevelPackage->IsDirty();
+    TestFalse(TEXT("Save refuses a different target"), LevelHandler.Handle(TEXT("level_save"), SaveParams).bOk);
+    TestEqual(TEXT("Refused save preserves dirty state"), SublevelPackage->IsDirty(), bSublevelWasDirty);
+    TestTrue(TEXT("LOD writes use editor transactions"), FHaybaMCPCommandHandler::ShouldCreateEditorTransaction(TEXT("mesh_set_lod")));
+    TestFalse(TEXT("Disk persistence does not claim an undo transaction"), FHaybaMCPCommandHandler::ShouldCreateEditorTransaction(TEXT("level_save")));
 
     GEditor->GetEditorWorldContext().SetCurrentWorld(nullptr);
     TestFalse(TEXT("Missing editor world is an error"),

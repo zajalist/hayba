@@ -340,7 +340,8 @@ import {
 } from './ui/ui-replace-element.js';
 import { worldGenerateHandler, meta as worldGenerateMeta } from './world/world-generate.js';
 import { worldInspectDescriptor, worldIngestDescriptor, runWorldIngest, createNativeWorldIngestDependencies } from './world/index.js';
-import { assetPrepareDescriptor } from './asset/index.js';
+import { assetPrepareDescriptor, withAssetPreparationInspection } from './asset/index.js';
+import { workflowNeedsApproval } from './workflows/approval.js';
 import {
   providerListHandler,
   providerListMeta,
@@ -1719,10 +1720,10 @@ export const PCG_DESCRIPTORS: ToolDescriptor[] = [
   ...(['hayba_import_landscape', 'import_landscape'] as const).map((name) => defineTool({
     name,
     description:
-      'Deprecated for one release; use world_ingest. Import a heightmap (PNG or R16) through the staged world workflow into the open world, preserving partition settings. Imports with the existing landscape_import command, then saves and verifies. The heightmap is sampled 0..uint16-max -> 0..maxHeightM (m). Spawns one Landscape covering worldSizeKm x worldSizeKm.',
+      'Deprecated for one release; use world_ingest. Import a heightmap (PNG or R16) through the shared staged workflow, preserving partition settings and legacy import-only behavior. Leaves changes unsaved. The heightmap is sampled 0..uint16-max -> 0..maxHeightM (m). Spawns one Landscape covering worldSizeKm x worldSizeKm.',
     meta: {
       cost: 'high',
-      effects: ['imports_landscape', 'modifies_level', 'writes-to-disk'],
+      effects: ['imports_landscape', 'modifies_level'],
       when: 'you need terrain that PCG can sample points against',
       not_when: 'a static mesh is sufficient and no PCG sampling is needed',
     },
@@ -1751,13 +1752,13 @@ export const PCG_DESCRIPTORS: ToolDescriptor[] = [
           // The legacy empty string means no material, just like omission.
           ...(params.landscapeMaterial ? { material: params.landscapeMaterial } : {}),
         },
-      }, createNativeWorldIngestDependencies(session));
+      }, createNativeWorldIngestDependencies(session, { persistence: 'legacy_import_only' }));
       return {
         content: [{ type: 'text', text: JSON.stringify({
           ...result,
           deprecation: { deprecated: true, replacement: 'world_ingest', removal: 'after_one_release' },
         }) }],
-        isError: !result.ok,
+        isError: !result.ok && !workflowNeedsApproval(result),
       };
     },
   })),
@@ -3489,7 +3490,7 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
     returns: '{ok, assets:[{name,path,class}], total, has_more, next_offset}',
     schema: assetRegistryQuerySchema.shape,
   },
-  ...editorPyDescriptors.map((d) => toToolDescriptor(d)),
+  ...editorPyDescriptors.map((d) => d.name === 'asset_inspect' ? withAssetPreparationInspection(toToolDescriptor(d)) : toToolDescriptor(d)),
 
   // ── Asset & mesh P0 tools (Phase 2 Wave 2, Task 2) — factory path ─────────
   // Net-new asset-provenance/save/folder tools and StaticMesh-asset readbacks
@@ -3855,6 +3856,7 @@ export function captureStaticToolCatalogue(session: SessionManagerStub): Map<str
     captured.set(tool.name, {
       description: tool.description,
       schema: tool.schema,
+      inputSchema: descriptor.inputSchema,
       handler: wrapToolHandlerForStream(tool.name, tool.handler) as CapturedTool['handler'],
       dir: inferDir(tool.name),
     });

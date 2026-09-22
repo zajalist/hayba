@@ -7,7 +7,7 @@ import { normalizeWorldFacts, worldInspectDescriptor } from './world-inspect.js'
 function snapshot(enabled = true) {
   return {
     world: {
-      type: 'Editor', current_level: '/Game/Maps/OpenWorld',
+      type: 'Editor', package: '/Game/Maps/OpenWorld', current_level: '/Game/Maps/OpenWorld',
       coordinate_system: 'left_handed_z_up_centimeters', scale: 100,
       source_control_ready: false,
     },
@@ -24,7 +24,8 @@ describe('normalizeWorldFacts', () => {
   it('normalizes the native grouped snapshot into the public capability report', () => {
     const report = normalizeWorldFacts(snapshot());
     expect(report.facts).toEqual({
-      worldType: 'Editor', currentLevel: '/Game/Maps/OpenWorld',
+      worldType: 'Editor', worldPackage: '/Game/Maps/OpenWorld', currentLevel: '/Game/Maps/OpenWorld',
+      scopes: { landscape: null, partition: 'loaded_actors', hlod: 'loaded_actors_and_world_default', saveReadiness: null, sourceControl: null, webBrowser: null },
       landscapeActors: [{ name: 'Landscape_Main' }],
       worldPartition: { enabled: true, runtimeGrids: ['MainGrid'], dataLayers: ['Gameplay'], hlodLayers: ['/Game/MainHLOD.MainHLOD'] },
       coordinateSystem: 'left_handed_z_up_centimeters', scale: 100,
@@ -57,6 +58,8 @@ describe('normalizeWorldFacts', () => {
     { ...snapshot(), landscape: undefined },
     { ...snapshot(), data_layers: undefined },
     { ...snapshot(), hlod: undefined },
+    { ...snapshot(), world: {} },
+    { ...snapshot(), world: { type: 'Editor', package: '', current_level: '' } },
   ])('blocks malformed native snapshots', (raw) => {
     expect(normalizeWorldFacts(raw).blockingErrors.map((result) => result.code)).toContain('world_inspect_malformed');
   });

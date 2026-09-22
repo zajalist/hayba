@@ -478,6 +478,11 @@ static bool IsDestructiveCommand(const FString& Cmd)
         // Landscape (legacy alias + namespaced form)
         TEXT("landscape_import"),
         TEXT("import_landscape"),
+        TEXT("hayba_import_landscape"),
+        TEXT("world_ingest"),
+        TEXT("asset_prepare"),
+        TEXT("world_generate"),
+        TEXT("mesh_set_lod"),
         // ISM
         TEXT("ism_create_actor"),
         TEXT("ism_add_instance"),
@@ -492,6 +497,7 @@ static bool IsDestructiveCommand(const FString& Cmd)
         TEXT("spline_remove_point"),
         // Level / Data authoring
         TEXT("level_create"),
+        TEXT("level_save"),
         TEXT("data_create"),
         TEXT("data_set"),
         // Audio asset/runtime authoring and capture
@@ -590,6 +596,9 @@ bool FHaybaMCPCommandHandler::ShouldCreateEditorTransaction(const FString& Cmd)
     // custom serialization. The explicit asset_save command is the persistence
     // boundary once the caller has inspected data_set's bounded readback.
     if (Cmd == TEXT("data_set")) return false;
+
+    // Persistence is approval-gated, but writing a map to disk is not undoable.
+    if (Cmd == TEXT("level_save")) return false;
 
     return true;
 }

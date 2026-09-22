@@ -8,7 +8,7 @@ let ue: ScriptedUe | undefined;
 afterEach(() => { ue?.restore(); ue = undefined; });
 
 const nativeWorld = {
-  world: { type: 'Editor', current_level: '/Game/Maps/Test', coordinate_system: 'left_handed_z_up_centimeters', scale: 100 },
+  world: { type: 'Editor', package: '/Game/Maps/Test', current_level: '/Game/Maps/Test', coordinate_system: 'left_handed_z_up_centimeters', scale: 100 },
   landscape: [], partition: { enabled: false, runtime_grids: [] }, data_layers: [],
   hlod: { layers: [] }, capabilities: { world_partition: true, hlod: true, web_browser: false }, save_ready: true,
 };
@@ -79,15 +79,16 @@ describe.each(['hayba_import_landscape', 'import_landscape'])('%s compatibility 
     });
   });
 
-  it('retains workflow failure and deprecation metadata when saving cannot be verified', async () => {
+  it('preserves import-only behavior without calling save even when save is unavailable', async () => {
     successfulImport();
     ue!.replies('level_save', { saved: true });
     const { response, result } = await invoke(name, { heightmapPath: 'D:/terrain.r16' });
-    expect(response.isError).toBe(true);
-    expect(result.ok).toBe(false);
+    expect(response.isError).toBe(false);
+    expect(result.ok).toBe(true);
     expect(result.operationId).toEqual(expect.any(String));
     expect(result.deprecation.replacement).toBe('world_ingest');
-    expect(result.stages.at(-1)).toMatchObject({ stage: 'saveVerify', status: 'failed' });
+    expect(result.stages.find((stage) => stage.stage === 'saveVerify')).toMatchObject({ status: 'skipped', code: 'legacy_import_only' });
+    expect(ue!.called('level_save')).toBe(false);
     expect(result.affectedResources).toEqual([{ kind: 'landscape', id: landscapePath, path: landscapePath }]);
   });
 });
