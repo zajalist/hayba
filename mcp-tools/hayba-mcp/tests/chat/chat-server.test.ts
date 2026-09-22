@@ -10,6 +10,7 @@ import {
   isLoopback,
 } from '../../src/chat/chat-server.js';
 import type { LLMClient, LLMStreamEvent } from '../../src/agents/llm-client.js';
+import { temporarySessionStore } from '../../src/chat/session-store.test-helpers.js';
 
 // A distinctive fake key we assert never leaks into any SSE frame or config read.
 const FAKE_KEY = 'sk-ant-LEAK-CANARY-000111222333';
@@ -118,7 +119,7 @@ function startApp(opts: Parameters<typeof registerChatRoutes>[1]): {
 } {
   const app = express();
   app.use(express.json());
-  registerChatRoutes(app, opts);
+  registerChatRoutes(app, { sessionStore: temporarySessionStore(), ...opts });
   const server = app.listen(0);
   const port = (server.address() as AddressInfo).port;
   return { server, url: `http://127.0.0.1:${port}` };

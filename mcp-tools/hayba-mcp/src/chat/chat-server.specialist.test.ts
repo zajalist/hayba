@@ -4,6 +4,7 @@ import type { AddressInfo } from 'node:net';
 import type { Server } from 'node:http';
 import type { LLMClient, LLMCompleteParams } from '../agents/llm-client.js';
 import { registerChatRoutes, __resetChatState } from './chat-server.js';
+import { temporarySessionStore } from './session-store.test-helpers.js';
 
 describe('chat server specialist routing compatibility', () => {
   let server: Server;
@@ -32,6 +33,7 @@ describe('chat server specialist routing compatibility', () => {
     const app = express();
     app.use(express.json());
     registerChatRoutes(app, {
+      sessionStore: temporarySessionStore(),
       createClient: () => client,
       tools: ['asset_search', 'actor_list'].map((name) => ({
         name,

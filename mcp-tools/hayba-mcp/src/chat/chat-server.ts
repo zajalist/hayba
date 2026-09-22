@@ -56,6 +56,14 @@ import { createChatDispatcher } from './tool-dispatch.js';
 import { getArchetype } from '../agents/agent-registry.js';
 import { installExpressJsonRedaction, redactBoundaryValue } from '../security/secret-redaction.js';
 import { jsonObjectBody, stringQuery } from '../http/express-boundary.js';
+import {
+  SessionStore,
+  isValidSessionId,
+  sessionMessages,
+  type SavedActivity,
+  type SavedSession,
+} from './session-store.js';
+import type { AgentStreamEvent } from './activity-events.js';
 
 // ---------------------------------------------------------------------------
 // Localhost enforcement
@@ -347,6 +355,8 @@ const DEFAULT_SYSTEM =
 // ---------------------------------------------------------------------------
 
 export interface ChatRoutesOptions {
+  /** Durable text and activity history. Defaults to Saved/HaybaMCP/sessions. */
+  sessionStore?: SessionStore;
   /** Override the tool dispatcher (test seam). Defaults to full-coverage dispatch. */
   dispatchTool?: DispatchTool;
   /** Inject a client factory (test seam). Defaults to createLLMClient. */
@@ -375,6 +385,52 @@ export function registerChatRoutes(app: Express, options: ChatRoutesOptions = {}
   const dispatchTool = options.dispatchTool ?? createChatDispatcher();
   const makeClient = options.createClient ?? createLLMClient;
   const system = options.system ?? DEFAULT_SYSTEM;
+  const sessionStore = options.sessionStore ?? new SessionStore();
+
+  // Session history is a separate, allowlisted surface from transient SSE
+  // buffers and provider transcripts. Storage errors never expose file paths.
+  app.get('/chat/sessions', (req: Request, res: Response) => {
+    if (!requireLoopback(req, res)) return;
+    try {
+      return res.json({ sessions: sessionStore.list() });
+    } catch {
+      return res.status(500).json({ error: 'Unable to read session history' });
+    }
+  });
+  app.post('/chat/sessions', (req: Request, res: Response) => {
+    if (!requireLoopback(req, res)) return;
+    try {
+      return res.status(201).json(sessionStore.create());
+    } catch {
+      return res.status(500).json({ error: 'Unable to create session' });
+    }
+  });
+  app.get('/chat/sessions/:id', (req: Request, res: Response) => {
+    if (!requireLoopback(req, res)) return;
+    const id = req.params.id;
+    if (!isValidSessionId(id)) return res.status(400).json({ error: 'invalid session id' });
+    try {
+      const saved = sessionStore.load(id);
+      return saved ? res.json(saved) : res.status(404).json({ error: 'unknown session' });
+    } catch {
+      return res.status(500).json({ error: 'Unable to read session history' });
+    }
+  });
+  app.delete('/chat/sessions/:id', (req: Request, res: Response) => {
+    if (!requireLoopback(req, res)) return;
+    const id = req.params.id;
+    if (!isValidSessionId(id)) return res.status(400).json({ error: 'invalid session id' });
+    const active = sessions.get(id);
+    if (active?.running) return res.status(409).json({ error: 'session already has a turn in flight' });
+    try {
+      if (!sessionStore.remove(id)) return res.status(404).json({ error: 'unknown session' });
+      if (active) evictSession(active);
+      configStore.delete(id);
+      return res.status(204).end();
+    } catch {
+      return res.status(500).json({ error: 'Unable to delete session' });
+    }
+  });
 
   // ── POST /chat/config ────────────────────────────────────────────────────
   app.post('/chat/config', (req: Request, res: Response) => {
@@ -474,6 +530,9 @@ export function registerChatRoutes(app: Express, options: ChatRoutesOptions = {}
       archetype_filter?: string[];
       last_seq?: number;
     };
+    if (body.session_id !== undefined && !isValidSessionId(body.session_id)) {
+      return res.status(400).json({ error: 'invalid session id' });
+    }
 
     // ── Branch on resume vs new turn BEFORE any SSE headers are flushed (I3) ──
     // Emitting a 409 after flushHeaders() would append JSON mid-stream (the 200 +
@@ -488,12 +547,23 @@ export function registerChatRoutes(app: Express, options: ChatRoutesOptions = {}
       return res.status(409).json({ error: 'session already has a turn in flight' });
     }
 
+    const sessionId = body.session_id || newSessionId();
+    let saved: SavedSession | undefined;
+    if (!isResume) {
+      try {
+        saved = sessionStore.load(sessionId) ?? sessionStore.create(sessionId);
+      } catch {
+        return res.status(500).json({ error: 'Unable to open session history' });
+      }
+    }
+
     // Committed to streaming — now flush SSE headers.
     res.status(200);
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache, no-transform');
     res.setHeader('Connection', 'keep-alive');
     res.setHeader('X-Accel-Buffering', 'no');
+    res.setHeader('X-Hayba-Session-Id', sessionId);
     res.flushHeaders?.();
 
     const heartbeat = setInterval(() => {
@@ -540,8 +610,8 @@ export function registerChatRoutes(app: Express, options: ChatRoutesOptions = {}
     }
 
     // ── NEW TURN path ────────────────────────────────────────────────────────
-    const sessionId = body.session_id || newSessionId();
     const session = getOrCreateSession(sessionId);
+    if (!session.messages.length && saved) session.messages = saved.messages;
     touch(session);
     // Fresh AbortController per turn (a prior cancel leaves an aborted one).
     session.abortController = new AbortController();
@@ -553,6 +623,9 @@ export function registerChatRoutes(app: Express, options: ChatRoutesOptions = {}
     // Resolve messages: explicit body wins; else reuse stored transcript
     // (post-approval resume) if present.
     let messages = normalizeMessages(body);
+    if (!Array.isArray(body.messages) && messages && session.messages.length) {
+      messages = [...session.messages, ...messages];
+    }
     if (!messages && session.messages.length > 0) messages = session.messages;
     if (!messages) {
       emit(session, 'error', { error: 'messages or prompt is required', kind: 'bad_request' });
@@ -562,6 +635,25 @@ export function registerChatRoutes(app: Express, options: ChatRoutesOptions = {}
       return res.end();
     }
     session.messages = messages;
+    try {
+      const textMessages = sessionMessages(messages);
+      // Clients may send the full transcript; append only the suffix shared
+      // with saved history. Prompt-only callers use restored history above.
+      let shared = 0;
+      while (
+        shared < (saved?.messages.length ?? 0) &&
+        shared < textMessages.length &&
+        saved!.messages[shared].role === textMessages[shared].role &&
+        saved!.messages[shared].content === textMessages[shared].content
+      )
+        shared += 1;
+      sessionStore.append(sessionId, { messages: textMessages.slice(shared) });
+    } catch {
+      emit(session, 'error', { error: 'Unable to save session history', kind: 'persistence' });
+      finalize(session, 'error');
+      cleanup();
+      return;
+    }
 
     // Resolve `archetype` (an id into hayba.agents.json) to its tool_filter +
     // system_prompt. Hand-passed `archetype_filter` keeps working unchanged —
@@ -647,6 +739,7 @@ export function registerChatRoutes(app: Express, options: ChatRoutesOptions = {}
       dispatchTool,
       signal: session.abortController.signal,
       approvedCall: session.approvedCall,
+      sessionStore,
     }).finally(() => {
       cleanup();
       // Consume the one-shot call-bound approval so a later turn re-gates.
@@ -662,6 +755,7 @@ export function registerChatRoutes(app: Express, options: ChatRoutesOptions = {}
 // ---------------------------------------------------------------------------
 
 interface RunTurnParams {
+  sessionStore: SessionStore;
   client: ReturnType<typeof createLLMClient>;
   system: string;
   messages: LLMMessage[];
@@ -704,20 +798,64 @@ async function runTurn(session: ChatSession, params: RunTurnParams): Promise<voi
   // Cache-hit metrics (cache_creation_input_tokens / cache_read_input_tokens
   // among them) travel on the loop's own 'done' event — see agent-loop.ts.
   let usage: LLMUsage | undefined;
+  let activity: SavedActivity | undefined;
+  const steps = new Map<string, SavedActivity['steps'][number]>();
+  const artifacts: SavedSession['artifacts'] = [];
+  const observe = (event: AgentStreamEvent): void => {
+    switch (event.type) {
+      case 'activity_started':
+        activity = {
+          activityId: event.activityId,
+          title: event.title,
+          specialistId: event.specialistId,
+          status: 'planning',
+          steps: [],
+        };
+        break;
+      case 'activity_step':
+        steps.set(event.step.id, { name: event.step.name, status: event.step.status });
+        if (activity) activity.status = 'running';
+        break;
+      case 'approval_requested':
+        if (activity) activity.status = 'awaiting_approval';
+        break;
+      case 'artifact_proposed':
+        artifacts.push(event.artifact);
+        break;
+      case 'activity_completed':
+        // The legacy adapter emits an aborted error before its done frame;
+        // capture usage here even when forwarding stops on that error.
+        if (event.usage) usage = event.usage;
+        if (activity) {
+          activity.status = event.outcome;
+          activity.reason = event.reason;
+        }
+        break;
+      case 'error':
+        if (activity) {
+          activity.status = 'failed';
+          activity.reason = event.termination?.reason ?? 'error';
+        }
+        break;
+    }
+  };
 
   try {
-    for await (const ev of runAgentLoop({
-      client: params.client,
-      system: params.system,
-      messages: params.messages,
-      tools: params.tools,
-      archetypeFilter: params.archetypeFilter,
-      pinnedSpecialistId: params.pinnedSpecialistId,
-      dispatchTool: params.dispatchTool,
-      signal: params.signal,
-      planMode: true, // honour Plan Mode; UE side is authoritative, TS side gated
-      approvedCall: params.approvedCall,
-    })) {
+    for await (const ev of runAgentLoop(
+      {
+        client: params.client,
+        system: params.system,
+        messages: params.messages,
+        tools: params.tools,
+        archetypeFilter: params.archetypeFilter,
+        pinnedSpecialistId: params.pinnedSpecialistId,
+        dispatchTool: params.dispatchTool,
+        signal: params.signal,
+        planMode: true, // honour Plan Mode; UE side is authoritative, TS side gated
+        approvedCall: params.approvedCall,
+      },
+      observe,
+    )) {
       forwardEvent(
         session,
         ev,
@@ -731,6 +869,25 @@ async function runTurn(session: ChatSession, params: RunTurnParams): Promise<voi
     }
   } catch (err) {
     lastError = { error: err instanceof Error ? err.message : String(err), kind: 'internal' };
+    if (activity) {
+      activity.status = 'failed';
+      activity.reason = 'error';
+    }
+  }
+
+  try {
+    if (activity) activity.steps = [...steps.values()];
+    const saved = params.sessionStore.append(session.id, {
+      messages: session.assistantText ? [{ role: 'assistant', content: session.assistantText }] : [],
+      activity,
+      artifacts,
+      usage,
+    });
+    session.messages = saved.messages;
+  } catch {
+    lastError = { error: 'Unable to save session history', kind: 'persistence' };
+    emit(session, 'error', lastError);
+    finalReason = null;
   }
 
   // Consolidated terminal frame. `usage` is included whenever the loop
