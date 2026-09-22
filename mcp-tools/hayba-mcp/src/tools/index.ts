@@ -339,6 +339,8 @@ import {
   uiReplaceElementHandler,
 } from './ui/ui-replace-element.js';
 import { worldGenerateHandler, meta as worldGenerateMeta } from './world/world-generate.js';
+import { worldInspectDescriptor, worldIngestDescriptor, runWorldIngest, createNativeWorldIngestDependencies } from './world/index.js';
+import { assetPrepareDescriptor } from './asset/index.js';
 import {
   providerListHandler,
   providerListMeta,
@@ -1714,13 +1716,13 @@ export const PCG_DESCRIPTORS: ToolDescriptor[] = [
       return { content: result.content, isError: result.isError };
     },
   }),
-  defineTool({
-    name: 'hayba_import_landscape',
+  ...(['hayba_import_landscape', 'import_landscape'] as const).map((name) => defineTool({
+    name,
     description:
-      'Import a heightmap (PNG or R16) as an UE Landscape actor. Wraps the UE-side landscape_import handler. The heightmap is sampled 0..uint16-max -> 0..maxHeightM (m). Spawns one Landscape covering worldSizeKm x worldSizeKm.',
+      'Deprecated for one release; use world_ingest. Import a heightmap (PNG or R16) through the staged world workflow into the open world, preserving partition settings. Imports with the existing landscape_import command, then saves and verifies. The heightmap is sampled 0..uint16-max -> 0..maxHeightM (m). Spawns one Landscape covering worldSizeKm x worldSizeKm.',
     meta: {
       cost: 'high',
-      effects: ['imports_landscape', 'modifies_level'],
+      effects: ['imports_landscape', 'modifies_level', 'writes-to-disk'],
       when: 'you need terrain that PCG can sample points against',
       not_when: 'a static mesh is sufficient and no PCG sampling is needed',
     },
@@ -1736,21 +1738,35 @@ export const PCG_DESCRIPTORS: ToolDescriptor[] = [
       landscapeMaterial: z.string().optional().describe('UE material path; empty = no material'),
     },
     cost: 'high',
-    returns: '{ok, actor, size, components}',
-    handler: async (params) => {
-      try {
-        const data = await executeCommand('landscape_import', params as Record<string, unknown>);
-        return {
-          content: [{ type: 'text', text: JSON.stringify(data ?? { ok: true }, null, 2) }],
-        };
-      } catch (e) {
-        return errorResult(`Error importing landscape: ${(e as Error).message}`);
-      }
+    returns: 'WorkflowResult including operationId, retained resources, and deprecation:{deprecated,replacement,removal}',
+    handler: async (params, session) => {
+      const result = await runWorldIngest({
+        source: { kind: 'heightmap', path: params.heightmapPath },
+        destination: { mode: 'open_world' },
+        partition: { mode: 'preserve' },
+        terrain: {
+          worldSizeKm: params.worldSizeKm,
+          maxHeightM: params.maxHeightM,
+          actorLabel: params.actorLabel,
+          // The legacy empty string means no material, just like omission.
+          ...(params.landscapeMaterial ? { material: params.landscapeMaterial } : {}),
+        },
+      }, createNativeWorldIngestDependencies(session));
+      return {
+        content: [{ type: 'text', text: JSON.stringify({
+          ...result,
+          deprecation: { deprecated: true, replacement: 'world_ingest', removal: 'after_one_release' },
+        }) }],
+        isError: !result.ok,
+      };
     },
-  }),
+  })),
 ];
 
 const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
+  worldInspectDescriptor,
+  worldIngestDescriptor,
+  assetPrepareDescriptor,
   // ── World generation (always-on flagship) ────────────────────────────────
   {
     name: 'world_generate',

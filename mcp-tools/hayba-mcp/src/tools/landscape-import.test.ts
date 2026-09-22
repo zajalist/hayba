@@ -1,54 +1,93 @@
-import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { afterEach, describe, expect, it } from 'vitest';
+import { z } from 'zod';
+import { STATIC_TOOL_CATALOGUE } from './index.js';
+import { scriptedUe, type ScriptedUe } from './testing/scripted-ue.js';
+import type { WorkflowResult } from './workflows/contracts.js';
 
-/**
- * Lightweight smoke test that the un-parked `hayba_import_landscape` wrapper
- * actually shipped in index.ts (no longer commented out as "schema parked").
- *
- * We deliberately avoid booting registerTools — that would require a full
- * MCP server + UE bridge fake — and instead source-check the registration.
- *
- * Companion runtime test: `routing/meta-tools/invoke.test.ts` covers the
- * UE-legacy dispatch path that this wrapper indirectly exercises.
- */
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const indexSrc = readFileSync(join(__dirname, 'index.ts'), 'utf-8');
+let ue: ScriptedUe | undefined;
+afterEach(() => { ue?.restore(); ue = undefined; });
 
-describe('hayba_import_landscape wrapper', () => {
-  it('is no longer parked — comment is gone', () => {
-    expect(indexSrc).not.toContain('hayba_import_landscape schema parked');
+const nativeWorld = {
+  world: { type: 'Editor', current_level: '/Game/Maps/Test', coordinate_system: 'left_handed_z_up_centimeters', scale: 100 },
+  landscape: [], partition: { enabled: false, runtime_grids: [] }, data_layers: [],
+  hlod: { layers: [] }, capabilities: { world_partition: true, hlod: true, web_browser: false }, save_ready: true,
+};
+const landscapePath = '/Game/Maps/Test.Test:PersistentLevel.Landscape_1';
+
+function successfulImport() {
+  let imported = false;
+  ue = scriptedUe()
+    .replies('world_inspect', () => ({ ...nativeWorld, landscape: imported ? [{ path: landscapePath }] : [] }))
+    .replies('landscape_import', () => { imported = true; return { actorLabel: 'Terrain' }; })
+    .replies('level_save', { saved: true, verified: true, dirty: false });
+}
+
+async function invoke(name: string, input: Record<string, unknown>) {
+  const descriptor = STATIC_TOOL_CATALOGUE.find((tool) => tool.name === name);
+  expect(descriptor, `${name} must remain callable`).toBeDefined();
+  const response = await descriptor!.handler(z.object(descriptor!.schema).parse(input), {});
+  const text = response.content.find((block) => block.type === 'text');
+  expect(text).toBeDefined();
+  return { response, result: JSON.parse(text!.text) as WorkflowResult & {
+    deprecation: { deprecated: boolean; replacement: string; removal: string };
+  } };
+}
+
+describe.each(['hayba_import_landscape', 'import_landscape'])('%s compatibility adapter', (name) => {
+  it('maps legacy inputs losslessly into the shared ingestion plan and native importer', async () => {
+    successfulImport();
+    const input = {
+      heightmapPath: 'D:/terrain.r16', worldSizeKm: 2.5, maxHeightM: 350,
+      actorLabel: 'Mountain', landscapeMaterial: '/Game/Materials/Terrain',
+    };
+    const { response, result } = await invoke(name, input);
+    expect(response.isError).toBe(false);
+    expect(result.ok).toBe(true);
+    expect(result.operationId).toEqual(expect.any(String));
+    expect(result.operationId.length).toBeGreaterThan(0);
+    expect(result.deprecation).toEqual({ deprecated: true, replacement: 'world_ingest', removal: 'after_one_release' });
+    const plan = JSON.parse(result.stages.find((stage) => stage.stage === 'plan')!.summary!);
+    expect(plan.request).toMatchObject({
+      source: { kind: 'heightmap', path: 'D:/terrain.r16' },
+      destination: { mode: 'open_world' }, partition: { mode: 'preserve' },
+      terrain: { worldSizeKm: 2.5, maxHeightM: 350, actorLabel: 'Mountain', material: '/Game/Materials/Terrain' },
+    });
+    expect(ue!.paramsFor('landscape_import')).toEqual(input);
+    expect(result.stages.map((stage) => stage.stage)).toEqual([
+      'inspect', 'normalize', 'plan', 'terrain', 'partition', 'assets', 'saveVerify', 'validate',
+    ]);
+    expect(result.stages.find((stage) => stage.stage === 'partition')?.status).toBe('skipped');
   });
 
-  it('registers a server.tool entry pointing at landscape_import', () => {
-    expect(indexSrc).toContain("'hayba_import_landscape'");
-    expect(indexSrc).toMatch(/executeCommand\(['"]landscape_import['"]/);
+  it('preserves the old defaults when optional fields are absent', async () => {
+    successfulImport();
+    const { result } = await invoke(name, { heightmapPath: 'D:/terrain.r16' });
+    expect(result.ok).toBe(true);
+    expect(ue!.paramsFor('landscape_import')).toEqual({
+      heightmapPath: 'D:/terrain.r16', worldSizeKm: 8, maxHeightM: 600, actorLabel: 'Hayba_Terrain',
+    });
   });
 
-  it('declares the full param schema from the UE Cmd_ImportLandscape signature', () => {
-    // Each TryGetStringField / TryGetNumberField call in the C++ handler
-    // should have a matching schema entry.
-    //
-    // Whitespace is permitted between `z` and its type because these are
-    // source-text assertions and the formatter is free to break a long zod
-    // chain across lines. It did exactly that to maxHeightM, and this suite went
-    // permanently red over a line break rather than a real regression — a
-    // failing check nobody can act on trains everyone to ignore the suite.
-    const declares = (param: string, zodType: 'string' | 'number'): RegExp =>
-      new RegExp(`${param}:\\s*z\\s*\\.\\s*${zodType}\\(\\)`);
-
-    expect(indexSrc).toMatch(declares('heightmapPath', 'string'));
-    expect(indexSrc).toMatch(declares('worldSizeKm', 'number'));
-    expect(indexSrc).toMatch(declares('maxHeightM', 'number'));
-    expect(indexSrc).toMatch(declares('actorLabel', 'string'));
-    expect(indexSrc).toMatch(declares('landscapeMaterial', 'string'));
+  it('retains explicit zero values and empty label, and treats empty material as no material', async () => {
+    successfulImport();
+    const { result } = await invoke(name, {
+      heightmapPath: 'D:/terrain.r16', worldSizeKm: 0, maxHeightM: 0, actorLabel: '', landscapeMaterial: '',
+    });
+    expect(result.ok).toBe(true);
+    expect(ue!.paramsFor('landscape_import')).toEqual({
+      heightmapPath: 'D:/terrain.r16', worldSizeKm: 0, maxHeightM: 0, actorLabel: '',
+    });
   });
 
-  it('feeds its descriptor through the shared schema-seeding loop', () => {
-    expect(indexSrc).toMatch(/name:\s*['"]hayba_import_landscape['"]/);
-    expect(indexSrc).toMatch(
-      /for\s*\(\s*const\s+descriptor\s+of\s+STATIC_TOOL_CATALOGUE\s*\)\s*recordToolSchema\(/,
-    );
+  it('retains workflow failure and deprecation metadata when saving cannot be verified', async () => {
+    successfulImport();
+    ue!.replies('level_save', { saved: true });
+    const { response, result } = await invoke(name, { heightmapPath: 'D:/terrain.r16' });
+    expect(response.isError).toBe(true);
+    expect(result.ok).toBe(false);
+    expect(result.operationId).toEqual(expect.any(String));
+    expect(result.deprecation.replacement).toBe('world_ingest');
+    expect(result.stages.at(-1)).toMatchObject({ stage: 'saveVerify', status: 'failed' });
+    expect(result.affectedResources).toEqual([{ kind: 'landscape', id: landscapePath, path: landscapePath }]);
   });
 });

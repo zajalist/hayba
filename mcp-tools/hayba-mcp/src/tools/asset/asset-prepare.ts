@@ -40,10 +40,12 @@ interface NativeMeshInspection {
 // This is the only place workflow code knows the current native command names.
 // Keep it local: the workflow contract is deliberately independent from the UE
 // command catalog and can survive a native rename without changing callers.
+// Workflow-internal reuse; mesh_set_lod remains a public generated native tool.
+const SET_MESH_LOD_COMMAND = 'mesh_set_lod' as const;
 const nativeMesh = {
   inspect: (assetPath: string) => executeCommand<NativeMeshInspection>('mesh_get_info', { path: assetPath }),
   setLod: (assetPath: string, lodIndex: number, screenSize: number, reduction?: number) =>
-    executeCommand('mesh_set_lod', {
+    executeCommand(SET_MESH_LOD_COMMAND, {
       path: assetPath,
       lod_index: lodIndex,
       screen_size: screenSize,

@@ -231,6 +231,7 @@ const DOMAINS: ReadonlyArray<{ domain: string; command_count: number; commands: 
  *  a cycle. Falls back to the prefix before the first underscore, which is the
  *  convention every domain follows. */
 function domainOf(name: string): string {
+  if (name === 'hayba_import_landscape' || name === 'import_landscape') return 'world';
   if (name === 'query_ue_docs') return 'docs';
   if (name.startsWith('hayba_fab_')) return 'fab';
   if (

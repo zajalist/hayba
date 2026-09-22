@@ -26,6 +26,8 @@ const HEAVY_OPS = new Set<string>([
   // Landscape import (both the C++ handler name and the alias used by callers).
   'landscape_import',
   'import_landscape',
+  // Staged world ingestion can import terrain and persist the resulting level.
+  'world_ingest',
   // Level save — world-partition saves serialise every dirty actor on the
   // game thread and hold the port for tens of seconds.
   'level_save',

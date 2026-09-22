@@ -11,6 +11,8 @@ import {
 import { worldInspectDescriptor, type WorldCapabilityReport } from './world-inspect.js';
 
 type ResourceRef = WorkflowResult['affectedResources'][number];
+// Workflow-internal reuse; level_save remains a public generated native tool.
+const SAVE_LEVEL_COMMAND = 'level_save' as const;
 type PartitionPolicy = Exclude<NonNullable<WorldIngestRequest['partition']>, { mode: 'preserve' }>;
 
 /**
@@ -191,7 +193,7 @@ export function createNativeWorldIngestDependencies(session: SessionManager = {}
       if (current.facts.currentLevel !== before.facts.currentLevel || current.facts.saveReady !== true) {
         return stageResult('saveVerify', 'failed', { code: 'world_changed_before_save', summary: 'Original world is no longer open and save-ready' });
       }
-      const saved = await executeCommand<{ saved?: boolean; verified?: boolean; dirty?: boolean }>('level_save', { path: before.facts.currentLevel });
+      const saved = await executeCommand<{ saved?: boolean; verified?: boolean; dirty?: boolean }>(SAVE_LEVEL_COMMAND, { path: before.facts.currentLevel });
       return stageResult('saveVerify', saved.saved === true && saved.verified === true && saved.dirty === false ? 'succeeded' : 'failed', {
         summary: 'Save requires native readback of a clean package that exists on disk',
       });
