@@ -34,6 +34,7 @@ interface NativeMeshInspection {
   is_foliage?: boolean;
   is_deforming?: boolean;
   lod_count?: number;
+  lod_screen_sizes?: number[];
 }
 
 // This is the only place workflow code knows the current native command names.
@@ -59,11 +60,16 @@ function decision(
 function inspectDecisions(policy: AssetPreparationPolicy, mesh: NativeMeshInspection): AssetPreparationInspection['decisions'] {
   const nanite = policy.nanite ?? 'preserve';
   const foliageOrDeforming = mesh.is_foliage === true || mesh.is_deforming === true || policy.intent === 'foliage';
-  const naniteEligible = mesh.supports_nanite === true && !foliageOrDeforming;
+  const eligibleIntent = policy.intent === 'environment' || policy.intent === 'hero';
+  const naniteEligible = mesh.supports_nanite === true && !foliageOrDeforming && eligibleIntent;
   const naniteDecision = nanite === 'auto'
-    ? naniteEligible
-      ? decision('nanite', nanite, 'enable', 'static environment mesh is eligible for Nanite')
-      : decision('nanite', nanite, 'preserve', 'foliage or deforming meshes are preserved under Nanite auto')
+    ? mesh.supports_nanite === false
+      ? decision('nanite', nanite, 'preserve', 'native inspection reports Nanite unsupported')
+      : foliageOrDeforming
+        ? decision('nanite', nanite, 'preserve', 'foliage or deforming meshes are preserved under Nanite auto')
+        : naniteEligible
+          ? decision('nanite', nanite, 'enable', 'static environment mesh is eligible for Nanite')
+          : decision('nanite', nanite, 'preserve', 'mesh intent is not automatically eligible for Nanite')
     : decision('nanite', nanite, nanite, nanite === 'enable' && mesh.supports_nanite === false
       ? 'native inspection reports Nanite unsupported'
       : 'requested explicitly');
@@ -74,21 +80,25 @@ function inspectDecisions(policy: AssetPreparationPolicy, mesh: NativeMeshInspec
   const materialInstances = policy.materialInstances ?? 'preserve';
   return [
     naniteDecision,
-    decision('collision', collision, collision, collision === 'preserve' ? 'preserved by policy' : 'native collision writer is unavailable'),
-    decision('lods', lods, lods, lods === 'preserve' ? 'preserved by policy' : 'native LOD generation is unavailable'),
-    decision('lightmapUvs', lightmapUvs, lightmapUvs, lightmapUvs === 'preserve' ? 'preserved by policy' : 'native lightmap UV generation is unavailable'),
-    decision('materialInstances', materialInstances, materialInstances, materialInstances === 'preserve' ? 'preserved by policy' : 'native material instance creation is unavailable'),
+    decision('collision', collision, 'preserve', collision === 'preserve' ? 'preserved by policy' : 'native collision writer is unavailable; skipped'),
+    decision('lods', lods, lods, lods === 'preserve' ? 'preserved by policy' : 'native LOD writer can update existing LOD reduction settings'),
+    decision('lightmapUvs', lightmapUvs, lightmapUvs === 'require' ? lightmapUvs : 'preserve', lightmapUvs === 'preserve' ? 'preserved by policy' : 'native lightmap UV generation is unavailable; skipped'),
+    decision('materialInstances', materialInstances, materialInstances === 'require' ? materialInstances : 'preserve', materialInstances === 'preserve' ? 'preserved by policy' : 'native material instance creation is unavailable; skipped'),
   ];
 }
 
-export async function inspectAssetPreparation(input: AssetPreparationInput): Promise<AssetPreparationInspection> {
+function toInspection(input: AssetPreparationInput, mesh: NativeMeshInspection): AssetPreparationInspection {
   const parsed = assetPrepareInputSchema.parse(input);
-  const mesh = await nativeMesh.inspect(parsed.assetPath);
   const decisions = inspectDecisions(parsed.policy, mesh);
   const unsupported = decisions
     .filter((d) => d.reason.includes('unavailable') || d.reason.includes('unsupported'))
     .map((d) => d.capability);
   return { assetPath: parsed.assetPath, decisions, unsupported };
+}
+
+export async function inspectAssetPreparation(input: AssetPreparationInput): Promise<AssetPreparationInspection> {
+  const parsed = assetPrepareInputSchema.parse(input);
+  return toInspection(parsed, await nativeMesh.inspect(parsed.assetPath));
 }
 
 function fail(assetPath: string, summary: string, inspection: AssetPreparationInspection): WorkflowResult {
@@ -106,34 +116,48 @@ function fail(assetPath: string, summary: string, inspection: AssetPreparationIn
   };
 }
 
-function requiredCapabilityFailure(input: AssetPreparationInput, inspection: AssetPreparationInspection): string | undefined {
+function requiredCapabilityFailure(input: AssetPreparationInput, inspection: AssetPreparationInspection, mesh: NativeMeshInspection): string | undefined {
   const d = (capability: AssetPreparationDecision['capability']) => inspection.decisions.find((x) => x.capability === capability);
   if (input.policy.nanite === 'enable' && d('nanite')?.reason.includes('unsupported')) return 'Nanite is unsupported by native inspection';
-  if (input.policy.nanite === 'enable') return 'Nanite enable requires a native writer that is unavailable';
+  if (input.policy.nanite === 'enable' || input.policy.nanite === 'disable') return 'Nanite mutation requires a native writer that is unavailable';
   if (input.policy.lightmapUvs === 'require') return 'lightmap UV generation is required but unavailable';
   if (input.policy.materialInstances === 'require') return 'material instance creation is required but unavailable';
-  if (typeof input.policy.lods === 'object') return 'LOD generation policy requires a native generator that is unavailable';
+  if (typeof input.policy.lods === 'object') {
+    if (input.policy.lods.count !== undefined && input.policy.lods.count !== mesh.lod_count) {
+      return `requested ${input.policy.lods.count} LODs but native writer can only edit the ${mesh.lod_count ?? 0} existing LODs`;
+    }
+    if (input.policy.lods.reduction !== undefined && (!mesh.lod_count || mesh.lod_count < 2 || !mesh.lod_screen_sizes || mesh.lod_screen_sizes.length < mesh.lod_count)) {
+      return 'LOD reduction requires inspected screen sizes for at least two existing LODs';
+    }
+  }
   return undefined;
+}
+
+async function applyLodReduction(input: AssetPreparationInput, mesh: NativeMeshInspection): Promise<void> {
+  const policy = input.policy.lods;
+  if (typeof policy !== 'object' || policy.reduction === undefined) return;
+  for (let lodIndex = 1; lodIndex < (mesh.lod_count ?? 0); lodIndex++) {
+    await nativeMesh.setLod(input.assetPath, lodIndex, mesh.lod_screen_sizes![lodIndex]!, policy.reduction);
+  }
 }
 
 export async function prepareAsset(input: AssetPreparationInput): Promise<WorkflowResult> {
   const parsed = assetPrepareInputSchema.parse(input);
-  const inspection = await inspectAssetPreparation(parsed);
-  const refusal = requiredCapabilityFailure(parsed, inspection);
+  const mesh = await nativeMesh.inspect(parsed.assetPath);
+  const inspection = toInspection(parsed, mesh);
+  const refusal = requiredCapabilityFailure(parsed, inspection, mesh);
   if (refusal) return fail(parsed.assetPath, refusal, inspection);
 
-  // Existing native LOD mutation is intentionally not used for `auto`: it can
-  // edit an existing source model but cannot create a requested LOD chain.
-  // Preserve and auto therefore remain non-mutating until an honest generator
-  // exists. The adapter keeps the future set-to-value integration local.
-  void nativeMesh.setLod;
+  await applyLodReduction(parsed, mesh);
   return {
     ok: true,
     operationId: `asset-prepare:${parsed.assetPath}`,
-    summary: 'asset preparation policy inspected; no supported mutations requested',
-    stages: [stageResult('inspect'), stageResult('prepare', 'skipped', { summary: 'no supported mutation required' })],
+    summary: typeof parsed.policy.lods === 'object' && parsed.policy.lods.reduction !== undefined
+      ? 'asset preparation policy inspected and supported LOD reductions applied'
+      : 'asset preparation policy inspected; no supported mutations requested',
+    stages: [stageResult('inspect'), stageResult('prepare', typeof parsed.policy.lods === 'object' && parsed.policy.lods.reduction !== undefined ? 'succeeded' : 'skipped', { summary: 'supported requested mutations applied or skipped' })],
     affectedResources: [{ kind: 'asset', id: parsed.assetPath, path: parsed.assetPath }],
-    verdicts: [{ code: 'prepared_without_mutation', message: 'Policies were inspected without changing the asset', severity: 'info', direction: 'proceed' }],
+    verdicts: [{ code: 'asset_preparation_complete', message: 'Supported policies were applied; unavailable optional policies were skipped', severity: 'info', direction: 'proceed' }],
     remediation: [],
   };
 }
