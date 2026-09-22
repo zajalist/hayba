@@ -47,6 +47,11 @@ export function hasChatCapturedTools(): boolean {
   return capturedTools !== null;
 }
 
+/** Canonical catalog snapshot; undefined means deferred routing has not registered. */
+export function listChatCapturedToolNames(): string[] | undefined {
+  return capturedTools ? [...capturedTools.keys()] : undefined;
+}
+
 /**
  * Unwrap an MCP tool result (`{content:[{type:'text',text}]}`) back into
  * structured data so the model — and the loop's plan-mode detector — see the

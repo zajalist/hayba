@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { z } from 'zod';
 import { recordSchema } from '../tools/schema-registry.js';
+import { registerChatCapturedTools } from './tool-dispatch.js';
 import {
   runLegacyAgentLoop as runAgentLoop,
   runAgentLoop as runSemanticAgentLoop,
@@ -44,6 +45,7 @@ class FakeLLMClient implements LLMClient {
   offeredToolNames: string[][] = [];
   /** Snapshot of the transcript sent to the client on each stream() call. */
   seenMessages: LLMMessage[][] = [];
+  seenSystems: string[] = [];
   private turns: LLMResponse[];
 
   constructor(turns: LLMResponse[]) {
@@ -56,6 +58,7 @@ class FakeLLMClient implements LLMClient {
   }
 
   async *stream(params: LLMCompleteParams): AsyncGenerator<LLMStreamEvent, void, unknown> {
+    this.seenSystems.push(params.system);
     this.offeredToolNames.push((params.tools ?? []).map((t) => t.name));
     this.seenMessages.push(params.messages.map((m) => ({ ...m })));
     const resp = this.turns.shift() ?? textResponse('done');
@@ -79,6 +82,108 @@ function reduceStream(events: AgentStreamEvent[], initial: ActivityState | null 
 }
 
 describe('semantic runAgentLoop', () => {
+  it('routes over the enabled catalog and exposes identity only in activity detail frames', async () => {
+    const client = new FakeLLMClient([toolResponse('asset_search'), textResponse('Found assets')]);
+    const events = await collect(
+      runSemanticAgentLoop(
+        baseParams({
+          client,
+          messages: [{ role: 'user', content: 'Find Content Browser assets by path' }],
+          tools: ['asset_search', 'asset_delete', 'actor_list'].map((name) => ({
+            name,
+            description: '',
+            input_schema: { type: 'object', properties: {} },
+          })),
+          disabledTools: ['asset_delete'],
+          dispatchTool: async () => ({ assets: [] }),
+        }),
+      ),
+    );
+    expect(client.offeredToolNames[0]).toEqual(['asset_search']);
+    expect(client.seenSystems[0]).toContain('Content Browser assets');
+    for (const event of events) {
+      expect(ActivityEventSchema.safeParse(event).success).toBe(true);
+      if (event.type === 'activity_started' || event.type === 'activity_step')
+        expect(event).toHaveProperty('specialistId', 'asset-manager');
+      else expect(event).not.toHaveProperty('specialistId');
+    }
+    expect(reduceStream(events).status).toBe('succeeded');
+  });
+
+  it('honors a pin over automatic intent while keeping approval gates', async () => {
+    const client = new FakeLLMClient([toolResponse('actor_spawn')]);
+    const dispatch = vi.fn();
+    const events = await collect(
+      runSemanticAgentLoop(
+        baseParams({
+          client,
+          pinnedSpecialistId: 'blueprint-generator',
+          messages: [{ role: 'user', content: 'Content Browser assets' }],
+          dispatchTool: dispatch,
+          planMode: true,
+        }),
+      ),
+    );
+    expect(events[0]).toHaveProperty('specialistId', 'blueprint-generator');
+    expect(events.at(-1)).toMatchObject({ type: 'approval_requested' });
+    expect(events.at(-1)).not.toHaveProperty('specialistId');
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  it('rejects unknown specialist pins before calling the provider', async () => {
+    const client = new FakeLLMClient([]);
+    await expect(collect(runSemanticAgentLoop(baseParams({ client, pinnedSpecialistId: 'missing' })))).rejects.toThrow(
+      /unknown archetype/,
+    );
+    expect(client.offeredToolNames).toEqual([]);
+  });
+
+  it('keeps coordinator behavior when no specialist matches', async () => {
+    const client = new FakeLLMClient([textResponse('Hello')]);
+    const events = await collect(runSemanticAgentLoop(baseParams({ client })));
+    expect(events[0]).toHaveProperty('specialistId', 'director');
+    expect(client.offeredToolNames[0]).toEqual(['actor_spawn', 'actor_list']);
+  });
+
+  it('routes from the latest human text even when a resumed transcript ends in tool results', async () => {
+    const events = await collect(
+      runSemanticAgentLoop(
+        baseParams({
+          messages: [
+            { role: 'user', content: [{ type: 'text', text: 'Find Content Browser assets by path' }] },
+            { role: 'assistant', content: [{ type: 'tool_use', id: 'c1', name: 'asset_search', input: {} }] },
+            { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'c1', content: 'No assets found' }] },
+          ],
+          tools: [{ name: 'asset_search', description: '', input_schema: { type: 'object', properties: {} } }],
+        }),
+      ),
+    );
+    expect(events[0]).toHaveProperty('specialistId', 'asset-manager');
+  });
+
+  it('refuses calls excluded by a pinned profile or an additional explicit filter', async () => {
+    const dispatch = vi.fn();
+    const client = new FakeLLMClient([toolResponse('actor_list'), toolResponse('asset_delete'), textResponse('Done')]);
+    const events = await collect(
+      runSemanticAgentLoop(
+        baseParams({
+          client,
+          pinnedSpecialistId: 'asset-manager',
+          archetypeFilter: ['*_search'],
+          tools: ['asset_search', 'asset_delete', 'actor_list'].map((name) => ({
+            name,
+            description: '',
+            input_schema: { type: 'object', properties: {} },
+          })),
+          dispatchTool: dispatch,
+        }),
+      ),
+    );
+    expect(client.offeredToolNames[0]).toEqual(['asset_search']);
+    expect(events.filter((event) => event.type === 'activity_step' && event.step.status === 'failed')).toHaveLength(2);
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
   it('streams a reducer-valid tool activity and provider-neutral usage', async () => {
     const events = await collect(
       runSemanticAgentLoop(
@@ -604,6 +709,15 @@ describe('runAgentLoop', () => {
 });
 
 describe('buildToolCatalog', () => {
+  it('offers only registered captured names and respects an empty captured catalog', () => {
+    recordSchema('zzz_captured_probe', { shape: {}, cost: 'low', returns: '{ok}' });
+    recordSchema('zzz_uncaptured_probe', { shape: {}, cost: 'low', returns: '{ok}' });
+    registerChatCapturedTools(new Map([['zzz_captured_probe', { handler: async () => ({ ok: true }) }]]));
+    expect(buildToolCatalog().map((tool) => tool.name)).toEqual(['zzz_captured_probe']);
+    registerChatCapturedTools(new Map());
+    expect(buildToolCatalog()).toEqual([]);
+  });
+
   it('filters by archetype tool_filter and disabled list', () => {
     const listCommands = () => ['actor_spawn', 'actor_list', 'pcg_create_graph'];
     const isDisabled = (n: string) => n === 'actor_list';

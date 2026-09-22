@@ -642,6 +642,7 @@ export function registerChatRoutes(app: Express, options: ChatRoutesOptions = {}
       system: turnSystem,
       messages,
       archetypeFilter,
+      pinnedSpecialistId: body.archetype,
       tools: options.tools,
       dispatchTool,
       signal: session.abortController.signal,
@@ -665,6 +666,7 @@ interface RunTurnParams {
   system: string;
   messages: LLMMessage[];
   archetypeFilter?: string[];
+  pinnedSpecialistId?: string;
   tools?: LLMTool[];
   dispatchTool: DispatchTool;
   signal: AbortSignal;
@@ -710,6 +712,7 @@ async function runTurn(session: ChatSession, params: RunTurnParams): Promise<voi
       messages: params.messages,
       tools: params.tools,
       archetypeFilter: params.archetypeFilter,
+      pinnedSpecialistId: params.pinnedSpecialistId,
       dispatchTool: params.dispatchTool,
       signal: params.signal,
       planMode: true, // honour Plan Mode; UE side is authoritative, TS side gated

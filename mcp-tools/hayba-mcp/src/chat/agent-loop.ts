@@ -47,6 +47,14 @@ import { getToolMeta } from '../tools/tool-meta-registry.js';
 import { describeMeta } from '../tools/hayba-tool-meta.js';
 import { NON_IDEMPOTENT, executeCommand } from '../tools/tool-executor.js';
 import { isToolDisabled } from '../tools/disabled-tools-watcher.js';
+import {
+  createToolFilter,
+  getAgentsManifest,
+  resolveArchetype,
+  type AgentsManifest,
+} from '../agents/agent-registry.js';
+import { selectSpecialist } from '../agents/specialist-router.js';
+import { listChatCapturedToolNames } from './tool-dispatch.js';
 
 // ---------------------------------------------------------------------------
 // Destructive-name predicate — mirrors C++ IsDestructiveCommand semantics.
@@ -174,12 +182,6 @@ function shapeToInputSchema(shape: ZodRawShape): LLMTool['input_schema'] {
 // Tool-catalog derivation from the live registry.
 // ---------------------------------------------------------------------------
 
-/** Convert a glob (`actor_*`, `*`) to a RegExp. Only `*` is a wildcard. */
-function globToRegex(glob: string): RegExp {
-  const escaped = glob.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*');
-  return new RegExp(`^${escaped}$`);
-}
-
 export interface ToolCatalogOptions {
   /** Explicit disabled names (in addition to the disabled-tools watcher). */
   disabledTools?: Iterable<string>;
@@ -198,9 +200,8 @@ export interface ToolCatalogOptions {
 export function buildToolCatalog(opts: ToolCatalogOptions = {}): LLMTool[] {
   const isDisabled = opts.isDisabled ?? isToolDisabled;
   const disabledExtra = new Set(opts.disabledTools ?? []);
-  const filters = (opts.archetypeFilter ?? ['*']).map(globToRegex);
-  const allowed = (name: string): boolean => filters.some((re) => re.test(name));
-  const names = (opts.listCommands ?? listRecordedCommands)();
+  const allowed = createToolFilter(opts.archetypeFilter ?? ['*']);
+  const names = opts.listCommands ? opts.listCommands() : (listChatCapturedToolNames() ?? listRecordedCommands());
 
   const tools: LLMTool[] = [];
   for (const name of names) {
@@ -275,6 +276,10 @@ export type AgentEvent =
   | { type: 'error'; error: string; kind?: string };
 
 export interface AgentLoopParams {
+  /** Existing manifest profiles, optionally supplied as one turn-scoped snapshot. */
+  manifest?: AgentsManifest;
+  /** Explicit /agent selection overrides intent routing. */
+  pinnedSpecialistId?: string;
   /** Stable identity supplied again when resuming a paused activity. */
   activityId?: string;
   activityTitle?: string;
@@ -642,26 +647,66 @@ async function* runExecutionLoop(params: AgentLoopParams): AsyncGenerator<AgentE
 
 /** Semantic public stream. Approval pauses stay open; every other ending is terminal once. */
 export async function* runAgentLoop(params: AgentLoopParams): AsyncGenerator<AgentStreamEvent, void, unknown> {
+  const manifest = params.manifest ?? getAgentsManifest();
+  const disabled = new Set(params.disabledTools ?? []);
+  const allowed = createToolFilter(params.archetypeFilter ?? ['*']);
+  const available = (params.tools ?? buildToolCatalog()).filter(
+    (tool) => !disabled.has(tool.name) && !isToolDisabled(tool.name) && allowed(tool.name),
+  );
+  // Tool results also use the user role in provider transcripts; they are not intent.
+  const latestUser = [...params.messages]
+    .reverse()
+    .find(
+      (message) =>
+        message.role === 'user' &&
+        (typeof message.content === 'string' || message.content.some((block) => block.type === 'text')),
+    );
+  const intent =
+    typeof latestUser?.content === 'string'
+      ? latestUser.content
+      : (latestUser?.content ?? [])
+          .filter((block) => block.type === 'text')
+          .map((block) => block.text)
+          .join(' ');
+  const specialist = selectSpecialist(
+    intent,
+    manifest,
+    available.map((tool) => tool.name),
+    params.pinnedSpecialistId,
+  );
+  const selectedNames = new Set(specialist.toolNames);
+  const executionParams = {
+    ...params,
+    tools: available.filter((tool) => selectedNames.has(tool.name)),
+    system: `${params.system}\n\nSpecialist guidance:\n${resolveArchetype(specialist.id, manifest).system_prompt}`,
+  };
   const activityId = params.activityId ?? randomUUID();
   yield {
     type: 'activity_started',
     activityId,
+    specialistId: specialist.id,
     title: params.activityTitle ?? 'Agent activity',
     ...(params.resumeApprovalId ? { resumeApprovalId: params.resumeApprovalId } : {}),
   };
   let pendingError: Extract<AgentEvent, { type: 'error' }> | undefined;
-  for await (const event of runExecutionLoop(params)) {
+  for await (const event of runExecutionLoop(executionParams)) {
     switch (event.type) {
       case 'text_delta':
         yield { type: 'message_delta', activityId, text: event.text };
         break;
       case 'tool_call':
-        yield { type: 'activity_step', activityId, step: { status: 'running', ...event.call } };
+        yield {
+          type: 'activity_step',
+          activityId,
+          specialistId: specialist.id,
+          step: { status: 'running', ...event.call },
+        };
         break;
       case 'tool_result':
         yield {
           type: 'activity_step',
           activityId,
+          specialistId: specialist.id,
           step: {
             status: event.isError ? 'failed' : 'succeeded',
             id: event.id,

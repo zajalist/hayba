@@ -6,11 +6,8 @@
  * file, validates it, and lets an archetype id resolve to its
  * `tool_filter` / `system_prompt`. See issue #356.
  *
- * Deliberately does NOT re-implement glob matching — `buildToolCatalog`
- * (src/chat/agent-loop.ts) already owns that, so a resolved archetype's
- * `tool_filter` is handed to it unchanged as `archetypeFilter`. Two copies
- * of a glob matcher is exactly the "drifted duplicate" class of bug this
- * codebase keeps finding (docs/WORKFLOW-improving-the-mcp.md, step 2).
+ * Catalog construction and specialist routing share the tool-filter matcher
+ * exported here, so both enforce the same archetype capability boundary.
  *
  * Also deliberately does NOT open a HaybaMemory instance from
  * `shared_memory` — that plumbing is issue #355's concern
@@ -61,8 +58,7 @@ export function loadAgentsManifest(manifestPath: string = defaultManifestPath())
     raw = readFileSync(manifestPath, 'utf-8');
   } catch (e: unknown) {
     throw new Error(
-      `hayba.agents.json at "${manifestPath}" could not be read: ` +
-        `${e instanceof Error ? e.message : String(e)}`,
+      `hayba.agents.json at "${manifestPath}" could not be read: ` + `${e instanceof Error ? e.message : String(e)}`,
     );
   }
 
@@ -71,16 +67,14 @@ export function loadAgentsManifest(manifestPath: string = defaultManifestPath())
     json = JSON.parse(raw);
   } catch (e: unknown) {
     throw new Error(
-      `hayba.agents.json at "${manifestPath}" is not valid JSON: ` +
-        `${e instanceof Error ? e.message : String(e)}`,
+      `hayba.agents.json at "${manifestPath}" is not valid JSON: ` + `${e instanceof Error ? e.message : String(e)}`,
     );
   }
 
   const result = AgentsManifestSchema.safeParse(json);
   if (!result.success) {
     throw new Error(
-      `hayba.agents.json at "${manifestPath}" failed schema validation:\n` +
-        formatIssues(result.error.issues),
+      `hayba.agents.json at "${manifestPath}" failed schema validation:\n` + formatIssues(result.error.issues),
     );
   }
 
@@ -122,17 +116,26 @@ export function __resetAgentsManifestCacheForTests(): void {
  * unknown id and listing the ids that ARE known, rather than returning
  * undefined for a caller to forget to check.
  */
-export function getArchetype(
-  id: string,
-  manifestPath: string = defaultManifestPath(),
-): ArchetypeConfig {
-  const manifest = getAgentsManifest(manifestPath);
+export function getArchetype(id: string, manifestPath: string = defaultManifestPath()): ArchetypeConfig {
+  return resolveArchetype(id, getAgentsManifest(manifestPath));
+}
+
+/** Resolve against the same manifest snapshot used for this turn's routing. */
+export function resolveArchetype(id: string, manifest: AgentsManifest): ArchetypeConfig {
   const found = manifest.archetypes.find((a) => a.id === id);
   if (!found) {
     const known = manifest.archetypes.map((a) => a.id).join(', ');
     throw new Error(`unknown archetype id "${id}" — known archetype ids: ${known}`);
   }
   return found;
+}
+
+/** Only `*` is a wildcard; all other regular-expression characters are literal. */
+export function createToolFilter(globs: readonly string[]): (name: string) => boolean {
+  const patterns = globs.map(
+    (glob) => new RegExp(`^${glob.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*')}$`),
+  );
+  return (name) => patterns.some((pattern) => pattern.test(name));
 }
 
 export type { ArchetypeConfig, AgentsManifest } from './types.js';

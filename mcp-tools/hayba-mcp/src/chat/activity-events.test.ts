@@ -43,6 +43,9 @@ describe('ActivityEventSchema', () => {
     for (const event of events) {
       expect(ActivityEventSchema.safeParse(event).success).toBe(true);
       expect(ActivityEventSchema.safeParse({ ...event, unexpected: true }).success).toBe(false);
+      expect(ActivityEventSchema.safeParse({ ...event, specialistId: 'asset-manager' }).success).toBe(
+        event.type === 'activity_started' || event.type === 'activity_step',
+      );
     }
     for (const event of [
       { ...start, activityId: '' },

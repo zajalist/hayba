@@ -53,8 +53,16 @@ const TerminationSchema = z
 /** Provider-neutral stream contract. Raw step payloads are transient, never persistence records. */
 export const ActivityEventSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('message_delta'), ...identity, text: z.string() }).strict(),
-  z.object({ type: z.literal('activity_started'), ...identity, title: id, resumeApprovalId: id.optional() }).strict(),
-  z.object({ type: z.literal('activity_step'), ...identity, step: StepSchema }).strict(),
+  z
+    .object({
+      type: z.literal('activity_started'),
+      ...identity,
+      title: id,
+      resumeApprovalId: id.optional(),
+      specialistId: id.optional(),
+    })
+    .strict(),
+  z.object({ type: z.literal('activity_step'), ...identity, step: StepSchema, specialistId: id.optional() }).strict(),
   z
     .object({
       type: z.literal('approval_requested'),
