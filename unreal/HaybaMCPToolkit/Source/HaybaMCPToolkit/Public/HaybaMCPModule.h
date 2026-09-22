@@ -9,6 +9,7 @@ class FHaybaMCPCommandHandler;
 class IHaybaMCPHandler;
 class FHaybaPlanOverlay;
 class IConsoleObject;
+class FHaybaActivityModel;
 
 // Lightweight tool-call record kept in the module so it survives tab
 // navigations. The Tool Stream panel hydrates from this buffer on Construct.
@@ -25,6 +26,11 @@ class FHaybaMCPModule : public IModuleInterface
 public:
     virtual void StartupModule() override;
     virtual void ShutdownModule() override;
+
+    /** Persistent activity history, independent of any tab or chat widget. */
+    FHaybaActivityModel& GetActivityModel();
+    DECLARE_MULTICAST_DELEGATE_OneParam(FOnActivityChanged, const FString& /*ActivityId*/);
+    FOnActivityChanged OnActivityChanged;
 
     bool StartTcpServer();
     void StopTcpServer();
@@ -110,6 +116,7 @@ public:
     FOnPlanRejected OnPlanRejected;
 
 private:
+    TSharedPtr<FHaybaActivityModel> ActivityModel;
     mutable FCriticalSection ToolCallHistoryLock;
     TArray<FHaybaToolCallRecord> ToolCallHistory;
 

@@ -1,4 +1,5 @@
 #include "HaybaMCPModule.h"
+#include "HaybaMCPActivityModel.h"
 #include "HaybaMCPMainPanel.h"
 #include "Studio/SHaybaSemanticStudio.h"
 #include "HaybaMCPPlanOverlay.h"
@@ -351,6 +352,9 @@ void FHaybaMCPModule::StartupModule()
 
 void FHaybaMCPModule::ShutdownModule()
 {
+    if (ActivityModel) ActivityModel->OnActivityChanged.Clear();
+    OnActivityChanged.Clear();
+    ActivityModel.Reset();
     FString ActiveRender;
     if (!HaybaRenderSafety::BeginShutdown(ActiveRender))
     {
@@ -400,6 +404,19 @@ void FHaybaMCPModule::ShutdownModule()
     StopMCPServer();
     FHaybaMCPStyle::Shutdown();
     UE_LOG(LogHaybaMCP, Log, TEXT("HaybaMCPToolkit module shut down."));
+}
+
+FHaybaActivityModel& FHaybaMCPModule::GetActivityModel()
+{
+    if (!ActivityModel)
+    {
+        ActivityModel = MakeShared<FHaybaActivityModel>();
+        ActivityModel->OnActivityChanged.AddLambda([this](const FString& ActivityId)
+        {
+            OnActivityChanged.Broadcast(ActivityId);
+        });
+    }
+    return *ActivityModel;
 }
 
 TSharedPtr<FJsonObject> FHaybaMCPModule::GetTcpTransportLimits() const

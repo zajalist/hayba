@@ -1,4 +1,6 @@
 #include "HaybaMCPAgentClient.h"
+#include "HaybaMCPActivityModel.h"
+#include "HaybaMCPModule.h"
 #include "HaybaMCPSettings.h"
 #include "HttpModule.h"
 #include "Interfaces/IHttpResponse.h"
@@ -42,6 +44,7 @@ FHaybaMCPAgentClient::~FHaybaMCPAgentClient()
 	// tick cannot re-enter a destroyed client. (Callbacks also capture a weak ptr.)
 	if (StreamRequest.IsValid())
 	{
+		if (!bTerminalEmitted) MarkActivitiesDisconnected();
 		StreamRequest->OnRequestProgress64().Unbind();
 		StreamRequest->OnProcessRequestComplete().Unbind();
 		StreamRequest->CancelRequest();
@@ -168,6 +171,7 @@ void FHaybaMCPAgentClient::StartStream(const FString& UserPrompt)
 	// Reset per-turn parse state.
 	ParseCursor = 0;
 	AccumulatedText.Empty();
+	StreamActivityIds.Empty();
 	bStreaming = true;
 
 	TSharedRef<FJsonObject> Body = MakeShared<FJsonObject>();
@@ -247,16 +251,34 @@ void FHaybaMCPAgentClient::ParseNewFrames(const FString& FullBody)
 	// any trailing partial frame unparsed until more bytes arrive.
 	while (true)
 	{
-		const int32 Boundary = FullBody.Find(
+		int32 Boundary = FullBody.Find(
 			TEXT("\n\n"), ESearchCase::CaseSensitive, ESearchDir::FromStart, ParseCursor);
+		const int32 CRLFBoundary = FullBody.Find(
+			TEXT("\r\n\r\n"), ESearchCase::CaseSensitive, ESearchDir::FromStart, ParseCursor);
+		int32 SeparatorLength = 2;
+		if (CRLFBoundary != INDEX_NONE && (Boundary == INDEX_NONE || CRLFBoundary < Boundary))
+		{
+			Boundary = CRLFBoundary;
+			SeparatorLength = 4;
+		}
 		if (Boundary == INDEX_NONE)
 		{
 			break; // remainder is a partial frame; wait for more
 		}
 		const FString FrameBlock = FullBody.Mid(ParseCursor, Boundary - ParseCursor);
-		ParseCursor = Boundary + 2; // skip the "\n\n"
+		ParseCursor = Boundary + SeparatorLength;
 		DispatchFrame(FrameBlock);
 	}
+}
+
+bool FHaybaMCPAgentClient::DecodeActivityEvent(const FString& EventType, const FString& Json, TSharedPtr<FJsonObject>& OutEvent)
+{
+	OutEvent.Reset();
+	TSharedPtr<FJsonObject> Event;
+	if (!FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Json), Event) || !Event.IsValid() ||
+		!FHaybaActivityModel::ValidateEvent(*Event) || Event->GetStringField(TEXT("type")) != EventType) return false;
+	OutEvent = MoveTemp(Event);
+	return true;
 }
 
 void FHaybaMCPAgentClient::DispatchFrame(const FString& FrameBlock)
@@ -311,6 +333,27 @@ void FHaybaMCPAgentClient::DispatchFrame(const FString& FrameBlock)
 	{
 		TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(DataStr);
 		FJsonSerializer::Deserialize(Reader, Data);
+	}
+
+	// Semantic error shares the legacy event name. Once an identity/type is
+	// present it must pass the semantic schema; never fall back to a legacy error.
+	const bool bSemantic = EventType == TEXT("message_delta") || EventType == TEXT("activity_started") ||
+		EventType == TEXT("activity_step") || EventType == TEXT("approval_requested") ||
+		EventType == TEXT("artifact_proposed") || EventType == TEXT("verdict_emitted") ||
+		EventType == TEXT("activity_completed") ||
+		(EventType == TEXT("error") && Data.IsValid() && (Data->HasField(TEXT("activityId")) || Data->HasField(TEXT("type"))));
+	if (bSemantic)
+	{
+		TSharedPtr<FJsonObject> Event;
+		if (!DecodeActivityEvent(EventType, DataStr, Event)) return;
+		FHaybaMCPModule* Module = FModuleManager::GetModulePtr<FHaybaMCPModule>(TEXT("HaybaMCPToolkit"));
+		if (!Module || !Module->GetActivityModel().ApplyEvent(*Event)) return;
+		StreamActivityIds.Add(Event->GetStringField(TEXT("activityId")));
+		// A pause is an intentional stream boundary, not a disconnect.
+		if (EventType == TEXT("approval_requested") || EventType == TEXT("activity_completed") || EventType == TEXT("error"))
+			bTerminalEmitted = true;
+		OnActivityEvent.Broadcast(*Event);
+		return;
 	}
 
 	if (EventType == TEXT("text_delta") || EventType == TEXT("token"))
@@ -387,6 +430,7 @@ void FHaybaMCPAgentClient::DispatchFrame(const FString& FrameBlock)
 			if (Err.Error.IsEmpty()) Data->TryGetStringField(TEXT("code"), Err.Error);
 		}
 		OnError.Broadcast(Err);
+		if (Err.Error == TEXT("resume_gap")) MarkActivitiesDisconnected();
 	}
 	// Unknown event types are ignored (forward-compatible).
 }
@@ -519,10 +563,22 @@ void FHaybaMCPAgentClient::EmitLocalDone(const FString& Reason, bool bCancelled)
 	{
 		return;
 	}
+	// Local completion/cancel only describes the HTTP request. It cannot confirm
+	// whether a server-side operation committed; wait for a semantic result.
+	MarkActivitiesDisconnected();
 	bTerminalEmitted = true;
 	FHaybaChatDone Done;
 	Done.Reason = Reason;
 	Done.AssistantText = AccumulatedText;
 	Done.bCancelled = bCancelled;
 	OnDone.Broadcast(Done);
+}
+
+void FHaybaMCPAgentClient::MarkActivitiesDisconnected()
+{
+	if (FHaybaMCPModule* Module = FModuleManager::GetModulePtr<FHaybaMCPModule>(TEXT("HaybaMCPToolkit")))
+	{
+		for (const FString& ActivityId : StreamActivityIds)
+			Module->GetActivityModel().MarkDisconnected(ActivityId);
+	}
 }

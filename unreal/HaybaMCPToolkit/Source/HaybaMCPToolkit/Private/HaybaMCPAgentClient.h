@@ -2,6 +2,8 @@
 #include "CoreMinimal.h"
 #include "Interfaces/IHttpRequest.h"
 
+class FJsonObject;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // FHaybaMCPAgentClient — Server-Sent-Events consumer for the BYOK copilot.
 //
@@ -83,6 +85,7 @@ DECLARE_MULTICAST_DELEGATE_OneParam(FOnHaybaChatToolResult, const FHaybaChatTool
 DECLARE_MULTICAST_DELEGATE_OneParam(FOnHaybaChatPlanRequest, const FHaybaChatPlanRequest&);
 DECLARE_MULTICAST_DELEGATE_OneParam(FOnHaybaChatDone, const FHaybaChatDone&);
 DECLARE_MULTICAST_DELEGATE_OneParam(FOnHaybaChatError, const FHaybaChatError&);
+DECLARE_MULTICAST_DELEGATE_OneParam(FOnHaybaActivityEvent, const FJsonObject&);
 
 class FHaybaMCPAgentClient : public TSharedFromThis<FHaybaMCPAgentClient>
 {
@@ -132,6 +135,10 @@ public:
 	/** The session id used against the sidecar (stable for this client). */
 	const FString& GetSessionId() const { return SessionId; }
 
+	/** Strict semantic JSON decoder; requires matching SSE and payload event types. */
+	static bool DecodeActivityEvent(const FString& EventType, const FString& Json, TSharedPtr<FJsonObject>& OutEvent);
+	FOnHaybaActivityEvent OnActivityEvent;
+
 	// Delegates — Task 8's panel subscribes to these. All fire on the game thread.
 	FOnHaybaChatTextDelta   OnTextDelta;
 	FOnHaybaChatToolCall    OnToolCall;
@@ -141,6 +148,7 @@ public:
 	FOnHaybaChatError       OnError;
 
 private:
+    friend class FHaybaActivityClientFramesTest;
 	void PostConfig(const FString& UserPrompt);
 	void StartStream(const FString& UserPrompt);
 	void PostApprove();
@@ -155,6 +163,7 @@ private:
 
 	/** Emit a synthetic local terminal done frame (used by Cancel / transport error). */
 	void EmitLocalDone(const FString& Reason, bool bCancelled);
+	void MarkActivitiesDisconnected();
 
 	FString MakeSessionId();
 
@@ -169,4 +178,6 @@ private:
 	int32 ParseCursor = 0;
 	/** Accumulated assistant text (for partial_text on local cancel). */
 	FString AccumulatedText;
+	/** Only identities seen on this client; unrelated sessions are never invalidated. */
+	TSet<FString> StreamActivityIds;
 };
