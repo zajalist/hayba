@@ -52,6 +52,9 @@ export const WorldDestinationSchema = z.discriminatedUnion('mode', [
 ]);
 
 export const TerrainOptionsSchema = z.object({
+  worldSizeKm: z.number().optional(),
+  maxHeightM: z.number().optional(),
+  actorLabel: z.string().optional(),
   scale: z.tuple([z.number().positive(), z.number().positive(), z.number().positive()]).optional(),
   material: z.string().min(1).optional(),
 }).strict();
