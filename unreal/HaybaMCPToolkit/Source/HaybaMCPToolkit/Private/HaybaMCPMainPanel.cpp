@@ -53,17 +53,17 @@ namespace
     {
         switch (P)
         {
-            case EHaybaPanel::Chat:       return TEXT("Hayba.Icon.Chat");
+            case EHaybaPanel::Chat:       return TEXT("Hayba.Icon.Agent");
             case EHaybaPanel::MCP:        return TEXT("Hayba.Icon.MCP");
             case EHaybaPanel::Slivers:    return TEXT("Hayba.Icon.Slivers");
             case EHaybaPanel::ToolStream: return TEXT("Hayba.Icon.ToolStream");
-            case EHaybaPanel::SceneMap:   return TEXT("Hayba.Icon.SceneMap");
+            case EHaybaPanel::SceneMap:   return TEXT("Hayba.Icon.World");
             case EHaybaPanel::Plan:       return TEXT("Hayba.Icon.Plan");
             case EHaybaPanel::Diff:       return TEXT("Hayba.Icon.Diff");
             case EHaybaPanel::Validation: return TEXT("Hayba.Icon.Validation");
-            case EHaybaPanel::Memory:     return TEXT("Hayba.Icon.Library"); // Library — custom icon
+            case EHaybaPanel::Memory:     return TEXT("Hayba.Icon.LibraryHayba");
             case EHaybaPanel::Lessons:    return TEXT("Hayba.Icon.Memory");
-            case EHaybaPanel::Settings:   return TEXT("Hayba.Icon.Settings");
+            case EHaybaPanel::Settings:   return TEXT("Hayba.Icon.Controls");
         }
         return NAME_None;
     }
