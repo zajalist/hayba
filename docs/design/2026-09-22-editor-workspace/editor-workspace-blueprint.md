@@ -1,6 +1,6 @@
 # Hayba editor workspace — concept blueprint
 
-Status: design proposal, 2026-09-22. The [interactive mockup](./editor-workspace-concepts.html) and its [task in editor](./concept-task.png), [narrow dock](./concept-task-520.png), [world](./concept-world.png), and [review](./concept-review.png) captures are illustrative. They are not screenshots of implemented plugin behavior.
+Status: revised design proposal, 2026-09-22. The [interactive spatial-field mockup](./spatial-cloud-concept.html) and its [near splat view](./spatial-near.png), [zoomed-out relation view](./spatial-far.png), and [compact apply state](./spatial-apply.png) are illustrative. They are not screenshots of implemented plugin behavior. The earlier 2D layout and full-page Review concepts are superseded.
 
 ## Product promise
 
@@ -8,24 +8,24 @@ Hayba helps a game maker move one idea through inspection, an editable proposal,
 
 The user asked for a refined in-editor agent experience, stronger production specialists, useful scene/blockout reasoning, and fewer disconnected tools. The current Agent / World / Library shell does not meet that bar: World Import and Validate only draft chat text, the narrow view is mostly generic controls, and scene/asset outcomes do not yet have a first-class review surface. This blueprint treats the **task** as the product unit; chat, scene design, assets, import, and validation are views and artifacts of that same task.
 
-## Three views, one task
+## One task, one spatial field
 
 | Surface | Why it exists | What it must show |
 | --- | --- | --- |
 | Docked task | Direct the agent without covering Unreal | Current task, exact context, conversation, progress, important artifacts, composer, connection state |
-| World canvas | Think spatially and edit a scene proposal | Zones/proxies, dimensions, typed relations, constraints, references, loaded-world coverage; selection links into Unreal |
-| Review | Decide on a concrete change and judge its result | Target level/assets, exact proposed or applied operations, unsupported stages, passed/failed/not-run checks, evidence, revision or recovery action |
+| Spatial field | Visualize and edit what the AI understands about a scene | 3D point clouds and splats at object scale; semantic clusters and relation edges at distant zoom; bounds, constraints, evidence, uncertainty, and links into Unreal |
+| Compact apply state | Make one scoped decision in context | Highlighted targets, exact operation count, destination, checks and unknowns, edit/approve controls; optional expanded detail only when requested |
 
-The dock has no permanent Agent / World / Library navigation rail. The task header opens its relevant artifact or review view. Assets and references enter through a context picker and appear in the task. A library browser remains available from that picker, with an expanded browse view only when necessary. Specialists route behind the task and identify themselves in activity when a handoff matters.
+The dock has no permanent Agent / World / Library navigation rail. The task header opens its relevant artifact in the spatial field. Assets and references enter through a context picker and appear in the task. A library browser remains available from that picker, with an expanded browse view only when necessary. Specialists route behind the task and identify themselves in activity when a handoff matters.
 
-At roughly 350–500 px of dock width, the task remains a single column. A spatial canvas or detailed change list opens as a larger dockable tab; it does not squeeze beside chat. The two views use the same task ID and selected artifact ID, so opening or closing the canvas never forks conversation state.
+At roughly 350–500 px of dock width, the task remains a single column. The spatial field opens as a larger dockable tab; it does not squeeze beside chat. There is no mandatory full-screen Review page. An apply ribbon appears over the relevant splats/actors and can expand its exact target list. Both surfaces use the same task ID and selected artifact ID, so opening or closing the field never forks conversation state.
 
 ## The task loop
 
 1. **Capture context.** Show project, current level, loaded-world scope, selected actors/assets, attached files/images, and user-picked region. Each chip opens or removes its source. The agent must distinguish an attached source from a broad project search result.
 2. **Inspect.** Read the world and relevant assets. The response records coverage and capability limits. "No findings" is not "validated." A disconnected backend gets an actionable connection state near the composer.
-3. **Propose.** Produce a typed artifact: scene layout, import plan, asset preparation, Blueprint change, concept direction, or validation report. The user can revise it in chat and, where useful, directly in a canvas. A plan has stable object IDs and a version; an edit creates a new version, not a silent overwrite.
-4. **Preview changes.** Bind a proposal to the precise editor operations it will authorize. Show target packages/actors, create/modify/delete counts, expected save behavior, required versus optional stages, and unsupported actions. An import preview includes source format, dimensions, transforms, material/LOD/Nanite/partition policies, and expected destinations.
+3. **Propose.** Produce a typed artifact: spatial cloud, import plan, asset preparation, Blueprint change, concept direction, or validation report. The user can revise it in chat and, where useful, directly in the field. A proposal has stable object IDs and a version; an edit creates a new version, not a silent overwrite.
+4. **Preview changes.** Highlight the proposed splats/actors in place and bind an apply ribbon to the precise editor operations it will authorize. Show target packages/actors, create/modify/delete counts, expected save behavior, required versus optional stages, and unsupported actions. Expand to exact targets on demand. An import preview includes source format, dimensions, transforms, material/LOD/Nanite/partition policies, and expected destinations.
 5. **Apply and observe.** Approval acts on that proposal ID and operation set. Activity reports meaningful stages, exact objects created or modified, failures, cancellation, and partial results. Use Unreal transactions and a dedicated draft folder where native operations support recovery; do not promise rollback for operations that cannot be reversed.
 6. **Verify.** Attach evidence to the task: actor/asset diff, viewport capture when available, compile or PIE result where relevant, and checks with explicit `passed`, `failed`, or `not_run` state. "Production ready" is unavailable when required checks are not run or fail. The user can revise, inspect in Unreal, or start a scoped repair from the result.
 
@@ -46,12 +46,12 @@ The current `Explore` mode can map to Inspect. `Draft` and `Production` names ma
 User: “Block out a calm clinic lobby with a clear path to reception.”
 
 - Context: `L_Clinic`, a user-selected region, four selected actors, a clinic brief, and loaded World Partition cells.
-- Scene proposal: zones for entry, waiting, reception, corridor; placeholder bounds and dimensions; relations such as `visible_from`, `adjacent_to`, and `path_to`; constraints such as minimum access width and no overlap with selected actors.
-- World canvas: 2D map with optional 3D samples; direct zone edits; hover/select highlights related actors in Unreal. A “mood” is an authored brief and references, not a magical fifth spatial coordinate.
-- Change review: 18 proposed proxies in one named folder, exact transforms, no existing asset replacements, and current save policy. Unloaded cells are marked not checked.
+- Scene proposal: observed shell points plus proposed splat groups for entry, waiting, reception, corridor, and object slots; stable IDs, bounds, relations such as `visible_from`, `adjacent_to`, and `path_to`; constraints such as minimum access width and no overlap with selected actors.
+- Spatial field: the near view shows 3D shape, density, color, and semantic selection through points/splats. Zooming away continuously aggregates samples into volumetric object/room clusters and reveals typed edges. Selecting a cluster zooms back into its samples and highlights linked Unreal actors. A “mood” is an authored brief and references, not a magical fifth spatial coordinate.
+- Apply ribbon: 18 highlighted proposed proxies in one named folder, exact transforms available on expansion, no existing asset replacements, and current save policy. Unloaded cells are marked not checked. No separate wall-of-text review page.
 - Result: new actor IDs and counts, a viewport image if capture succeeds, clearance/overlap checks that actually ran, and specific gaps. The next conversation turn can refer to the same plan and actor IDs.
 
-The existing Scene Intent Graph feasibility note contains the underlying representation and stop conditions: [feasibility](../2026-08-23-extension-redesign/13-SCENE-INTENT-GRAPH-FEASIBILITY.md). This blueprint is a UI and workflow hypothesis; the graph editor and realization pipeline are not implemented yet.
+The existing Scene Intent Graph feasibility note contains the underlying representation and stop conditions: [feasibility](../2026-08-23-extension-redesign/13-SCENE-INTENT-GRAPH-FEASIBILITY.md). The graph remains the reliable internal model; the point cloud and splats become the primary user-facing medium. The "fourth dimension" is a relational layer revealed by scale, not a fourth spatial coordinate. Time/variants can be another filter, and mood remains a semantic art-direction target. This is a UI and workflow hypothesis; the graph editor and realization pipeline are not implemented yet.
 
 ### Across the game-making pipeline
 
@@ -75,14 +75,16 @@ Concept art remains an unrendered brief when no image-generation provider is ava
 | `world_inspect` | Inspect and coverage panel | Reads loaded world facts; unloaded partition cells are not indexed |
 | `world_ingest` | Import proposal and activity | Staged orchestration exists; automatic partition/HLOD and several preparation adapters remain unsupported |
 | `asset_prepare` | Asset change proposal | Some LOD reductions supported; Nanite mutation, collision, lightmap UV, and material-instance creation are incomplete |
-| Scene map and validator | World canvas and evidence | Map loading and check coverage need live validation; findings cannot imply a full pass |
+| Scene map and validator | Spatial field and evidence | Map loading and check coverage need live validation; findings cannot imply a full pass |
 | Eleven specialist profiles | Internal routing and named handoffs | Prompt/routing profiles, not separately trained or benchmarked agents |
 | Library/recipes | Context picker and repeatable task templates | Keep only actions backed by a real operation; avoid a second home for task state |
 | External MCP plan gate | Settings and task-scoped external proposal | Existing gate approves the next native write, not an exact frozen operation set |
 
 ## Implementation seams
 
-The editor shell can remain native Slate. It owns the task dock, context chips, result cards, permission prompts, and links into Content Browser, Outliner, Details, and viewport. A larger spatial canvas should use an editor-native drawing surface or a reliably loaded embedded renderer; the existing CEF map spinner is not an acceptable completion state. The source of truth for a task is a structured task record, not parsed chat prose.
+The editor shell can remain native Slate. It owns the task dock, context chips, result cards, compact apply ribbon, and links into Content Browser, Outliner, Details, and viewport. The spatial field needs a performant 3D renderer and picking, ideally in an Unreal preview viewport; the browser canvas in the mockup only illustrates the interaction. The existing CEF map spinner is not an acceptable completion state. Benchmark splat count, zoom transitions, and selection on a representative project machine before choosing a rendering adapter. The source of truth for a task is a structured task record, not parsed chat prose.
+
+Observed geometry, proposed samples, inferred semantics, and unknown/unloaded regions need distinct visual states and provenance. Generated proxy splats are a design preview; they must not be presented as a photorealistic reconstruction. Zooming out aggregates by stable object/region ID and turns on typed relation edges. Zooming in restores the samples. Neither view should silently change the underlying task record.
 
 Minimum typed records:
 
@@ -90,6 +92,8 @@ Minimum typed records:
 Task { id, goal, mode, stage, contextSnapshot, artifacts[], actions[], evidence[] }
 ContextSnapshot { level, selectionIds[], region, loadedScope, sources[], capturedAt }
 Artifact { id, kind, version, sourceTaskId, preview, targetRefs[], constraints[], status }
+SpatialSample { id, ownerNodeId, position3D, radius, color, semanticRole, origin: observed|proposed }
+Relation { fromNodeId, toNodeId, type, parameters, provenance, confidence }
 ActionProposal { id, artifactVersion, operations[], targets[], risk, requiredChecks[], unsupported[], approvalState }
 CheckResult { name, targetRefs[], status: passed|failed|not_run, evidenceRef?, reason? }
 ```
@@ -100,7 +104,7 @@ Every UI view reads the same records. The backend streams state changes; the nat
 
 1. **Honest dock.** Replace the rail with a task header and context/status. Make World Import and Validate genuine entry flows or relabel them until they are. Show meaningful connected/disconnected setup. Verify the 420 px layout with real Slate captures and keyboard navigation.
 2. **Typed task review.** Add durable artifacts and exact proposal IDs; render proposal, activity, results, and check coverage in one conversation. Verify restart/session restore, approval of the intended operation only, cancellation, and partial failure.
-3. **World canvas MVP.** One room or compact point of interest. Edit zones, proxy bounds, relations, and constraints; preview placement in a dedicated draft folder. Verify selected-world grounding and a recoverable path. Do not expand to full partitioned maps before unloaded-cell coverage is designed.
+3. **Spatial field MVP.** One room or compact point of interest. Render observed/proposed 3D samples as distinct point clouds or splats; aggregate into stable spatial clusters and typed edges with distance; select and edit bounds, relations, and constraints; preview placement in a dedicated draft folder. Verify selected-world grounding and a recoverable path. Do not expand to full partitioned maps before unloaded-cell coverage is designed.
 4. **Real production workflows.** Complete missing native adapters and checks for the advertised import/asset policies. Test with representative landscapes, meshes, partitioned worlds, and existing project content. Evaluate specialists on real briefs using artifact quality and correction cost, not routing tests alone.
 
 The first release is successful when a user can complete one real task from a narrow dock—context, proposal, exact approval, editor change, and evidence—without guessing which tab owns the result. Production readiness requires a checked result, not just a confident agent response.

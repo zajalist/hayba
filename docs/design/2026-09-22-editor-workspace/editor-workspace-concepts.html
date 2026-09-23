@@ -4,6 +4,11 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Hayba workspace concepts</title>
+  <script>
+    // Redirect previously shared concept tabs to the revised spatial-field direction.
+    const oldScreen = new URLSearchParams(location.search).get('screen');
+    location.replace('spatial-cloud-concept.html?view=' + (oldScreen === 'review' ? 'apply' : 'near'));
+  </script>
   <style>
     :root {
       color-scheme: dark;
