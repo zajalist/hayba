@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Hayba workspace concepts</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --ink: #171a18;
+      --editor: #232624;
+      --panel: #1c201d;
+      --surface: #262b27;
+      --surface-2: #303630;
+      --line: #3c443d;
+      --text: #eee9df;
+      --muted: #a8ada3;
+      --quiet: #818a80;
+      --ochre: #bb762e;
+      --gold: #e3ad6a;
+      --sage: #9ab49b;
+      --alert: #d9a277;
+      font-family: "Segoe UI Variable", "Segoe UI", sans-serif;
+      font-size: 14px;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #111411; color: var(--text); }
+    button { font: inherit; color: inherit; cursor: pointer; }
+    .prototype-bar { height: 42px; padding: 0 28px; display: flex; align-items: center; justify-content: space-between; background: #101310; border-bottom: 1px solid #353a34; color: #aeb5a9; font-size: 12px; }
+    .prototype-bar strong { color: var(--text); font-weight: 600; }
+    .prototype-tabs { display: flex; gap: 6px; }
+    .prototype-tabs a { color: #afb5ac; text-decoration: none; padding: 7px 11px; border-radius: 5px; }
+    .prototype-tabs a.active { color: #f3ede2; background: #33372f; }
+    .screen { display: none; height: calc(100vh - 42px); min-height: 660px; }
+    body[data-screen="task"] .screen.task,
+    body[data-screen="world"] .screen.world,
+    body[data-screen="review"] .screen.review { display: flex; }
+    .editor { flex: 1; min-width: 380px; background: var(--editor); position: relative; overflow: hidden; }
+    .editor-toolbar { height: 49px; background: #2a2d2b; border-bottom: 1px solid #3d413e; display: flex; align-items: center; gap: 21px; padding: 0 18px; color: #c4c8c2; font-size: 12px; }
+    .editor-toolbar .ue { font-size: 21px; font-weight: 800; color: #ddd; letter-spacing: -.1em; margin-right: 5px; }
+    .editor-toolbar .active-tool { color: #f2e6d4; background: #46443b; padding: 7px 12px; border-radius: 4px; }
+    .viewport { height: calc(100% - 88px); position: relative; background: radial-gradient(ellipse 110% 56% at 48% 82%, #42483f 0%, #313a35 38%, #252e2d 75%, #20282a 100%); }
+    .viewport::before { content: ""; position: absolute; inset: 28% -20% 0; background-image: linear-gradient(#87958619 1px, transparent 1px), linear-gradient(90deg, #87958619 1px, transparent 1px); background-size: 40px 40px; transform: perspective(450px) rotateX(58deg); transform-origin: bottom; opacity: .9; }
+    .scene-block { position: absolute; background: #aca99a; border: 2px solid #d1c8aa; box-shadow: 16px 22px 0 #252b28, 22px 30px 30px #1118; transform: skewY(-13deg); }
+    .scene-block.one { width: 170px; height: 80px; left: 30%; top: 46%; }
+    .scene-block.two { width: 82px; height: 92px; left: 55%; top: 33%; background: #8b9488; }
+    .scene-block.three { width: 115px; height: 32px; left: 47%; top: 61%; background: #a27e5e; }
+    .scene-pin { position: absolute; left: 46%; top: 27%; padding: 7px 10px; background: #1d211ded; border: 1px solid #8e9f88; border-radius: 4px; color: #d6e0d0; font-size: 12px; }
+    .editor-status { height: 39px; background: #2a2d2b; border-top: 1px solid #3d413e; color: #aab0a9; display: flex; align-items: center; justify-content: space-between; padding: 0 16px; font-size: 11px; }
+    .dock { width: 442px; flex: 0 0 442px; display: flex; flex-direction: column; border-left: 1px solid #4c534a; background: var(--panel); box-shadow: -12px 0 30px #1014114d; overflow: hidden; }
+    .dock-head { padding: 15px 17px 13px; border-bottom: 1px solid var(--line); }
+    .head-top { display: flex; align-items: center; gap: 10px; }
+    .brand { display: flex; align-items: center; gap: 9px; font-weight: 700; letter-spacing: -.02em; font-size: 18px; }
+    .brand img { width: 19px; height: 23px; object-fit: contain; }
+    .head-spacer { flex: 1; }
+    .icon-button { width: 30px; height: 30px; border: 0; background: transparent; border-radius: 5px; color: var(--muted); display: grid; place-items: center; font-size: 17px; }
+    .icon-button:hover { background: var(--surface); }
+    .thread-title { font-size: 16px; font-weight: 630; margin: 16px 0 5px; letter-spacing: -.015em; }
+    .thread-sub { font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 8px; }
+    .status-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--sage); display: inline-block; }
+    .head-actions { display: flex; gap: 9px; padding-top: 14px; }
+    .head-actions button { border: 1px solid #4d554a; background: #252a25; border-radius: 5px; padding: 7px 11px; color: #d8ded2; font-size: 11px; }
+    .head-actions button.primary-small { background: #4d3c29; border-color: #8b6337; color: #f0d2ab; }
+    .task-body { flex: 1; overflow: auto; padding: 17px 18px 16px; scrollbar-color: #50584f transparent; }
+    .context { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 18px; }
+    .context span { background: #2d342d; color: #c8d6c7; border: 1px solid #465746; border-radius: 4px; padding: 5px 8px; font-size: 11px; }
+    .person { color: #c6cabf; font-size: 11px; margin-bottom: 6px; }
+    .user-message { border-left: 2px solid #756b54; padding-left: 12px; line-height: 1.5; color: #e6e5de; margin-bottom: 19px; }
+    .response-start { display: flex; gap: 9px; align-items: center; color: var(--sage); font-size: 12px; font-weight: 650; margin-bottom: 11px; }
+    .response-start .mini-mark { width: 19px; height: 19px; background: #55422e; color: #f1c689; display: grid; place-items: center; border-radius: 4px; font-weight: bold; }
+    .response-copy { line-height: 1.47; margin: 0 0 15px 28px; font-size: 13px; color: #dedfd8; }
+    .artifact { background: #242a25; border: 1px solid #556454; border-radius: 7px; overflow: hidden; margin: 11px 0 14px 27px; }
+    .artifact-top { display: flex; align-items: center; gap: 9px; border-bottom: 1px solid #4a564a; padding: 10px 11px; }
+    .artifact-glyph { color: #e7b579; background: #5b432e; border-radius: 4px; width: 23px; height: 23px; display: grid; place-items: center; font-size: 14px; }
+    .artifact-top strong { font-size: 12px; }
+    .artifact-top small { margin-left: auto; color: #b6bfb2; font-size: 10px; }
+    .artifact-body { padding: 11px; font-size: 12px; line-height: 1.48; color: #bdc7b9; }
+    .artifact-body b { color: #e8e9df; font-weight: 600; }
+    .artifact-row { display: flex; align-items: center; justify-content: space-between; border-top: 1px solid #39453a; padding: 9px 11px; color: #d4ded0; font-size: 11px; }
+    .artifact-row .link { color: #f0bd7a; }
+    .run-line { margin: 0 0 0 27px; border-left: 1px solid #556254; padding: 0 0 0 13px; display: grid; gap: 9px; font-size: 11px; color: #b6c0b4; }
+    .run-line div::before { content: ""; display: inline-block; width: 5px; height: 5px; border-radius: 50%; background: var(--sage); margin: 0 9px 1px -16px; box-shadow: 0 0 0 3px #252d25; }
+    .run-line .current::before { background: var(--gold); }
+    .composer { margin: 0 13px 13px; border: 1px solid #676655; background: #282d28; border-radius: 8px; padding: 11px; box-shadow: 0 -7px 20px #151a1630; }
+    .composer p { margin: 0; min-height: 45px; color: #aeb6a9; line-height: 1.4; font-size: 13px; }
+    .composer-bottom { display: flex; align-items: center; gap: 7px; margin-top: 9px; }
+    .mode { color: #eac292; background: #4c3b2a; border: 1px solid #825d33; border-radius: 4px; padding: 6px 8px; font-size: 11px; }
+    .attach { color: #c0c9bc; background: #333b33; border: 1px solid #505c4d; border-radius: 4px; padding: 6px 8px; font-size: 11px; }
+    .send { margin-left: auto; background: #cb8a43; color: #1e211c; border: 0; border-radius: 5px; width: 31px; height: 31px; font-size: 18px; font-weight: 700; }
+    .connection { display: flex; align-items: center; justify-content: space-between; padding: 0 16px 10px; font-size: 10px; color: #9ea99d; }
+    .connection .link { color: #d8ae77; }
+    .wide .editor { display: none; }
+    .wide .dock { flex: 0 0 390px; width: 390px; }
+    .canvas { flex: 1; min-width: 560px; background: #202521; overflow: auto; }
+    .canvas-head { border-bottom: 1px solid #414a40; padding: 20px 25px 17px; display: flex; align-items: start; justify-content: space-between; }
+    .canvas-head h1 { font-size: 22px; margin: 0 0 5px; font-weight: 630; letter-spacing: -.025em; }
+    .canvas-head p { font-size: 12px; margin: 0; color: var(--muted); }
+    .canvas-head button { background: #343d34; border: 1px solid #586558; border-radius: 5px; padding: 8px 12px; font-size: 11px; }
+    .canvas-inner { padding: 20px 24px; display: grid; grid-template-columns: 1.5fr .85fr; gap: 16px; }
+    .canvas-panel { border: 1px solid #465147; background: #252b26; border-radius: 7px; overflow: hidden; }
+    .canvas-title { display: flex; align-items: center; justify-content: space-between; padding: 12px 15px; border-bottom: 1px solid #424d43; font-size: 12px; font-weight: 650; }
+    .canvas-title small { color: var(--muted); font-weight: 400; }
+    .floorplan { height: 410px; position: relative; margin: 18px; border: 1px solid #6f806e; background: #303b33; overflow: hidden; }
+    .floorplan::before { content: ""; position: absolute; inset: 0; background-image: linear-gradient(#8c9a8415 1px, transparent 1px), linear-gradient(90deg, #8c9a8415 1px, transparent 1px); background-size: 24px 24px; }
+    .zone { position: absolute; border: 2px solid #b8c7b4; background: #4b5d4b75; color: #f1f1e8; display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: 13px; text-align: center; z-index: 1; }
+    .zone small { font-size: 10px; color: #d4ddd0; margin-top: 4px; }
+    .zone.entry { left: 7%; top: 55%; width: 26%; height: 34%; }
+    .zone.waiting { left: 34%; top: 18%; width: 37%; height: 68%; border-color: #ebae67; background: #7c5b3682; }
+    .zone.desk { left: 72%; top: 18%; width: 20%; height: 29%; }
+    .zone.clinic { left: 72%; top: 51%; width: 20%; height: 35%; }
+    .path { position: absolute; height: 2px; background: #e8b879; z-index: 2; transform-origin: left; }
+    .path.one { width: 100px; left: 25%; top: 69%; transform: rotate(-18deg); }
+    .path.two { width: 125px; left: 61%; top: 43%; transform: rotate(-20deg); }
+    .path.three { width: 118px; left: 61%; top: 63%; transform: rotate(15deg); }
+    .floor-legend { display: flex; gap: 12px; padding: 0 18px 16px; font-size: 10px; color: #b9c3b8; }
+    .floor-legend .swatch { width: 8px; height: 8px; border-radius: 2px; display: inline-block; margin-right: 5px; background: #e4ae71; }
+    .inspector { display: grid; gap: 13px; align-content: start; }
+    .inspector .canvas-panel { padding-bottom: 3px; }
+    .fact { display: flex; justify-content: space-between; gap: 15px; padding: 11px 14px; border-bottom: 1px solid #39443b; font-size: 11px; }
+    .fact:last-child { border: 0; }
+    .fact span { color: #aeb9ad; }
+    .fact strong { color: #e7eae0; font-weight: 600; text-align: right; }
+    .fact strong.warn { color: #e3ac75; }
+    .canvas-note { margin: 0; padding: 12px 14px; color: #bec8ba; font-size: 11px; line-height: 1.45; }
+    .review-list { padding: 0 16px; }
+    .review-item { padding: 15px 0; border-bottom: 1px solid #3d473e; }
+    .review-item:last-child { border: 0; }
+    .review-item .label { font-size: 11px; color: var(--muted); }
+    .review-item strong { display: block; font-size: 13px; margin: 4px 0; }
+    .review-item small { color: #b4bdb2; font-size: 11px; line-height: 1.4; }
+    .review-actions { padding: 13px 15px; display: flex; gap: 8px; border-top: 1px solid #414b42; }
+    .review-actions button { padding: 9px 12px; border-radius: 5px; border: 1px solid #626d5f; background: #394138; font-size: 11px; }
+    .review-actions button.go { background: #c38843; color: #20231e; border-color: #c38843; font-weight: 700; }
+    .review-headline { margin: 0; padding: 13px 16px; color: #dce5d8; font-size: 12px; line-height: 1.45; }
+    .tag { padding: 3px 6px; background: #465343; color: #d2e5d0; border-radius: 3px; font-size: 10px; }
+    .tag.unknown { background: #5f4836; color: #f0c7a1; }
+    @media (max-width: 850px) { .editor { display: none; } .dock { width: 100%; flex-basis: 100%; } .wide .canvas { display: none; } .wide .dock { flex-basis: 100%; } .prototype-bar { padding: 0 8px; } }
+  </style>
+</head>
+<body data-screen="task">
+  <div class="prototype-bar"><strong>Hayba editor workspace · design concept</strong><nav class="prototype-tabs"><a href="?screen=task" data-tab="task">Task</a><a href="?screen=world" data-tab="world">World canvas</a><a href="?screen=review" data-tab="review">Review</a></nav></div>
+
+  <main class="screen task">
+    <div class="editor"><div class="editor-toolbar"><span class="ue">U</span><span>Selection Mode</span><span>Landscape</span><span>Blueprints</span><span class="active-tool">Hayba</span></div><div class="viewport"><div class="scene-block one"></div><div class="scene-block two"></div><div class="scene-block three"></div><div class="scene-pin">Clinic lobby · blockout preview</div></div><div class="editor-status"><span>Perspective · Lit · Show</span><span>2 unsaved · World Partition</span></div></div>
+    <section class="dock">
+      <header class="dock-head"><div class="head-top"><div class="brand"><img src="../../../unreal/HaybaMCPToolkit/Resources/HaybaLogo.svg" alt="">Hayba</div><span class="head-spacer"></span><button class="icon-button" title="New task">＋</button><button class="icon-button" title="Task history">☷</button></div><h2 class="thread-title">Clinic lobby blockout</h2><div class="thread-sub"><span class="status-dot"></span> Draft in progress <span>·</span> Saskartarad / L_Clinic</div><div class="head-actions"><button>View world</button><button class="primary-small">Review changes 3</button></div></header>
+      <div class="task-body"><div class="context"><span>⌖ Current level</span><span>◇ 4 selected actors</span><span>▧ Clinic brief.pdf</span></div><div class="person">You</div><div class="user-message">Block out a small clinic lobby. Keep a clear route from the entry to reception and make the waiting area feel calm.</div><div class="response-start"><span class="mini-mark">H</span> Hayba <span style="color:#879385;font-weight:400">· Scene design</span></div><p class="response-copy">I mapped the lobby around a 1.8 m accessible path. Here is an editable first pass before I place anything.</p><div class="artifact"><div class="artifact-top"><span class="artifact-glyph">◫</span><strong>Spatial plan</strong><small>Draft v2</small></div><div class="artifact-body"><b>4 zones · 18 proxies · 3 constraints</b><br>Entry → waiting → reception, with a visible route to the clinic corridor.</div><div class="artifact-row"><span>Preview layout and relations</span><span class="link">Open world canvas ↗</span></div></div><div class="run-line"><div>Inspected level and 4 selected actors</div><div>Checked route width and reception sightline</div><div class="current">Ready to preview 18 placements</div></div></div>
+      <div class="composer"><p>Ask for a change, attach a reference, or describe the next step…</p><div class="composer-bottom"><span class="mode">Draft ▾</span><span class="attach">＋ Context</span><span class="attach">▧ Image</span><button class="send" title="Send">↑</button></div></div><div class="connection"><span>● Editor connected</span><span class="link">Model and safety settings</span></div>
+    </section>
+  </main>
+
+  <main class="screen world wide">
+    <section class="dock"><header class="dock-head"><div class="head-top"><div class="brand"><img src="../../../unreal/HaybaMCPToolkit/Resources/HaybaLogo.svg" alt="">Hayba</div><span class="head-spacer"></span><button class="icon-button">＋</button><button class="icon-button">☷</button></div><h2 class="thread-title">Clinic lobby blockout</h2><div class="thread-sub"><span class="status-dot"></span> Draft in progress · L_Clinic</div><div class="head-actions"><button class="primary-small">World canvas open</button><button>Review changes 3</button></div></header><div class="task-body"><div class="context"><span>⌖ Current level</span><span>▧ Clinic brief.pdf</span></div><div class="person">You</div><div class="user-message">Block out a small clinic lobby with a clear route to reception.</div><div class="response-start"><span class="mini-mark">H</span> Hayba · Scene design</div><p class="response-copy">The layout keeps 1.8 m through the main path. I placed reception on the east edge so it is visible from the entry.</p><div class="artifact"><div class="artifact-top"><span class="artifact-glyph">◫</span><strong>Spatial plan</strong><small>Draft v2</small></div><div class="artifact-body">Select a zone on the canvas to change dimensions, intent, or its relation to nearby objects.</div></div><div class="run-line"><div>World facts read</div><div>Layout constraints checked</div><div class="current">Awaiting your review</div></div></div><div class="composer"><p>Make reception more visible from the door…</p><div class="composer-bottom"><span class="mode">Draft ▾</span><span class="attach">＋ Context</span><button class="send">↑</button></div></div><div class="connection"><span>● Editor connected</span><span class="link">World coverage</span></div></section>
+    <section class="canvas"><div class="canvas-head"><div><h1>Spatial plan</h1><p>Clinic lobby · editable blockout · Draft v2</p></div><button>Show in Unreal viewport ↗</button></div><div class="canvas-inner"><div class="canvas-panel"><div class="canvas-title">Zone layout <small>Click a zone to inspect or edit</small></div><div class="floorplan"><div class="zone entry">Entry<small>clear approach</small></div><div class="zone waiting">Waiting<small>quiet · 8 seats</small></div><div class="zone desk">Reception<small>visible from entry</small></div><div class="zone clinic">Clinic corridor<small>staff access</small></div><div class="path one"></div><div class="path two"></div><div class="path three"></div></div><div class="floor-legend"><span><i class="swatch"></i>Selected zone</span><span>Lines show required movement and sightlines</span></div></div><div class="inspector"><div class="canvas-panel"><div class="canvas-title">Waiting area <small>12 × 8 m</small></div><div class="fact"><span>Purpose</span><strong>Quiet, welcoming</strong></div><div class="fact"><span>Seats</span><strong>8 placeholders</strong></div><div class="fact"><span>Access route</span><strong>1.8 m clear</strong></div><div class="fact"><span>Connects to</span><strong>Entry, reception</strong></div></div><div class="canvas-panel"><div class="canvas-title">World coverage <small>Inspected now</small></div><div class="fact"><span>Current level</span><strong>L_Clinic</strong></div><div class="fact"><span>World Partition</span><strong>Enabled</strong></div><div class="fact"><span>Actors checked</span><strong>Loaded actors</strong></div><div class="fact"><span>Unloaded cells</span><strong class="warn">Not checked</strong></div><p class="canvas-note">The plan is grounded in loaded geometry. It does not claim collision or clearance in unloaded cells.</p></div></div></div></section>
+  </main>
+
+  <main class="screen review wide">
+    <section class="dock"><header class="dock-head"><div class="head-top"><div class="brand"><img src="../../../unreal/HaybaMCPToolkit/Resources/HaybaLogo.svg" alt="">Hayba</div><span class="head-spacer"></span><button class="icon-button">＋</button><button class="icon-button">☷</button></div><h2 class="thread-title">Clinic lobby blockout</h2><div class="thread-sub"><span class="status-dot"></span> Ready for review · L_Clinic</div><div class="head-actions"><button>World canvas</button><button class="primary-small">Review changes 3</button></div></header><div class="task-body"><div class="person">You</div><div class="user-message">Place the draft blockout and tell me what is safe to build on.</div><div class="response-start"><span class="mini-mark">H</span> Hayba · Build review</div><p class="response-copy">I can place the proxies in a dedicated folder. The current map has World Partition, so I will only change the loaded area you reviewed.</p><div class="artifact"><div class="artifact-top"><span class="artifact-glyph">▤</span><strong>Proposed changes</strong><small>Not applied</small></div><div class="artifact-body"><b>18 actors · 1 folder · 0 existing assets replaced</b><br>Scope: L_Clinic / Hayba_Drafts / Lobby_v2</div><div class="artifact-row"><span>Review exact objects and transforms</span><span class="link">Open changes ↗</span></div></div><div class="run-line"><div>Preview prepared</div><div>Loaded-world checks passed</div><div class="current">Awaiting approval</div></div></div><div class="composer"><p>Ask for a change before applying…</p><div class="composer-bottom"><span class="mode">Draft ▾</span><span class="attach">＋ Context</span><button class="send">↑</button></div></div><div class="connection"><span>● Editor connected</span><span class="link">Approval policy</span></div></section>
+    <section class="canvas"><div class="canvas-head"><div><h1>Review changes</h1><p>One approval covers the exact set below. Nothing has been placed yet.</p></div><button>Back to spatial plan</button></div><div class="canvas-inner"><div class="canvas-panel"><div class="canvas-title">What will change <small>Scoped to the current level</small></div><p class="review-headline">Hayba will add an isolated lobby blockout in <strong>Hayba_Drafts / Lobby_v2</strong>. Existing actors and assets remain untouched.</p><div class="review-list"><div class="review-item"><span class="label">Create</span><strong>18 blockout actors</strong><small>Walls, desk, seats, paths and signs with named object IDs.</small></div><div class="review-item"><span class="label">Group</span><strong>1 Outliner folder</strong><small>One place to select, hide, or remove the entire draft.</small></div><div class="review-item"><span class="label">Save</span><strong>Not included in this action</strong><small>World Partition actor packages need a separate save review.</small></div></div><div class="review-actions"><button class="go">Place draft blockout</button><button>Revise plan</button><button>Cancel</button></div></div><div class="inspector"><div class="canvas-panel"><div class="canvas-title">Checks <small>Before placement</small></div><div class="fact"><span>Path width</span><strong><span class="tag">Passed</span></strong></div><div class="fact"><span>Overlap in loaded area</span><strong><span class="tag">Passed</span></strong></div><div class="fact"><span>Unloaded cells</span><strong><span class="tag unknown">Not checked</span></strong></div><div class="fact"><span>Gameplay in PIE</span><strong><span class="tag unknown">Not run</span></strong></div></div><div class="canvas-panel"><div class="canvas-title">After placement</div><p class="canvas-note">Hayba will verify actor count and transforms, capture a viewport image, and report any failed or unrun checks. You can revise or remove the draft from the same task.</p></div></div></div></section>
+  </main>
+  <script>
+    const screen = new URLSearchParams(location.search).get('screen') || 'task';
+    document.body.dataset.screen = ['task','world','review'].includes(screen) ? screen : 'task';
+    document.querySelector(`[data-tab="${document.body.dataset.screen}"]`)?.classList.add('active');
+  </script>
+</body>
+</html>
