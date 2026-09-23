@@ -1,8 +1,8 @@
 // SHaybaValidatorPanel.h — runtime validator history browser.
 //
 // Reads `.scratch/validator-history.jsonl` (written by the MCP server) and
-// renders it as a filterable table. Per-row actions dismiss findings (writes
-// resolved:true back to disk), jump to the linked actor, and re-run the rule.
+// renders it as a filterable list. Per-row actions dismiss findings (writes
+// resolved:true back to disk) and jump to the linked actor. Run checks through Agent.
 //
 // File-watching keeps the table live without an explicit refresh button —
 // any append/edit by the MCP server triggers a re-read.
@@ -54,10 +54,6 @@ public:
     /** Re-read the on-disk history file. */
     void Refresh();
 
-    /** Public bridges so the per-row Slate widget (declared in the .cpp) can
-     *  call these actions without needing friend access. */
-    FReply OnDismissClicked_Public(TSharedPtr<FHaybaValidatorFinding> Item);
-    FReply OnJumpToActorClicked_Public(TSharedPtr<FHaybaValidatorFinding> Item);
 
 private:
     // ── Data ────────────────────────────────────────────────────────────
@@ -86,8 +82,6 @@ private:
     void OnSelectionChanged(TSharedPtr<FHaybaValidatorFinding> Item, ESelectInfo::Type);
     void OnDirectoryChanged(const TArray<FFileChangeData>& Changes);
 
-    FReply OnClearAllClicked();
-    FReply OnReRunAllClicked();
     FReply OnDismissClicked(TSharedPtr<FHaybaValidatorFinding> Item);
     FReply OnJumpToActorClicked(TSharedPtr<FHaybaValidatorFinding> Item);
 

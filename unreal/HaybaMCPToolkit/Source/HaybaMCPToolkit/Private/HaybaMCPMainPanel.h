@@ -22,6 +22,8 @@ public:
     void Construct(const FArguments& InArgs, FHaybaMCPModule* InModule);
 
     void ShowPanel(EHaybaPanel Panel);
+    void DraftWorldTask(const FString& Prompt);
+    void InspectWorld();
 
     /** Product navigation; Settings is a separate bottom control. */
     static TArray<EHaybaPanel> RailDestinations();
@@ -33,6 +35,8 @@ private:
     FHaybaMCPModule* Module = nullptr;
     EHaybaPanel CurrentPanel = EHaybaPanel::Agent;
 
+    TSharedPtr<class SHaybaMCPChatPanel> AgentPanel;
+    FText WorldInspection;
     TSharedPtr<SBox> ContentArea;
     TSharedPtr<SVerticalBox> Sidebar;
     TSharedPtr<class SBorder> SidebarWrapper;  // measured for compact-mode threshold

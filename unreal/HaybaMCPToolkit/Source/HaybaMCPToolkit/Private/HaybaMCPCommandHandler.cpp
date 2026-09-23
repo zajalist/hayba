@@ -1035,10 +1035,14 @@ static FString HandleProposePlan(const FString& Id, const TSharedPtr<FJsonObject
 
     if (FHaybaMCPModule* M = FModuleManager::GetModulePtr<FHaybaMCPModule>("HaybaMCPToolkit"))
     {
-        if (TSharedPtr<SHaybaMCPPlanPanel> Panel = M->PlanPanel.Pin())
+        TArray<FString> Summary;
+        for (const FHaybaPlanStep& Step : Steps)
         {
-            Panel->LoadPlan(Steps, AwaitSecs);
+            Summary.Add(FString::Printf(TEXT("%d. %s%s%s%s%s"), Step.Index + 1, *Step.Title,
+                Step.Tool.IsEmpty() ? TEXT("") : TEXT(" — "), *Step.Tool,
+                Step.Description.IsEmpty() ? TEXT("") : TEXT("\n"), *Step.Description));
         }
+        M->ProposeExternalPlan(FString::Join(Summary, TEXT("\n\n")));
     }
 
     auto Data = MakeShared<FJsonObject>();
@@ -1290,7 +1294,7 @@ FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
             {
                 auto Data = MakeShared<FJsonObject>();
                 Data->SetStringField(TEXT("status"), TEXT("plan_mode_required"));
-                Data->SetStringField(TEXT("hint"), TEXT("Plan Mode is ON. Call hayba_propose_plan with a steps[] array, then the user must click Approve in the Plan tab before destructive commands run."));
+                Data->SetStringField(TEXT("hint"), TEXT("Plan Mode is ON. Call hayba_propose_plan with a steps[] array, then the user must review and approve the external MCP proposal in Agent before destructive commands run."));
                 // Under strict consume the previous Approve was SPENT by the
                 // last destructive command. Without saying so, the second call
                 // in a sequence looks exactly like Approve never worked, and

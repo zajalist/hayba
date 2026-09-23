@@ -1,7 +1,7 @@
 # Agent Workspace and World Tools Redesign
 
 **Date:** 2026-09-22
-**Status:** Approved design, awaiting implementation-plan review
+**Status:** Approved; foundation implemented. See `docs/updates/2026-09-22.md` for verification, rollout status, and remaining scope.
 **Supersedes:** The five-noun information architecture in `docs/design/2026-08-23-extension-redesign/02-PLAN.md` and Track P2 in `03-MASTER-PLAN.md`
 
 ## Purpose

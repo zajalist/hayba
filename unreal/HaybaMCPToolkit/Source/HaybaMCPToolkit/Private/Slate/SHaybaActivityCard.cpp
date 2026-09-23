@@ -80,8 +80,12 @@ void SHaybaActivityCard::Rebuild()
         const FString Risk = Current->Approval->Hint.IsEmpty() ? TEXT("Review scope and reversibility before approval.") : Current->Approval->Hint;
         Body->AddSlot().AutoHeight().Padding(4.f, 4.f, 4.f, 0.f)
         [ SNew(STextBlock).Text(FText::FromString(FString::Printf(TEXT("Scope: %s. %s"), *Scope, *Risk))).AutoWrapText(true) ];
-        if (OnApprove.IsBound()) Body->AddSlot().AutoHeight().Padding(4.f, 4.f, 0.f, 0.f) [ BuildAction(LOCTEXT("Approve", "Approve"), LOCTEXT("ApproveTip", "Approve this exact planned action"), OnApprove) ];
-        if (OnReject.IsBound()) Body->AddSlot().AutoHeight().Padding(4.f, 4.f, 0.f, 0.f) [ BuildAction(LOCTEXT("Reject", "Reject"), LOCTEXT("RejectTip", "Reject and cancel this planned action"), OnReject) ];
+        TSharedRef<SHorizontalBox> Actions = SNew(SHorizontalBox);
+        if (OnApprove.IsBound()) Actions->AddSlot().AutoWidth().Padding(0.f, 0.f, 8.f, 0.f)
+            [ BuildAction(LOCTEXT("Approve", "Approve"), LOCTEXT("ApproveTip", "Approve this exact planned action"), OnApprove) ];
+        if (OnReject.IsBound()) Actions->AddSlot().AutoWidth()
+            [ BuildAction(LOCTEXT("Reject", "Reject"), LOCTEXT("RejectTip", "Reject and cancel this planned action"), OnReject) ];
+        Body->AddSlot().AutoHeight().Padding(4.f, 8.f, 0.f, 0.f)[ Actions ];
     }
     else if (Current->State == EHaybaActivityState::Running && OnCancel.IsBound())
     {
@@ -133,6 +137,7 @@ TSharedRef<SWidget> SHaybaActivityCard::BuildAction(const FText& Label, const FT
         SNew(SButton)
         .ButtonStyle(FAppStyle::Get(), "SimpleButton")
         .Text(Label)
+        .ContentPadding(FMargin(12.f, 4.f))
         .ToolTipText(Tooltip)
         .OnClicked(this, &SHaybaActivityCard::Execute, Action)
     ];

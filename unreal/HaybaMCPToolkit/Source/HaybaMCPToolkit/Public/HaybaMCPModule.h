@@ -78,6 +78,22 @@ public:
     // destructive command so each plan must be approved exactly once.
     bool bPlanApproved = false;
 
+    // External MCP proposals survive navigation and tab recreation. Chat has
+    // its own exact-call approval protocol; never broadcast chat approval here.
+    FString PendingExternalPlan;
+    void ProposeExternalPlan(const FString& Summary)
+    {
+        bPlanApproved = false;
+        PendingExternalPlan = Summary;
+    }
+    bool ResolveExternalPlan(bool bApprove)
+    {
+        if (PendingExternalPlan.IsEmpty()) return false;
+        bPlanApproved = bApprove;
+        PendingExternalPlan.Empty();
+        return true;
+    }
+
     // Satellite modules (HaybaMCPGAS/Niagara/MetaSound/Sequencer) register their
     // command handlers into the core router at their own StartupModule, so an
     // optional-plugin module that fails to load simply leaves its commands
@@ -131,7 +147,6 @@ private:
     /** Adds the "Open with Hayba" entry to the StaticMesh content-browser menu. */
     void RegisterStudioContentMenu();
     /** Adds the Plan Mode widget under this module's removable ToolMenus owner. */
-    void RegisterPlanModeToolbar();
     /** Tracked next-tick onboarding action; ShutdownModule cancels it if pending. */
     void OpenOnboardingTab();
     FString PendingStudioAsset;
@@ -141,7 +156,6 @@ private:
     IConsoleObject* OpenStudioConsoleCommand = nullptr;
     FTimerHandle AutoOpenTimerHandle;
     FDelegateHandle StudioMenuStartupHandle;
-    FDelegateHandle PlanModeMenuStartupHandle;
 
     FString FindNodeExecutable() const;
     FString GetMCPServerPath() const;

@@ -2,6 +2,9 @@
 #include "HaybaMCPModule.h"
 #include "HaybaMCPStyle.h"
 #include "HaybaMCPChatPanel.h"
+#include "Dom/JsonObject.h"
+#include "HaybaMCPSettings.h"
+#include "Widgets/Layout/SWrapBox.h"
 #include "HaybaMCPSceneMapWebPanel.h"
 #include "HaybaMCPMemoryPanel.h"
 #include "HaybaMCPCapabilitiesPanel.h"
@@ -64,6 +67,9 @@ namespace
 void SHaybaMCPMainPanel::Construct(const FArguments&, FHaybaMCPModule* InModule)
 {
     Module = InModule;
+    WorldInspection = NSLOCTEXT("Hayba", "World.Initial", "Inspect this world to see partition, landscape, and save status.");
+    TSharedRef<SWidget> InitialAgent = BuildPanelContent(EHaybaPanel::Agent);
+    PanelCache.Add(EHaybaPanel::Agent, InitialAgent);
     ChildSlot
     [
         SNew(SBorder)
@@ -78,14 +84,14 @@ void SHaybaMCPMainPanel::Construct(const FArguments&, FHaybaMCPModule* InModule)
             [
                 SAssignNew(SidebarWrapper, SBorder)
                 .BorderImage(FAppStyle::GetBrush("Brushes.Header"))
-                .Padding(FMargin(3.f, 6.f))
+                .Padding(FMargin(5.f, 8.f))
                 [ BuildSidebar() ]
             ]
             + SSplitter::Slot().Value(0.84f)
             [
                 SAssignNew(ContentArea, SBox)
                 .Padding(FMargin(8.f, 6.f))
-                [ BuildPanelContent(EHaybaPanel::Agent) ]
+                [ InitialAgent ]
             ]
         ]
     ];
@@ -99,6 +105,17 @@ TArray<EHaybaPanel> SHaybaMCPMainPanel::RailDestinations()
 TSharedRef<SWidget> SHaybaMCPMainPanel::BuildSidebar()
 {
     SAssignNew(Sidebar, SVerticalBox);
+    Sidebar->AddSlot().AutoHeight().Padding(7.f, 8.f, 4.f, 20.f)
+    [
+        SNew(SHorizontalBox)
+        + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
+        [ SNew(SBox).WidthOverride(24.f).HeightOverride(29.f)
+          [ SNew(SImage).Image(FHaybaMCPStyle::GetBrush(TEXT("Hayba.Logo.Small"))) ] ]
+        + SHorizontalBox::Slot().FillWidth(1.f).VAlign(VAlign_Center).Padding(9.f, 0.f)
+        [ SNew(STextBlock).Text(NSLOCTEXT("Hayba", "Brand", "Hayba"))
+            .Font(FCoreStyle::GetDefaultFontStyle("Bold", 14))
+            .Visibility_Lambda([this]() { return IsSidebarCompact() ? EVisibility::Collapsed : EVisibility::Visible; }) ]
+    ];
     for (EHaybaPanel Panel : RailDestinations())
     {
         Sidebar->AddSlot().AutoHeight().Padding(1.f, 1.f)
@@ -118,10 +135,12 @@ void SHaybaMCPMainPanel::Tick(const FGeometry& Geometry, double Time, float Delt
 
 TSharedRef<SWidget> SHaybaMCPMainPanel::BuildSidebarItem(EHaybaPanel Panel, const FName& IconBrushName, const FText& Label)
 {
-    return SNew(SBox).HeightOverride(36.f)
+    return SNew(SBox).HeightOverride(42.f)
     [
         SNew(SButton)
-        .ButtonStyle(FAppStyle::Get(), "HoverHintOnly")
+        .ButtonStyle(&FHaybaMCPStyle::Get().GetWidgetStyle<FButtonStyle>("Hayba.Button.Nav"))
+        .ButtonColorAndOpacity_Lambda([this, Panel]() { return CurrentPanel == Panel
+            ? FLinearColor(0.14f, 0.105f, 0.065f) : FLinearColor::Transparent; })
         .ContentPadding(FMargin(6.f, 3.f))
         .HAlign(HAlign_Fill)
         .ToolTipText(Label)
@@ -137,7 +156,7 @@ TSharedRef<SWidget> SHaybaMCPMainPanel::BuildSidebarItem(EHaybaPanel Panel, cons
                     .ColorAndOpacity_Lambda([this, Panel]()
                     {
                         return CurrentPanel == Panel ? FHaybaMCPStyle::Get().GetColor(TEXT("Hayba.Color.Active"))
-                            : FSlateColor(FLinearColor(0.64f, 0.66f, 0.69f));
+                            : FSlateColor(FLinearColor::FromSRGBColor(FColor(222, 212, 195)));
                     })
                 ]
             ]
@@ -148,7 +167,7 @@ TSharedRef<SWidget> SHaybaMCPMainPanel::BuildSidebarItem(EHaybaPanel Panel, cons
                 .ColorAndOpacity_Lambda([this, Panel]()
                 {
                     return CurrentPanel == Panel ? FHaybaMCPStyle::Get().GetColor(TEXT("Hayba.Color.Active"))
-                        : FSlateColor(FLinearColor(0.76f, 0.78f, 0.81f));
+                        : FSlateColor(FLinearColor::FromSRGBColor(FColor(222, 212, 195)));
                 })
                 .Visibility_Lambda([this]() { return IsSidebarCompact() ? EVisibility::Collapsed : EVisibility::Visible; })
             ]
@@ -187,7 +206,7 @@ void SHaybaMCPMainPanel::ShowOnboardingFromSplash()
 TSharedRef<SWidget> SHaybaMCPMainPanel::BuildPanelContent(EHaybaPanel Panel)
 {
     if (Panel == EHaybaPanel::Agent)
-        return SNew(SHaybaMCPChatPanel, Module).MainPanel(this);
+        return SAssignNew(AgentPanel, SHaybaMCPChatPanel, Module).MainPanel(this);
 
     if (Panel == EHaybaPanel::World)
     {
@@ -199,15 +218,36 @@ TSharedRef<SWidget> SHaybaMCPMainPanel::BuildPanelContent(EHaybaPanel Panel)
             [
                 SNew(SHorizontalBox)
                 + SHorizontalBox::Slot().FillWidth(1.f).VAlign(VAlign_Center)
-                [ SNew(STextBlock).Text(NSLOCTEXT("Hayba", "World.Heading", "World")) ]
+                [ SNew(STextBlock).Text(NSLOCTEXT("Hayba", "World.Heading", "World")).Font(FCoreStyle::GetDefaultFontStyle("Bold", 18)) ]
                 + SHorizontalBox::Slot().AutoWidth()
                 [ SNew(SButton).Text(NSLOCTEXT("Hayba", "World.Refresh", "Refresh"))
                     .ToolTipText(NSLOCTEXT("Hayba", "World.RefreshTip", "Rescan loaded actors and findings"))
                     .OnClicked_Lambda([Map, Findings]() { Map->Refresh(); Findings->Refresh(); return FReply::Handled(); }) ]
             ]
+            + SVerticalBox::Slot().AutoHeight().Padding(6.f, 4.f, 6.f, 10.f)
+            [
+                SNew(SWrapBox).UseAllottedSize(true).InnerSlotPadding(FVector2D(8.f, 8.f))
+                + SWrapBox::Slot()
+                [ SNew(SButton).Text(NSLOCTEXT("Hayba", "World.Inspect", "Inspect"))
+                    .ContentPadding(FMargin(14.f, 8.f))
+                    .ToolTipText(NSLOCTEXT("Hayba", "World.InspectTip", "Read current world, partition, landscape and save status. Does not change the level."))
+                    .OnClicked_Lambda([this, Map, Findings]() { InspectWorld(); Map->Refresh(); Findings->Refresh(); return FReply::Handled(); }) ]
+                + SWrapBox::Slot()
+                [ SNew(SButton).Text(NSLOCTEXT("Hayba", "World.Import", "Import with Agent"))
+                    .ContentPadding(FMargin(14.f, 8.f))
+                    .ToolTipText(NSLOCTEXT("Hayba", "World.ImportTip", "Draft a guided world import request. Review and send it in Agent."))
+                    .OnClicked_Lambda([this]() { DraftWorldTask(TEXT("Help me import terrain or a scene. Inspect the current world first, then ask for the source files and target area. Propose world_ingest with partition placement, material, collision, LOD and Nanite policies where supported. Show unsupported stages and dry-run results before any writes.")); return FReply::Handled(); }) ]
+                + SWrapBox::Slot()
+                [ SNew(SButton).Text(NSLOCTEXT("Hayba", "World.Validate", "Validate with Agent"))
+                    .ContentPadding(FMargin(14.f, 8.f))
+                    .ToolTipText(NSLOCTEXT("Hayba", "World.ValidateTip", "Draft a validation request in Agent. This button does not run checks yet."))
+                    .OnClicked_Lambda([this]() { DraftWorldTask(TEXT("Inspect the current world and run available read-only validation, including validator_run if enabled. Report concrete findings, evidence, loaded-world coverage, and checks that could not run. Do not change or save the project.")); return FReply::Handled(); }) ]
+            ]
+            + SVerticalBox::Slot().AutoHeight().Padding(6.f, 0.f, 6.f, 10.f)
+            [ SNew(STextBlock).Text_Lambda([this]() { return WorldInspection; }).AutoWrapText(true) ]
             + SVerticalBox::Slot().AutoHeight().Padding(6.f, 0.f, 6.f, 5.f)
-            [ SNew(STextBlock).Text(NSLOCTEXT("Hayba", "World.Coverage", "Loaded actor map · unloaded World Partition regions are not yet indexed"))
-                .ColorAndOpacity(FSlateColor(FLinearColor(0.64f, 0.66f, 0.69f))) ]
+            [ SNew(STextBlock).Text(NSLOCTEXT("Hayba", "World.Coverage", "Coverage: loaded actors only. Unloaded World Partition regions are not indexed."))
+                .ColorAndOpacity(FSlateColor(FLinearColor(0.64f, 0.66f, 0.69f))).AutoWrapText(true) ]
             + SVerticalBox::Slot().FillHeight(1.f)
             [
                 SNew(SSplitter).Orientation(Orient_Vertical)
@@ -257,4 +297,45 @@ TSharedRef<SWidget> SHaybaMCPMainPanel::BuildHeader()
 TSharedRef<SWidget> SHaybaMCPMainPanel::BuildWatermark()
 {
     return SNew(SBox);
+}
+
+void SHaybaMCPMainPanel::DraftWorldTask(const FString& Prompt)
+{
+    ShowPanel(EHaybaPanel::Agent);
+    if (AgentPanel.IsValid()) AgentPanel->DraftPrompt(Prompt);
+}
+
+void SHaybaMCPMainPanel::InspectWorld()
+{
+    if (!Module)
+    {
+        WorldInspection = NSLOCTEXT("Hayba", "World.Unavailable", "Inspection unavailable: reopen the Hayba toolkit.");
+        return;
+    }
+    TWeakPtr<SHaybaMCPMainPanel> WeakSelf = SharedThis(this);
+    Module->SendTcpCommand(TEXT("world_inspect"), MakeShared<FJsonObject>(),
+        [WeakSelf](bool bOk, const TSharedPtr<FJsonObject>& Data)
+        {
+            const auto Self = WeakSelf.Pin();
+            if (!Self.IsValid()) return;
+            const TSharedPtr<FJsonObject>* World = nullptr;
+            const TSharedPtr<FJsonObject>* Partition = nullptr;
+            if (!bOk || !Data.IsValid() || !Data->TryGetObjectField(TEXT("world"), World)
+                || !Data->TryGetObjectField(TEXT("partition"), Partition))
+            {
+                Self->WorldInspection = NSLOCTEXT("Hayba", "World.InspectFailed", "Could not inspect this world. Check the editor connection and try Inspect again.");
+                return;
+            }
+            FString Package;
+            (*World)->TryGetStringField(TEXT("package"), Package);
+            bool bPartition = false, bSaveReady = false;
+            (*Partition)->TryGetBoolField(TEXT("enabled"), bPartition);
+            Data->TryGetBoolField(TEXT("save_ready"), bSaveReady);
+            const TArray<TSharedPtr<FJsonValue>>* Landscapes = nullptr;
+            const int32 Count = Data->TryGetArrayField(TEXT("landscape"), Landscapes) ? Landscapes->Num() : 0;
+            Self->WorldInspection = FText::FromString(FString::Printf(
+                TEXT("%s\nWorld Partition: %s    Loaded landscapes: %d\nCurrent map file: %s. External actor packages and checkout have not been checked."),
+                *Package, bPartition ? TEXT("enabled") : TEXT("disabled"), Count,
+                bSaveReady ? TEXT("existing and writable") : TEXT("not confirmed writable")));
+        });
 }

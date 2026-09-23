@@ -6,6 +6,7 @@
 #include "Misc/Paths.h"
 #include "Fonts/SlateFontInfo.h"
 #include "Styling/AppStyle.h"
+#include "Brushes/SlateRoundedBoxBrush.h"
 
 TSharedPtr<FSlateStyleSet> FHaybaMCPStyle::StyleInstance = nullptr;
 
@@ -93,6 +94,14 @@ TSharedRef<FSlateStyleSet> FHaybaMCPStyle::Create()
     Style->Set("Hayba.Icon.MCP",        new IMAGE_BRUSH_SVG(TEXT("IconMCP"),         IconSize));
     Style->Set("Hayba.Icon.Slivers",    new IMAGE_BRUSH_SVG(TEXT("IconSlivers"),     IconSize));
     Style->Set("Hayba.MCP.Hero",        new IMAGE_BRUSH_SVG(TEXT("MCPHero"),         FVector2D(72.f, 72.f)));
+
+    FButtonStyle Nav = FAppStyle::Get().GetWidgetStyle<FButtonStyle>("SimpleButton");
+    Nav.SetNormal(FSlateRoundedBoxBrush(FLinearColor::White, 6.f));
+    Nav.SetHovered(FSlateRoundedBoxBrush(FLinearColor(0.24f, 0.21f, 0.17f), 6.f));
+    Nav.SetPressed(FSlateRoundedBoxBrush(FLinearColor(0.31f, 0.23f, 0.14f), 6.f));
+    Style->Set("Hayba.Button.Nav", Nav);
+    Style->Set("Hayba.Composer", new FSlateRoundedBoxBrush(FLinearColor(0.055f, 0.052f, 0.047f), 8.f,
+        FLinearColor(0.19f, 0.17f, 0.14f), 1.f));
 
     // Typography — bigger, more breathing room
     {

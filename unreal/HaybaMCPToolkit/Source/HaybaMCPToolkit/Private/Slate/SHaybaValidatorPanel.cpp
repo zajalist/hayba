@@ -20,20 +20,13 @@
 #include "Widgets/Input/SSearchBox.h"
 #include "Widgets/Layout/SBorder.h"
 #include "Widgets/Layout/SScrollBox.h"
+#include "Widgets/Layout/SWrapBox.h"
 #include "Widgets/SBoxPanel.h"
 #include "Widgets/Text/STextBlock.h"
-#include "Widgets/Views/SHeaderRow.h"
 #include "Widgets/Views/STableRow.h"
 
 namespace
 {
-    const FName ColSeverity("Severity");
-    const FName ColRuleId("RuleId");
-    const FName ColMessage("Message");
-    const FName ColTool("Tool");
-    const FName ColTime("Time");
-    const FName ColActions("Actions");
-
     FSlateColor ColorForSeverity(const FString& Sev)
     {
         if (Sev == TEXT("error"))   return FSlateColor(FLinearColor(1.f, 0.3f, 0.3f));
@@ -41,107 +34,6 @@ namespace
         return FSlateColor(FLinearColor(0.55f, 0.7f, 1.f));
     }
 
-    /** Trim long strings for the table; full text is in the tooltip. */
-    FString Truncate(const FString& S, int32 Max)
-    {
-        if (S.Len() <= Max) return S;
-        return S.Left(Max - 1) + TEXT("…");
-    }
-
-    /** Per-row table widget. */
-    class SValidatorTableRow : public SMultiColumnTableRow<TSharedPtr<FHaybaValidatorFinding>>
-    {
-    public:
-        SLATE_BEGIN_ARGS(SValidatorTableRow) {}
-            SLATE_ARGUMENT(TSharedPtr<FHaybaValidatorFinding>, Item)
-            SLATE_ARGUMENT(SHaybaValidatorPanel*, Panel)
-        SLATE_END_ARGS()
-
-        void Construct(const FArguments& InArgs, const TSharedRef<STableViewBase>& Owner)
-        {
-            Item = InArgs._Item;
-            Panel = InArgs._Panel;
-            SMultiColumnTableRow::Construct(FSuperRowType::FArguments(), Owner);
-        }
-
-        virtual TSharedRef<SWidget> GenerateWidgetForColumn(const FName& Column) override
-        {
-            if (!Item.IsValid()) return SNullWidget::NullWidget;
-
-            if (Column == ColSeverity)
-            {
-                return SNew(SBorder)
-                    .Padding(FMargin(6, 2))
-                    .BorderBackgroundColor(ColorForSeverity(Item->Severity))
-                    [
-                        SNew(STextBlock)
-                        .Text(FText::FromString(Item->Severity.ToUpper()))
-                        .ColorAndOpacity(FSlateColor(FLinearColor::White))
-                    ];
-            }
-            if (Column == ColRuleId)
-            {
-                return SNew(STextBlock)
-                    .Margin(FMargin(6, 3))
-                    .Text(FText::FromString(Item->RuleId))
-                    .ToolTipText(FText::FromString(Item->Hint));
-            }
-            if (Column == ColMessage)
-            {
-                return SNew(STextBlock)
-                    .Margin(FMargin(6, 3))
-                    .Text(FText::FromString(Truncate(Item->Message, 120)))
-                    .ToolTipText(FText::FromString(Item->Message + TEXT("\n\nHint: ") + Item->Hint));
-            }
-            if (Column == ColTool)
-            {
-                return SNew(STextBlock)
-                    .Margin(FMargin(6, 3))
-                    .Text(FText::FromString(Item->ToolName));
-            }
-            if (Column == ColTime)
-            {
-                return SNew(STextBlock)
-                    .Margin(FMargin(6, 3))
-                    .Text(FText::FromString(Truncate(Item->Timestamp, 19)));
-            }
-            if (Column == ColActions)
-            {
-                TSharedRef<SHorizontalBox> ActionsBox = SNew(SHorizontalBox);
-                ActionsBox->AddSlot().AutoWidth().Padding(2)
-                [
-                    SNew(SButton)
-                    .ContentPadding(FMargin(6, 2))
-                    .ToolTipText(FText::FromString(TEXT("Mark this finding as resolved (or restore it).")))
-                    .OnClicked_Lambda([this]() -> FReply {
-                        if (Panel) return Panel->OnDismissClicked_Public(Item);
-                        return FReply::Handled();
-                    })
-                    [ SNew(STextBlock).Text(FText::FromString(Item->bResolved ? TEXT("Restore") : TEXT("Dismiss"))) ]
-                ];
-                if (!Item->ActorLabel.IsEmpty() || !Item->ActorId.IsEmpty())
-                {
-                    ActionsBox->AddSlot().AutoWidth().Padding(2)
-                    [
-                        SNew(SButton)
-                        .ContentPadding(FMargin(6, 2))
-                        .ToolTipText(FText::FromString(TEXT("Select the actor referenced by this finding and frame it in the viewport.")))
-                        .OnClicked_Lambda([this]() -> FReply {
-                            if (Panel) return Panel->OnJumpToActorClicked_Public(Item);
-                            return FReply::Handled();
-                        })
-                        [ SNew(STextBlock).Text(FText::FromString(TEXT("Jump"))) ]
-                    ];
-                }
-                return ActionsBox;
-            }
-            return SNullWidget::NullWidget;
-        }
-
-    private:
-        TSharedPtr<FHaybaValidatorFinding> Item;
-        SHaybaValidatorPanel* Panel = nullptr;
-    };
 }
 
 FReply SHaybaValidatorPanel::OnDismissClicked(TSharedPtr<FHaybaValidatorFinding> Item)
@@ -177,11 +69,6 @@ FReply SHaybaValidatorPanel::OnJumpToActorClicked(TSharedPtr<FHaybaValidatorFind
     return FReply::Handled();
 }
 
-// Public bridge methods used by the table-row class — defined here so the
-// member access checker is satisfied without making the row a friend.
-FReply SHaybaValidatorPanel::OnDismissClicked_Public(TSharedPtr<FHaybaValidatorFinding> Item) { return OnDismissClicked(Item); }
-FReply SHaybaValidatorPanel::OnJumpToActorClicked_Public(TSharedPtr<FHaybaValidatorFinding> Item) { return OnJumpToActorClicked(Item); }
-
 // ── Path helpers ───────────────────────────────────────────────────────────
 
 FString SHaybaValidatorPanel::DefaultScratchDir()
@@ -213,77 +100,40 @@ void SHaybaValidatorPanel::Construct(const FArguments& InArgs)
     [
         SNew(SVerticalBox)
 
-        // ── Header row ────────────────────────────────────────────────
-        + SVerticalBox::Slot().AutoHeight().Padding(4)
+        + SVerticalBox::Slot().AutoHeight().Padding(8.f, 8.f, 8.f, 4.f)
+        [ SAssignNew(HeaderText, STextBlock).AutoWrapText(true) ]
+        + SVerticalBox::Slot().AutoHeight().Padding(8.f, 2.f)
         [
-            SNew(SHorizontalBox)
-            + SHorizontalBox::Slot().FillWidth(1.f).VAlign(VAlign_Center).Padding(4, 0)
-            [ SAssignNew(HeaderText, STextBlock).Text(FText::FromString(TEXT("Validator history"))) ]
-            + SHorizontalBox::Slot().AutoWidth().Padding(2)
-            [
-                SNew(SButton)
-                .ContentPadding(FMargin(8, 3))
-                .ToolTipText(FText::FromString(TEXT("Re-run every validator rule with an active evaluator.")))
-                .OnClicked(this, &SHaybaValidatorPanel::OnReRunAllClicked)
-                [ SNew(STextBlock).Text(FText::FromString(TEXT("Re-run All"))) ]
-            ]
-            + SHorizontalBox::Slot().AutoWidth().Padding(2)
-            [
-                SNew(SButton)
-                .ContentPadding(FMargin(8, 3))
-                .ToolTipText(FText::FromString(TEXT("Wipe the validator history. Findings can no longer be restored after this.")))
-                .OnClicked(this, &SHaybaValidatorPanel::OnClearAllClicked)
-                [ SNew(STextBlock).Text(FText::FromString(TEXT("Clear All"))) ]
-            ]
+            SNew(SSearchBox)
+            .HintText(FText::FromString(TEXT("Search findings")))
+            .OnTextChanged_Lambda([this](const FText& Text) { SearchText = Text.ToString(); ApplyFilter(); })
         ]
-
-        // ── Filter bar ────────────────────────────────────────────────
-        + SVerticalBox::Slot().AutoHeight().Padding(4)
+        + SVerticalBox::Slot().AutoHeight().Padding(8.f, 4.f)
         [
-            SNew(SHorizontalBox)
-            + SHorizontalBox::Slot().FillWidth(1.f).VAlign(VAlign_Center).Padding(2)
-            [
-                SNew(SSearchBox)
-                .HintText(FText::FromString(TEXT("Search rule id, message, tool…")))
-                .OnTextChanged_Lambda([this](const FText& T)
-                {
-                    SearchText = T.ToString();
-                    ApplyFilter();
-                })
-            ]
-            + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(6, 2)
-            [
-                SNew(SCheckBox)
-                .IsChecked(ECheckBoxState::Checked)
-                .ToolTipText(FText::FromString(TEXT("Show error findings.")))
-                .OnCheckStateChanged_Lambda([this](ECheckBoxState S) { bShowError = (S == ECheckBoxState::Checked); ApplyFilter(); })
-                [ SNew(STextBlock).Text(FText::FromString(TEXT("Errors"))) ]
-            ]
-            + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(6, 2)
-            [
-                SNew(SCheckBox)
-                .IsChecked(ECheckBoxState::Checked)
-                .ToolTipText(FText::FromString(TEXT("Show warning findings.")))
-                .OnCheckStateChanged_Lambda([this](ECheckBoxState S) { bShowWarning = (S == ECheckBoxState::Checked); ApplyFilter(); })
-                [ SNew(STextBlock).Text(FText::FromString(TEXT("Warnings"))) ]
-            ]
-            + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(6, 2)
-            [
-                SNew(SCheckBox)
-                .IsChecked(ECheckBoxState::Checked)
-                .ToolTipText(FText::FromString(TEXT("Show info findings.")))
-                .OnCheckStateChanged_Lambda([this](ECheckBoxState S) { bShowInfo = (S == ECheckBoxState::Checked); ApplyFilter(); })
-                [ SNew(STextBlock).Text(FText::FromString(TEXT("Info"))) ]
-            ]
-            + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(6, 2)
-            [
-                SNew(SCheckBox)
-                .IsChecked(ECheckBoxState::Unchecked)
-                .ToolTipText(FText::FromString(TEXT("Include findings that have been dismissed.")))
-                .OnCheckStateChanged_Lambda([this](ECheckBoxState S) { bIncludeResolved = (S == ECheckBoxState::Checked); ApplyFilter(); })
-                [ SNew(STextBlock).Text(FText::FromString(TEXT("Include resolved"))) ]
-            ]
+            SNew(SWrapBox).UseAllottedSize(true).InnerSlotPadding(FVector2D(10.f, 4.f))
+            + SWrapBox::Slot()
+            [ SNew(SCheckBox).IsChecked(ECheckBoxState::Checked)
+                .OnCheckStateChanged_Lambda([this](ECheckBoxState S) { bShowError = S == ECheckBoxState::Checked; ApplyFilter(); })
+                [ SNew(STextBlock).Text(FText::FromString(TEXT("Errors"))) ] ]
+            + SWrapBox::Slot()
+            [ SNew(SCheckBox).IsChecked(ECheckBoxState::Checked)
+                .OnCheckStateChanged_Lambda([this](ECheckBoxState S) { bShowWarning = S == ECheckBoxState::Checked; ApplyFilter(); })
+                [ SNew(STextBlock).Text(FText::FromString(TEXT("Warnings"))) ] ]
+            + SWrapBox::Slot()
+            [ SNew(SCheckBox).IsChecked(ECheckBoxState::Checked)
+                .OnCheckStateChanged_Lambda([this](ECheckBoxState S) { bShowInfo = S == ECheckBoxState::Checked; ApplyFilter(); })
+                [ SNew(STextBlock).Text(FText::FromString(TEXT("Info"))) ] ]
+            + SWrapBox::Slot()
+            [ SNew(SCheckBox).IsChecked(ECheckBoxState::Unchecked)
+                .OnCheckStateChanged_Lambda([this](ECheckBoxState S) { bIncludeResolved = S == ECheckBoxState::Checked; ApplyFilter(); })
+                [ SNew(STextBlock).Text(FText::FromString(TEXT("Resolved"))) ] ]
         ]
+        + SVerticalBox::Slot().AutoHeight().Padding(8.f, 4.f)
+        [ SNew(STextBlock).AutoWrapText(true)
+            .Visibility_Lambda([this]() { return FilteredItems.IsEmpty() ? EVisibility::Visible : EVisibility::Collapsed; })
+            .Text_Lambda([this]() { return FText::FromString(AllItems.IsEmpty()
+                ? TEXT("No recorded findings. Use Validate with Agent to run available checks.")
+                : TEXT("No findings match these filters.")); }) ]
 
         // ── Table ──────────────────────────────────────────────────────
         + SVerticalBox::Slot().FillHeight(1.f).Padding(4)
@@ -293,15 +143,6 @@ void SHaybaValidatorPanel::Construct(const FArguments& InArgs)
             .OnGenerateRow(this, &SHaybaValidatorPanel::OnGenerateRow)
             .OnSelectionChanged(this, &SHaybaValidatorPanel::OnSelectionChanged)
             .SelectionMode(ESelectionMode::Single)
-            .HeaderRow(
-                SNew(SHeaderRow)
-                + SHeaderRow::Column(ColSeverity).DefaultLabel(FText::FromString(TEXT("Severity"))).FixedWidth(80)
-                + SHeaderRow::Column(ColRuleId).DefaultLabel(FText::FromString(TEXT("Rule"))).FillWidth(0.22f)
-                + SHeaderRow::Column(ColMessage).DefaultLabel(FText::FromString(TEXT("Message"))).FillWidth(0.42f)
-                + SHeaderRow::Column(ColTool).DefaultLabel(FText::FromString(TEXT("Tool"))).FillWidth(0.16f)
-                + SHeaderRow::Column(ColTime).DefaultLabel(FText::FromString(TEXT("When"))).FillWidth(0.14f)
-                + SHeaderRow::Column(ColActions).DefaultLabel(FText::FromString(TEXT("Actions"))).FillWidth(0.16f)
-            )
         ]
     ];
 
@@ -461,14 +302,35 @@ void SHaybaValidatorPanel::UpdateHeader()
     for (const TSharedPtr<FHaybaValidatorFinding>& F : AllItems)
         if (F.IsValid() && !F->bResolved) ++Unresolved;
     HeaderText->SetText(FText::FromString(FString::Printf(
-        TEXT("Validator history — %d findings (%d unresolved)"),
+        TEXT("Findings: %d recorded, %d unresolved"),
         AllItems.Num(), Unresolved)));
 }
 
 TSharedRef<ITableRow> SHaybaValidatorPanel::OnGenerateRow(
     TSharedPtr<FHaybaValidatorFinding> Item, const TSharedRef<STableViewBase>& Owner)
 {
-    return SNew(SValidatorTableRow, Owner).Item(Item).Panel(this);
+    return SNew(STableRow<TSharedPtr<FHaybaValidatorFinding>>, Owner)
+        .Padding(FMargin(8.f, 6.f))
+        [
+            SNew(SVerticalBox)
+            + SVerticalBox::Slot().AutoHeight()
+            [ SNew(STextBlock).Text(FText::FromString(Item->Severity + TEXT(" / ") + Item->RuleId))
+                .ColorAndOpacity(ColorForSeverity(Item->Severity)).AutoWrapText(true) ]
+            + SVerticalBox::Slot().AutoHeight().Padding(0.f, 4.f)
+            [ SNew(STextBlock).Text(FText::FromString(Item->Message)).AutoWrapText(true)
+                .ToolTipText(FText::FromString(Item->Hint)) ]
+            + SVerticalBox::Slot().AutoHeight()
+            [
+                SNew(SHorizontalBox)
+                + SHorizontalBox::Slot().AutoWidth()
+                [ SNew(SButton).Text_Lambda([Item]() { return FText::FromString(Item->bResolved ? TEXT("Restore") : TEXT("Dismiss")); })
+                    .OnClicked_Lambda([this, Item]() { return OnDismissClicked(Item); }) ]
+                + SHorizontalBox::Slot().AutoWidth().Padding(6.f, 0.f)
+                [ SNew(SButton).Text(FText::FromString(TEXT("Locate actor")))
+                    .Visibility(Item->ActorLabel.IsEmpty() && Item->ActorId.IsEmpty() ? EVisibility::Collapsed : EVisibility::Visible)
+                    .OnClicked_Lambda([this, Item]() { return OnJumpToActorClicked(Item); }) ]
+            ]
+        ];
 }
 
 void SHaybaValidatorPanel::OnSelectionChanged(TSharedPtr<FHaybaValidatorFinding> Item, ESelectInfo::Type)
@@ -486,29 +348,6 @@ void SHaybaValidatorPanel::OnDirectoryChanged(const TArray<FFileChangeData>& Cha
             return;
         }
     }
-}
-
-FReply SHaybaValidatorPanel::OnClearAllClicked()
-{
-    // Truncate the file. Same effect as the validator_clear MCP tool.
-    FFileHelper::SaveStringToFile(FString(), *HistoryFile);
-    AllItems.Reset();
-    ApplyFilter();
-    UpdateHeader();
-    return FReply::Handled();
-}
-
-FReply SHaybaValidatorPanel::OnReRunAllClicked()
-{
-    // The panel is decoupled from the MCP transport, so we leave actual rule
-    // execution to the agent / validator_run MCP tool. Provide a hint via the
-    // header text so the user knows the click was registered.
-    if (HeaderText.IsValid())
-    {
-        HeaderText->SetText(FText::FromString(TEXT(
-            "Validator — invoke `validator_run {scope:'all'}` from the agent to re-evaluate all rules.")));
-    }
-    return FReply::Handled();
 }
 
 bool SHaybaValidatorPanel::WriteAllFindings(const TArray<TSharedPtr<FHaybaValidatorFinding>>& Findings) const

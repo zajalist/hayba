@@ -11,7 +11,7 @@
 #include "HaybaMCPClaudeClient.h"
 #include "HaybaMCPAgentClient.h"
 #include "HaybaMCPActivityModel.h"
-#include "HaybaMCPPlanPanel.h"
+#include "HaybaMCPStyle.h"
 #include "Slate/SHaybaActivityCard.h"
 #include "HaybaMCPSettings.h"
 #include "HaybaMCPWizardPrompt.h"
@@ -19,6 +19,7 @@
 #include "Widgets/Layout/SBox.h"
 #include "Widgets/Layout/SBorder.h"
 #include "Widgets/Layout/SSeparator.h"
+#include "Widgets/Layout/SWrapBox.h"
 #include "Widgets/Layout/SScrollBox.h"
 #include "Widgets/Input/SButton.h"
 #include "Widgets/Input/SComboButton.h"
@@ -79,6 +80,34 @@ void SHaybaMCPChatPanel::Construct(const FArguments& InArgs, FHaybaMCPModule* In
         // Toolbar — new conversation + recent dropdown (Q18-a).
         + SVerticalBox::Slot().AutoHeight().Padding(4.f, 4.f, 4.f, 0.f)
         [ BuildToolbar() ]
+        + SVerticalBox::Slot().AutoHeight().Padding(8.f, 6.f)
+        [
+            SNew(SBorder).BorderImage(FHaybaMCPStyle::GetBrush(TEXT("Hayba.Composer"))).Padding(12.f)
+            .Visibility_Lambda([this]() { return Module && !Module->PendingExternalPlan.IsEmpty() ? EVisibility::Visible : EVisibility::Collapsed; })
+            [
+                SNew(SVerticalBox)
+                + SVerticalBox::Slot().AutoHeight()
+                [ SNew(STextBlock).Text(LOCTEXT("ExternalPlanTitle", "External MCP proposal"))
+                    .Font(FCoreStyle::GetDefaultFontStyle("Bold", 11)) ]
+                + SVerticalBox::Slot().AutoHeight().Padding(0.f, 6.f)
+                [ SNew(SBox).MaxDesiredHeight(150.f)
+                    [ SNew(SScrollBox) + SScrollBox::Slot()
+                        [ SNew(STextBlock).Text_Lambda([this]() { return FText::FromString(Module ? Module->PendingExternalPlan : FString()); }).AutoWrapText(true) ] ] ]
+                + SVerticalBox::Slot().AutoHeight()
+                [ SNew(STextBlock).Text(LOCTEXT("ExternalPlanScope", "Approval permits the next native write command. Review the external client's proposed scope."))
+                    .AutoWrapText(true).ColorAndOpacity(FSlateColor(ColorMuted)) ]
+                + SVerticalBox::Slot().AutoHeight().Padding(0.f, 8.f, 0.f, 0.f)
+                [
+                    SNew(SHorizontalBox)
+                    + SHorizontalBox::Slot().AutoWidth()
+                    [ SNew(SButton).Text(LOCTEXT("ExternalApprove", "Approve next command"))
+                        .OnClicked_Lambda([this]() { if (Module) Module->ResolveExternalPlan(true); return FReply::Handled(); }) ]
+                    + SHorizontalBox::Slot().AutoWidth().Padding(8.f, 0.f)
+                    [ SNew(SButton).Text(LOCTEXT("ExternalReject", "Reject"))
+                        .OnClicked_Lambda([this]() { if (Module) Module->ResolveExternalPlan(false); return FReply::Handled(); }) ]
+                ]
+            ]
+        ]
 
         // Chat scroll. SOverlay so we can float a "↓ N new" chip on top.
         + SVerticalBox::Slot().FillHeight(1.f)
@@ -140,7 +169,8 @@ SHaybaMCPChatPanel::~SHaybaMCPChatPanel()
 TSharedRef<SWidget> SHaybaMCPChatPanel::BuildToolbar()
 {
     return SNew(SHorizontalBox)
-        + SHorizontalBox::Slot().FillWidth(1.f) [ SNew(SBox) ]
+        + SHorizontalBox::Slot().FillWidth(1.f).VAlign(VAlign_Center)
+        [ SNew(STextBlock).Text(LOCTEXT("AgentHeading", "Agent")).Font(FCoreStyle::GetDefaultFontStyle("Bold", 16)) ]
         + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
         [
             SNew(SButton)
@@ -297,67 +327,32 @@ TSharedRef<SWidget> SHaybaMCPChatPanel::BuildChatArea()
 
 TSharedRef<SWidget> SHaybaMCPChatPanel::BuildFooter()
 {
-    auto Sep = []()
-    {
-        return SNew(STextBlock)
-            .Text(FText::FromString(TEXT(" · ")))
-            .ColorAndOpacity(FSlateColor(ColorMuted));
-    };
-
-    return SNew(SHorizontalBox)
-        // Connection segment — green/red dot, label routes to Settings.
-        + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
+    return SNew(SWrapBox).UseAllottedSize(true).InnerSlotPadding(FVector2D(10.f, 4.f))
+        + SWrapBox::Slot()
         [
-            SNew(SButton)
-            .ButtonStyle(FAppStyle::Get(), "SimpleButton")
-            .ContentPadding(FMargin(0.f))
+            SNew(SButton).ButtonStyle(FAppStyle::Get(), "SimpleButton").ContentPadding(FMargin(0.f))
             .OnClicked(this, &SHaybaMCPChatPanel::OnFooterConnectionClick)
-            [
-                SNew(SHorizontalBox)
-                + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0.f, 0.f, 4.f, 0.f)
-                [
-                    SNew(STextBlock)
-                    .Text(FText::FromString(TEXT("●")))
-                    .ColorAndOpacity_Lambda([this]() -> FSlateColor
-                    {
-                        const bool bConnected = Module && Module->IsServerRunning();
-                        return FSlateColor(bConnected ? ColorSuccess : ColorError);
-                    })
-                ]
-                + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
-                [
-                    SNew(STextBlock)
-                    .Text_Lambda([this]()
-                    {
-                        const bool bConnected = Module && Module->IsServerRunning();
-                        return bConnected ? LOCTEXT("FootConn", "Connected")
-                                          : LOCTEXT("FootDisc", "Disconnected");
-                    })
-                    .ColorAndOpacity(FSlateColor(ColorMuted))
-                ]
-            ]
+            [ SNew(STextBlock).Text_Lambda([this]() { return Module && Module->IsServerRunning()
+                ? LOCTEXT("FootConn", "Connected") : LOCTEXT("FootDisc", "Disconnected"); })
+                .ColorAndOpacity(FSlateColor(ColorMuted)) ]
         ]
-        + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center) [ Sep() ]
-
-        // Model segment.
-        + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
+        + SWrapBox::Slot()
         [
-            SNew(SButton)
-            .ButtonStyle(FAppStyle::Get(), "SimpleButton")
-            .ContentPadding(FMargin(0.f))
+            SNew(SButton).ButtonStyle(FAppStyle::Get(), "SimpleButton").ContentPadding(FMargin(0.f))
             .OnClicked(this, &SHaybaMCPChatPanel::OnFooterModelClick)
-            [
-                SNew(STextBlock)
-                .Text_Lambda([]()
-                {
-                    const FString& M = FHaybaMCPSettings::Get().Model;
-                    return FText::FromString(M.IsEmpty() ? TEXT("model?") : M);
-                })
-                .ColorAndOpacity(FSlateColor(ColorMuted))
-            ]
+            [ SNew(STextBlock).Text_Lambda([]() { const FString& Model = FHaybaMCPSettings::Get().Model;
+                return Model.IsEmpty() ? LOCTEXT("ChooseModel", "Choose a model") : FText::FromString(Model); })
+                .ColorAndOpacity(FSlateColor(ColorMuted)) ]
         ]
-        // Spacer + plugin watermark already shown by MainPanel — nothing here.
-        + SHorizontalBox::Slot().FillWidth(1.f) [ SNew(SBox) ];
+        + SWrapBox::Slot()
+        [
+            SNew(SButton).ButtonStyle(FAppStyle::Get(), "SimpleButton").ContentPadding(FMargin(0.f))
+            .Visibility_Lambda([]() { return FHaybaMCPSettings::Get().bPlanModeEnabled ? EVisibility::Collapsed : EVisibility::Visible; })
+            .OnClicked(this, &SHaybaMCPChatPanel::OnFooterConnectionClick)
+            .ToolTipText(LOCTEXT("ExternalGateOffTip", "External MCP clients can issue native writes without a reviewed plan. Built-in chat still asks for action approval. Change this in Settings."))
+            [ SNew(STextBlock).Text(LOCTEXT("ExternalGateOff", "External MCP review off"))
+                .ColorAndOpacity(FHaybaMCPStyle::Get().GetColor(TEXT("Hayba.Color.Pending"))) ]
+        ];
 }
 
 FReply SHaybaMCPChatPanel::OnFooterConnectionClick() { OpenSettings(MainPanel); return FReply::Handled(); }
@@ -368,23 +363,23 @@ FReply SHaybaMCPChatPanel::OnFooterModelClick()      { OpenSettings(MainPanel); 
 TSharedRef<SWidget> SHaybaMCPChatPanel::BuildInput()
 {
     return SNew(SBorder)
-        .BorderImage(FAppStyle::GetBrush("Brushes.Panel"))
-        .Padding(FMargin(6.f))
+        .BorderImage(FHaybaMCPStyle::GetBrush(TEXT("Hayba.Composer")))
+        .Padding(FMargin(12.f))
         [
-            SNew(SHorizontalBox)
-            + SHorizontalBox::Slot().FillWidth(1.f).VAlign(VAlign_Center)
+            SNew(SVerticalBox)
+            + SVerticalBox::Slot().AutoHeight()
             [
-                // Overlay the real input with a middle-ellipsis hint label so
-                // narrow panels show "Describe what you...for newline)" rather
-                // than wrapping the hint to 3 lines.
-                SNew(SOverlay)
-                + SOverlay::Slot()
+                SNew(SBox).MinDesiredHeight(72.f).MaxDesiredHeight(220.f)
                 [
                     SAssignNew(InputBox, SMultiLineEditableTextBox)
-                    // No HintText — the overlay below takes that role so we
-                    // can apply OverflowPolicy::MiddleEllipsis.
                     .AutoWrapText(true)
-                    .IsEnabled_Lambda([this](){ return CanSend(); })
+                    .BackgroundColor(FLinearColor::Transparent)
+                    .Padding(FMargin(2.f))
+                    .Font(FCoreStyle::GetDefaultFontStyle("Regular", 11))
+                    .HintText_Lambda([this]() { return bAwaitingPlanApproval
+                        ? LOCTEXT("InputAwait", "Review the proposed action above to continue.")
+                        : LOCTEXT("InputPrompt", "Describe what you want to make…"); })
+                    .IsEnabled_Lambda([this]() { return CanSend(); })
                     .OnKeyDownHandler_Lambda([this](const FGeometry&, const FKeyEvent& Key) -> FReply
                     {
                         if (Key.GetKey() == EKeys::Enter && !Key.IsShiftDown())
@@ -395,67 +390,37 @@ TSharedRef<SWidget> SHaybaMCPChatPanel::BuildInput()
                         return FReply::Unhandled();
                     })
                 ]
-                + SOverlay::Slot()
-                .VAlign(VAlign_Center).Padding(FMargin(4.f, 0.f))
+            ]
+            + SVerticalBox::Slot().AutoHeight().Padding(0.f, 10.f, 0.f, 0.f)
+            [
+                SNew(SHorizontalBox)
+                + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
                 [
-                    SNew(STextBlock)
-                    .Text_Lambda([this]()
+                    SNew(SComboButton)
+                    .ButtonStyle(FAppStyle::Get(), "SimpleButton")
+                    .IsEnabled_Lambda([this]() { return !bIsStreaming && !bAwaitingPlanApproval; })
+                    .ToolTipText(LOCTEXT("WorkModeTip", "Explore reads and plans. Draft and Production request approval for changes."))
+                    .ButtonContent()
+                    [ SNew(STextBlock).Text_Lambda([this]() { return FText::FromString(WorkMode == TEXT("explore") ? TEXT("Explore") : WorkMode == TEXT("draft") ? TEXT("Draft") : TEXT("Production")); }) ]
+                    .OnGetMenuContent_Lambda([this]()
                     {
-                        // Reflect the parked-at-the-gate state so the disabled
-                        // input reads as intentional, not broken.
-                        if (bAwaitingPlanApproval)
-                            return LOCTEXT("InputHintAwaitApproval",
-                                "Review the proposed action in this conversation to continue.");
-                        return LOCTEXT("InputHint",
-                            "Ask about your world or describe a task…  (Enter to send · Shift+Enter for newline)");
-                    })
-                    .ColorAndOpacity(FSlateColor(FLinearColor(0.50f, 0.52f, 0.60f)))
-                    .OverflowPolicy(ETextOverflowPolicy::MiddleEllipsis)
-                    .Visibility_Lambda([this]()
-                    {
-                        // Only visible while the input is empty AND unfocused
-                        // (matches stock HintText behaviour). bIsHovered
-                        // intentionally ignored so it doesn't flicker on hover.
-                        if (!InputBox.IsValid()) return EVisibility::Visible;
-                        const bool bEmpty = InputBox->GetText().IsEmpty();
-                        return bEmpty ? EVisibility::HitTestInvisible : EVisibility::Collapsed;
+                        FMenuBuilder Menu(true, nullptr);
+                        Menu.AddMenuEntry(LOCTEXT("ExploreMode", "Explore"), LOCTEXT("ExploreModeTip", "Inspect, explain, and compare."), FSlateIcon(), FUIAction(FExecuteAction::CreateLambda([this]() { OnSetWorkMode(TEXT("explore")); })));
+                        Menu.AddMenuEntry(LOCTEXT("DraftMode", "Draft"), LOCTEXT("DraftModeTip", "Provisional work with reviewed changes."), FSlateIcon(), FUIAction(FExecuteAction::CreateLambda([this]() { OnSetWorkMode(TEXT("draft")); })));
+                        Menu.AddMenuEntry(LOCTEXT("ProductionMode", "Production"), LOCTEXT("ProductionModeTip", "Reviewed changes with explicit verification and limitations."), FSlateIcon(), FUIAction(FExecuteAction::CreateLambda([this]() { OnSetWorkMode(TEXT("production")); })));
+                        return Menu.MakeWidget();
                     })
                 ]
-            ]
-            + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Bottom).Padding(6.f, 0.f, 0.f, 0.f)
-            [
-                SNew(SComboButton)
-                .ButtonStyle(FAppStyle::Get(), "SimpleButton")
-                .ToolTipText(LOCTEXT("WorkModeTip", "Choose how cautiously the agent may work"))
-                .ButtonContent()
-                [ SNew(STextBlock).Text_Lambda([this]() { return FText::FromString(WorkMode == TEXT("explore") ? TEXT("Explore") : WorkMode == TEXT("draft") ? TEXT("Draft") : TEXT("Production")); }) ]
-                .OnGetMenuContent_Lambda([this]()
-                {
-                    FMenuBuilder Menu(true, nullptr);
-                    Menu.AddMenuEntry(LOCTEXT("ExploreMode", "Explore"), LOCTEXT("ExploreModeTip", "Read-only by default: inspect, explain, and compare."), FSlateIcon(), FUIAction(FExecuteAction::CreateLambda([this]() { OnSetWorkMode(TEXT("explore")); })));
-                    Menu.AddMenuEntry(LOCTEXT("DraftMode", "Draft"), LOCTEXT("DraftModeTip", "Provisional and plan-gated work."), FSlateIcon(), FUIAction(FExecuteAction::CreateLambda([this]() { OnSetWorkMode(TEXT("draft")); })));
-                    Menu.AddMenuEntry(LOCTEXT("ProductionMode", "Production"), LOCTEXT("ProductionModeTip", "Plan Mode, verification, and normal production safeguards."), FSlateIcon(), FUIAction(FExecuteAction::CreateLambda([this]() { OnSetWorkMode(TEXT("production")); })));
-                    return Menu.MakeWidget();
-                })
-            ]
-            + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Bottom).Padding(6.f, 0.f, 0.f, 0.f)
-            [
-                SNew(SButton)
-                .ButtonStyle(FAppStyle::Get(), "PrimaryButton")
-                .ContentPadding(FMargin(10.f, 6.f))
-                .IsEnabled_Lambda([this]() { return bIsStreaming || CanSend(); })
-                .OnClicked(this, &SHaybaMCPChatPanel::OnSendOrStop)
-                .ToolTipText_Lambda([this]()
-                {
-                    return bIsStreaming ? LOCTEXT("StopTT", "Stop generation")
-                                        : LOCTEXT("SendTT", "Send message (⏎)");
-                })
+                + SHorizontalBox::Slot().FillWidth(1.f).VAlign(VAlign_Center).Padding(10.f, 0.f)
+                [ SNew(STextBlock).Text(LOCTEXT("ComposerKeys", "Shift+Enter for a new line"))
+                    .OverflowPolicy(ETextOverflowPolicy::Ellipsis).ColorAndOpacity(FSlateColor(ColorMuted)) ]
+                + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
                 [
-                    SNew(STextBlock).Text_Lambda([this]()
-                    {
-                        return bIsStreaming ? FText::FromString(TEXT("■"))
-                                            : FText::FromString(TEXT("Send ▶"));
-                    })
+                    SNew(SButton).ContentPadding(FMargin(14.f, 7.f))
+                    .IsEnabled_Lambda([this]() { return bIsStreaming || (CanSend() && InputBox.IsValid() && !InputBox->GetText().IsEmpty()); })
+                    .OnClicked(this, &SHaybaMCPChatPanel::OnSendOrStop)
+                    .ToolTipText_Lambda([this]() { return bIsStreaming ? LOCTEXT("StopTT", "Stop generation") : LOCTEXT("SendTT", "Send message (Enter)"); })
+                    [ SNew(STextBlock).Text_Lambda([this]() { return bIsStreaming ? LOCTEXT("Stop", "Stop") : LOCTEXT("Send", "Send"); }) ]
                 ]
             ]
         ];
@@ -471,7 +436,7 @@ TSharedRef<SWidget> SHaybaMCPChatPanel::BuildEmptyState()
         [
             SNew(STextBlock)
             .Text(LOCTEXT("EmptyTitle", "What are we making?"))
-            .TextStyle(&FAppStyle::Get().GetWidgetStyle<FTextBlockStyle>("DetailsView.CategoryTextStyle"))
+            .Font(FCoreStyle::GetDefaultFontStyle("Bold", 21))
         ]
         + SVerticalBox::Slot().AutoHeight().Padding(22.f, 0.f, 22.f, 14.f)
         [
@@ -493,6 +458,12 @@ TSharedRef<SWidget> SHaybaMCPChatPanel::BuildEmptyState()
               [ SNew(SButton).ButtonStyle(FAppStyle::Get(), "SimpleButton").Text(LOCTEXT("PromptAsset", "Prepare selected assets"))
                 .OnClicked_Lambda([this]() { return OnPromptCardClicked(TEXT("Inspect the selected assets and propose production preparation for Nanite, LODs, collision, and materials.")); }) ]
         ];
+}
+
+void SHaybaMCPChatPanel::DraftPrompt(const FString& Prompt)
+{
+    AppendToInput(Prompt);
+    Toast(LOCTEXT("DraftReady", "Request added to the composer. Review it, choose a work mode, then send."));
 }
 
 FReply SHaybaMCPChatPanel::OnPromptCardClicked(FString Prompt)

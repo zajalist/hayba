@@ -37,6 +37,8 @@ public:
     SLATE_END_ARGS()
 
     void Construct(const FArguments& InArgs, FHaybaMCPModule* InModule);
+    /** Stage a guided request without sending or replacing a user's draft. */
+    void DraftPrompt(const FString& Prompt);
 
     // Unsubscribe delegates + cancel any in-flight stream so a late callback
     // cannot touch freed Slate widgets.

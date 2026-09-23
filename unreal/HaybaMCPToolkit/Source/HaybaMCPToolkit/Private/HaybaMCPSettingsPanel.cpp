@@ -204,21 +204,19 @@ void SHaybaMCPSettingsPanel::Construct(const FArguments& InArgs)
                     + SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 8.f)
                     [
                         BuildSection(
-                            NSLOCTEXT("Hayba", "Settings.Sec.PlanMode", "Plan Mode (AI safety)"),
+                            NSLOCTEXT("Hayba", "Settings.Sec.PlanMode", "External MCP safety"),
                             NSLOCTEXT("Hayba", "Settings.Sec.PlanMode.TT",
-                                "Plan Mode is a safety gate. When on, destructive commands "
-                                "(spawn / delete / modify actors, write assets, run unsafe Python) "
-                                "return `plan_mode_required` until the agent has called "
-                                "`hayba_propose_plan` with a step-by-step proposal that you can "
-                                "review in the Plan tab."),
+                                "Require a reviewed plan for external MCP clients before they change the project. "
+                                "Review incoming proposals in Agent. Built-in chat keeps its own action approvals "
+                                "and Explore / Draft / Production modes."),
                             SNew(SVerticalBox)
                             + SVerticalBox::Slot().AutoHeight().Padding(0.f, 2.f)
                             [ BuildToggle(
-                                NSLOCTEXT("Hayba", "S.Plan", "Plan Mode enabled — destructive ops require a plan first"),
+                                NSLOCTEXT("Hayba", "S.Plan", "Require a plan before external MCP changes"),
                                 NSLOCTEXT("Hayba", "S.Plan.TT",
-                                    "Strongly recommended.\n\n"
-                                    "Turning this off lets the agent mutate your level / assets / disk without proposing a plan first. Reserve for trusted prompts and small experiments.\n\n"
-                                    "Default: on. Auto-prompts you to re-enable after 7 days off OR 50 destructive calls."),
+                                    "Applies to the native command gate used by external MCP hosts. "
+                                    "Turning this off allows their write commands without this plan review. "
+                                    "Built-in chat approvals remain enabled. Default: on."),
                                 [](){ return FHaybaMCPSettings::Get().bPlanModeEnabled; },
                                 [](bool b){ FHaybaMCPSettings::Get().bPlanModeEnabled = b; }) ]
                         )
