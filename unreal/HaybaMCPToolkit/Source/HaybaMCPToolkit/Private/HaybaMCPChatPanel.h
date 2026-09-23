@@ -141,13 +141,6 @@ private:
     FReply OnCopyMessage(int32 MessageIndex);
     TSharedPtr<SWidget> BuildMessageContextMenu(int32 MessageIndex);
 
-    // ── Message-attached step actions (Q6-a) ──────────────────────────────
-    FReply OnApproveStepFromMessage();
-    FReply OnRedoStepFromMessage();
-    FReply OnPreviewGraphFromMessage(int32 MessageIndex);
-    FReply OnCreateInUEFromMessage(int32 MessageIndex);
-    FReply OnTestItFromMessage(int32 MessageIndex);
-
     // ── Footer click handlers (Q17-b) ─────────────────────────────────────
     FReply OnFooterConnectionClick();
     FReply OnFooterModelClick();
