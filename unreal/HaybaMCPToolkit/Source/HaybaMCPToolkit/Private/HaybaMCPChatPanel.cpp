@@ -150,6 +150,7 @@ void SHaybaMCPChatPanel::Construct(const FArguments& InArgs, FHaybaMCPModule* In
 
 SHaybaMCPChatPanel::~SHaybaMCPChatPanel()
 {
+    InspectGeneration.Invalidate();
     // Tear down the streaming client: clear our delegate bindings so a late HTTP
     // tick can't fan out into this destroyed panel, then cancel the stream. The
     // client itself captures a weak ptr, so the ordering is belt-and-braces.
@@ -171,6 +172,12 @@ TSharedRef<SWidget> SHaybaMCPChatPanel::BuildToolbar()
     return SNew(SHorizontalBox)
         + SHorizontalBox::Slot().FillWidth(1.f).VAlign(VAlign_Center)
         [ SNew(STextBlock).Text(LOCTEXT("AgentHeading", "Agent")).Font(FCoreStyle::GetDefaultFontStyle("Bold", 16)) ]
+        + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0.f, 0.f, 5.f, 0.f)
+        [ SNew(SButton).ButtonStyle(FAppStyle::Get(), "SimpleButton")
+            .Text(LOCTEXT("InspectWorldAction", "Inspect world"))
+            .ToolTipText(LOCTEXT("InspectWorldActionTip", "Read the loaded world. No AI model, level changes, or save."))
+            .IsEnabled_Lambda([this]() { return Module && !bInspectInFlight && !bIsStreaming && CanSend(); })
+            .OnClicked(this, &SHaybaMCPChatPanel::OnInspectWorld) ]
         + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
         [
             SNew(SButton)
@@ -441,7 +448,7 @@ TSharedRef<SWidget> SHaybaMCPChatPanel::BuildEmptyState()
         + SVerticalBox::Slot().AutoHeight().Padding(22.f, 0.f, 22.f, 14.f)
         [
             SNew(STextBlock)
-            .Text(LOCTEXT("EmptyDescription", "Plan a scene, inspect the current world, or prepare an asset. You can review every action before it changes the project."))
+            .Text(LOCTEXT("EmptyDescription", "Ask Hayba to plan or work on selected content. Inspect reads the loaded world without using the model."))
             .ColorAndOpacity(FSlateColor(ColorMuted))
             .AutoWrapText(true)
         ]
@@ -453,7 +460,7 @@ TSharedRef<SWidget> SHaybaMCPChatPanel::BuildEmptyState()
                 .OnClicked_Lambda([this]() { return OnPromptCardClicked(TEXT("Plan a scene layout for the selected area. Start by inspecting the world and propose an editable blockout.")); }) ]
             + SVerticalBox::Slot().AutoHeight()
               [ SNew(SButton).ButtonStyle(FAppStyle::Get(), "SimpleButton").Text(LOCTEXT("PromptInspectWorld", "Inspect the current world"))
-                .OnClicked_Lambda([this]() { return OnPromptCardClicked(TEXT("Inspect the current world, including partition status and validation findings. Summarize what is known and unknown.")); }) ]
+                .OnClicked(this, &SHaybaMCPChatPanel::OnInspectWorld) ]
             + SVerticalBox::Slot().AutoHeight()
               [ SNew(SButton).ButtonStyle(FAppStyle::Get(), "SimpleButton").Text(LOCTEXT("PromptAsset", "Prepare selected assets"))
                 .OnClicked_Lambda([this]() { return OnPromptCardClicked(TEXT("Inspect the selected assets and propose production preparation for Nanite, LODs, collision, and materials.")); }) ]
@@ -553,7 +560,8 @@ FReply SHaybaMCPChatPanel::OnDrop(const FGeometry& /*MyGeometry*/, const FDragDr
 TSharedRef<SWidget> SHaybaMCPChatPanel::BuildMessageRow(const FHaybaMCPChatMessage& Msg, int32 MessageIndex)
 {
     const FText RoleLabel = Msg.bFromUser ? LOCTEXT("RoleYou", "You")
-                                          : LOCTEXT("RoleAI",  "Hayba");
+        : Msg.bToolResult ? LOCTEXT("RoleWorldInspect", "World inspect")
+        : LOCTEXT("RoleAI", "Hayba");
     const FLinearColor RoleColor = Msg.bFromUser ? ColorMuted : ColorRoleAI;
 
     TSharedRef<SVerticalBox> Stack = SNew(SVerticalBox)
@@ -618,6 +626,18 @@ void SHaybaMCPChatPanel::AddAIMessage(const FString& Text, TSharedPtr<FJsonObjec
 
     // Sticky-if-at-bottom (Q13-b).
     const bool bPinned = IsScrolledNearBottom();
+    if (!bPinned) ++UnseenWhileScrolledUp;
+    RebuildChat();
+    if (bPinned) ScrollToBottomIfPinned();
+}
+
+void SHaybaMCPChatPanel::AddInspectResult(const FHaybaWorldInspectSummary& Summary)
+{
+    FHaybaMCPChatMessage Msg{};
+    Msg.bToolResult = true;
+    Msg.Text = Summary.ToConversationText();
+    const bool bPinned = IsScrolledNearBottom();
+    Session.Messages.Add(MoveTemp(Msg));
     if (!bPinned) ++UnseenWhileScrolledUp;
     RebuildChat();
     if (bPinned) ScrollToBottomIfPinned();
@@ -768,6 +788,8 @@ bool SHaybaMCPChatPanel::CanSend() const
 
 FReply SHaybaMCPChatPanel::OnNewConversation()
 {
+    InspectGeneration.Invalidate();
+    bInspectInFlight = false;
     PendingSessionId.Empty();
     bLoadingSession = false;
     // Abort any in-flight stream and drop the client so the next send opens a
@@ -792,6 +814,23 @@ FReply SHaybaMCPChatPanel::OnNewConversation()
     if (Module) Module->GetActivityModel().Clear();
     UnseenWhileScrolledUp = 0;
     RebuildChat();
+    return FReply::Handled();
+}
+
+FReply SHaybaMCPChatPanel::OnInspectWorld()
+{
+    if (!Module || bInspectInFlight || bIsStreaming || !CanSend()) return FReply::Handled();
+    bInspectInFlight = true;
+    const uint64 Generation = InspectGeneration.Begin();
+    TWeakPtr<SHaybaMCPChatPanel> WeakSelf = SharedThis(this);
+    Module->SendTcpCommand(TEXT("world_inspect"), MakeShared<FJsonObject>(),
+        [WeakSelf, Generation](bool bOk, const TSharedPtr<FJsonObject>& Data)
+        {
+            const TSharedPtr<SHaybaMCPChatPanel> Self = WeakSelf.Pin();
+            if (!Self.IsValid() || !Self->InspectGeneration.IsCurrent(Generation)) return;
+            Self->bInspectInFlight = false;
+            Self->AddInspectResult(FHaybaWorldInspectSummary::FromResponse(bOk, Data));
+        });
     return FReply::Handled();
 }
 

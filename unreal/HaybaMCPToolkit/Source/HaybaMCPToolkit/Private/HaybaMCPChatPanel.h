@@ -6,6 +6,7 @@
 #include "Widgets/Input/SMultiLineEditableTextBox.h"
 #include "HaybaMCPWizardState.h"
 #include "HaybaMCPSettings.h"
+#include "HaybaMCPWorldInspectSummary.h"
 
 class FHaybaMCPModule;
 class SHaybaMCPMainPanel;
@@ -68,6 +69,8 @@ private:
     TSharedPtr<SMultiLineEditableTextBox>   InputBox;
     TSharedPtr<SVerticalBox>                ChatContainer;
     bool                                    bIsStreaming = false;
+    bool                                    bInspectInFlight = false;
+    FHaybaInspectRequestGeneration         InspectGeneration;
     int32                                   UnseenWhileScrolledUp = 0;
 
     int32           InProgressMessageIndex = INDEX_NONE;
@@ -120,6 +123,7 @@ private:
     // ── Message management ────────────────────────────────────────────────
     void AddUserMessage(const FString& Text);
     void AddAIMessage(const FString& Text, TSharedPtr<FJsonObject> Graph = nullptr);
+    void AddInspectResult(const FHaybaWorldInspectSummary& Summary);
     void AddSystemError(const FString& Reason, const FString& RetryPrompt);
     void RebuildChat();
     void ScrollToBottomIfPinned();
@@ -133,6 +137,7 @@ private:
 
     // ── Conversation controls ─────────────────────────────────────────────
     FReply OnNewConversation();
+    FReply OnInspectWorld();
     TSharedRef<SWidget> BuildRecentSessionsMenu();
     void RefreshRecentSessions();
     void OpenSavedSession(const FString& SessionId);
