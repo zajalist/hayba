@@ -17,6 +17,7 @@ FHaybaWorldInspectSummary FHaybaWorldInspectSummary::FromResponse(
         || !Data->TryGetArrayField(TEXT("landscape"), Landscapes) || !Landscapes
         || !(*World)->TryGetStringField(TEXT("package"), Summary.LevelPackage)
         || Summary.LevelPackage.IsEmpty()
+        || !(*World)->TryGetStringField(TEXT("current_level"), Summary.CurrentLevelPackage)
         || !(*Partition)->TryGetBoolField(TEXT("enabled"), Summary.bPartitionEnabled)
         || !Data->TryGetBoolField(TEXT("save_ready"), Summary.bSaveReady))
     {
@@ -33,9 +34,10 @@ FString FHaybaWorldInspectSummary::ToConversationText() const
 {
     if (!bSuccess) return Error;
     return FString::Printf(
-        TEXT("Current map: %s\nWorld Partition: %s\nLoaded landscapes: %d\nMap file: %s\nCoverage: loaded world only; unloaded partition cells not inspected."),
+        TEXT("Current map: %s\nWorld Partition: %s\nLoaded landscapes: %d\nCurrent level file (%s): %s\nCoverage: loaded world only; unloaded partition cells not inspected."),
         *LevelPackage,
         bPartitionEnabled ? TEXT("enabled") : TEXT("disabled"),
         LoadedLandscapeCount,
+        CurrentLevelPackage.IsEmpty() ? TEXT("unknown") : *CurrentLevelPackage,
         bSaveReady ? TEXT("existing and writable") : TEXT("not confirmed writable"));
 }

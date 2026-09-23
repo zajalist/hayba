@@ -74,7 +74,8 @@ It produced three symptoms that looked unrelated:
 - low framerate,
 - "texture streaming pool over budget",
 - a `DXGI_ERROR_DEVICE_REMOVED` GPU hang with breadcrumb `GPUSkinCache_UpdateSkinningBatches`
-  at only 7.75 GB of a 9.7 GB VRAM budget — so never a memory-exhaustion crash.
+  at only 7.75 GB of a 9.7 GB VRAM budget — evidence against a simple
+  aggregate-VRAM-exhaustion explanation, not proof of the exact crash cause.
 
 **It is invisible in the PCG graph editor.** The only way to see it is
 `descriptor.export_text()` string parsing.

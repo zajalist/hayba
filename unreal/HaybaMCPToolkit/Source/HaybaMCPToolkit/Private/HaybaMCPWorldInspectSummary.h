@@ -9,6 +9,7 @@ struct FHaybaWorldInspectSummary
 {
     bool bSuccess = false;
     FString LevelPackage;
+    FString CurrentLevelPackage;
     bool bPartitionEnabled = false;
     int32 LoadedLandscapeCount = 0;
     bool bSaveReady = false;
