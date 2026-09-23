@@ -42,7 +42,7 @@ export function selectSpecialist(
   const candidates = manifest.archetypes
     .filter((profile) => profile.id !== coordinator.id)
     .map((profile) => {
-      const guidance = terms(`${profile.id} ${profile.role} ${profile.system_prompt}`);
+      const guidance = terms(profile.intent_keywords?.join(' ') ?? `${profile.id} ${profile.role} ${profile.system_prompt}`);
       const hasTools = enabled.some(createToolFilter(profile.tool_filter));
       const score = hasTools ? [...requested].filter((word) => guidance.has(word)).length : 0;
       return { id: profile.id, score };

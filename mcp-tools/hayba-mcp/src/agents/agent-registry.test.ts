@@ -70,15 +70,15 @@ const VALID_MANIFEST = {
 };
 
 describe('agent-registry: loadAgentsManifest', () => {
-  it('the real shipped hayba.agents.json loads and exposes all five archetypes', () => {
+  it('the shipped manifest exposes pipeline specialists and preserves legacy IDs', () => {
     // No path override: exercises the actual file at the package root, so a
     // regression that breaks the shipped file (not just a test fixture) is
     // caught here too.
     const manifest = loadAgentsManifest(defaultManifestPath());
-    expect(manifest.archetypes).toHaveLength(5);
+    expect(manifest.archetypes).toHaveLength(11);
     const ids = manifest.archetypes.map((a) => a.id).sort();
     expect(ids).toEqual(
-      ['asset-manager', 'blueprint-generator', 'director', 'node-expert', 'pattern-expert'].sort(),
+      ['asset-manager', 'blueprint-generator', 'director', 'node-expert', 'pattern-expert', 'concept-artist', 'world-builder', 'lighting-artist', 'audio-designer', 'cinematic-designer', 'quality-reviewer'].sort(),
     );
   });
 

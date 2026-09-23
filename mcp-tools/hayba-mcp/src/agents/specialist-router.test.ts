@@ -3,7 +3,7 @@ import { loadAgentsManifest } from './agent-registry.js';
 import { selectSpecialist } from './specialist-router.js';
 
 const manifest = loadAgentsManifest();
-const available = ['asset_search', 'scene_export', 'docs_search', 'pcg_validate', 'actor_list'];
+const available = ['asset_search', 'scene_export', 'docs_search', 'pcg_validate', 'actor_list', 'world_inspect', 'metasound_get_graph'];
 
 describe('selectSpecialist', () => {
   it.each([
@@ -11,8 +11,22 @@ describe('selectSpecialist', () => {
     ['Validate PCG node connectivity', 'node-expert'],
     ['Apply spatial composition layout', 'pattern-expert'],
     ['Construct blueprint logic graphs', 'blueprint-generator'],
+    ['Concept art moodboard with strong silhouettes', 'concept-artist'],
+    ['Import terrain heightmap into a partition landscape', 'world-builder'],
+    ['Adjust lighting and atmosphere', 'lighting-artist'],
+    ['Create a cinematic camera shot', 'cinematic-designer'],
+    ['Check production readiness and regression tests', 'quality-reviewer'],
   ])('routes %s using manifest guidance', (intent, id) => {
     expect(selectSpecialist(intent, manifest, available).id).toBe(id);
+  });
+
+  it('routes audio work when its tools are enabled', () => {
+    expect(selectSpecialist('Design metasound ambience and attenuation', manifest, available).id).toBe('audio-designer');
+  });
+
+  it('offers the canonical Sequencer tools to cinematic work', () => {
+    expect(selectSpecialist('Create cinematic camera shots', manifest, ['seq_new', 'asset_delete'], 'cinematic-designer').toolNames)
+      .toEqual(['seq_new']);
   });
 
   it('pins a specialist regardless of intent and intersects its globs with enabled names', () => {

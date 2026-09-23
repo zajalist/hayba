@@ -50,7 +50,13 @@ describe('chat server specialist routing compatibility', () => {
     });
     const frames = await result.text();
     expect(frames).toContain('event: done');
-    expect(frames).not.toContain('specialistId');
+    const semantic = frames.split('\n').filter((line) => line.startsWith('data: '))
+      .map((line) => JSON.parse(line.slice(6)) as { type?: string; specialistId?: string });
+    if (expectedTools) {
+      expect(semantic.find((event) => event.type === 'activity_started')?.specialistId)
+        .toBe(archetype ?? 'asset-manager');
+    }
+    expect(semantic.filter((event) => event.type !== 'activity_started').every((event) => !event.specialistId)).toBe(true);
     if (expectedTools) {
       expect(requests[0].tools?.map((tool) => tool.name)).toEqual(expectedTools);
       expect(frames).not.toContain('event: error');

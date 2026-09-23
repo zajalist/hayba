@@ -163,7 +163,10 @@ describe('chat HTTP/SSE redaction boundary', () => {
     const frames = await collectSse(
       await post('/chat/stream', { session_id: id, prompt: 'api_key=SENTINEL_PROMPT list actors' }),
     );
-    expect(frames.map((frame) => frame.event)).toEqual(['tool_call', 'tool_result', 'text_delta', 'done']);
+    expect(frames.map((frame) => frame.event)).toEqual([
+      'activity_started', 'activity_step', 'tool_call', 'activity_step',
+      'tool_result', 'message_delta', 'text_delta', 'activity_completed', 'done',
+    ]);
     const loaded = await fetch(`${url}/chat/sessions/${id}`);
     const session = (await loaded.json()) as SavedSession;
     expect(session.messages.map((message) => message.role)).toEqual(['user', 'assistant']);
