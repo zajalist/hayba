@@ -1,3 +1,5 @@
+
+
 <div align="center">
 
 # Hayba
@@ -44,7 +46,7 @@ This repo is the UE5 MCP toolkit: the Node MCP server, the UE5 C++ editor plugin
 
 ### 1. Install the UE plugin
 
-Copy [`unreal/HaybaMCPToolkit/`](unreal/HaybaMCPToolkit) into your UE project's `Plugins/` folder, regenerate Visual Studio project files, recompile (UE 5.7+, VS 2022).
+Copy [`unreal/HaybaMCPToolkit/`](unreal/HaybaMCPToolkit) into your UE project's `Plugins/` folder, **enable it in the Editor's Plugin Manager**, regenerate Visual Studio project files, and recompile (UE 5.7+, VS 2022).
 
 ### 2. Register the MCP server with your agent host
 
