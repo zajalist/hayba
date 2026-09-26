@@ -633,18 +633,57 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::AddVariable(const TSharedPtr<FJso
     Out->SetStringField(TEXT("type"), VarType);
     AttachCompileReport(Out, bClean, Errors, Warnings);
     // Verified means the variable exists with the type that was asked for — and,
-    // when a default was given, that the default is the one stored.
+    // when a default was given, that the class default object holds it.
     bool bVerified = false;
     for (const FBPVariableDescription& Current : BP->NewVariables)
     {
         if (Current.VarName != FName(*VarName)) continue;
-        bVerified = Current.VarType == PinType && (DefaultValue.IsEmpty() || Current.DefaultValue == DefaultValue);
+        bVerified = Current.VarType == PinType;
         Out->SetStringField(TEXT("pin_category"), Current.VarType.PinCategory.ToString());
         Out->SetBoolField(TEXT("is_array"), Current.VarType.IsArray());
         if (Current.VarType.PinSubCategoryObject.IsValid())
             Out->SetStringField(TEXT("resolved_type"), Current.VarType.PinSubCategoryObject->GetPathName());
-        if (!Current.DefaultValue.IsEmpty()) Out->SetStringField(TEXT("default_value"), Current.DefaultValue);
         break;
+    }
+
+    // The description's DefaultValue is emptied once the compile moves the value
+    // onto the CDO, so the CDO is what gets checked — found live, when reading the
+    // description back failed every default. The requested text is parsed by the
+    // property itself, so "0.2" and "0.200000" are the same value.
+    if (bVerified && !DefaultValue.IsEmpty())
+    {
+        bVerified = false;
+        UObject* CDO = BP->GeneratedClass ? BP->GeneratedClass->GetDefaultObject() : nullptr;
+        FProperty* Prop = CDO ? FindFProperty<FProperty>(BP->GeneratedClass, FName(*VarName)) : nullptr;
+        if (Prop)
+        {
+            void* Actual = Prop->ContainerPtrToValuePtr<void>(CDO);
+            void* Expected = FMemory::Malloc(Prop->GetSize(), Prop->GetMinAlignment());
+            Prop->InitializeValue(Expected);
+            if (!Prop->ImportText_Direct(*DefaultValue, Expected, nullptr, PPF_None))
+            {
+                Out->SetStringField(TEXT("warning"), FString::Printf(
+                    TEXT("default_value '%s' is not valid text for a %s; the variable was added without it."),
+                    *DefaultValue, *Prop->GetCPPType()));
+            }
+            else
+            {
+                if (!Prop->Identical(Actual, Expected))
+                {
+                    // The compile did not carry it across; put it where the class reads it.
+                    CDO->Modify();
+                    Prop->CopyCompleteValue(Actual, Expected);
+                    BP->GetOutermost()->MarkPackageDirty();
+                    Out->SetBoolField(TEXT("default_applied_to_cdo"), true);
+                }
+                bVerified = Prop->Identical(Actual, Expected);
+            }
+            FString Stored;
+            Prop->ExportTextItem_Direct(Stored, Actual, nullptr, nullptr, PPF_None);
+            Out->SetStringField(TEXT("default_value"), Stored);
+            Prop->DestroyValue(Expected);
+            FMemory::Free(Expected);
+        }
     }
     Out->SetBoolField(TEXT("verified"), bVerified);
     Out->SetBoolField(TEXT("dirty"), BP->GetOutermost()->IsDirty());

@@ -227,8 +227,12 @@ async function main() {
       ['ProbeWhere', 'vector'],
     ]) {
       r = await wire.send('blueprint_add_variable', { path: wbp, variable_name: name, variable_type: type, ...(value ? { default_value: value } : {}) });
+      // The stored default is the CDO's own text form ("0.200000" for 0.2), so a
+      // numeric default is compared as a number, not as the string that was sent.
+      const storedMatches = value === undefined
+        || (r.data?.default_value !== undefined && Number(r.data.default_value) === Number(value));
       check(`variable ${name}: ${type}${value ? ` = ${value}` : ''}`,
-        r.ok && r.data?.verified === true && r.data?.compiled_clean === true && (value === undefined || r.data?.default_value === value), r);
+        r.ok && r.data?.verified === true && r.data?.compiled_clean === true && storedMatches, r);
     }
 
     console.log('removal');

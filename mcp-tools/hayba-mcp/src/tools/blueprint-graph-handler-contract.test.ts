@@ -66,6 +66,17 @@ describe('Blueprint event-graph authoring contract', () => {
       expect(source).toContain('FUNC_BlueprintPure');
     });
 
+    it('verifies a variable default on the class default object', () => {
+      // FBPVariableDescription::DefaultValue is emptied once the compile moves the
+      // default onto the CDO, so reading it back always failed — found live by
+      // scripts/probe-blueprint-authoring.mjs. The CDO is where the value lives.
+      const start = source.indexOf('FHaybaHandlerResult FHaybaMCPBlueprintHandler::AddVariable(');
+      const next = source.indexOf('\nFHaybaHandlerResult FHaybaMCPBlueprintHandler::', start + 1);
+      const body = source.slice(start, next);
+      expect(body).toContain('GetDefaultObject');
+      expect(body).toContain('->Identical(');
+    });
+
     it('creates a real function library when the parent is BlueprintFunctionLibrary', () => {
       expect(source).toContain('BPTYPE_FunctionLibrary');
     });
