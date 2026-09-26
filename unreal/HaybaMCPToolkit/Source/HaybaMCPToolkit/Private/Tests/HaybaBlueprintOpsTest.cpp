@@ -93,4 +93,118 @@ bool FHaybaBlueprintOpsFunctionNameTest::RunTest(const FString&)
     return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FHaybaBlueprintOpsTypeSpecTest,
+    "Hayba.MCP.BlueprintOps.ParseTypeSpec",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FHaybaBlueprintOpsTypeSpecTest::RunTest(const FString&)
+{
+    using namespace HaybaBlueprintOps;
+
+    {
+        // The spellings blueprint_add_variable always accepted keep working.
+        const FTypeSpec F = ParseTypeSpec(TEXT("Float"));
+        TestTrue(TEXT("float parses"), F.IsValid());
+        TestTrue(TEXT("float is a real"), F.Kind == ETypeKind::Real);
+        TestFalse(TEXT("a scalar is not an array"), F.bArray);
+        TestTrue(TEXT("text parses"), ParseTypeSpec(TEXT("text")).Kind == ETypeKind::Text);
+        TestTrue(TEXT("fname parses"), ParseTypeSpec(TEXT("fname")).Kind == ETypeKind::Name);
+        TestTrue(TEXT("boolean parses"), ParseTypeSpec(TEXT("boolean")).Kind == ETypeKind::Bool);
+        TestTrue(TEXT("integer parses"), ParseTypeSpec(TEXT("integer")).Kind == ETypeKind::Int);
+    }
+
+    {
+        // The sidecar has long promised "vector"; the handler refused it. A
+        // shorthand must name the engine struct, not a guess.
+        const FTypeSpec V = ParseTypeSpec(TEXT("vector"));
+        TestTrue(TEXT("vector is a struct"), V.Kind == ETypeKind::Struct);
+        TestEqual(TEXT("the engine Vector"), V.ObjectPath, FString(TEXT("/Script/CoreUObject.Vector")));
+        TestEqual(TEXT("rotator"), ParseTypeSpec(TEXT("Rotator")).ObjectPath, FString(TEXT("/Script/CoreUObject.Rotator")));
+        TestEqual(TEXT("transform"), ParseTypeSpec(TEXT("transform")).ObjectPath, FString(TEXT("/Script/CoreUObject.Transform")));
+        TestEqual(TEXT("linear_color"), ParseTypeSpec(TEXT("linear_color")).ObjectPath, FString(TEXT("/Script/CoreUObject.LinearColor")));
+    }
+
+    {
+        // References carry the path the handler must resolve; parsing never loads.
+        const FTypeSpec O = ParseTypeSpec(TEXT("object:/Script/Engine.SplineComponent"));
+        TestTrue(TEXT("object reference"), O.Kind == ETypeKind::Object);
+        TestEqual(TEXT("keeps its class path"), O.ObjectPath, FString(TEXT("/Script/Engine.SplineComponent")));
+        TestTrue(TEXT("class reference"), ParseTypeSpec(TEXT("class:/Script/UMG.UserWidget")).Kind == ETypeKind::Class);
+        TestTrue(TEXT("soft object"), ParseTypeSpec(TEXT("soft_object:/Script/Engine.StaticMesh")).Kind == ETypeKind::SoftObject);
+        TestTrue(TEXT("soft class"), ParseTypeSpec(TEXT("soft_class:/Script/Engine.Actor")).Kind == ETypeKind::SoftClass);
+        TestTrue(TEXT("named struct"), ParseTypeSpec(TEXT("struct:/Script/CoreUObject.Vector2D")).Kind == ETypeKind::Struct);
+        TestTrue(TEXT("enum"), ParseTypeSpec(TEXT("enum:/Script/Engine.ECollisionChannel")).Kind == ETypeKind::Enum);
+    }
+
+    {
+        // One level of array around any single type.
+        const FTypeSpec A = ParseTypeSpec(TEXT("array<text>"));
+        TestTrue(TEXT("array of text parses"), A.IsValid());
+        TestTrue(TEXT("is an array"), A.bArray);
+        TestTrue(TEXT("of text"), A.Kind == ETypeKind::Text);
+        const FTypeSpec R = ParseTypeSpec(TEXT(" Array< object:/Game/UI/WBP_X.WBP_X_C > "));
+        TestTrue(TEXT("whitespace and case around the wrapper are tolerated"), R.bArray && R.Kind == ETypeKind::Object);
+        TestEqual(TEXT("the inner path survives"), R.ObjectPath, FString(TEXT("/Game/UI/WBP_X.WBP_X_C")));
+    }
+
+    {
+        // Refused with a reason — never silently turned into something else.
+        for (const TCHAR* Bad : { TEXT(""), TEXT("vector3"), TEXT("array<array<int>>"), TEXT("object:"), TEXT("array<int") })
+        {
+            const FTypeSpec S = ParseTypeSpec(Bad);
+            TestFalse(FString::Printf(TEXT("'%s' is refused"), Bad), S.IsValid());
+            TestFalse(FString::Printf(TEXT("'%s' says why"), Bad), S.Error.IsEmpty());
+        }
+    }
+
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FHaybaBlueprintOpsEventNameTest,
+    "Hayba.MCP.BlueprintOps.CanonicalEventFunctionName",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FHaybaBlueprintOpsEventNameTest::RunTest(const FString&)
+{
+    using namespace HaybaBlueprintOps;
+
+    // Callers write the name the node shows; the engine looks up the UFunction.
+    // "BeginPlay" failing with "no overridable event" sends them hunting for a
+    // parent-class problem that does not exist.
+    TestEqual(TEXT("BeginPlay"), CanonicalEventFunctionName(TEXT("BeginPlay")), FString(TEXT("ReceiveBeginPlay")));
+    TestEqual(TEXT("node title form"), CanonicalEventFunctionName(TEXT("Event BeginPlay")), FString(TEXT("ReceiveBeginPlay")));
+    TestEqual(TEXT("case-insensitive"), CanonicalEventFunctionName(TEXT("tick")), FString(TEXT("ReceiveTick")));
+    TestEqual(TEXT("EndPlay"), CanonicalEventFunctionName(TEXT("EndPlay")), FString(TEXT("ReceiveEndPlay")));
+    TestEqual(TEXT("overlap"), CanonicalEventFunctionName(TEXT("ActorBeginOverlap")), FString(TEXT("ReceiveActorBeginOverlap")));
+    TestEqual(TEXT("widget events are already function names"), CanonicalEventFunctionName(TEXT("Construct")), FString(TEXT("Construct")));
+    TestEqual(TEXT("the real name passes through"), CanonicalEventFunctionName(TEXT("ReceiveBeginPlay")), FString(TEXT("ReceiveBeginPlay")));
+    TestEqual(TEXT("prefix stripped for any event"), CanonicalEventFunctionName(TEXT("Event Construct")), FString(TEXT("Construct")));
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FHaybaBlueprintOpsParamNamesTest,
+    "Hayba.MCP.BlueprintOps.ParamNamesProblem",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FHaybaBlueprintOpsParamNamesTest::RunTest(const FString&)
+{
+    using namespace HaybaBlueprintOps;
+
+    TestTrue(TEXT("distinct names are fine"), ParamNamesProblem({ TEXT("Distance"), TEXT("Zone") }).IsEmpty());
+    TestTrue(TEXT("no params is fine"), ParamNamesProblem({}).IsEmpty());
+
+    // The editor would silently rename the second to "A_0", so the caller's
+    // wiring by name would land on a pin they never asked for.
+    const FString Dup = ParamNamesProblem({ TEXT("A"), TEXT("a") });
+    TestTrue(TEXT("a case-only duplicate is refused"), Dup.Contains(TEXT("duplicate")));
+    TestFalse(TEXT("an empty name is refused"), ParamNamesProblem({ TEXT("") }).IsEmpty());
+    // Exec and self pins already use these names on every node.
+    for (const TCHAR* Reserved : { TEXT("execute"), TEXT("then"), TEXT("self") })
+        TestFalse(FString::Printf(TEXT("'%s' is reserved"), Reserved), ParamNamesProblem({ Reserved }).IsEmpty());
+    return true;
+}
+
 #endif // WITH_DEV_AUTOMATION_TESTS

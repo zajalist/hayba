@@ -292,6 +292,11 @@ import {
   uiBindPropertyHandler,
 } from './ui/ui-bind-property.js';
 import {
+  meta as uiBindEventMeta,
+  schema as uiBindEventSchema,
+  uiBindEventHandler,
+} from './ui/ui-bind-event.js';
+import {
   meta as uiListWidgetBlueprintsMeta,
   schema as uiListWidgetBlueprintsSchema,
   uiListWidgetBlueprintsHandler,
@@ -2732,6 +2737,17 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
     returns: '{widget_name, property_name, variable_name?, bound, binding_count?}',
     niche: UI,
     schema: uiBindPropertySchema.shape,
+  },
+  {
+    name: 'ui_bind_event',
+    description:
+      'Make a widget react to input: bind a widget event (Button OnClicked, OnHovered, OnPressed) to an event node in its Widget Blueprint, then wire the node\'s "then" pin to what should happen. Idempotent - binding again returns the existing node. Expose the widget with ui_set_variable and compile first.',
+    meta: uiBindEventMeta,
+    handler: uiBindEventHandler,
+    cost: 'medium',
+    returns: '{node_id, pins, target, event_name, graph, already_existed, verified}',
+    niche: UI,
+    schema: uiBindEventSchema.shape,
   },
   {
     name: 'ui_list_widget_blueprints',

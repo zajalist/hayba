@@ -74,6 +74,11 @@ const EXTRA_DESTRUCTIVE = new Set<string>([
   'blueprint_add_component',
   'blueprint_add_variable',
   'blueprint_set_defaults',
+  // Returns the existing node on a repeat call, so retry-safe — but it adds to
+  // the graph. The tool name matches no verb pattern; the wire name is listed
+  // for completeness with the C++ set.
+  'ui_bind_event',
+  'blueprint_add_bound_event',
   'ism_add_instance',
   'spline_add_point',
   'spline_set_point',

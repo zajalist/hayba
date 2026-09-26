@@ -51,4 +51,54 @@ namespace HaybaBlueprintOps
      *  ok:true carrying compile_errors — verified live. Graph names compare
      *  case-insensitively, because FName does. */
     FString FunctionNameConflict(const TArray<FString>& ExistingGraphNames, const FString& Requested);
+
+    // ── What a type string means ─────────────────────────────────────────────
+
+    enum class ETypeKind : uint8
+    {
+        None, Bool, Int, Int64, Real, String, Name, Text, Byte,
+        Enum, Struct, Object, Class, SoftObject, SoftClass,
+    };
+
+    /** A parsed variable / parameter type. Parsing never loads anything: the
+     *  handler resolves ObjectPath, so this stays testable without an editor. */
+    struct FTypeSpec
+    {
+        ETypeKind Kind = ETypeKind::None;
+        /** Class, struct or enum path for the reference kinds; empty otherwise. */
+        FString ObjectPath;
+        bool bArray = false;
+        /** Why the spec was refused. Empty when it parsed. */
+        FString Error;
+
+        bool IsValid() const { return Error.IsEmpty() && Kind != ETypeKind::None; }
+    };
+
+    /** Parse the type grammar shared by variables, function parameters and
+     *  custom-event inputs:
+     *
+     *    bool | int | int64 | float | double | string | name | text | byte
+     *    vector | rotator | transform | linear_color | vector2d   (engine structs)
+     *    object:<class> | class:<class> | soft_object:<class> | soft_class:<class>
+     *    struct:<struct> | enum:<enum>
+     *    array<any of the above>
+     *
+     *  Case-insensitive; surrounding whitespace ignored. Anything else is refused
+     *  with a reason rather than guessed at. */
+    FTypeSpec ParseTypeSpec(const FString& Spec);
+
+    // ── Which UFunction an event name means ──────────────────────────────────
+
+    /** The UFunction behind the name a caller wrote. Callers write what the node
+     *  shows ("BeginPlay", "Event BeginPlay"); actors implement it as
+     *  "ReceiveBeginPlay". Names that are already function names pass through. */
+    FString CanonicalEventFunctionName(const FString& Requested);
+
+    // ── Whether a parameter list can be built as asked ───────────────────────
+
+    /** An error if the names are empty, collide case-insensitively, or reuse a
+     *  pin name every node already has (execute, then, self). Empty otherwise.
+     *  The editor would otherwise rename silently ("A" → "A_0"), and a caller
+     *  wiring by name would land on a pin it never asked for. */
+    FString ParamNamesProblem(const TArray<FString>& Names);
 }

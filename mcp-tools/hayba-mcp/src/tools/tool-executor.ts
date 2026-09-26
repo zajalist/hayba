@@ -70,6 +70,8 @@ export const NON_IDEMPOTENT = new Set<string>([
   'blueprint_add_node',
   'blueprint_connect_nodes',
   'blueprint_set_pin_default',
+  'blueprint_add_custom_event',
+  'blueprint_remove_node',
   // Material authoring
   'material_create',
   'material_create_instance',

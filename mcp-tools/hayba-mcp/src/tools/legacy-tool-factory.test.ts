@@ -73,6 +73,41 @@ describe('generateLegacyDescriptors — sample descriptors', () => {
   });
 });
 
+describe('generateLegacyDescriptors — Blueprint event authoring', () => {
+  const gen = generateLegacyDescriptors(new Set());
+  const optional = (d: ToolDescriptor, key: string) => {
+    expect(d.schema[key], `${d.name} has no "${key}" param`).toBeDefined();
+    return (d.schema[key] as any).isOptional() as boolean;
+  };
+
+  it('exposes override events, custom events and node removal as tools', () => {
+    expect(optional(byName(gen, 'blueprint_add_event'), 'event_name')).toBe(false);
+    expect(optional(byName(gen, 'blueprint_add_custom_event'), 'event_name')).toBe(false);
+    expect(optional(byName(gen, 'blueprint_add_custom_event'), 'inputs')).toBe(true);
+    expect(optional(byName(gen, 'blueprint_remove_node'), 'node_id')).toBe(false);
+  });
+
+  it('lets a function be declared with a real signature', () => {
+    const f = byName(gen, 'blueprint_add_function');
+    for (const key of ['inputs', 'outputs', 'pure']) expect(optional(f, key)).toBe(true);
+    const inputs = (f.schema.inputs as any).safeParse([{ name: 'Distance', type: 'float' }]);
+    expect(inputs.success).toBe(true);
+  });
+
+  it('lets a variable be created with a default value', () => {
+    expect(optional(byName(gen, 'blueprint_add_variable'), 'default_value')).toBe(true);
+  });
+
+  it('leaves the bound-event command to its ui_bind_event wrapper while keeping it invocable', () => {
+    // A generated twin beside the hand-written wrapper is the drifted-duplicate
+    // shape the legacy-wrapper lint exists to stop.
+    expect(gen.find((d) => d.name === 'blueprint_add_bound_event')).toBeUndefined();
+    const entry = getSidecar().commands['blueprint_add_bound_event'];
+    expect(entry?.agent_callable).toBe(true);
+    expect(entry?.has_ts_wrapper).toBe(true);
+  });
+});
+
 describe('legacy handler dispatch (mocked sender)', () => {
   beforeEach(() => setDefaultSender(undefined as never));
 

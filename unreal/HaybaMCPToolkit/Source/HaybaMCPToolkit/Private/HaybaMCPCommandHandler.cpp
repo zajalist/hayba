@@ -458,6 +458,10 @@ static bool IsDestructiveCommand(const FString& Cmd)
         TEXT("blueprint_add_node"),
         TEXT("blueprint_connect_nodes"),
         TEXT("blueprint_set_pin_default"),
+        TEXT("blueprint_add_event"),
+        TEXT("blueprint_add_custom_event"),
+        TEXT("blueprint_add_bound_event"),
+        TEXT("blueprint_remove_node"),
         // Material authoring
         TEXT("material_create"),
         TEXT("material_create_instance"),
