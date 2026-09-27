@@ -45,6 +45,8 @@ const MessageSchema = z.object({
 
 export const ProUnavailableReasonSchema = z.enum([
   'capacity', 'user_concurrency', 'quota', 'not_entitled', 'auth', 'maintenance', 'not_configured', 'unreachable',
+  // A resume named a session the brain no longer holds (restart, sweep, or another user's id).
+  'session_expired',
 ]);
 
 const UsageSchema = z.object({
