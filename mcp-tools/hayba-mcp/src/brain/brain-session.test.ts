@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BrainSession } from './brain-session.js';
+import { BrainSession, type BrainSessionOptions } from './brain-session.js';
 import { FakeSocket, baseOpts } from './fake-socket.test-helpers.js';
 
 const welcome = { type: 'welcome', seq: 1, limits: { max_steps: 40, max_tokens: 400000, wall_clock_ms: 1800000 }, protocol_range: [1, 1], resumed: false };
@@ -137,11 +137,133 @@ describe('BrainSession', () => {
     const sockets: FakeSocket[] = [];
     const s = new BrainSession('s-1', baseOpts(sockets));
     const p = s.open(); await tick(); sockets[0].open(); await tick(); sockets[0].push(welcome); await p;
-    sockets[0].push({ type: 'ping', seq: 2 });
-    sockets[0].push({ type: 'ping', seq: 2 });
+    const delta = { type: 'event', seq: 2, event: { type: 'message_delta', activityId: 'a', text: 'x' } };
+    sockets[0].push(delta);
+    sockets[0].push(delta);
     sockets[0].push({ type: 'done', seq: 3, reason: 'end_turn' });
     const got: string[] = [];
     for await (const f of s.frames()) { got.push(`${f.type}:${f.seq}`); if (f.type === 'done') break; }
-    expect(got).toEqual(['ping:2', 'done:3']);
+    expect(got).toEqual(['event:2', 'done:3']);
+  });
+
+  // ── final-review fix wave ────────────────────────────────────────────────
+  async function established(opts: Partial<BrainSessionOptions> = {}) {
+    const sockets: FakeSocket[] = [];
+    const s = new BrainSession('s-1', { ...baseOpts(sockets), ...opts });
+    const p = s.open(); await tick(); sockets[0].open(); await tick(); sockets[0].push(welcome); await p;
+    return { s, sockets };
+  }
+  const until = async (cond: () => boolean, ms = 500) => {
+    const t0 = Date.now();
+    while (!cond()) { if (Date.now() - t0 > ms) throw new Error('timed out'); await tick(); }
+  };
+
+  it('R1: a rejected resume (seq 1, below lastInSeq) ends the session and reaches frames()', async () => {
+    const { s, sockets } = await established();
+    sockets[0].push({ type: 'event', seq: 7, event: { type: 'message_delta', activityId: 'a', text: 'x' } });
+    const it = s.frames(); await it.next();
+    sockets[0].drop();
+    await until(() => sockets.length === 2);
+    sockets[1].open(); await tick();
+    expect(sockets[1].sent[0]).toMatchObject({ type: 'resume', last_seq: 7 });
+    sockets[1].push({ type: 'pro_unavailable', seq: 1, session_id: 'unknown', reason: 'session_expired', message: 'That Pro session has ended.' });
+    expect((await it.next()).value).toMatchObject({ type: 'pro_unavailable', reason: 'session_expired' });
+    expect((await it.next()).done).toBe(true);
+    expect(s.isAlive()).toBe(false);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(sockets).toHaveLength(2); // no reconnect storm
+  });
+
+  it('R1: an upgrade_required answer to a resume ends the session the same way', async () => {
+    const { s, sockets } = await established();
+    sockets[0].drop();
+    await until(() => sockets.length === 2);
+    sockets[1].open(); await tick();
+    sockets[1].push({ type: 'upgrade_required', seq: 1, min_version: 2, download_url: 'https://example.com/dl' });
+    const got: string[] = [];
+    for await (const f of s.frames()) got.push(f.type);
+    expect(got).toEqual(['upgrade_required']);
+    expect(s.isAlive()).toBe(false);
+  });
+
+  it('R1: an opened-but-never-acked reconnect does not reset the give-up clock', async () => {
+    const { s, sockets } = await established({ backoffMs: [2], resumeWindowMs: 60 });
+    sockets[0].drop();
+    // Every reconnect opens, then the brain closes it without ever acking.
+    const t0 = Date.now();
+    while (s.isAlive() && Date.now() - t0 < 1000) {
+      const last = sockets.at(-1)!;
+      if (last.readyState === 0) { last.open(); await tick(); last.drop(); }
+      await tick();
+    }
+    expect(s.isAlive()).toBe(false);
+    expect(Date.now() - t0).toBeLessThan(1000);
+  });
+
+  it('R1: a reconnect socket stuck connecting times out and counts toward give-up', async () => {
+    const { s, sockets } = await established({ backoffMs: [1], resumeWindowMs: 40, connectTimeoutMs: 5 });
+    sockets[0].drop();
+    await until(() => !s.isAlive(), 1000); // sockets never open; old code hung here forever
+    expect(sockets.length).toBeGreaterThan(1);
+  });
+
+  it('R1: a resume ACK (welcome resumed:true) re-arms backoff and keeps the session alive', async () => {
+    const { s, sockets } = await established({ backoffMs: [2], resumeWindowMs: 60 });
+    sockets[0].drop();
+    await until(() => sockets.length === 2);
+    sockets[1].open(); await tick();
+    sockets[1].push({ ...welcome, seq: 2, resumed: true });
+    await new Promise((r) => setTimeout(r, 80)); // past the resume window: must not give up now
+    expect(s.isAlive()).toBe(true);
+  });
+
+  it('R4: re-sends tool_results for an unfinished turn after an ACKed resume, and stops after done', async () => {
+    const { s, sockets } = await established();
+    sockets[0].push({ type: 'tool_call', seq: 2, id: 't-1', name: 'world_inspect', args: {}, gated: false });
+    const it = s.frames(); await it.next();
+    s.send({ type: 'tool_result', id: 't-1', ok: true, result: 1 }); // written to the (dying) socket
+    expect(sockets[0].sent.at(-1)).toMatchObject({ type: 'tool_result', id: 't-1' });
+    sockets[0].drop();
+    await until(() => sockets.length === 2);
+    sockets[1].open(); await tick();
+    expect(sockets[1].sent.some((m) => m.type === 'tool_result')).toBe(false); // not before the ACK
+    sockets[1].push({ ...welcome, seq: 3, resumed: true });
+    await tick();
+    expect(sockets[1].sent.filter((m) => m.type === 'tool_result' && m.id === 't-1')).toHaveLength(1);
+    // Once the turn reaches done nothing is retained.
+    sockets[1].push({ type: 'done', seq: 4, reason: 'end_turn' });
+    await it.next();
+    sockets[1].drop();
+    await until(() => sockets.length === 3);
+    sockets[2].open(); await tick();
+    sockets[2].push({ ...welcome, seq: 5, resumed: true });
+    await tick();
+    expect(sockets[2].sent.some((m) => m.type === 'tool_result')).toBe(false);
+  });
+
+  it('R4: pings the brain on an interval while connected and never surfaces inbound pings', async () => {
+    const { s, sockets } = await established({ pingIntervalMs: 5 });
+    await until(() => sockets[0].sent.some((m) => m.type === 'ping'));
+    sockets[0].push({ type: 'ping', seq: 2 });
+    sockets[0].push({ type: 'done', seq: 3, reason: 'end_turn' });
+    const got: string[] = [];
+    for await (const f of s.frames()) { got.push(f.type); if (f.type === 'done') break; }
+    expect(got).toEqual(['done']);
+    s.close();
+    const sent = sockets[0].sent.length;
+    await new Promise((r) => setTimeout(r, 20));
+    expect(sockets[0].sent.length).toBe(sent); // pinging stops with the session
+  });
+
+  it('ignores frames from a socket that has been replaced', async () => {
+    const { s, sockets } = await established();
+    sockets[0].drop();
+    await until(() => sockets.length === 2);
+    sockets[1].open(); await tick();
+    sockets[1].push({ ...welcome, seq: 2, resumed: true });
+    sockets[0].push({ type: 'done', seq: 50, reason: 'stale' });
+    sockets[1].push({ type: 'done', seq: 3, reason: 'end_turn' });
+    const it = s.frames();
+    expect((await it.next()).value).toMatchObject({ type: 'done', reason: 'end_turn' });
   });
 });

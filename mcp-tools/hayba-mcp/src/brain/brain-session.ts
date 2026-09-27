@@ -24,6 +24,10 @@ export interface BrainSessionOptions {
   resumeWindowMs?: number;
   /** Safety-net ceiling on how long turn-discard mode can stay on if `done` never arrives. */
   discardTimeoutMs?: number;
+  /** A reconnect socket that hasn't been ACKed (opened + resume accepted) by then is abandoned. */
+  connectTimeoutMs?: number;
+  /** Keep-alive ping cadence while connected (tunnels close idle sockets after ~100 s). */
+  pingIntervalMs?: number;
 }
 export type OpenResult =
   | { ok: true; welcome: Welcome }
@@ -32,7 +36,15 @@ export type OpenResult =
 const DEFAULT_BACKOFF = [1000, 2000, 4000, 8000, 16000, 30000] as const;
 const DEFAULT_RESUME_WINDOW_MS = 600_000;
 const DEFAULT_DISCARD_TIMEOUT_MS = 30_000;
+const DEFAULT_CONNECT_TIMEOUT_MS = 10_000;
+const DEFAULT_PING_INTERVAL_MS = 30_000;
 const OPEN = 1;
+
+/** Frames that answer a hello/resume; on an un-ACKed socket they bypass the seq filter. */
+type HandshakeFrame = Extract<Frame, { type: 'welcome' | 'pro_unavailable' | 'upgrade_required' }>;
+function isHandshakeFrame(f: Frame): f is HandshakeFrame {
+  return f.type === 'welcome' || f.type === 'pro_unavailable' || f.type === 'upgrade_required';
+}
 
 export class BrainSession {
   private socket?: SocketLike;
@@ -52,6 +64,13 @@ export class BrainSession {
   /** True while absorbing a locally-cancelled turn's remaining frames (see `cancelTurn`). */
   private discardingTurn = false;
   private discardTimer?: ReturnType<typeof setTimeout>;
+  private pinger?: ReturnType<typeof setInterval>;
+  /**
+   * tool_results already sent for the turn in flight. A result written to a socket
+   * that was dying is lost with it; these are re-sent after an ACKed resume (the
+   * brain dedupes by id) and forgotten once the turn reaches `done`.
+   */
+  private sentToolResults = new Map<string, Outbound<Frame>>();
 
   constructor(readonly sessionId: string, private readonly opts: BrainSessionOptions) {}
 
@@ -73,25 +92,25 @@ export class BrainSession {
         resolve({ ok: false, reason: 'unreachable', message: 'Hayba Pro did not answer in time.' });
       }, this.opts.openTimeoutMs ?? 10_000);
       const settle = (r: OpenResult) => { clearTimeout(timer); resolve(r); };
-      this.connect(() => {
-        this.write({
+      this.connect({
+        initial: true,
+        onOpen: () => this.write({
           type: 'hello', access_token: token, client_version: this.opts.clientVersion, ...this.opts.hello,
-        });
-      }, (f) => {
-        if (f.type === 'welcome') { this.established = true; settle({ ok: true, welcome: f }); return true; }
-        if (f.type === 'pro_unavailable') { this.closed = true; this.socket?.close(); settle({ ok: false, reason: f.reason, message: f.message }); return true; }
-        if (f.type === 'upgrade_required') {
+        }),
+        onHandshake: (f) => {
+          if (f.type === 'welcome') { this.established = true; this.startPinging(); settle({ ok: true, welcome: f }); return; }
           this.closed = true; this.socket?.close();
-          settle({ ok: false, reason: 'upgrade_required', message: `Update Hayba to use Pro: ${f.download_url}` });
-          return true;
-        }
-        return false;
+          settle(f.type === 'pro_unavailable'
+            ? { ok: false, reason: f.reason, message: f.message }
+            : { ok: false, reason: 'upgrade_required', message: `Update Hayba to use Pro: ${f.download_url}` });
+        },
       });
     });
   }
 
   /** Stamp the envelope and send, or queue until the socket is back. */
   send<T extends Frame>(body: Outbound<T>): void {
+    if (body.type === 'tool_result') this.sentToolResults.set(body.id, body);
     if (this.socket?.readyState === OPEN && this.established) this.write(body);
     else this.pending.push(body);
   }
@@ -162,6 +181,7 @@ export class BrainSession {
 
   close(): void {
     this.closed = true;
+    this.stopPinging();
     this.socket?.close(1000, 'client closed');
     this.deliver(null);
   }
@@ -172,28 +192,72 @@ export class BrainSession {
     this.socket?.send(frame);
   }
 
-  private connect(onOpen: () => void, intercept?: (f: Frame) => boolean): void {
+  /**
+   * Opens one socket. Each socket has its own handshake phase: until the brain
+   * answers the hello/resume, a welcome/pro_unavailable/upgrade_required on it
+   * goes to `onHandshake` WITHOUT the seq filter — the brain stamps rejections
+   * with seq 1, which the filter would otherwise drop as a replay duplicate.
+   * Frames from a socket that has since been replaced are ignored.
+   */
+  private connect(h: { initial: boolean; onOpen: () => void; onHandshake: (f: HandshakeFrame) => void }): void {
     const socket = (this.opts.socketFactory ?? ((u: string) => new WebSocket(u) as unknown as SocketLike))(this.opts.url);
     this.socket = socket;
+    let acked = false;
+    let finished = false;
+    const onClose = () => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(connectTimer);
+      if (socket !== this.socket) return;
+      this.stopPinging();
+      this.handleClose();
+    };
+    // A reconnect that never gets ACKed (stuck connecting, or opened but silent)
+    // is abandoned so it counts toward the give-up deadline instead of hanging.
+    // (The initial open has its own `openTimeoutMs`.)
+    const connectTimer = h.initial ? undefined : setTimeout(() => {
+      if (acked || finished) return;
+      socket.close();
+      onClose();
+    }, this.opts.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS);
     socket.addEventListener('open', () => {
-      this.attempt = 0;
-      this.disconnectedAt = undefined;
-      onOpen();
+      if (socket === this.socket) h.onOpen();
     });
     socket.addEventListener('message', (ev) => {
+      if (socket !== this.socket || finished) return;
       const parsed = parseFrame(String(ev.data));
       if (!parsed.ok) return; // malformed brain frames are ignored, never executed
       const f = parsed.frame;
+      if (!acked && isHandshakeFrame(f)) {
+        if (f.type === 'welcome') {
+          acked = true;
+          clearTimeout(connectTimer);
+          this.lastInSeq = Math.max(this.lastInSeq, f.seq);
+        }
+        h.onHandshake(f);
+        return;
+      }
       if (f.seq <= this.lastInSeq) return; // replay duplicate
       this.lastInSeq = f.seq;
+      if (f.type === 'ping') return; // keep-alive only
+      if (f.type === 'done') this.sentToolResults.clear(); // the turn is over; nothing left to re-send
       if (this.absorbDiscardedFrame(f)) return;
-      // The handshake handler only owns frames until the session is established;
-      // afterwards a pro_unavailable/upgrade_required belongs to the live turn.
-      if (!this.established && intercept?.(f)) return;
       this.deliver(f);
     });
-    socket.addEventListener('close', () => this.handleClose());
+    socket.addEventListener('close', onClose);
     socket.addEventListener('error', () => { /* close follows */ });
+  }
+
+  private startPinging(): void {
+    this.stopPinging();
+    this.pinger = setInterval(() => {
+      if (this.socket?.readyState === OPEN && this.established && !this.closed) this.write({ type: 'ping' });
+    }, this.opts.pingIntervalMs ?? DEFAULT_PING_INTERVAL_MS);
+    (this.pinger as { unref?: () => void }).unref?.();
+  }
+
+  private stopPinging(): void {
+    if (this.pinger) { clearInterval(this.pinger); this.pinger = undefined; }
   }
 
   private handleClose(): void {
@@ -217,6 +281,7 @@ export class BrainSession {
   /** The brain's resume window has elapsed with no reconnect; end the session like a brain outage. */
   private giveUp(): void {
     this.closed = true;
+    this.stopPinging();
     this.deliver({
       type: 'pro_unavailable',
       v: PROTOCOL_VERSION,
@@ -240,9 +305,31 @@ export class BrainSession {
       return;
     }
     if (this.closed) return;
-    this.connect(() => {
-      this.write({ type: 'resume', access_token: token, last_seq: this.lastInSeq });
-      for (const body of this.pending.splice(0)) this.write(body);
+    this.connect({
+      initial: false,
+      onOpen: () => {
+        this.write({ type: 'resume', access_token: token, last_seq: this.lastInSeq });
+        // The brain handles frames strictly in order, so queued frames may follow the resume at once.
+        for (const body of this.pending.splice(0)) this.write(body);
+      },
+      onHandshake: (f) => {
+        if (f.type === 'welcome') {
+          // Only an ACKed resume proves the brain still holds this session.
+          this.attempt = 0;
+          this.disconnectedAt = undefined;
+          this.startPinging();
+          for (const body of this.sentToolResults.values()) this.write(body);
+          return;
+        }
+        // The brain no longer holds this session (restart, sweep) or needs a newer
+        // client: end it and hand the terminal to the current turn. The next turn
+        // opens a fresh session with a hello.
+        this.closed = true;
+        this.socket?.close();
+        this.sentToolResults.clear();
+        this.deliver(f);
+        this.deliver(null);
+      },
     });
   }
 

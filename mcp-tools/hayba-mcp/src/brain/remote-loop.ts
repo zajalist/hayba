@@ -116,6 +116,10 @@ export async function* runRemoteLoop(p: RemoteLoopParams): AsyncGenerator<AgentS
         p.onUnavailable?.(f.reason);
         yield { type: 'error', activityId: lastActivityId, error: f.message, kind: 'brain_unavailable' };
         return;
+      } else if (f.type === 'upgrade_required') {
+        p.onUnavailable?.('upgrade_required');
+        yield { type: 'error', activityId: lastActivityId, error: `Update Hayba to use Pro: ${f.download_url}`, kind: 'brain_unavailable' };
+        return;
       }
     }
   } finally {

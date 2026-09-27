@@ -189,4 +189,32 @@ describe('runRemoteLoop', () => {
       { type: 'activity_completed', activityId: 'b', outcome: 'succeeded', reason: 'end_turn' },
     ]);
   });
+
+  it('R1: turns a mid-turn upgrade_required into brain_unavailable with reason upgrade_required', async () => {
+    const { session, sock } = await connected();
+    const reasons: string[] = [];
+    const run = drain(runRemoteLoop({ session, messages: [{ role: 'user', content: 'hi' }], mode: 'production', approvals: new LocalApprovals(), dispatchTool: vi.fn(), guard, signal: new AbortController().signal, onUnavailable: (r) => reasons.push(r) }));
+    await tick();
+    sock.push({ type: 'upgrade_required', seq: 2, min_version: 2, download_url: 'https://example.com/dl' });
+    const events = await run;
+    expect(events).toEqual([expect.objectContaining({ type: 'error', kind: 'brain_unavailable' })]);
+    expect(reasons).toEqual(['upgrade_required']);
+  });
+
+  it('R1: a resume rejected mid-turn yields brain_unavailable and leaves the session dead', async () => {
+    const { session, sock } = await connected();
+    const reasons: string[] = [];
+    const run = drain(runRemoteLoop({ session, messages: [{ role: 'user', content: 'hi' }], mode: 'production', approvals: new LocalApprovals(), dispatchTool: vi.fn(), guard, signal: new AbortController().signal, onUnavailable: (r) => reasons.push(r) }));
+    await tick();
+    sock.push({ type: 'event', seq: 2, event: { type: 'message_delta', activityId: 'a', text: 'x' } });
+    sock.drop();
+    await new Promise((r) => setTimeout(r, 20));
+    const next = (session as unknown as { socket: FakeSocket }).socket;
+    next.open(); await tick();
+    next.push({ type: 'pro_unavailable', seq: 1, session_id: 'unknown', reason: 'session_expired', message: 'That Pro session has ended.' });
+    const events = await run;
+    expect(events.at(-1)).toMatchObject({ type: 'error', kind: 'brain_unavailable' });
+    expect(reasons).toEqual(['session_expired']);
+    expect(session.isAlive()).toBe(false);
+  });
 });
