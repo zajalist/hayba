@@ -272,4 +272,34 @@ describe('chat server Pro loop', () => {
     await s2.frames;
     expect(connector.opened).toHaveLength(2);
   });
+
+  it('R9: closes the least-recently-used idle Pro session when a third Pro chat starts', async () => {
+    const brain = new FakeBrain();
+    const connector = brainConnector(brain);
+    start(connector);
+    const ids: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      const s = await stream({ prompt: `chat ${i}`, loop: 'pro' });
+      await waitFor(() => brain.sockets.length === i + 1 && brain.sentTypes().includes('turn'));
+      brain.finishTurn(`a${i}`);
+      await s.frames;
+      ids.push(s.sessionId);
+      await new Promise((r) => setTimeout(r, 5)); // distinct lastActivity stamps
+    }
+    expect(connector.opened.map((b) => b.isAlive())).toEqual([false, true, true]);
+    expect(new Set(ids).size).toBe(3);
+  });
+
+  it('R9: closes the brain session of a deleted chat', async () => {
+    const brain = new FakeBrain();
+    const connector = brainConnector(brain);
+    start(connector);
+    const s = await stream({ prompt: 'hi', loop: 'pro' });
+    await waitFor(() => brain.sentTypes().includes('turn'));
+    brain.finishTurn('a1');
+    await s.frames;
+    const res = await fetch(`${base}/chat/sessions/${s.sessionId}`, { method: 'DELETE' });
+    expect(res.status).toBe(204);
+    expect(connector.opened[0].isAlive()).toBe(false);
+  });
 });
