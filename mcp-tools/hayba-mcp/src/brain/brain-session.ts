@@ -240,6 +240,10 @@ export class BrainSession {
       if (f.seq <= this.lastInSeq) return; // replay duplicate
       this.lastInSeq = f.seq;
       if (f.type === 'ping') return; // keep-alive only
+      // Only a socket's FIRST welcome is its handshake ACK. Any later one (e.g. an
+      // ACK lost with an earlier socket and replayed here) is session-level noise
+      // and never reaches frames(); a fresh one still clears stale discard state.
+      if (f.type === 'welcome') { this.absorbDiscardedFrame(f); return; }
       if (f.type === 'done') this.sentToolResults.clear(); // the turn is over; nothing left to re-send
       if (this.absorbDiscardedFrame(f)) return;
       this.deliver(f);

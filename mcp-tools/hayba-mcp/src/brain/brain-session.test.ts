@@ -255,6 +255,25 @@ describe('BrainSession', () => {
     expect(sockets[0].sent.length).toBe(sent); // pinging stops with the session
   });
 
+  it('never delivers welcome frames to frames(), even a stray ACK replayed after two drops', async () => {
+    const { s, sockets } = await established();
+    sockets[0].push({ type: 'event', seq: 2, event: { type: 'message_delta', activityId: 'a', text: 'x' } });
+    const it = s.frames(); await it.next();
+    sockets[0].drop();
+    await until(() => sockets.length === 2);
+    sockets[1].open(); await tick();
+    // The brain ACKs this resume (seq 3), but the socket dies before the ACK arrives.
+    sockets[1].drop();
+    await until(() => sockets.length === 3);
+    sockets[2].open(); await tick();
+    // The next resume replays the lost ACK before the real one.
+    sockets[2].push({ ...welcome, seq: 3, resumed: true });
+    sockets[2].push({ ...welcome, seq: 4, resumed: true });
+    sockets[2].push({ type: 'done', seq: 5, reason: 'end_turn' });
+    expect((await it.next()).value).toMatchObject({ type: 'done', seq: 5 });
+    expect(s.isAlive()).toBe(true);
+  });
+
   it('ignores frames from a socket that has been replaced', async () => {
     const { s, sockets } = await established();
     sockets[0].drop();
