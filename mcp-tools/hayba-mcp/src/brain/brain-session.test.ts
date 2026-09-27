@@ -274,6 +274,35 @@ describe('BrainSession', () => {
     expect(s.isAlive()).toBe(true);
   });
 
+  it('close() resolves only once the socket has actually closed', async () => {
+    const { s, sockets } = await established();
+    sockets[0].deferClose = true;
+    let settled = false;
+    const closing = s.close().then(() => { settled = true; });
+    expect(s.isAlive()).toBe(false);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(settled).toBe(false);
+    sockets[0].finishClose();
+    await closing;
+    expect(settled).toBe(true);
+  });
+
+  it('close() gives up waiting for the close event after closeTimeoutMs', async () => {
+    const { s, sockets } = await established({ closeTimeoutMs: 10 });
+    sockets[0].deferClose = true;
+    const t0 = Date.now();
+    await s.close();
+    expect(Date.now() - t0).toBeGreaterThanOrEqual(5);
+    expect(sockets[0].readyState).toBe(2); // still closing; we stopped waiting
+  });
+
+  it('close() on an already-closed socket resolves at once', async () => {
+    const { s, sockets } = await established({ closeTimeoutMs: 10_000 });
+    await s.close();
+    sockets[0].deferClose = true;
+    await s.close(); // would hang 10 s if it waited on a socket that is already gone
+  });
+
   it('ignores frames from a socket that has been replaced', async () => {
     const { s, sockets } = await established();
     sockets[0].drop();

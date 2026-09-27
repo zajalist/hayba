@@ -4,10 +4,13 @@ type L = (ev: { data?: unknown }) => void;
 export class FakeSocket implements SocketLike {
   readyState = 0;
   sent: Array<Record<string, unknown>> = [];
+  /** When true, close() only starts closing (like a real socket); finishClose() delivers the close event. */
+  deferClose = false;
   private ls: Record<string, L[]> = {};
   addEventListener(t: 'open' | 'message' | 'close' | 'error', l: L) { (this.ls[t] ??= []).push(l); }
   send(d: string) { this.sent.push(JSON.parse(d)); }
-  close() { this.readyState = 3; this.emit('close', {}); }
+  close() { if (this.deferClose) { this.readyState = 2; return; } this.readyState = 3; this.emit('close', {}); }
+  finishClose() { this.readyState = 3; this.emit('close', {}); }
   // test drivers
   open() { this.readyState = 1; this.emit('open', {}); }
   push(frame: Record<string, unknown>) { this.emit('message', { data: JSON.stringify({ v: 1, session_id: 's-1', ...frame }) }); }

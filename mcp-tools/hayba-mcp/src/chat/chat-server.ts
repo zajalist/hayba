@@ -256,15 +256,16 @@ function evictSession(session: ChatSession): void {
   }
   session.clients.clear();
   session.running = false;
-  dropBrain(session);
+  void dropBrain(session);
   sessions.delete(session.id);
 }
 
-/** Close and forget this chat's remote brain session (if any). */
-function dropBrain(session: ChatSession): void {
-  session.brain?.close();
+/** Close and forget this chat's remote brain session (if any); resolves once its socket has closed. */
+function dropBrain(session: ChatSession): Promise<void> {
+  const closing = session.brain?.close() ?? Promise.resolve();
   session.brain = undefined;
   session.brainTurnParked = false;
+  return closing;
 }
 
 /** The brain admits two concurrent Pro sessions per user. */
@@ -275,12 +276,15 @@ const MAX_OPEN_PRO_SESSIONS = 2;
  * so this machine never holds more than the brain's per-user allowance open.
  * Chats with a running or parked Pro turn are left alone.
  */
-function makeRoomForProSession(opening: ChatSession): void {
+async function makeRoomForProSession(opening: ChatSession): Promise<void> {
   const open = [...sessions.values()].filter((s) => s !== opening && s.brain?.isAlive());
   const idle = open.filter((s) => !s.running && !s.brainTurnParked).sort((a, b) => a.lastActivity - b.lastActivity);
+  const closing: Array<Promise<void>> = [];
   for (let excess = open.length - (MAX_OPEN_PRO_SESSIONS - 1); excess > 0 && idle.length > 0; excess -= 1) {
-    dropBrain(idle.shift()!);
+    closing.push(dropBrain(idle.shift()!));
   }
+  // The brain counts a session until its socket closes; a hello sent sooner can be refused.
+  await Promise.all(closing);
 }
 
 function sweepSessions(now: number = Date.now()): void {
@@ -748,13 +752,13 @@ export function registerChatRoutes(app: Express, options: ChatRoutesOptions = {}
       const permissions = resolvePermissions(body.permissions);
       const catalog = options.tools ?? buildToolCatalog();
       // A session that was closed or gave up can never carry another turn.
-      if (session.brain && !session.brain.isAlive()) dropBrain(session);
+      if (session.brain && !session.brain.isAlive()) void dropBrain(session);
       if (!session.brain) {
         const cfg = resolveSessionConfig(sessionId);
         const llm: LlmMode = body.llm === 'byok' && cfg?.apiKey
           ? { mode: 'byok', provider: cfg.provider, ...(cfg.model ? { model: cfg.model } : {}), ...(cfg.baseURL ? { base_url: cfg.baseURL } : {}), api_key: cfg.apiKey }
           : { mode: 'subscription' };
-        makeRoomForProSession(session);
+        await makeRoomForProSession(session);
         const opened = options.brain
           ? await options.brain.openSession(sessionId, llm, buildHandsManifest(catalog), permissions)
           : { ok: false as const, reason: 'not_configured', message: 'Hayba Pro is not configured on this machine.' };
@@ -1096,7 +1100,7 @@ async function runTurn(session: ChatSession, params: RunTurnParams): Promise<voi
     if (finalReason === 'plan_request') session.brainTurnParked = true;
     // A brain that became unavailable mid-turn is not reused; the next Pro
     // turn opens a fresh session (or reports brain_unavailable).
-    if (brainLost && session.brain === params.remote.session) dropBrain(session);
+    if (brainLost && session.brain === params.remote.session) void dropBrain(session);
     if (brainLost && !finalReason) finalReason = 'brain_unavailable';
   }
 
@@ -1185,7 +1189,7 @@ function forwardEvent(
 
 /** Clear all in-memory session + config state (tests). */
 export function __resetChatState(): void {
-  for (const session of sessions.values()) dropBrain(session);
+  for (const session of sessions.values()) void dropBrain(session);
   sessions.clear();
   configStore.clear();
   sessionCounter = 0;

@@ -290,6 +290,30 @@ describe('chat server Pro loop', () => {
     expect(new Set(ids).size).toBe(3);
   });
 
+  it('R9: waits for the evicted Pro socket to finish closing before sending the next hello', async () => {
+    const brain = new FakeBrain();
+    const connector = brainConnector(brain);
+    start(connector);
+    for (let i = 0; i < 2; i++) {
+      const s = await stream({ prompt: `chat ${i}`, loop: 'pro' });
+      await waitFor(() => brain.sockets.length === i + 1 && brain.sentTypes().includes('turn'));
+      brain.finishTurn(`a${i}`);
+      await s.frames;
+      await new Promise((r) => setTimeout(r, 5));
+    }
+    const lru = brain.sockets[0];
+    lru.deferClose = true;
+    const third = await stream({ prompt: 'chat 2', loop: 'pro' });
+    await waitFor(() => lru.readyState === 2); // eviction started
+    await new Promise((r) => setTimeout(r, 30));
+    expect(brain.sockets).toHaveLength(2); // no hello while the brain may still count the old session
+    lru.finishClose();
+    await waitFor(() => brain.sockets.length === 3 && brain.sentTypes().includes('turn'));
+    expect(brain.sentTypes()[0]).toBe('hello');
+    brain.finishTurn('a2');
+    await third.frames;
+  });
+
   it('R9: closes the brain session of a deleted chat', async () => {
     const brain = new FakeBrain();
     const connector = brainConnector(brain);

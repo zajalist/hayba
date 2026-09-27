@@ -28,6 +28,8 @@ export interface BrainSessionOptions {
   connectTimeoutMs?: number;
   /** Keep-alive ping cadence while connected (tunnels close idle sockets after ~100 s). */
   pingIntervalMs?: number;
+  /** How long close() waits for the socket's close event before resolving anyway. */
+  closeTimeoutMs?: number;
 }
 export type OpenResult =
   | { ok: true; welcome: Welcome }
@@ -38,7 +40,9 @@ const DEFAULT_RESUME_WINDOW_MS = 600_000;
 const DEFAULT_DISCARD_TIMEOUT_MS = 30_000;
 const DEFAULT_CONNECT_TIMEOUT_MS = 10_000;
 const DEFAULT_PING_INTERVAL_MS = 30_000;
+const DEFAULT_CLOSE_TIMEOUT_MS = 1000;
 const OPEN = 1;
+const CLOSED = 3;
 
 /** Frames that answer a hello/resume; on an un-ACKed socket they bypass the seq filter. */
 type HandshakeFrame = Extract<Frame, { type: 'welcome' | 'pro_unavailable' | 'upgrade_required' }>;
@@ -179,11 +183,25 @@ export class BrainSession {
     }
   }
 
-  close(): void {
+  /**
+   * Ends the session. Resolves once the socket has actually closed (or after
+   * `closeTimeoutMs`), so a caller freeing a slot in the brain's per-user
+   * session allowance can wait until the brain has seen this one go.
+   */
+  close(): Promise<void> {
     this.closed = true;
     this.stopPinging();
-    this.socket?.close(1000, 'client closed');
+    const socket = this.socket;
+    const closed = !socket || socket.readyState === CLOSED
+      ? Promise.resolve()
+      : new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, this.opts.closeTimeoutMs ?? DEFAULT_CLOSE_TIMEOUT_MS);
+        (timer as { unref?: () => void }).unref?.();
+        socket.addEventListener('close', () => { clearTimeout(timer); resolve(); });
+      });
+    socket?.close(1000, 'client closed');
     this.deliver(null);
+    return closed;
   }
 
   /** Stamps `seq` at the moment a frame is actually written, so wire order stays seq order. */
