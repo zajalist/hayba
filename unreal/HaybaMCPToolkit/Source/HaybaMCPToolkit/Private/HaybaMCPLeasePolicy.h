@@ -44,6 +44,10 @@ namespace HaybaMCPLease
 		double AgingSeconds = 60.0;
 		int32 MaxWaiters = 64;
 		int32 MaxLeasesPerOwner = 16;
+		/** A lease granted while a batch lease yields at a fence lives at most
+		 *  this long from its grant, renewals included, so a batch parked at a
+		 *  fence always gets its resources back. */
+		double FenceGrantMaxSeconds = 30.0;
 	};
 
 	struct FRequest
@@ -71,6 +75,15 @@ namespace HaybaMCPLease
 		double ExpiresAt = 0.0;
 		int32 ConnId = 0;
 		ELane Lane = ELane::Interactive;
+		/** Held by a running editor_batch: it may yield at the batch's fences. */
+		bool bYieldable = false;
+		/** While yielding at a fence: waiters with Seq <= YieldSeq that are
+		 *  interactive (or aged) are not blocked by this lease. 0 = not yielding. */
+		int64 YieldSeq = 0;
+		/** Token of the yielding lease this one was granted under, if any. */
+		FString FenceOf;
+
+		bool IsYielding() const { return YieldSeq > 0; }
 	};
 
 	struct FWaiter
@@ -202,19 +215,31 @@ namespace HaybaMCPLease
 
 			const FWaiter& Candidate = Waiters[WaiterIndex];
 
-			// 1. A conflicting holder (another owner) blocks outright.
+			// 1. A conflicting holder (another owner) blocks outright, unless it
+			//    is a batch lease yielding at a fence and this request is one the
+			//    fence serves (queued before the fence opened, interactive or aged).
 			double LatestHolderExpiry = -1.0;
 			const FLease* Blocker = nullptr;
+			FString FenceOf;
 			for (const FLease& L : Leases)
 			{
 				FString Detail;
 				if (L.Owner != Candidate.Request.Owner
 					&& HaybaMCPAccess::FindConflict(Candidate.Locks, L.Locks, &Detail))
 				{
+					if (FenceServes(L, Candidate, Now))
+					{
+						if (FenceOf.IsEmpty()) FenceOf = L.Token;
+						continue;
+					}
 					if (!Blocker)
 					{
 						Blocker = &L;
 						Result.ConflictDetail = Detail;
+						if (L.bYieldable)
+						{
+							Result.ConflictDetail += TEXT(" (held by a running editor_batch: interactive requests are granted at its next fence)");
+						}
 					}
 					LatestHolderExpiry = FMath::Max(LatestHolderExpiry, L.ExpiresAt);
 				}
@@ -236,7 +261,7 @@ namespace HaybaMCPLease
 
 			if (!Blocker && !AheadBlocker)
 			{
-				return Grant(WaiterIndex, Now);
+				return Grant(WaiterIndex, Now, FenceOf);
 			}
 
 			Result.Status = EStatus::Queued;
@@ -246,7 +271,9 @@ namespace HaybaMCPLease
 			{
 				Result.HolderOwner = Blocker->Owner;
 				Result.HolderToken = Blocker->Token;
-				Result.EtaSeconds = FMath::Max(0.0, LatestHolderExpiry - Now);
+				// A batch lease is renewed while it runs, so its expiry says
+				// nothing; its next fence is the real ETA and that is unknown.
+				Result.EtaSeconds = Blocker->bYieldable ? -1.0 : FMath::Max(0.0, LatestHolderExpiry - Now);
 			}
 			else
 			{
@@ -271,6 +298,10 @@ namespace HaybaMCPLease
 				return false;
 			}
 			Lease->ExpiresAt = Clock() + ClampTtl(TtlSeconds);
+			if (!Lease->FenceOf.IsEmpty())
+			{
+				Lease->ExpiresAt = FMath::Min(Lease->ExpiresAt, Lease->GrantedAt + Tuning.FenceGrantMaxSeconds);
+			}
 			OutExpiresAt = Lease->ExpiresAt;
 			return true;
 		}
@@ -326,10 +357,85 @@ namespace HaybaMCPLease
 			{
 				if (L.Owner != Owner && HaybaMCPAccess::FindConflict(Required, L.Locks, OutDetail))
 				{
+					// A batch parked at a fence does not run; the owner it let in
+					// works under a lease granted at that fence.
+					if (L.IsYielding() && OwnerHoldsFenceGrantOf(Owner, L.Token))
+					{
+						continue;
+					}
 					return &L;
 				}
 			}
 			return nullptr;
+		}
+
+		// ---------------------------------------------------------------------
+		// Fences (editor_batch). A batch holds its lease across many steps. At
+		// a fence it may yield, so queued interactive work is granted, and then
+		// it takes the resources back. See docs/adr/0010, "Fair queue at fences".
+		// ---------------------------------------------------------------------
+
+		/** Mark a lease as held by a running batch (true) or not (false). */
+		bool SetYieldable(const FString& Token, bool bYieldable)
+		{
+			Expire();
+			FLease* Lease = FindMutable(Token);
+			if (!Lease) return false;
+			Lease->bYieldable = bYieldable;
+			if (!bYieldable) Lease->YieldSeq = 0;
+			return true;
+		}
+
+		/** True when a waiter of another owner that a fence would serve
+		 *  (interactive, or an aged long waiter) is blocked by this lease. */
+		bool HasEligibleWaiterBlockedBy(const FString& Token)
+		{
+			Expire();
+			const FLease* Lease = Leases.FindByPredicate([&Token](const FLease& L) { return L.Token == Token; });
+			if (!Lease) return false;
+			const double Now = Clock();
+			for (const FWaiter& W : Waiters)
+			{
+				if (W.Request.Owner != Lease->Owner && IsFenceEligible(W, Now)
+					&& HaybaMCPAccess::FindConflict(W.Locks, Lease->Locks))
+				{
+					return true;
+				}
+			}
+			return false;
+		}
+
+		/** Open a fence: waiters already queued may be granted past this lease. */
+		bool BeginYield(const FString& Token)
+		{
+			Expire();
+			FLease* Lease = FindMutable(Token);
+			if (!Lease || !Lease->bYieldable) return false;
+			Lease->YieldSeq = FMath::Max<int64>(Sequence, 1);
+			return true;
+		}
+
+		/** Close the fence. Leases granted at it keep running until released or
+		 *  capped by FenceGrantMaxSeconds; the batch waits for them first. */
+		void EndYield(const FString& Token)
+		{
+			Expire();
+			if (FLease* Lease = FindMutable(Token))
+			{
+				Lease->YieldSeq = 0;
+			}
+		}
+
+		/** Leases still held that were granted at this lease's fence. */
+		int32 CountFenceGrants(const FString& Token)
+		{
+			Expire();
+			int32 Count = 0;
+			for (const FLease& L : Leases)
+			{
+				if (L.FenceOf == Token) ++Count;
+			}
+			return Count;
 		}
 
 		/** True when `Owner` holds an exclusive lease on `Key` or on global. */
@@ -359,6 +465,31 @@ namespace HaybaMCPLease
 		}
 
 	private:
+		FLease* FindMutable(const FString& Token)
+		{
+			return Leases.FindByPredicate([&Token](const FLease& L) { return L.Token == Token; });
+		}
+
+		bool IsFenceEligible(const FWaiter& W, double Now) const
+		{
+			return W.Request.Lane == ELane::Interactive || IsAged(W, Now);
+		}
+
+		/** A yielding lease lets through the waiters its fence serves. */
+		bool FenceServes(const FLease& L, const FWaiter& Candidate, double Now) const
+		{
+			return L.IsYielding() && Candidate.Seq <= L.YieldSeq && IsFenceEligible(Candidate, Now);
+		}
+
+		bool OwnerHoldsFenceGrantOf(const FString& Owner, const FString& Token) const
+		{
+			for (const FLease& L : Leases)
+			{
+				if (L.Owner == Owner && L.FenceOf == Token) return true;
+			}
+			return false;
+		}
+
 		/** Lower ranks are served first: interactive-or-aged before long, then
 		 *  by arrival. */
 		int64 Ranks(const FWaiter& W, double Now) const
@@ -367,7 +498,7 @@ namespace HaybaMCPLease
 			return (Lane << 48) + W.Seq;
 		}
 
-		FAcquireResult Grant(int32 WaiterIndex, double Now)
+		FAcquireResult Grant(int32 WaiterIndex, double Now, const FString& FenceOf = FString())
 		{
 			FWaiter Waiter = MoveTemp(Waiters[WaiterIndex]);
 			Waiters.RemoveAt(WaiterIndex);
@@ -392,6 +523,11 @@ namespace HaybaMCPLease
 			Lease.ExpiresAt = Now + ClampTtl(Waiter.Request.TtlSeconds);
 			Lease.ConnId = Waiter.Request.ConnId;
 			Lease.Lane = Waiter.Request.Lane;
+			Lease.FenceOf = FenceOf;
+			if (!FenceOf.IsEmpty())
+			{
+				Lease.ExpiresAt = FMath::Min(Lease.ExpiresAt, Now + Tuning.FenceGrantMaxSeconds);
+			}
 
 			FAcquireResult Result;
 			Result.Status = EStatus::Granted;
