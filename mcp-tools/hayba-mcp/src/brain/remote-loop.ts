@@ -19,8 +19,9 @@ export interface RemoteLoopParams {
   signal: AbortSignal;
 }
 
+/** An outcome for the current activity — the turn itself only ends at the `done` frame. */
 function isTerminal(e: AgentStreamEvent): boolean {
-  return e.type === 'activity_completed' || e.type === 'approval_requested' || (e.type === 'error' && e.termination !== undefined);
+  return e.type === 'activity_completed' || (e.type === 'error' && e.termination !== undefined);
 }
 
 type Race = { kind: 'frame'; result: IteratorResult<Frame> } | { kind: 'abort' };
@@ -68,6 +69,16 @@ export async function* runRemoteLoop(p: RemoteLoopParams): AsyncGenerator<AgentS
   p.signal.addEventListener('abort', sendCancelOnce, { once: true });
   p.signal.addEventListener('abort', onAbort, { once: true });
 
+  // Protocol rule (binding): every brain turn ends with exactly one `done` frame;
+  // `done`, not an activity outcome, is the turn boundary. Once the activity has
+  // reached an outcome we stop yielding further events but keep reading (and
+  // still answering any tool_call) until `done` closes the turn out — otherwise
+  // `done` is left in the inbox for the NEXT turn on this reused session to trip
+  // over. `approval_requested` is the one exception: the brain PARKS the turn
+  // there (no `done` follows), so we return immediately; the eventual `approve`
+  // call reopens the same turn and is the one that consumes through its `done`.
+  let awaitingDone = false;
+
   const gen = p.session.frames();
   try {
     while (true) {
@@ -81,12 +92,20 @@ export async function* runRemoteLoop(p: RemoteLoopParams): AsyncGenerator<AgentS
         yield { type: 'activity_completed', activityId: lastActivityId, outcome: 'cancelled', reason: 'aborted' };
         return;
       }
-      if (race.result.done) return;
+      if (race.result.done) {
+        // The frame stream ended (session closed/gave up) without a `done` frame.
+        if (p.signal.aborted) yield { type: 'activity_completed', activityId: lastActivityId, outcome: 'cancelled', reason: 'aborted' };
+        return;
+      }
       const f = race.result.value;
       if (f.type === 'event') {
         lastActivityId = f.event.activityId;
-        yield f.event;
-        if (isTerminal(f.event)) return;
+        if (f.event.type === 'approval_requested') {
+          yield f.event;
+          return;
+        }
+        if (!awaitingDone) yield f.event; // stray events after the outcome are defensively ignored
+        if (isTerminal(f.event)) awaitingDone = true;
       } else if (f.type === 'tool_call') {
         p.session.send({ type: 'tool_result', id: f.id, ...(await executeLocally(p, f.name, f.args)) });
       } else if (f.type === 'done') {

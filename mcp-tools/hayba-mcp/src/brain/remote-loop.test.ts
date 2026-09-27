@@ -34,8 +34,39 @@ describe('runRemoteLoop', () => {
     expect(dispatchTool).toHaveBeenCalledWith('world_inspect', {});
     expect(sock.sent.at(-1)).toMatchObject({ type: 'tool_result', id: 't-1', ok: true, result: { actors: 3 } });
     sock.push({ type: 'event', seq: 4, event: { type: 'activity_completed', activityId: 'a', outcome: 'succeeded', reason: 'end_turn' } });
+    sock.push({ type: 'done', seq: 5, reason: 'end_turn' });
     const events = await run;
     expect(events).toHaveLength(2);
+  });
+
+  it('waits for done after the outcome, then a second turn on the same session sees only its own frames', async () => {
+    const { session, sock } = await connected();
+    const run1 = drain(runRemoteLoop({ session, messages: [{ role: 'user', content: 'turn 1' }], mode: 'production', approvals: new LocalApprovals(), dispatchTool: vi.fn(), guard, signal: new AbortController().signal }));
+    await tick();
+    sock.push({ type: 'event', seq: 2, event: { type: 'activity_completed', activityId: 'a', outcome: 'succeeded', reason: 'end_turn' } });
+    await tick();
+    // The outcome fired, but the turn boundary (`done`) hasn't arrived: run1 must still be pending.
+    let settled = false;
+    void run1.then(() => { settled = true; });
+    await tick();
+    expect(settled).toBe(false);
+    sock.push({ type: 'done', seq: 3, reason: 'end_turn' });
+    expect(await run1).toEqual([{ type: 'activity_completed', activityId: 'a', outcome: 'succeeded', reason: 'end_turn' }]);
+
+    const run2 = drain(runRemoteLoop({ session, messages: [{ role: 'user', content: 'turn 2' }], mode: 'production', approvals: new LocalApprovals(), dispatchTool: vi.fn(), guard, signal: new AbortController().signal }));
+    await tick();
+    sock.push({ type: 'event', seq: 4, event: { type: 'activity_completed', activityId: 'b', outcome: 'succeeded', reason: 'end_turn' } });
+    sock.push({ type: 'done', seq: 5, reason: 'end_turn' });
+    expect(await run2).toEqual([{ type: 'activity_completed', activityId: 'b', outcome: 'succeeded', reason: 'end_turn' }]);
+  });
+
+  it('yields a non-terminal busy error and still waits for done to end the turn', async () => {
+    const { session, sock } = await connected();
+    const run = drain(runRemoteLoop({ session, messages: [{ role: 'user', content: 'x' }], mode: 'production', approvals: new LocalApprovals(), dispatchTool: vi.fn(), guard, signal: new AbortController().signal }));
+    await tick();
+    sock.push({ type: 'event', seq: 2, event: { type: 'error', activityId: 'a', error: 'busy, try later', kind: 'busy' } });
+    sock.push({ type: 'done', seq: 3, reason: 'end_turn' });
+    expect(await run).toEqual([{ type: 'error', activityId: 'a', error: 'busy, try later', kind: 'busy' }]);
   });
 
   it('refuses an unapproved destructive call without dispatching', async () => {
@@ -49,12 +80,12 @@ describe('runRemoteLoop', () => {
     expect(sock.sent.at(-1)).toMatchObject({ type: 'tool_result', id: 't-2', ok: false, result: { error: 'approval_required' } });
   });
 
-  it('on resume-after-approval sends approve and lets exactly that call through once', async () => {
+  it('on resume-after-approval sends approve, lets exactly that call through once, and consumes through the resumed turn\'s done', async () => {
     const { session, sock } = await connected();
     const dispatchTool = vi.fn(async () => ({ deleted: true }));
     const args = { path: '/Game/X' };
     const approvals = new LocalApprovals();
-    void drain(runRemoteLoop({ session, messages: [], mode: 'production', approvedCall: { name: 'asset_delete', argsHash: argsHash(args) }, approvals, dispatchTool, guard, signal: new AbortController().signal }));
+    const run = drain(runRemoteLoop({ session, messages: [], mode: 'production', approvedCall: { name: 'asset_delete', argsHash: argsHash(args) }, approvals, dispatchTool, guard, signal: new AbortController().signal }));
     await tick();
     expect(sock.sent.at(-1)).toMatchObject({ type: 'approve', name: 'asset_delete', args_hash: argsHash(args) });
     sock.push({ type: 'tool_call', seq: 2, id: 't-3', name: 'asset_delete', args, gated: true });
@@ -63,6 +94,11 @@ describe('runRemoteLoop', () => {
     await tick();
     expect(dispatchTool).toHaveBeenCalledTimes(1);
     expect(sock.sent.at(-1)).toMatchObject({ id: 't-4', ok: false });
+    // The frames the resumed (approve) call unblocks still belong to the same
+    // turn and end with the same turn's `done` — this call must consume it.
+    sock.push({ type: 'event', seq: 4, event: { type: 'activity_completed', activityId: 'a', outcome: 'succeeded', reason: 'end_turn' } });
+    sock.push({ type: 'done', seq: 5, reason: 'end_turn' });
+    expect(await run).toEqual([{ type: 'activity_completed', activityId: 'a', outcome: 'succeeded', reason: 'end_turn' }]);
   });
 
   it('pauses (returns) on approval_requested and forwards cancel on abort', async () => {
@@ -100,6 +136,7 @@ describe('runRemoteLoop', () => {
     sock.push({ type: 'tool_call', seq: 2, id: 't-9', name: 'world_inspect', args: {}, gated: false });
     await tick();
     sock.push({ type: 'event', seq: 3, event: { type: 'activity_completed', activityId: 'a', outcome: 'succeeded', reason: 'end_turn' } });
+    sock.push({ type: 'done', seq: 4, reason: 'end_turn' });
     await run;
     const sent = sock.sent.find((s) => s.id === 't-9') as { result: { message: string } };
     expect(sent.result.message).not.toContain('sk-live-abc123');
@@ -145,6 +182,7 @@ describe('runRemoteLoop', () => {
     await tick();
     expect(dispatchTool2).toHaveBeenCalledWith('world_inspect', {});
     sock.push({ type: 'event', seq: 8, event: { type: 'activity_completed', activityId: 'b', outcome: 'succeeded', reason: 'end_turn' } });
+    sock.push({ type: 'done', seq: 9, reason: 'end_turn' });
     const events2 = await run2;
     expect(events2).toEqual([
       { type: 'message_delta', activityId: 'b', text: 'fresh' },

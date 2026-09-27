@@ -22,6 +22,8 @@ export interface BrainSessionOptions {
   openTimeoutMs?: number;
   /** How long to keep reconnecting after a drop before giving up (the brain's resume window). */
   resumeWindowMs?: number;
+  /** Safety-net ceiling on how long turn-discard mode can stay on if `done` never arrives. */
+  discardTimeoutMs?: number;
 }
 export type OpenResult =
   | { ok: true; welcome: Welcome }
@@ -29,6 +31,7 @@ export type OpenResult =
 
 const DEFAULT_BACKOFF = [1000, 2000, 4000, 8000, 16000, 30000] as const;
 const DEFAULT_RESUME_WINDOW_MS = 600_000;
+const DEFAULT_DISCARD_TIMEOUT_MS = 30_000;
 const OPEN = 1;
 
 export class BrainSession {
@@ -48,6 +51,7 @@ export class BrainSession {
   private disconnectedAt?: number;
   /** True while absorbing a locally-cancelled turn's remaining frames (see `cancelTurn`). */
   private discardingTurn = false;
+  private discardTimer?: ReturnType<typeof setTimeout>;
 
   constructor(readonly sessionId: string, private readonly opts: BrainSessionOptions) {}
 
@@ -98,6 +102,10 @@ export class BrainSession {
    */
   cancelTurn(): void {
     this.discardingTurn = true;
+    if (this.discardTimer) clearTimeout(this.discardTimer);
+    // Safety net: if `done` never arrives (a brain bug, or a frame lost to a
+    // race we didn't anticipate), don't wedge this session shut forever.
+    this.discardTimer = setTimeout(() => this.stopDiscarding(), this.opts.discardTimeoutMs ?? DEFAULT_DISCARD_TIMEOUT_MS);
     if (this.waiter) { const w = this.waiter; this.waiter = undefined; w(null); }
     const queued = this.inbox.splice(0);
     for (const f of queued) {
@@ -105,8 +113,16 @@ export class BrainSession {
     }
   }
 
+  private stopDiscarding(): void {
+    this.discardingTurn = false;
+    if (this.discardTimer) { clearTimeout(this.discardTimer); this.discardTimer = undefined; }
+  }
+
   /** Returns true if `f` belonged to the cancelled turn and was absorbed (never to be delivered). */
   private absorbDiscardedFrame(f: Frame): boolean {
+    // A fresh (non-resumed) welcome means a brand-new session handshake — any
+    // discard state left over from a prior turn is meaningless now.
+    if (f.type === 'welcome' && !f.resumed) this.stopDiscarding();
     if (!this.discardingTurn) return false;
     if (f.type === 'tool_call') {
       const shaped = shapeToolResult({ error: 'cancelled' });
@@ -120,10 +136,10 @@ export class BrainSession {
       return true;
     }
     if (f.type === 'done') {
-      this.discardingTurn = false;
+      this.stopDiscarding();
       return true;
     }
-    return false; // welcome/ping/pro_unavailable/upgrade_required/resume echoes are session-level, not turn-scoped
+    return false; // ping/pro_unavailable/upgrade_required/resume echoes are session-level, not turn-scoped
   }
 
   async *frames(): AsyncGenerator<Frame> {

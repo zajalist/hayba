@@ -81,6 +81,34 @@ describe('BrainSession', () => {
     expect(sockets.length).toBe(1); // never reconnected
   });
 
+  it('a fresh (non-resumed) welcome clears turn-discard mode', async () => {
+    const sockets: FakeSocket[] = [];
+    const s = new BrainSession('s-1', baseOpts(sockets));
+    const p = s.open(); await tick(); sockets[0].open(); await tick(); sockets[0].push(welcome); await p;
+    s.cancelTurn();
+    sockets[0].push({ type: 'tool_call', seq: 2, id: 't-1', name: 'world_inspect', args: {}, gated: false });
+    await tick();
+    expect(sockets[0].sent.find((m) => m.id === 't-1')).toMatchObject({ ok: false, result: { error: 'cancelled' } });
+    // A brand-new (non-resumed) welcome means old discard state is stale; a tool_call after it must flow through.
+    sockets[0].push({ type: 'welcome', seq: 3, limits: { max_steps: 40, max_tokens: 1, wall_clock_ms: 1 }, protocol_range: [1, 1], resumed: false });
+    sockets[0].push({ type: 'tool_call', seq: 4, id: 't-2', name: 'world_inspect', args: {}, gated: false });
+    const got: Array<{ type: string }> = [];
+    for await (const f of s.frames()) { got.push(f); if (f.type === 'tool_call') break; }
+    expect(got.at(-1)).toMatchObject({ type: 'tool_call', id: 't-2' });
+  });
+
+  it('turn-discard mode auto-clears after discardTimeoutMs if done never arrives', async () => {
+    const sockets: FakeSocket[] = [];
+    const s = new BrainSession('s-1', { ...baseOpts(sockets), discardTimeoutMs: 5 });
+    const p = s.open(); await tick(); sockets[0].open(); await tick(); sockets[0].push(welcome); await p;
+    s.cancelTurn();
+    await new Promise((r) => setTimeout(r, 20)); // let the 5ms safety-net timer fire
+    sockets[0].push({ type: 'tool_call', seq: 2, id: 't-1', name: 'world_inspect', args: {}, gated: false });
+    const got: Array<{ type: string }> = [];
+    for await (const f of s.frames()) { got.push(f); if (f.type === 'tool_call') break; }
+    expect(got.at(-1)).toMatchObject({ type: 'tool_call', id: 't-1' });
+  });
+
   it('drops duplicate inbound frames by seq after replay', async () => {
     const sockets: FakeSocket[] = [];
     const s = new BrainSession('s-1', baseOpts(sockets));
