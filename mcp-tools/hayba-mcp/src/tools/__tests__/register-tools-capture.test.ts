@@ -88,8 +88,15 @@ describe('registerTools capture', () => {
 
     expect(Object.keys(sig.schema)).toEqual(['command']);
     expect(Object.keys(sig.wireSchema ?? {})).toEqual(['command', 'name']);
-    expect(Object.keys(python.schema)).toEqual(['script', 'allow_unsafe']);
-    expect(Object.keys(python.wireSchema ?? {})).toEqual(['script', 'code', 'allow_unsafe']);
+    expect(Object.keys(python.schema)).toEqual(['script', 'allow_unsafe', 'deadline_s', 'world_partition', 'transaction']);
+    expect(Object.keys(python.wireSchema ?? {})).toEqual([
+      'script',
+      'code',
+      'allow_unsafe',
+      'deadline_s',
+      'world_partition',
+      'transaction',
+    ]);
   });
 
   it('makes deferred stream wrapping idempotent before a captured tool is pack-loaded', () => {
