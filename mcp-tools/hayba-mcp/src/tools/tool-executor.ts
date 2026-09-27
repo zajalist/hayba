@@ -169,6 +169,9 @@ export const NON_IDEMPOTENT = new Set<string>([
   // lost the reply). Re-sending ran the same mutation twice, including World
   // Partition load/unload sequences that must never overlap.
   'python_run',
+  // Starts a multi-step job under a lease. A resend after a lost reply would
+  // start the same steps a second time (a second region load, a second save).
+  'editor_batch',
   // GAS
   'gas_create_ability',
   'gas_create_effect',
