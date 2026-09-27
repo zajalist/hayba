@@ -3,7 +3,7 @@
 // them durably (DPAPI) and pushes them back on launch via POST /brain/config.
 
 import type { Express, Request, Response } from 'express';
-import { isLoopback } from '../chat/chat-server.js';
+import { isLocalRequest } from '../http/loopback-guard.js';
 import { jsonObjectBody } from '../http/express-boundary.js';
 import type { BrainConnector } from './brain-connector.js';
 
@@ -16,24 +16,7 @@ function sendTokenBearing(res: Response, body: Record<string, unknown>): Respons
   return res.type('application/json').send(JSON.stringify(body));
 }
 
-const LOOPBACK_HOSTNAMES = new Set(['127.0.0.1', 'localhost', '[::1]']);
-
-/** `Host` must name a loopback host (any port): a rebound DNS name is refused. */
-export function isLoopbackHostHeader(host: string | undefined): boolean {
-  if (!host) return false;
-  const match = /^(\[::1\]|[^:]+)(?::\d+)?$/.exec(host.trim().toLowerCase());
-  return match !== null && LOOPBACK_HOSTNAMES.has(match[1]);
-}
-
-/** A browser `Origin`, when present, must itself be a loopback http(s) origin. */
-export function isLoopbackOrigin(origin: string): boolean {
-  try {
-    const url = new URL(origin);
-    return (url.protocol === 'http:' || url.protocol === 'https:') && LOOPBACK_HOSTNAMES.has(url.hostname);
-  } catch {
-    return false; // includes the opaque "null" origin
-  }
-}
+export { isLoopbackHostHeader, isLoopbackOrigin } from '../http/loopback-guard.js';
 
 export function registerBrainRoutes(app: Express, connector: BrainConnector): void {
   // These routes hand out and accept a long-lived refresh token, so a loopback
@@ -41,12 +24,7 @@ export function registerBrainRoutes(app: Express, connector: BrainConnector): vo
   // also connects from 127.0.0.1. Require a loopback Host, and a loopback
   // Origin whenever a browser sends one.
   const local = (req: Request, res: Response) => {
-    const origin = req.headers.origin;
-    if (
-      isLoopback(req.socket.remoteAddress) &&
-      isLoopbackHostHeader(req.headers.host) &&
-      (origin === undefined || isLoopbackOrigin(origin))
-    ) return true;
+    if (isLocalRequest(req)) return true;
     res.status(403).json({ error: 'brain routes are localhost-only' });
     return false;
   };

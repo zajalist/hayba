@@ -64,6 +64,7 @@ import type { LlmMode, Permissions } from '@hayba/brain-protocol';
 import { getArchetype } from '../agents/agent-registry.js';
 import { installExpressJsonRedaction, redactBoundaryValue } from '../security/secret-redaction.js';
 import { jsonObjectBody, stringQuery } from '../http/express-boundary.js';
+import { isLocalRequest, isLoopback } from '../http/loopback-guard.js';
 import { SessionStore, isValidSessionId, type SavedActivity, type SavedSession } from './session-store.js';
 import type { AgentStreamEvent } from './activity-events.js';
 
@@ -71,14 +72,11 @@ import type { AgentStreamEvent } from './activity-events.js';
 // Localhost enforcement
 // ---------------------------------------------------------------------------
 
-/** True for IPv4/IPv6 loopback (incl. IPv4-mapped IPv6). Never network-exposed. */
-export function isLoopback(addr: string | undefined): boolean {
-  if (!addr) return false;
-  return addr === '127.0.0.1' || addr === '::1' || addr === '::ffff:127.0.0.1' || addr.startsWith('127.');
-}
+export { isLoopback };
 
+/** Loopback peer AND loopback Host/Origin: a DNS-rebound browser page is refused too. */
 function requireLoopback(req: Request, res: Response): boolean {
-  if (isLoopback(req.socket.remoteAddress)) return true;
+  if (isLocalRequest(req)) return true;
   res.status(403).json({ error: 'chat routes are localhost-only' });
   return false;
 }
