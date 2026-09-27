@@ -162,25 +162,75 @@ agent that never acquires a lease are unaffected until someone else holds one.
   `plan-mode-gate.test.ts`): an agent must always be able to queue for, see
   and release a lease.
 
+## Batches and fences (built after the first change)
+
+### `editor_batch`
+
+`editor_batch {lease, steps:[{cmd, params?, fence_after?}], on_error, idle_ticks?, fence_timeout_s?}`
+runs several commands under one lease and answers `{job_id}` at once;
+`batch_status {job_id}` (or `build_status`) follows it. The state machine is
+pure (`HaybaMCPBatchPolicy.h`, `Hayba.MCP.Batch.*`): the driver
+(`HaybaMCPBatchHandler.cpp`, an `FTSTicker` job like `test_run`'s) feeds it
+the clock, the idle predicate and the lease facts each tick and does the ONE
+action it answers.
+
+- **One step per tick**, each through the normal `ProcessCommand` path (auth,
+  lease check, Plan gate, transaction, journal). The batch was Plan-gated
+  itself, so with Plan Mode on its approval covers its steps and they do not
+  spend it again.
+- **Fences.** After each step: `idle` (default) waits for N consecutive idle
+  ticks (shaders, asset registry, GC or incremental purge, async loading: the
+  `wait_for_idle` predicates plus `IsAsyncLoading`); `gc` first calls
+  `CollectGarbage`, but only while the batch lease is exclusive on a region,
+  a world or global (otherwise it waits for idle and says so); `none` is the
+  next tick. A fence that never settles fails its step after
+  `fence_timeout_s`.
+- **Soft paths.** Step params are stored as text and parsed again for every
+  step; no step holds an object across a fence, where GC may collect it.
+- **Regions.** `wp_region_load {bounds, name?}` and `wp_region_unload {name?}`
+  are steps the batch runs natively with a `UWorldPartitionEditorLoaderAdapter`
+  it owns, never inside an editor transaction. Loading needs the lease to hold
+  the region exclusively (X on global, the world, or a containing
+  `wp-region:`). Every region still loaded when the batch ends, for any
+  reason, is released. A global command (map load, PIE, quit) is refused while
+  a region is loaded.
+- **Errors.** `on_error: stop` halts at the failing step and releases the
+  regions. `unload_then_stop` releases them and then runs a settle fence
+  (gc when allowed, then idle) before reporting done. A lost lease stops the
+  batch the same way. The batch keeps its own lease alive while it runs; if
+  the lease is released or its connection closes, the batch stops.
+
+### Fair queue at fences
+
+A batch lease is marked yieldable. At a fence, if a waiter of another owner
+that the fence serves (an interactive request, or an aged long one) is
+blocked by the batch lease, the batch **yields**: the table stops counting the
+batch lease against waiters queued before the fence opened, so their next
+poll is granted. Those grants are capped at `FenceGrantMaxSeconds` (30 s)
+including renewals. While yielding the batch runs nothing; the let-in owner's
+commands do not collide with the parked batch. The batch resumes once the
+fence grants are released or lapse, or after a short window (4 s) if nobody
+polled. The batch ages too: after 3 yields or 60 s spent yielding it stops
+yielding, so a stream of interactive work cannot starve it. A request blocked
+by a batch is told so and gets no ETA (a running batch's expiry says nothing).
+
+The TCP drain is unchanged: commands that need no lease still interleave
+between batch steps, as they always did, because the batch never holds more
+than one tick.
+
 ## Next
 
-Not built in this change, in the order they depend on each other:
-
-1. **`editor_batch` with fences.** One request carrying several commands under
-   one lease, executed in order on the game thread with a fence between steps.
-   A fence is where the editor may tick (GC, streaming, shader compile) and
-   where other owners' work may run.
-2. **Native `wp_region_load` / `wp_region_unload`.** Typed commands that take
-   `wp-region:` resources directly, so World Partition work stops going through
-   `python_run` and its lexical detection, and the region lock is exactly the
-   loaded area.
-3. **Fair-queue scheduling at fences.** Today the fair queue orders lease
-   grants only. At a fence the drain could pick the next command by the same
-   lanes and aging, instead of the single global FIFO, so one agent's long
-   batch cannot starve another agent's interactive command.
-4. **Migrate `editor_gate.py`.** Host projects use this script (outside this
-   repo) so agents take turns in the editor. Move its callers to
-   `lease_acquire` on the resources it protects, then retire it.
-5. **`wait_for_idle` as a real wait.** It snapshots busy predicates once today;
-   combined with fences it can wait across ticks without blocking the game
-   thread.
+1. **`wait_for_idle` as a real wait.** It still snapshots the busy predicates
+   once. The batch fence now waits across ticks without blocking; the
+   standalone command can reuse the same fence (a one-step batch, or a job).
+2. **Migrate `editor_gate.py` in the host project.** The proposed version
+   ships with the first consumer project's host tools (patch plus tests,
+   file-lock fallback kept). Install it when the consumer's editor is
+   closed, then move
+   `apply_look.py` and `bpgraph.mjs` to one connection per client with the
+   `lease` envelope field, then retire the file lock.
+3. **Batch cancel.** A running batch stops only on error, lease loss or
+   completion. A `batch_cancel` would be a machine input like `bLeaseValid`.
+4. **Fair scheduling of the drain itself.** Fences serve lease waiters. The
+   drain is still one global FIFO for lease-free commands; it could pick by
+   the same lanes if a lease-free flood ever starves an interactive agent.

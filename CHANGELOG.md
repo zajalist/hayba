@@ -16,6 +16,21 @@ All notable changes to Hayba MCP Toolkit are documented here. Format based on [K
 - `python_run` accepts `deadline_s` (5 to 60 s) from a caller holding an
   exclusive lease on the current world, `transaction: false`, and
   `world_partition: true`.
+- `editor_batch` / `batch_status` (ADR-0010). Several commands under one
+  lease, one step per editor tick through the normal command path, with a
+  fence after each step that waits across ticks for shaders, asset loads, GC
+  and async loading (`fence_after: idle | gc | none`; `gc` collects garbage
+  only under an exclusive region, world or global lease). Returns a `job_id`
+  at once. `wp_region_load {bounds}` / `wp_region_unload` steps load World
+  Partition regions with a loader adapter the batch owns, and every region is
+  released by the time the batch ends; `on_error: stop | unload_then_stop`.
+  At a fence the batch yields to other owners' queued interactive (or aged)
+  lease requests; fence grants last at most 30 s and the batch stops yielding
+  after 3 yields or 60 s.
+- `ping` reports `capabilities.lease_manager`, `editor_batch` and
+  `wp_region_steps`, so host scripts can switch from a file lock to leases.
+- A proposed lease-based `editor_gate.py` for the first consumer project,
+  with tests and a patch, kept with that project's host tools.
 
 ### Changed
 - Plan-Mode approval is per owner: only the agent that proposed a plan can
@@ -26,6 +41,7 @@ All notable changes to Hayba MCP Toolkit are documented here. Format based on [K
   run inside the global editor transaction, which left `UTransBuffer` with a
   non-zero active count and crashed the next tick in Landscape.
 - `python_run` is no longer re-sent after a transport timeout.
+- `editor_batch` is never re-sent after a transport failure either.
 - `material_get_info` now reports each graph parameter's authored name, exact
   parameter type, and typed default value, with explicit availability flags
   for invalid/non-finite metadata instead of plausible omissions. Master
