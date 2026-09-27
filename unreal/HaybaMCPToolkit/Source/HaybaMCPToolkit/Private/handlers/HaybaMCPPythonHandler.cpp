@@ -6,6 +6,7 @@
 #include "HaybaMCPSeh.h"   // world-switch repair after a swallowed fault
 #include "HaybaMCPAccessPolicy.h"
 #include "HaybaMCPDeveloperSettings.h"
+#include "HaybaMCPLeaseManager.h"
 #if PLATFORM_WINDOWS
 #include <excpt.h>   // EXCEPTION_EXECUTE_HANDLER for the SEH guard below
 #endif
@@ -23,11 +24,11 @@ namespace
     constexpr int32 MaxPythonCapturedCharsPerStream = 64 * 1024;
     constexpr int32 PythonDeadlineCheckInterval = 256;
 
-    // No lease manager exists yet, so a deadline above 5 s is only reachable
-    // through the server setting.
+    // deadline_s above 5 s: the caller (or the lease its envelope names)
+    // holds an exclusive lease on the current world or on global.
     bool CallerHoldsExclusiveLease()
     {
-        return false;
+        return FHaybaMCPLeaseManager::Get().CallerHoldsExclusiveOnCurrentWorld();
     }
 
     // Operations whose failure happens outside Python exception handling (or

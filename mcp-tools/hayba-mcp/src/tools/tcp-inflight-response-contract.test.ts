@@ -65,7 +65,7 @@ describe('TCP in-flight response lifetime contract', () => {
   });
 
   it('never blocks the game-thread ticker on response socket backpressure', () => {
-    const process = server.indexOf('CommandHandler->ProcessCommand(Cmd.Message)');
+    const process = server.indexOf('CommandHandler->ProcessCommand(Cmd.Message, Cmd.ConnId)');
     const enqueue = server.indexOf(
       'Cmd.Conn->OutboundResponses.Enqueue(FHaybaMCPOutboundResponse',
       process,

@@ -13,6 +13,18 @@ enum class EHaybaModelPreset : uint8
     Full
 };
 
+/** How the lease table treats a command that collides with another owner's lease. */
+UENUM()
+enum class EHaybaMCPLeaseEnforcement : uint8
+{
+    /** No check at all. */
+    Off,
+    /** Run the command, but attach a lease_warning to its response and log it. */
+    Advisory,
+    /** Refuse the command with code lease_conflict. */
+    Enforced
+};
+
 UCLASS(Config=HaybaMCP, DefaultConfig, meta=(DisplayName="Hayba MCP Toolkit"))
 class UHaybaMCPDeveloperSettings : public UDeveloperSettings
 {
@@ -77,6 +89,10 @@ public:
     UPROPERTY(EditAnywhere, Config, Category="Multi-Agent",
         meta=(ToolTip="Let python_run accept deadline_s above 5 seconds (up to 60) from a caller that holds no exclusive lease. Off by default: a long script holds the game thread and every other agent waits behind it."))
     bool bAllowLongPythonDeadlineWithoutLease = false;
+
+    UPROPERTY(EditAnywhere, Config, Category="Multi-Agent",
+        meta=(ToolTip="What happens when a command collides with another agent's lease (lease_acquire). Advisory runs it and attaches lease_warning; Enforced refuses it with code lease_conflict. Takes effect immediately."))
+    EHaybaMCPLeaseEnforcement LeaseEnforcement = EHaybaMCPLeaseEnforcement::Advisory;
 
     UPROPERTY(EditAnywhere, Config, Category="Performance")
     bool bCodeModeEnabled = true;

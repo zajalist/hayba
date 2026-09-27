@@ -3,6 +3,7 @@
 #include "HaybaMCPLeasePolicy.h"
 #include "HaybaMCPCommandHandler.h"
 #include "HaybaMCPModule.h"
+#include "HaybaMCPLeaseManager.h"
 #include "Modules/ModuleManager.h"
 
 #if WITH_DEV_AUTOMATION_TESTS
@@ -400,6 +401,56 @@ bool FHaybaMCPLeaseClassificationDriftTest::RunTest(const FString& Parameters)
 				Class.Class, EAccessClass::Read);
 		}
 	}
+	for (const FString& Cmd : { FString(TEXT("lease_acquire")), FString(TEXT("lease_renew")),
+		FString(TEXT("lease_release")), FString(TEXT("lease_status")) })
+	{
+		TestTrue(*FString::Printf(TEXT("lease command is registered: %s"), *Cmd), Registered.Contains(Cmd));
+	}
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FHaybaMCPLeaseEnvelopeTest,
+	"Hayba.MCP.Lease.Envelope",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FHaybaMCPLeaseEnvelopeTest::RunTest(const FString& Parameters)
+{
+	TSharedPtr<FJsonObject> Envelope = MakeShared<FJsonObject>();
+	TestEqual(TEXT("no owner field: one owner per connection"),
+		FHaybaMCPLeaseManager::ResolveOwner(Envelope, 12), FString(TEXT("conn:12")));
+	TestEqual(TEXT("no owner and no connection: local"),
+		FHaybaMCPLeaseManager::ResolveOwner(Envelope, 0), FString(TEXT("local")));
+	Envelope->SetStringField(TEXT("owner"), TEXT("  agent-7  "));
+	TestEqual(TEXT("owner field wins and is trimmed"),
+		FHaybaMCPLeaseManager::ResolveOwner(Envelope, 12), FString(TEXT("agent-7")));
+	Envelope->SetStringField(TEXT("owner"), FString::ChrN(500, TEXT('a')));
+	TestEqual(TEXT("owner is bounded"), FHaybaMCPLeaseManager::ResolveOwner(Envelope, 12).Len(), 128);
+
+	TSharedPtr<FJsonObject> Params = MakeShared<FJsonObject>();
+	TArray<HaybaMCPAccess::FClaim> Claims;
+	FString Error;
+	TestTrue(TEXT("absent resources parse to nothing"), FHaybaMCPLeaseManager::ParseClaims(Params, true, Claims, Error));
+	TestEqual(TEXT("no claims"), Claims.Num(), 0);
+
+	TArray<TSharedPtr<FJsonValue>> Items;
+	Items.Add(MakeShared<FJsonValueString>(TEXT("world:/Game/V")));
+	TSharedPtr<FJsonObject> Shared = MakeShared<FJsonObject>();
+	Shared->SetStringField(TEXT("resource"), TEXT("asset:/Game/Props/SM_Rock"));
+	Shared->SetStringField(TEXT("mode"), TEXT("shared"));
+	Items.Add(MakeShared<FJsonValueObject>(Shared));
+	Params->SetArrayField(TEXT("resources"), Items);
+	TestTrue(TEXT("strings and objects parse"), FHaybaMCPLeaseManager::ParseClaims(Params, true, Claims, Error));
+	if (TestEqual(TEXT("two claims"), Claims.Num(), 2))
+	{
+		TestTrue(TEXT("a plain string takes the default mode"), Claims[0].bExclusive);
+		TestFalse(TEXT("an object can ask for shared"), Claims[1].bExclusive);
+	}
+
+	Items.Add(MakeShared<FJsonValueString>(TEXT("level:/Game/V")));
+	Params->SetArrayField(TEXT("resources"), Items);
+	TestFalse(TEXT("a bad resource fails the whole list"), FHaybaMCPLeaseManager::ParseClaims(Params, true, Claims, Error));
+	TestTrue(TEXT("the error names the bad resource"), Error.Contains(TEXT("level:/Game/V")));
 	return true;
 }
 

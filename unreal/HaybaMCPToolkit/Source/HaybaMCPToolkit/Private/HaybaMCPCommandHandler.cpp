@@ -17,6 +17,7 @@
 #include "HaybaMCPMemoryPanel.h"
 #include "HaybaMCPDiffPanel.h"
 #include "HaybaMCPAccessPolicy.h"
+#include "HaybaMCPLeaseManager.h"
 #include "Json.h"
 #include "Editor.h"
 #include "EngineUtils.h"
@@ -1037,8 +1038,17 @@ static FString HandleProposePlan(const FString& Id, const TSharedPtr<FJsonObject
     int32 AwaitSecs = 30;
     if (Params.IsValid()) Params->TryGetNumberField(TEXT("await_seconds"), AwaitSecs);
 
+    const FString Proposer = FHaybaMCPLeaseManager::Get().EffectiveOwner();
     if (FHaybaMCPModule* M = FModuleManager::GetModulePtr<FHaybaMCPModule>("HaybaMCPToolkit"))
     {
+        // Plan approval is per owner: only the agent that proposed this plan
+        // may spend the Approve click. A different agent's proposal must not
+        // inherit an approval the user gave someone else.
+        if (M->PlanOwner != Proposer)
+        {
+            M->bPlanApproved = false;
+        }
+        M->PlanOwner = Proposer;
         if (TSharedPtr<SHaybaMCPPlanPanel> Panel = M->PlanPanel.Pin())
         {
             Panel->LoadPlan(Steps, AwaitSecs);
@@ -1048,6 +1058,7 @@ static FString HandleProposePlan(const FString& Id, const TSharedPtr<FJsonObject
     auto Data = MakeShared<FJsonObject>();
     Data->SetBoolField(TEXT("received"), true);
     Data->SetNumberField(TEXT("step_count"), Steps.Num());
+    Data->SetStringField(TEXT("plan_owner"), Proposer);
     return FHaybaMCPCommandHandler::MakeOkResponse(Id, Data, TEXT("hayba_propose_plan"));
 }
 
@@ -1146,7 +1157,31 @@ TArray<FString> FHaybaMCPCommandHandler::GetAllCommands() const
     return Out;
 }
 
+void FHaybaMCPCommandHandler::NotifyConnectionClosed(int32 ConnId)
+{
+    FHaybaMCPLeaseManager::Get().OnConnectionClosed(ConnId);
+}
+
 FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
+{
+    return ProcessCommand(CommandJson, 0);
+}
+
+/** Add top-level fields to a finished response envelope (rare path: only a
+ *  lease conflict or warning pays for the re-parse). */
+static FString AddEnvelopeFields(const FString& Response, TFunctionRef<void(FJsonObject&)> Apply)
+{
+    TSharedPtr<FJsonObject> Envelope;
+    TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(Response);
+    if (!FJsonSerializer::Deserialize(Reader, Envelope) || !Envelope.IsValid())
+    {
+        return Response;
+    }
+    Apply(*Envelope);
+    return JsonToString(Envelope.ToSharedRef());
+}
+
+FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson, int32 ConnId)
 {
     // This must remain the first branch. Even JSON parsing and the normal
     // response helpers are outside the supported off-thread contract.
@@ -1154,6 +1189,31 @@ FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
     {
         return MakeOffGameThreadResponse();
     }
+
+    // Publish who is calling for the whole dispatch: lease_acquire, python_run
+    // deadline_s and the Plan-Mode gate all ask. Owner and lease token are
+    // filled in once the envelope has parsed.
+    FHaybaMCPRequestContext Context;
+    Context.ConnId = ConnId;
+    Context.Owner = FHaybaMCPLeaseManager::ResolveOwner(nullptr, ConnId);
+    FString Response;
+    {
+        FHaybaMCPLeaseManager::FScope Scope(Context);
+        Response = ProcessCommandInContext(CommandJson);
+    }
+    if (Context.LeaseWarning.IsValid())
+    {
+        const TSharedPtr<FJsonObject> Warning = Context.LeaseWarning;
+        Response = AddEnvelopeFields(Response, [&Warning](FJsonObject& Envelope)
+        {
+            Envelope.SetObjectField(TEXT("lease_warning"), Warning);
+        });
+    }
+    return Response;
+}
+
+FString FHaybaMCPCommandHandler::ProcessCommandInContext(const FString& CommandJson)
+{
 
     TSharedPtr<FJsonObject> Parsed;
     TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(CommandJson);
@@ -1198,6 +1258,15 @@ FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
     }
     if (!Params.IsValid()) Params = MakeShared<FJsonObject>();
 
+    // Optional, back-compatible envelope fields: `owner` names the agent
+    // (else one owner per connection) and `lease` names a held lease token.
+    FHaybaMCPLeaseManager& Leases = FHaybaMCPLeaseManager::Get();
+    if (FHaybaMCPRequestContext* Context = Leases.Current())
+    {
+        Context->Owner = FHaybaMCPLeaseManager::ResolveOwner(Parsed, Context->ConnId);
+        Parsed->TryGetStringField(TEXT("lease"), Context->LeaseToken);
+    }
+
     UE_LOG(LogHaybaMCPCmd, Log, TEXT("Processing command: %s (id: %s)"), *Cmd, *Id);
 
     // Auth gate
@@ -1205,6 +1274,23 @@ FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
     if (!FHaybaMCPSecurityManager::Get().ValidateRequest(Parsed, AuthReason))
     {
         return MakeErrorResponse(Id, AuthReason, Cmd, false, true);
+    }
+
+    // Lease gate (after auth, before anything runs). Never blocks: Advisory
+    // lets the command run and attaches lease_warning; Enforced refuses it.
+    {
+        const FHaybaMCPLeaseManager::FVerdict Verdict = Leases.CheckCommand(Cmd, Params);
+        if (Verdict.bRefuse)
+        {
+            const TSharedPtr<FJsonObject> Detail = Verdict.Detail;
+            return AddEnvelopeFields(
+                MakeErrorResponse(Id, Verdict.Message, Cmd, false, /*bKnownPreflight=*/true),
+                [&Detail](FJsonObject& Envelope)
+                {
+                    Envelope.SetStringField(TEXT("code"), TEXT("lease_conflict"));
+                    if (Detail.IsValid()) Envelope.SetObjectField(TEXT("lease"), Detail);
+                });
+        }
     }
 
     // Special-case: hayba_propose_plan pushes to the UI Plan panel (no domain handler).
@@ -1289,12 +1375,21 @@ FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
         if (S.bPlanModeEnabled && IsDestructiveCommand(Cmd))
         {
             FHaybaMCPModule* M = FModuleManager::GetModulePtr<FHaybaMCPModule>("HaybaMCPToolkit");
-            const bool bApproved = (M && M->bPlanApproved);
+            const FString Caller = Leases.EffectiveOwner();
+            // Approval is per owner: another agent's Approve does not cover this caller.
+            const bool bApproved = M && HaybaMCPLease::PlanApprovalApplies(M->bPlanApproved, M->PlanOwner, Caller);
             if (!bApproved)
             {
                 auto Data = MakeShared<FJsonObject>();
                 Data->SetStringField(TEXT("status"), TEXT("plan_mode_required"));
                 Data->SetStringField(TEXT("hint"), TEXT("Plan Mode is ON. Call hayba_propose_plan with a steps[] array, then the user must click Approve in the Plan tab before destructive commands run."));
+                if (M && M->bPlanApproved)
+                {
+                    Data->SetStringField(TEXT("plan_owner"), M->PlanOwner);
+                    Data->SetStringField(TEXT("caller_owner"), Caller);
+                    Data->SetStringField(TEXT("approval_scope_note"),
+                        TEXT("The approved plan belongs to another agent. Approval is per owner; propose your own plan."));
+                }
                 // Under strict consume the previous Approve was SPENT by the
                 // last destructive command. Without saying so, the second call
                 // in a sequence looks exactly like Approve never worked, and

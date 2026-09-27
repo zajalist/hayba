@@ -36,6 +36,9 @@ struct FHaybaMCPClientConnection
 	~FHaybaMCPClientConnection();
 
 	FSocket* Socket = nullptr;
+	/** Process-unique id (never 0). Leases bound to a connection are released
+	 *  when it closes; ProcessCommand uses it as the default owner. */
+	int32 ConnId = 0;
 	FThreadSafeBool bAlive{ true };
 	// Number of accepted requests whose response has not finished sending.
 	// The reader uses this to distinguish a healthy long-running command from
@@ -64,6 +67,8 @@ struct FHaybaMCPPendingCommand
 	FHaybaMCPClientConnectionPtr Conn;
 	FHaybaMCPCountReservationPtr PendingReservation;
 	FHaybaMCPCountReservationPtr ResponseReservation;
+	/** Which connection sent it, so the router knows its caller. */
+	int32 ConnId = 0;
 };
 
 class FHaybaMCPTcpServer : public FRunnable, public TSharedFromThis<FHaybaMCPTcpServer, ESPMode::ThreadSafe>
@@ -130,6 +135,9 @@ private:
 	// runs in the normal engine tick, outside task-graph task execution, so such
 	// work is safe. Connection (background) threads enqueue; the ticker drains.
 	TQueue<FHaybaMCPPendingCommand, EQueueMode::Mpsc> PendingCommands;
+	// Reader threads report a closed connection here; the game-thread drain
+	// hands it to the router so leases bound to that connection are released.
+	TQueue<int32, EQueueMode::Mpsc> ClosedConnections;
 	FTSTicker::FDelegateHandle DrainTickerHandle;
 	bool DrainPendingCommands(float DeltaTime);
 	void RetainWorker(TUniquePtr<FHaybaMCPJoinableWorker>&& Worker);
