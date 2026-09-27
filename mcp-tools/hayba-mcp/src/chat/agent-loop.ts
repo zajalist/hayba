@@ -279,7 +279,7 @@ export type AgentEvent =
   | { type: 'tool_result'; id: string; name: string; result: unknown; isError?: boolean }
   | { type: 'plan_request'; call: LLMToolCall; hint?: string; source: 'ts' | 'ue'; argsHash?: string }
   | { type: 'done'; reason: AgentDoneReason; stopReason?: LLMStopReason; usage?: LLMUsage }
-  | { type: 'error'; error: string; kind?: string };
+  | { type: 'error'; error: string; kind?: string; reason?: string };
 
 export interface AgentLoopParams {
   /** Existing manifest profiles, optionally supplied as one turn-scoped snapshot. */

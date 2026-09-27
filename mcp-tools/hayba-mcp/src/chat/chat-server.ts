@@ -166,6 +166,18 @@ interface ToolTraceEntry {
   isError?: boolean;
 }
 
+type TurnLoop = 'community' | 'pro';
+
+/** A plan-gated call plus the loop that raised it; an approval never crosses loops. */
+interface OriginatedCall extends ApprovedCall {
+  origin: TurnLoop;
+}
+
+/** The approval a turn on `loop` may use, stripped of its origin tag. */
+function approvalFor(call: OriginatedCall | undefined, loop: TurnLoop): ApprovedCall | undefined {
+  return call?.origin === loop ? { name: call.name, argsHash: call.argsHash } : undefined;
+}
+
 interface ChatSession {
   id: string;
   abortController: AbortController;
@@ -178,12 +190,13 @@ interface ChatSession {
    * Identity of the tool call currently paused at the Plan-Mode gate (set when a
    * plan_request is emitted). `/chat/approve` promotes this to `approvedCall`.
    */
-  pendingPlanCall?: ApprovedCall;
+  pendingPlanCall?: OriginatedCall;
   /**
    * Call-bound approval (C1): the ONE `{name, argsHash}` the next turn may
    * dispatch past the TS-side gate. Consumed (cleared) after the turn runs.
+   * Honoured only by a turn on the same loop that raised it (`origin`).
    */
-  approvedCall?: ApprovedCall;
+  approvedCall?: OriginatedCall;
   assistantText: string;
   toolTrace: ToolTraceEntry[];
   /** Epoch ms of the last activity on this session; drives TTL/LRU eviction. */
@@ -739,7 +752,7 @@ export function registerChatRoutes(app: Express, options: ChatRoutesOptions = {}
         session.brain = opened.session;
       }
       // Only a turn the brain actually parked can be resumed by `approve`.
-      const approvedCall = session.brainTurnParked ? session.approvedCall : undefined;
+      const approvedCall = session.brainTurnParked ? approvalFor(session.approvedCall, 'pro') : undefined;
       if (session.brainTurnParked && !approvedCall) {
         // The user moved on without approving: close the parked turn out first.
         // cancelTurn() absorbs its stragglers through its `done`, so the new
@@ -847,6 +860,16 @@ export function registerChatRoutes(app: Express, options: ChatRoutesOptions = {}
       cleanup();
     });
 
+    // A Pro turn parked at an approval is abandoned once the user runs a
+    // Community turn instead: close it out on the brain (its stragglers are
+    // absorbed through its `done`) and drop its now-unresumable plan request.
+    if (session.brainTurnParked && session.brain) {
+      session.brain.send({ type: 'cancel' });
+      session.brain.cancelTurn();
+      session.brainTurnParked = false;
+      if (session.pendingPlanCall?.origin === 'pro') session.pendingPlanCall = undefined;
+    }
+
     // Drive the loop server-side, independent of the HTTP connection lifetime.
     void runTurn(session, {
       client,
@@ -857,7 +880,7 @@ export function registerChatRoutes(app: Express, options: ChatRoutesOptions = {}
       tools: options.tools,
       dispatchTool,
       signal: session.abortController.signal,
-      approvedCall: session.approvedCall,
+      approvedCall: approvalFor(session.approvedCall, 'community'),
       sessionStore,
       mode,
     }).finally(() => {
@@ -921,9 +944,18 @@ function finalize(session: ChatSession, reason: string, extra: Record<string, un
   session.clients.clear();
 }
 
+interface TurnError {
+  error: string;
+  kind?: string;
+}
+
 async function runTurn(session: ChatSession, params: RunTurnParams): Promise<void> {
   let finalReason: string | null = null;
-  let lastError: { error: string; kind?: string } | null = null;
+  let lastError: TurnError | null = null;
+  // Hayba Pro: set when the brain became unavailable mid-turn.
+  let brainLost = false;
+  let unavailableReason: string | undefined;
+  const origin: TurnLoop = params.remote ? 'pro' : 'community';
   // Cache-hit metrics (cache_creation_input_tokens / cache_read_input_tokens
   // among them) travel on the loop's own 'done' event — see agent-loop.ts.
   let usage: LLMUsage | undefined;
@@ -984,6 +1016,7 @@ async function runTurn(session: ChatSession, params: RunTurnParams): Promise<voi
           dispatchTool: params.dispatchTool,
           guard: params.remote.guard,
           signal: params.signal,
+          onUnavailable: (reason) => { unavailableReason = reason; },
         })
       : runAgentLoopStreaming({
           client: params.client!,
@@ -1000,10 +1033,17 @@ async function runTurn(session: ChatSession, params: RunTurnParams): Promise<voi
           planMode: true, // honour Plan Mode; UE side is authoritative, TS side gated
           approvedCall: params.approvedCall,
         });
-    for await (const ev of adaptToLegacy(source, observe)) {
+    for await (const legacy of adaptToLegacy(source, observe)) {
+      let ev = legacy;
+      if (ev.type === 'error' && ev.kind === 'brain_unavailable') {
+        brainLost = true;
+        // Same shape as the open-failure path: { error, kind, reason }.
+        if (unavailableReason) ev = { ...ev, reason: unavailableReason };
+      }
       forwardEvent(
         session,
         ev,
+        origin,
         (r) => (finalReason = r),
         (e) => (lastError = e),
         (u) => {
@@ -1041,7 +1081,6 @@ async function runTurn(session: ChatSession, params: RunTurnParams): Promise<voi
     if (finalReason === 'plan_request') session.brainTurnParked = true;
     // A brain that became unavailable mid-turn is not reused; the next Pro
     // turn opens a fresh session (or reports brain_unavailable).
-    const brainLost = (lastError as { kind?: string } | null)?.kind === 'brain_unavailable';
     if (brainLost && session.brain === params.remote.session) dropBrain(session);
     if (brainLost && !finalReason) finalReason = 'brain_unavailable';
   }
@@ -1063,8 +1102,9 @@ async function runTurn(session: ChatSession, params: RunTurnParams): Promise<voi
 function forwardEvent(
   session: ChatSession,
   ev: AgentEvent,
+  origin: TurnLoop,
   setReason: (r: string) => void,
-  setError: (e: { error: string; kind?: string }) => void,
+  setError: (e: TurnError) => void,
   setUsage: (u: LLMUsage | undefined) => void,
 ): void {
   switch (ev.type) {
@@ -1098,7 +1138,7 @@ function forwardEvent(
       // C1: record the identity of the paused call so /chat/approve can bind the
       // approval to THIS exact {name, argsHash} rather than the whole turn.
       const hash = ev.argsHash ?? argsHash(ev.call.input);
-      session.pendingPlanCall = { name: ev.call.name, argsHash: hash };
+      session.pendingPlanCall = { name: ev.call.name, argsHash: hash, origin };
       const input = redactBoundaryValue(ev.call.input) as Record<string, unknown>;
       emit(session, 'plan_request', {
         id: ev.call.id,
@@ -1118,7 +1158,7 @@ function forwardEvent(
       break;
     case 'error':
       setError({ error: ev.error, kind: ev.kind });
-      emit(session, 'error', { error: ev.error, kind: ev.kind });
+      emit(session, 'error', { error: ev.error, kind: ev.kind, ...(ev.reason ? { reason: ev.reason } : {}) });
       if (ev.kind === 'aborted') setReason('aborted');
       break;
   }

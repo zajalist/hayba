@@ -16,9 +16,37 @@ function sendTokenBearing(res: Response, body: Record<string, unknown>): Respons
   return res.type('application/json').send(JSON.stringify(body));
 }
 
+const LOOPBACK_HOSTNAMES = new Set(['127.0.0.1', 'localhost', '[::1]']);
+
+/** `Host` must name a loopback host (any port): a rebound DNS name is refused. */
+export function isLoopbackHostHeader(host: string | undefined): boolean {
+  if (!host) return false;
+  const match = /^(\[::1\]|[^:]+)(?::\d+)?$/.exec(host.trim().toLowerCase());
+  return match !== null && LOOPBACK_HOSTNAMES.has(match[1]);
+}
+
+/** A browser `Origin`, when present, must itself be a loopback http(s) origin. */
+export function isLoopbackOrigin(origin: string): boolean {
+  try {
+    const url = new URL(origin);
+    return (url.protocol === 'http:' || url.protocol === 'https:') && LOOPBACK_HOSTNAMES.has(url.hostname);
+  } catch {
+    return false; // includes the opaque "null" origin
+  }
+}
+
 export function registerBrainRoutes(app: Express, connector: BrainConnector): void {
+  // These routes hand out and accept a long-lived refresh token, so a loopback
+  // peer address alone is not enough: a DNS-rebound page in the user's browser
+  // also connects from 127.0.0.1. Require a loopback Host, and a loopback
+  // Origin whenever a browser sends one.
   const local = (req: Request, res: Response) => {
-    if (isLoopback(req.socket.remoteAddress)) return true;
+    const origin = req.headers.origin;
+    if (
+      isLoopback(req.socket.remoteAddress) &&
+      isLoopbackHostHeader(req.headers.host) &&
+      (origin === undefined || isLoopbackOrigin(origin))
+    ) return true;
     res.status(403).json({ error: 'brain routes are localhost-only' });
     return false;
   };
@@ -34,8 +62,11 @@ export function registerBrainRoutes(app: Express, connector: BrainConnector): vo
     if (!device_code || typeof device_code !== 'string') return res.status(400).json({ error: 'device_code is required' });
     try {
       const r = await connector.pollSignin(device_code);
-      if (r.status === 'approved') connector.setRefreshToken(r.refresh_token, r.email);
-      return sendTokenBearing(res, r); // refresh_token returned ONCE so the panel can DPAPI-store it
+      if (r.status !== 'approved') return res.json({ status: r.status });
+      connector.setRefreshToken(r.refresh_token, r.email);
+      // refresh_token returned ONCE so the panel can DPAPI-store it; built
+      // field-by-field so nothing else from the brain rides the redaction bypass.
+      return sendTokenBearing(res, { status: 'approved', refresh_token: r.refresh_token, email: r.email });
     } catch { return res.status(502).json({ error: 'Hayba Pro is unreachable' }); }
   });
   app.post('/brain/config', (req, res) => {

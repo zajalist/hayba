@@ -17,6 +17,8 @@ export interface RemoteLoopParams {
   dispatchTool: DispatchTool;
   guard: Omit<GuardContext, 'mode'>;
   signal: AbortSignal;
+  /** Called with the brain's reason just before a `brain_unavailable` error is yielded. */
+  onUnavailable?: (reason: string) => void;
 }
 
 /** An outcome for the current activity — the turn itself only ends at the `done` frame. */
@@ -111,6 +113,7 @@ export async function* runRemoteLoop(p: RemoteLoopParams): AsyncGenerator<AgentS
       } else if (f.type === 'done') {
         return;
       } else if (f.type === 'pro_unavailable') {
+        p.onUnavailable?.(f.reason);
         yield { type: 'error', activityId: lastActivityId, error: f.message, kind: 'brain_unavailable' };
         return;
       }

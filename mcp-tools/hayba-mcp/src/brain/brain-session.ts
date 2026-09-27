@@ -187,7 +187,9 @@ export class BrainSession {
       if (f.seq <= this.lastInSeq) return; // replay duplicate
       this.lastInSeq = f.seq;
       if (this.absorbDiscardedFrame(f)) return;
-      if (intercept?.(f)) return;
+      // The handshake handler only owns frames until the session is established;
+      // afterwards a pro_unavailable/upgrade_required belongs to the live turn.
+      if (!this.established && intercept?.(f)) return;
       this.deliver(f);
     });
     socket.addEventListener('close', () => this.handleClose());

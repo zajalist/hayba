@@ -5,6 +5,7 @@ import type { Server } from 'node:http';
 import { argsHash } from '@hayba/brain-protocol';
 import { registerChatRoutes, __resetChatState } from './chat-server.js';
 import { temporarySessionStore } from './session-store.test-helpers.js';
+import type { LLMClient, LLMResponse } from '../agents/llm-client.js';
 import { createBrainConnector, type BrainConnector } from '../brain/brain-connector.js';
 import type { BrainSession, SocketLike } from '../brain/brain-session.js';
 import { FakeSocket } from '../brain/fake-socket.test-helpers.js';
@@ -88,11 +89,12 @@ describe('chat server Pro loop', () => {
     __resetChatState();
   });
 
-  function start(brain: BrainConnector, dispatchTool = vi.fn(async () => ({ ok: true }))) {
+  function start(brain: BrainConnector, dispatchTool = vi.fn(async () => ({ ok: true })), client?: LLMClient) {
     const app = express();
     app.use(express.json());
     registerChatRoutes(app, {
       brain,
+      ...(client ? { createClient: () => client } : {}),
       sessionStore: temporarySessionStore(),
       tools: [{ name: TOOL, description: '', input_schema: { type: 'object', properties: {} } }],
       dispatchTool,
@@ -217,5 +219,57 @@ describe('chat server Pro loop', () => {
     expect(frames.at(-1)).toMatchObject({ event: 'done', data: { reason: 'end_turn' } });
     expect(connector.opened).toHaveLength(2);
     expect(brain.sentTypes(brain.sockets[0]).filter((t) => t === 'turn')).toHaveLength(1);
+  });
+
+  it('never sends a Community approval to the brain, and cancels the parked Pro turn when Community runs', async () => {
+    const brain = new FakeBrain();
+    const connector = brainConnector(brain);
+    // Community model: asks to run the same destructive tool on DIFFERENT args, so it parks too.
+    const otherArgs = { path: '/Game/Other' };
+    const response: LLMResponse = { content: '', toolCalls: [{ id: 'c2', name: TOOL, input: otherArgs }], stopReason: 'tool_use' };
+    const client: LLMClient = {
+      provider: 'mock', model: 'fake', protocol: 'anthropic',
+      complete: async () => response,
+      async *stream() { yield { type: 'done', response }; },
+    };
+    const dispatchTool = start(connector, vi.fn(async () => ({ ok: true })), client);
+    const sessionId = await parkAtApproval(brain); // Pro parks P
+
+    // Community turn parks C; starting it closes out the brain's parked turn.
+    const c = await stream({ session_id: sessionId, prompt: 'use the local loop', loop: 'community' });
+    const cFrames = await c.frames;
+    expect(cFrames.find((f) => f.event === 'plan_request')).toMatchObject({ data: { name: TOOL, args_hash: argsHash(otherArgs) } });
+    expect(brain.sentTypes()).toEqual(['hello', 'turn', 'cancel']);
+    brain.push({ type: 'done', reason: 'aborted' }); // the brain closes out P
+
+    expect((await post('/chat/approve', { session_id: sessionId })).status).toBe(200); // approves C
+
+    // The next Pro turn must NOT send approve{C}; it starts a fresh turn.
+    const p2 = await stream({ session_id: sessionId, prompt: 'back to pro', loop: 'pro' });
+    await waitFor(() => brain.sentTypes().filter((t) => t === 'turn').length === 2);
+    expect(brain.sentTypes()).toEqual(['hello', 'turn', 'cancel', 'turn']);
+    brain.finishTurn('b1');
+    expect((await p2.frames).at(-1)).toMatchObject({ event: 'done', data: { reason: 'end_turn' } });
+    expect(dispatchTool).not.toHaveBeenCalled();
+  });
+
+  it('a mid-turn pro_unavailable ends the turn with one brain_unavailable error, then reopens next time', async () => {
+    const brain = new FakeBrain();
+    const connector = brainConnector(brain);
+    start(connector);
+    const s1 = await stream({ prompt: 'hi', loop: 'pro' });
+    await waitFor(() => brain.sentTypes().includes('turn'));
+    brain.push({ type: 'pro_unavailable', reason: 'maintenance', message: 'Hayba Pro is restarting.' });
+    const frames = await s1.frames;
+    // Legacy error frames carry no semantic `type`; the semantic stream mirrors it separately.
+    const legacyErrors = frames.filter((f) => f.event === 'error' && f.data.type === undefined);
+    expect(legacyErrors).toEqual([{ event: 'error', data: { error: 'Hayba Pro is restarting.', kind: 'brain_unavailable', reason: 'maintenance' } }]);
+    expect(frames.at(-1)).toMatchObject({ event: 'done', data: { reason: 'brain_unavailable' } });
+
+    const s2 = await stream({ session_id: s1.sessionId, prompt: 'again', loop: 'pro' });
+    await waitFor(() => brain.sockets.length === 2 && brain.sentTypes().includes('turn'));
+    brain.finishTurn('a2');
+    await s2.frames;
+    expect(connector.opened).toHaveLength(2);
   });
 });

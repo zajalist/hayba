@@ -124,6 +124,15 @@ describe('BrainSession', () => {
     expect(gaveUp.isAlive()).toBe(false);
   });
 
+  it('delivers a post-welcome pro_unavailable to frames() instead of swallowing it in the handshake handler', async () => {
+    const sockets: FakeSocket[] = [];
+    const s = new BrainSession('s-1', baseOpts(sockets));
+    const p = s.open(); await tick(); sockets[0].open(); await tick(); sockets[0].push(welcome); await p;
+    sockets[0].push({ type: 'pro_unavailable', seq: 2, reason: 'maintenance', message: 'restarting' });
+    const it = s.frames();
+    expect((await it.next()).value).toMatchObject({ type: 'pro_unavailable', reason: 'maintenance' });
+  });
+
   it('drops duplicate inbound frames by seq after replay', async () => {
     const sockets: FakeSocket[] = [];
     const s = new BrainSession('s-1', baseOpts(sockets));
