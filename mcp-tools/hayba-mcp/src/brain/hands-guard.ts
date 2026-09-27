@@ -67,13 +67,40 @@ function isPythonConsoleCommand(command: unknown): boolean {
 
 const omittedImage = () => ({ omitted: 'image' });
 const LONG_STRING_BYTES = 4 * 1024;
-const BASE64_RE = /^[A-Za-z0-9+/_-]+={0,2}$/;
+const BASE64_RE = /^[A-Za-z0-9+/]+={0,2}$/;
+const BASE64URL_RE = /^[A-Za-z0-9_-]+={0,2}$/;
+/** MIME (RFC 2045) and PEM wrap base64 at these widths; any other line layout is text. */
+const MIME_LINE_WIDTHS = [64, 76];
+
+function isStrictBase64Line(s: string): boolean {
+  if (BASE64_RE.test(s)) return s.length % 4 === 0;
+  // base64url may drop its padding, which leaves any length but 1 (mod 4).
+  return BASE64URL_RE.test(s) && (s.includes('=') ? s.length % 4 === 0 : s.length % 4 !== 1);
+}
+
+/**
+ * Strict base64 on the RAW string: one unbroken line, or standard base64 wrapped
+ * with `\r?\n` exactly every 64 or 76 characters. Spaces or irregular line breaks
+ * mean text — a long newline-separated list of actor names or /Game paths is
+ * made of base64-legal characters but is not a binary payload.
+ */
+function isStrictBase64(s: string): boolean {
+  if (!/[\r\n]/.test(s)) return isStrictBase64Line(s);
+  const lines = s.split(/\r?\n/);
+  if (lines.at(-1) === '') lines.pop(); // one trailing line break
+  const width = lines[0].length;
+  if (!MIME_LINE_WIDTHS.includes(width)) return false;
+  const last = lines[lines.length - 1];
+  if (last.length === 0 || last.length > width) return false;
+  if (!lines.slice(0, -1).every((l) => l.length === width)) return false;
+  const joined = lines.join('');
+  return BASE64_RE.test(joined) && joined.length % 4 === 0;
+}
 
 function isBinaryString(s: string): boolean {
   if (/^data:image\//i.test(s)) return true;
   if (s.length <= LONG_STRING_BYTES) return false;
-  const compact = s.replace(/\s+/g, '');
-  return compact.length % 4 === 0 && BASE64_RE.test(compact);
+  return isStrictBase64(s);
 }
 
 /**

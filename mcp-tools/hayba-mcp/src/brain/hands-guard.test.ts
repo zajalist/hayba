@@ -80,6 +80,36 @@ describe('shapeToolResult', () => {
     expect(out.result).toEqual({ nested: [{ frame: { omitted: 'image' } }], log: text });
     expect(JSON.stringify(out.result)).not.toContain(png.slice(0, 64));
   });
+  // A long newline-separated token list (actor names, /Game paths) is text, not
+  // base64 — even when its non-whitespace characters happen to be base64-legal.
+  function tokenList(prefix: string, minBytes: number): string {
+    const lines: string[] = [];
+    for (let i = 0; lines.join('\n').length < minBytes; i++) lines.push(`${prefix}${i}`);
+    let s = lines.join('\n');
+    while (s.replace(/\s+/g, '').length % 4 !== 0) s += 'X'; // the old whitespace-stripping check called this base64
+    return s;
+  }
+  const wrap = (s: string, n: number, eol = '\n') => s.match(new RegExp(`.{1,${n}}`, 'g'))!.join(eol);
+  const bin = Buffer.from(Array.from({ length: 9000 }, (_, i) => (i * 37) % 256)).toString('base64');
+  it('R8: keeps a 5 KB newline-separated actor-name list verbatim', () => {
+    const actors = tokenList('StaticMeshActor_', 5 * 1024);
+    expect(shapeToolResult({ actors }).result).toEqual({ actors });
+  });
+  it('R8: keeps a 5 KB newline-separated /Game path list verbatim', () => {
+    const paths = tokenList('/Game/Props/SM_Rock_', 5 * 1024);
+    expect(shapeToolResult({ paths }).result).toEqual({ paths });
+  });
+  it('R8: strips a real base64 PNG whether single-line, base64url, or MIME-wrapped at 76/64 columns', () => {
+    const url = bin.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    for (const frame of [bin, url, wrap(bin, 76, '\r\n'), wrap(bin, 64), `${wrap(bin, 76)}\n`]) {
+      expect(shapeToolResult({ frame }).result).toEqual({ frame: { omitted: 'image' } });
+    }
+  });
+  it('R8: base64-legal text with irregular line breaks or spaces is kept', () => {
+    const ragged = wrap(bin, 50);
+    const spaced = wrap(bin, 76, ' ');
+    expect(shapeToolResult({ ragged, spaced }).result).toEqual({ ragged, spaced });
+  });
 });
 
 describe('buildHandsManifest', () => {
