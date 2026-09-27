@@ -36,6 +36,28 @@ namespace
 		FJsonSerializer::Serialize(Val.ToSharedRef(), TEXT(""), Writer);
 		return Out;
 	}
+
+	/**
+	 * Apply a GET /brain/status response: re-store any rotated refresh token in
+	 * the DPAPI vault (Supabase rotates on every refresh; the sidecar hands the
+	 * new one back exactly once). Returns the sidecar's `signed_in`, or false
+	 * when the status could not be read.
+	 */
+	bool ApplyBrainStatusResponse(const FHttpResponsePtr& Response, bool bConnected)
+	{
+		if (!bConnected || !Response.IsValid() || Response->GetResponseCode() != 200) return false;
+		TSharedPtr<FJsonObject> Root;
+		if (!FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Response->GetContentAsString()), Root) ||
+			!Root.IsValid()) return false;
+		FString Rotated;
+		if (Root->TryGetStringField(TEXT("rotated_refresh_token"), Rotated) && !Rotated.IsEmpty())
+		{
+			FHaybaMCPSettings::SetProviderKey(TEXT("hayba-brain"), Rotated);   // never logged
+		}
+		bool bSignedIn = false;
+		Root->TryGetBoolField(TEXT("signed_in"), bSignedIn);
+		return bSignedIn;
+	}
 }
 
 FHaybaMCPAgentClient::~FHaybaMCPAgentClient()
@@ -82,19 +104,56 @@ void FHaybaMCPAgentClient::SendPrompt(const FString& UserPrompt, const FString& 
 	bTerminalEmitted = false;
 	WorkMode = InWorkMode;
 
-	// Hayba Pro: the sidecar holds the refresh token only in memory, so push the
-	// DPAPI-stored one before every Pro turn. With no stored token, skip the push;
-	// the sidecar answers brain_unavailable, which the panel renders.
 	if (IsProLoopActive())
 	{
-		const FString RefreshToken = FHaybaMCPSettings::GetProviderKey(TEXT("hayba-brain"));
-		if (!RefreshToken.IsEmpty())
-		{
-			PostBrainConfig(UserPrompt, RefreshToken);
-			return;
-		}
+		CheckBrainThenStream(UserPrompt);
+		return;
 	}
 	ConfigureAndStream(UserPrompt);
+}
+
+void FHaybaMCPAgentClient::ForceCommunityThisChat()
+{
+	bForceCommunityThisChat = true;
+	// Re-post /chat/config so the Community turn runs with the current provider key.
+	bConfigDone = false;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Hayba Pro — GET /brain/status first. The sidecar keeps the refresh token in
+// memory and rotates it; pushing the vault token blindly could overwrite a
+// pending rotation with a spent token. So: collect any rotation, and push the
+// vault token (POST /brain/config) only when the sidecar is NOT signed in
+// (e.g. it restarted). With no stored token the push is skipped and the
+// sidecar answers brain_unavailable, which the panel renders.
+// ─────────────────────────────────────────────────────────────────────────────
+void FHaybaMCPAgentClient::CheckBrainThenStream(const FString& UserPrompt)
+{
+	TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();
+	Request->SetURL(FHaybaMCPSettings::Get().SidecarURL / TEXT("brain/status"));
+	Request->SetVerb(TEXT("GET"));
+
+	TWeakPtr<FHaybaMCPAgentClient> WeakSelf = AsShared();
+	const FString CapturedPrompt = UserPrompt;
+	Request->OnProcessRequestComplete().BindLambda(
+		[WeakSelf, CapturedPrompt](FHttpRequestPtr /*Req*/, FHttpResponsePtr Response, bool bConnected)
+		{
+			// Store any rotation even if the client is gone — the vault must not lose it.
+			const bool bSignedIn = ApplyBrainStatusResponse(Response, bConnected);
+			TSharedPtr<FHaybaMCPAgentClient> Self = WeakSelf.Pin();
+			if (!Self.IsValid()) return;
+			if (!bSignedIn)
+			{
+				const FString RefreshToken = FHaybaMCPSettings::GetProviderKey(TEXT("hayba-brain"));
+				if (!RefreshToken.IsEmpty())
+				{
+					Self->PostBrainConfig(CapturedPrompt, RefreshToken);
+					return;
+				}
+			}
+			Self->ConfigureAndStream(CapturedPrompt);
+		});
+	Request->ProcessRequest();
 }
 
 bool FHaybaMCPAgentClient::IsProLoopActive() const
@@ -167,15 +226,7 @@ void FHaybaMCPAgentClient::StoreRotatedBrainToken()
 	Request->OnProcessRequestComplete().BindLambda(
 		[](FHttpRequestPtr /*Req*/, FHttpResponsePtr Response, bool bConnected)
 		{
-			if (!bConnected || !Response.IsValid() || Response->GetResponseCode() != 200) return;
-			TSharedPtr<FJsonObject> Root;
-			if (!FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Response->GetContentAsString()), Root) ||
-				!Root.IsValid()) return;
-			FString Rotated;
-			if (Root->TryGetStringField(TEXT("rotated_refresh_token"), Rotated) && !Rotated.IsEmpty())
-			{
-				FHaybaMCPSettings::SetProviderKey(TEXT("hayba-brain"), Rotated);   // never logged
-			}
+			ApplyBrainStatusResponse(Response, bConnected);
 		});
 	Request->ProcessRequest();
 }
@@ -326,6 +377,13 @@ TSharedRef<IHttpRequest, ESPMode::ThreadSafe> FHaybaMCPAgentClient::CreateStream
 			TSharedPtr<FHaybaMCPAgentClient> Self = WeakSelf.Pin();
 			if (!Self.IsValid()) return;
 			Self->bStreaming = false;
+
+			// Every end of a Pro stream request (server done, approval pause,
+			// transport drop) collects a rotated refresh token, if any.
+			if (Self->bCurrentTurnPro)
+			{
+				Self->StoreRotatedBrainToken();
+			}
 
 			// Drain any frames that arrived between the last progress tick and
 			// completion (a small tail can land in one shot).
@@ -539,10 +597,6 @@ void FHaybaMCPAgentClient::DispatchFrame(const FString& FrameBlock)
 			Data->TryGetBoolField(TEXT("cancelled"), Done.bCancelled);
 		}
 		bTerminalEmitted = true;
-		if (bCurrentTurnPro)
-		{
-			StoreRotatedBrainToken();
-		}
 		OnDone.Broadcast(Done);
 	}
 	else if (EventType == TEXT("error"))
@@ -648,6 +702,12 @@ void FHaybaMCPAgentClient::Cancel()
 		StreamRequest.Reset();
 	}
 	bStreaming = false;
+
+	// The completion callback (which collects rotations) was unbound above.
+	if (bCurrentTurnPro)
+	{
+		StoreRotatedBrainToken();
+	}
 
 	// Fire our own terminal done carrying the partial text streamed so far.
 	EmitLocalDone(TEXT("cancelled"), /*cancelled*/ true);

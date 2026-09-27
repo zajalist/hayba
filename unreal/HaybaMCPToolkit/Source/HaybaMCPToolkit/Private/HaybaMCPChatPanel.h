@@ -95,8 +95,9 @@ private:
     FString         PendingActivityId;
 
     // ── Hayba Pro loop selection / unavailable fallback ─────────────────────
-    // Last prompt handed to the agent, so "Use Community for this chat" can
-    // re-send it after a brain_unavailable error.
+    // Last prompt handed to the agent (set in StartAgentTurn). The Community
+    // fallback does NOT re-send it — it re-streams prompt-less over the saved
+    // transcript — so this is kept for reference only.
     FString         LastPrompt;
     // Row (Session.Messages index) that carries the inline Community-fallback
     // button; INDEX_NONE when no fallback is offered.

@@ -872,9 +872,11 @@ FReply SHaybaMCPSettingsPanel::OnBrainSignIn()
             Self->BrainSignInDeadline = FPlatformTime::Seconds() + FMath::Max(ExpiresIn, Interval);
 
             FPlatformProcess::LaunchURL(*VerificationUrl, nullptr, nullptr);
-            Self->BrainStatusText->SetText(FText::Format(
-                NSLOCTEXT("Hayba", "S.Pro.ConfirmCode", "Confirm code {0} in your browser"),
-                FText::FromString(UserCode)));
+            Self->BrainStatusText->SetText(UserCode.IsEmpty()
+                ? NSLOCTEXT("Hayba", "S.Pro.CompleteInBrowser", "Complete sign-in in your browser")
+                : FText::Format(
+                    NSLOCTEXT("Hayba", "S.Pro.ConfirmCode", "Confirm code {0} in your browser"),
+                    FText::FromString(UserCode)));
 
             Self->BrainPollTicker = FTSTicker::GetCoreTicker().AddTicker(
                 FTickerDelegate::CreateSP(Self.ToSharedRef(), &SHaybaMCPSettingsPanel::TickBrainSignInPoll),

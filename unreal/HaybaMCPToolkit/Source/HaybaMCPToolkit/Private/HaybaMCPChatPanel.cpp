@@ -609,8 +609,8 @@ TSharedRef<SWidget> SHaybaMCPChatPanel::BuildMessageRow(const FHaybaMCPChatMessa
         [
             SNew(SButton)
             .Text(LOCTEXT("UseCommunity", "Use Community for this chat"))
-            .ToolTipText(LOCTEXT("UseCommunityTip", "Re-send your last message using the local Community loop. Other chats keep using Hayba Pro."))
-            .IsEnabled_Lambda([this]() { return CanSend() && !LastPrompt.IsEmpty(); })
+            .ToolTipText(LOCTEXT("UseCommunityTip", "Continue this conversation on the local Community loop. Other chats keep using Hayba Pro."))
+            .IsEnabled_Lambda([this]() { return CanSend() && AgentClient.IsValid() && !AgentClient->IsStreaming(); })
             .OnClicked(this, &SHaybaMCPChatPanel::OnUseCommunityForThisChat)
         ];
 
@@ -1123,14 +1123,25 @@ void SHaybaMCPChatPanel::HandleStreamError(const FHaybaChatError& Error)
 
 FReply SHaybaMCPChatPanel::OnUseCommunityForThisChat()
 {
-    if (!CanSend() || LastPrompt.IsEmpty()) return FReply::Handled();
-    EnsureAgentClient();
-    AgentClient->bForceCommunityThisChat = true;
+    if (!CanSend() || !AgentClient.IsValid() || AgentClient->IsStreaming()) return FReply::Handled();
+    // Community runs on the local provider key.
+    if (!FHaybaMCPSettings::Get().HasApiKey())
+    {
+        AddSystemError(TEXT("No API key configured — add one in Settings to chat"), TEXT(""));
+        return FReply::Handled();
+    }
+    AgentClient->ForceCommunityThisChat();
     CommunityFallbackMessageIndex = INDEX_NONE;
-    // StartAgentTurn wraps AgentClient->SendPrompt(LastPrompt, WorkMode) with the
-    // same in-progress bubble / waiting state as a normal send.
-    const FString Prompt = LastPrompt;
-    StartAgentTurn(Prompt);
+
+    // Same waiting / in-progress bubble setup as StartAgentTurn. The prompt is
+    // EMPTY on purpose: the sidecar already saved the user's message before it
+    // reported brain_unavailable, so a prompt-less stream on the same session
+    // runs a Community turn over the saved transcript (as approval-resume does)
+    // instead of duplicating that message.
+    Session.bWaitingForAI = true;
+    bIsStreaming = true;
+    BeginInProgressBubble();
+    AgentClient->SendPrompt(FString(), WorkMode);
     return FReply::Handled();
 }
 

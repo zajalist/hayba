@@ -140,6 +140,12 @@ public:
 	/** True when the next turn routes through Hayba Pro (setting on, not forced to Community). */
 	bool IsProLoopActive() const;
 
+	/**
+	 * Switch this chat to the Community loop (sets bForceCommunityThisChat) and
+	 * force /chat/config to be re-posted with the current provider key.
+	 */
+	void ForceCommunityThisChat();
+
 	/** True while a stream request is in flight. */
 	bool IsStreaming() const { return bStreaming; }
 
@@ -166,9 +172,11 @@ private:
 	void PostConfig(const FString& UserPrompt);
 	/** /chat/config when this session has none yet, then /chat/stream. */
 	void ConfigureAndStream(const FString& UserPrompt);
+	/** Hayba Pro: GET /brain/status (store rotation), push the vault token only if not signed in, then stream. */
+	void CheckBrainThenStream(const FString& UserPrompt);
 	/** Hayba Pro: push the DPAPI-stored refresh token (POST /brain/config), then ConfigureAndStream. */
 	void PostBrainConfig(const FString& UserPrompt, const FString& RefreshToken);
-	/** Hayba Pro: after a Pro turn's done, GET /brain/status and re-store any rotated refresh token. */
+	/** Hayba Pro: at every end of a Pro stream, GET /brain/status and re-store any rotated refresh token. */
 	void StoreRotatedBrainToken();
 	void StartStream(const FString& UserPrompt);
 	/** Prepare callbacks/state separately from sending, so transport outcomes can be tested offline. */
