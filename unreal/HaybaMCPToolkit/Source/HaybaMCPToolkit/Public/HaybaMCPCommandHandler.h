@@ -37,6 +37,14 @@ public:
      */
     static bool ShouldCreateEditorTransaction(const FString& Cmd);
 
+    /**
+     * The per-request form: the static policy above, then the caller's
+     * opt-outs (`transaction:false`, python_run `world_partition:true` or a
+     * script that loads/unloads World Partition actors). Only turns a
+     * transaction off, never on. See HaybaMCPAccessPolicy.h.
+     */
+    static bool ShouldCreateEditorTransaction(const FString& Cmd, const TSharedPtr<FJsonObject>& Params);
+
     static FString MakeOkResponse(
         const FString& Id,
         const TSharedPtr<FJsonObject>& Data,

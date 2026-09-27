@@ -122,6 +122,32 @@ describe('python_run crash guard + bounded inline output', () => {
     expect(payload.allow_unsafe_deprecated).toBe(true);
   });
 
+  it('forwards deadline_s, world_partition and transaction to the native handler', async () => {
+    const { pythonRunHandler } = await import('./python-run.js');
+    send.mockClear();
+    setDefaultSender(send);
+    send.mockResolvedValueOnce({ ok: true, data: { ok: true, stdout: '' } });
+    const r = await pythonRunHandler(
+      { script: 'print(1)', deadline_s: 30, world_partition: true, transaction: false },
+      {} as never,
+    );
+    expect(r.isError).toBeFalsy();
+    expect(send).toHaveBeenCalledWith(
+      'python_run',
+      { script: 'print(1)', deadline_s: 30, world_partition: true, transaction: false },
+      expect.anything(),
+    );
+  });
+
+  it('rejects a deadline_s outside 5..60 before UE', async () => {
+    const { pythonRunHandler } = await import('./python-run.js');
+    send.mockClear();
+    setDefaultSender(send);
+    const r = await pythonRunHandler({ script: 'print(1)', deadline_s: 600 }, {} as never);
+    expect(r.isError).toBe(true);
+    expect(send).not.toHaveBeenCalled();
+  });
+
   it('preserves an authoritative native policy code and recovery response', async () => {
     const { pythonRunHandler } = await import('./python-run.js');
     send.mockClear();

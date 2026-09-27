@@ -3,7 +3,10 @@
 #include "Misc/AutomationTest.h"
 #include "handlers/HaybaMCPPythonHandler.h"
 #include "HaybaMCPDeveloperSettings.h"
+#include "HaybaMCPAccessPolicy.h"
+#include "HaybaMCPCommandHandler.h"
 #include "Dom/JsonObject.h"
+#include <limits>
 
 namespace
 {
@@ -492,6 +495,76 @@ bool FHaybaMCPPythonOutputBoundaryTest::RunTest(const FString& Parameters)
                 .Contains(TEXT("exception arguments omitted by bounded capture")));
         TestTrue(TEXT("large exception stderr stays bounded"),
             LargeException.Data->GetStringField(TEXT("stderr")).Len() <= 64 * 1024);
+    }
+
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FHaybaMCPPythonDeadlineTransactionPolicyTest,
+    "Hayba.MCP.Python.DeadlineAndTransactionPolicy",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FHaybaMCPPythonDeadlineTransactionPolicyTest::RunTest(const FString& Parameters)
+{
+    using namespace HaybaMCPAccess;
+
+    // Pure decisions only: nothing here executes Python or opens a transaction.
+    {
+        const FPythonDeadline Absent = ResolvePythonDeadline(false, 0.0, false, false);
+        TestTrue(TEXT("absent deadline_s is allowed"), Absent.bAllowed);
+        TestEqual(TEXT("absent deadline_s keeps the 5 s default"), Absent.Seconds, 5.0);
+
+        const FPythonDeadline Short = ResolvePythonDeadline(true, 1.0, false, false);
+        TestTrue(TEXT("a request below 5 s is allowed"), Short.bAllowed);
+        TestEqual(TEXT("a request below 5 s clamps up to the floor"), Short.Seconds, 5.0);
+
+        const FPythonDeadline NoLease = ResolvePythonDeadline(true, 30.0, false, false);
+        TestFalse(TEXT("30 s without a lease or setting is refused"), NoLease.bAllowed);
+        TestTrue(TEXT("refusal names the lease requirement"), NoLease.Error.Contains(TEXT("exclusive lease")));
+
+        const FPythonDeadline WithLease = ResolvePythonDeadline(true, 30.0, true, false);
+        TestTrue(TEXT("30 s with an exclusive lease is allowed"), WithLease.bAllowed);
+        TestEqual(TEXT("30 s with a lease is honoured"), WithLease.Seconds, 30.0);
+
+        const FPythonDeadline WithSetting = ResolvePythonDeadline(true, 30.0, false, true);
+        TestTrue(TEXT("the server setting allows a long deadline without a lease"), WithSetting.bAllowed);
+
+        const FPythonDeadline Huge = ResolvePythonDeadline(true, 600.0, true, false);
+        TestEqual(TEXT("a lease holder is still clamped to 60 s"), Huge.Seconds, 60.0);
+
+        const FPythonDeadline NotFinite = ResolvePythonDeadline(
+            true, std::numeric_limits<double>::infinity(), true, true);
+        TestFalse(TEXT("a non-finite deadline is refused"), NotFinite.bAllowed);
+    }
+
+    {
+        TSharedPtr<FJsonObject> Params = MakeShared<FJsonObject>();
+        Params->SetStringField(TEXT("script"), TEXT("print(1)"));
+        TestTrue(TEXT("plain python_run keeps its transaction"),
+            FHaybaMCPCommandHandler::ShouldCreateEditorTransaction(TEXT("python_run"), Params));
+
+        Params->SetBoolField(TEXT("world_partition"), true);
+        TestFalse(TEXT("world_partition:true opts python_run out"),
+            FHaybaMCPCommandHandler::ShouldCreateEditorTransaction(TEXT("python_run"), Params));
+
+        TSharedPtr<FJsonObject> Detected = MakeShared<FJsonObject>();
+        Detected->SetStringField(TEXT("script"),
+            TEXT("adapter = unreal.WorldPartitionEditorLoaderAdapter()\nlib.unload_actors(guids)"));
+        TestFalse(TEXT("a visible WP unload script is opted out without the flag"),
+            FHaybaMCPCommandHandler::ShouldCreateEditorTransaction(TEXT("python_run"), Detected));
+
+        TSharedPtr<FJsonObject> OptOut = MakeShared<FJsonObject>();
+        OptOut->SetBoolField(TEXT("transaction"), false);
+        TestFalse(TEXT("transaction:false opts any destructive command out"),
+            FHaybaMCPCommandHandler::ShouldCreateEditorTransaction(TEXT("actor_spawn"), OptOut));
+
+        TSharedPtr<FJsonObject> OptIn = MakeShared<FJsonObject>();
+        OptIn->SetBoolField(TEXT("transaction"), true);
+        TestFalse(TEXT("transaction:true cannot add a transaction to an unwrapped command"),
+            FHaybaMCPCommandHandler::ShouldCreateEditorTransaction(TEXT("ui_compile_widget"), OptIn));
+        TestFalse(TEXT("a read command never gets a transaction"),
+            FHaybaMCPCommandHandler::ShouldCreateEditorTransaction(TEXT("actor_list"), OptIn));
     }
 
     return true;

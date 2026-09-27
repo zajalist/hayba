@@ -74,6 +74,10 @@ public:
             ToolTip="Maximum total milliseconds allowed to send one response before disconnecting a client that is not reading. Applied when the TCP server next starts."))
     int32 TcpSendTimeoutMs = 1000;
 
+    UPROPERTY(EditAnywhere, Config, Category="Multi-Agent",
+        meta=(ToolTip="Let python_run accept deadline_s above 5 seconds (up to 60) from a caller that holds no exclusive lease. Off by default: a long script holds the game thread and every other agent waits behind it."))
+    bool bAllowLongPythonDeadlineWithoutLease = false;
+
     UPROPERTY(EditAnywhere, Config, Category="Performance")
     bool bCodeModeEnabled = true;
 
