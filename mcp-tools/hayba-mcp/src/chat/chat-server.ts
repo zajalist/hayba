@@ -48,13 +48,13 @@ import {
   runLegacyAgentLoop as runAgentLoop,
   argsHash,
   buildToolCatalog,
-  isDestructiveToolName,
   type AgentEvent,
   type ApprovedCall,
   type DispatchTool,
 } from './agent-loop.js';
 import type { LLMTool, LLMUsage } from '../agents/llm-client.js';
 import { createChatDispatcher } from './tool-dispatch.js';
+import { isExploreReadOnlyTool } from '../brain/hands-guard.js';
 import { getArchetype } from '../agents/agent-registry.js';
 import { installExpressJsonRedaction, redactBoundaryValue } from '../security/secret-redaction.js';
 import { jsonObjectBody, stringQuery } from '../http/express-boundary.js';
@@ -351,12 +351,6 @@ export type AgentWorkMode = (typeof AGENT_WORK_MODES)[number];
 
 function isAgentWorkMode(value: unknown): value is AgentWorkMode {
   return typeof value === 'string' && (AGENT_WORK_MODES as readonly string[]).includes(value);
-}
-
-/** Explore exposes only known read-shaped commands. Unknown names fail closed. */
-function isExploreReadOnlyTool(name: string): boolean {
-  return !isDestructiveToolName(name) &&
-    /(?:^|_)(?:get|list|search|inspect|validate|query|read|describe|count|find|status|stats|info)(?:_|$)/.test(name);
 }
 
 function modeGuidance(mode: AgentWorkMode): string {
