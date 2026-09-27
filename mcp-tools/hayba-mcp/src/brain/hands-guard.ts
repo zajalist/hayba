@@ -57,8 +57,42 @@ export function guardInboundToolCall(name: string, args: Record<string, unknown>
   return { ok: true };
 }
 
+const omittedImage = () => ({ omitted: 'image' });
+const LONG_STRING_BYTES = 4 * 1024;
+const BASE64_RE = /^[A-Za-z0-9+/_-]+={0,2}$/;
+
+function isBinaryString(s: string): boolean {
+  if (/^data:image\//i.test(s)) return true;
+  if (s.length <= LONG_STRING_BYTES) return false;
+  const compact = s.replace(/\s+/g, '');
+  return compact.length % 4 === 0 && BASE64_RE.test(compact);
+}
+
+/**
+ * Screenshots and other binary payloads never leave the machine (they would leak
+ * scene imagery and blow the size cap as a useless base64 preview): MCP image
+ * content blocks, `image_base64` fields, `data:image/...` URLs and any long
+ * base64 string become `{ omitted: 'image' }`. `ancestors` guards against cycles.
+ */
+export function stripBinaryPayloads(value: unknown, ancestors: WeakSet<object> = new WeakSet()): unknown {
+  if (typeof value === 'string') return isBinaryString(value) ? omittedImage() : value;
+  if (value === null || typeof value !== 'object') return value;
+  if (ancestors.has(value)) return undefined;
+  if (!Array.isArray(value) && (value as { type?: unknown }).type === 'image') return omittedImage();
+  ancestors.add(value);
+  let out: unknown;
+  if (Array.isArray(value)) out = value.map((v) => stripBinaryPayloads(v, ancestors));
+  else {
+    const obj: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value)) obj[k] = k === 'image_base64' ? omittedImage() : stripBinaryPayloads(v, ancestors);
+    out = obj;
+  }
+  ancestors.delete(value);
+  return out;
+}
+
 export function shapeToolResult(result: unknown): { result: unknown; truncated: boolean } {
-  const redacted = redactBoundaryValue(result);
+  const redacted = redactBoundaryValue(stripBinaryPayloads(result));
   const json = JSON.stringify(redacted) ?? 'null';
   const bytes = Buffer.byteLength(json);
   if (bytes <= TOOL_RESULT_CAP_BYTES) return { result: redacted, truncated: false };
