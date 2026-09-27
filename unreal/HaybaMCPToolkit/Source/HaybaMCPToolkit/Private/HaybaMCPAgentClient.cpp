@@ -37,26 +37,33 @@ namespace
 		return Out;
 	}
 
+	/** What a GET /brain/status said about the sidecar's sign-in state. */
+	enum class EHaybaBrainSignIn : uint8
+	{
+		SignedIn,
+		NotSignedIn,
+		Unknown,   // transport error / non-200 / unreadable body: do NOT push the vault token
+	};
+
 	/**
 	 * Apply a GET /brain/status response: re-store any rotated refresh token in
 	 * the DPAPI vault (Supabase rotates on every refresh; the sidecar hands the
-	 * new one back exactly once). Returns the sidecar's `signed_in`, or false
-	 * when the status could not be read.
+	 * new one back exactly once). Returns the sidecar's sign-in state.
 	 */
-	bool ApplyBrainStatusResponse(const FHttpResponsePtr& Response, bool bConnected)
+	EHaybaBrainSignIn ApplyBrainStatusResponse(const FHttpResponsePtr& Response, bool bConnected)
 	{
-		if (!bConnected || !Response.IsValid() || Response->GetResponseCode() != 200) return false;
+		if (!bConnected || !Response.IsValid() || Response->GetResponseCode() != 200) return EHaybaBrainSignIn::Unknown;
 		TSharedPtr<FJsonObject> Root;
 		if (!FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Response->GetContentAsString()), Root) ||
-			!Root.IsValid()) return false;
+			!Root.IsValid()) return EHaybaBrainSignIn::Unknown;
 		FString Rotated;
 		if (Root->TryGetStringField(TEXT("rotated_refresh_token"), Rotated) && !Rotated.IsEmpty())
 		{
 			FHaybaMCPSettings::SetProviderKey(TEXT("hayba-brain"), Rotated);   // never logged
 		}
 		bool bSignedIn = false;
-		Root->TryGetBoolField(TEXT("signed_in"), bSignedIn);
-		return bSignedIn;
+		if (!Root->TryGetBoolField(TEXT("signed_in"), bSignedIn)) return EHaybaBrainSignIn::Unknown;
+		return bSignedIn ? EHaybaBrainSignIn::SignedIn : EHaybaBrainSignIn::NotSignedIn;
 	}
 }
 
@@ -88,7 +95,7 @@ void FHaybaMCPAgentClient::SendPrompt(const FString& UserPrompt, const FString& 
 	// start a second /chat/stream sharing this instance's ParseCursor +
 	// AccumulatedText (reset in StartStream), corrupting the live parse. The
 	// server 409s a concurrent turn, but self-guard so the UI can't garble it.
-	if (bStreaming)
+	if (bStreaming || bTurnPending)
 	{
 		FHaybaChatError Busy;
 		Busy.Error = TEXT("a chat turn is already in progress; cancel it or wait for done");
@@ -103,6 +110,13 @@ void FHaybaMCPAgentClient::SendPrompt(const FString& UserPrompt, const FString& 
 	}
 	bTerminalEmitted = false;
 	WorkMode = InWorkMode;
+	// The turn is pending until /chat/stream starts (or it terminates). Every
+	// pre-stream continuation checks this generation, so a Stop pressed during
+	// the /brain/status, /brain/config or /chat/config round-trip wins.
+	bTurnPending = true;
+	++TurnGeneration;
+	AccumulatedText.Empty();
+	bCurrentTurnPro = IsProLoopActive();
 
 	if (IsProLoopActive())
 	{
@@ -135,14 +149,19 @@ void FHaybaMCPAgentClient::CheckBrainThenStream(const FString& UserPrompt)
 
 	TWeakPtr<FHaybaMCPAgentClient> WeakSelf = AsShared();
 	const FString CapturedPrompt = UserPrompt;
+	const uint32 Generation = TurnGeneration;
 	Request->OnProcessRequestComplete().BindLambda(
-		[WeakSelf, CapturedPrompt](FHttpRequestPtr /*Req*/, FHttpResponsePtr Response, bool bConnected)
+		[WeakSelf, CapturedPrompt, Generation](FHttpRequestPtr /*Req*/, FHttpResponsePtr Response, bool bConnected)
 		{
-			// Store any rotation even if the client is gone — the vault must not lose it.
-			const bool bSignedIn = ApplyBrainStatusResponse(Response, bConnected);
+			// Store any rotation even if the client or turn is gone; the vault must not lose it.
+			const EHaybaBrainSignIn SignIn = ApplyBrainStatusResponse(Response, bConnected);
 			TSharedPtr<FHaybaMCPAgentClient> Self = WeakSelf.Pin();
-			if (!Self.IsValid()) return;
-			if (!bSignedIn)
+			if (!Self.IsValid() || !Self->IsTurnCurrent(Generation)) return;
+			// Push the vault token only when the sidecar definitely has none (e.g. it
+			// restarted). On Unknown, stream without pushing: a possibly-spent vault
+			// token must not overwrite the sidecar's, and a sidecar that truly has no
+			// token answers brain_unavailable itself.
+			if (SignIn == EHaybaBrainSignIn::NotSignedIn)
 			{
 				const FString RefreshToken = FHaybaMCPSettings::GetProviderKey(TEXT("hayba-brain"));
 				if (!RefreshToken.IsEmpty())
@@ -154,6 +173,11 @@ void FHaybaMCPAgentClient::CheckBrainThenStream(const FString& UserPrompt)
 			Self->ConfigureAndStream(CapturedPrompt);
 		});
 	Request->ProcessRequest();
+}
+
+bool FHaybaMCPAgentClient::IsTurnCurrent(uint32 Generation) const
+{
+	return bTurnPending && TurnGeneration == Generation;
 }
 
 bool FHaybaMCPAgentClient::IsProLoopActive() const
@@ -198,11 +222,12 @@ void FHaybaMCPAgentClient::PostBrainConfig(const FString& UserPrompt, const FStr
 
 	TWeakPtr<FHaybaMCPAgentClient> WeakSelf = AsShared();
 	const FString CapturedPrompt = UserPrompt;
+	const uint32 Generation = TurnGeneration;
 	Request->OnProcessRequestComplete().BindLambda(
-		[WeakSelf, CapturedPrompt](FHttpRequestPtr /*Req*/, FHttpResponsePtr Response, bool bConnected)
+		[WeakSelf, CapturedPrompt, Generation](FHttpRequestPtr /*Req*/, FHttpResponsePtr Response, bool bConnected)
 		{
 			TSharedPtr<FHaybaMCPAgentClient> Self = WeakSelf.Pin();
-			if (!Self.IsValid()) return;
+			if (!Self.IsValid() || !Self->IsTurnCurrent(Generation)) return;
 			// Stream either way: a failed push surfaces as the sidecar's own
 			// brain_unavailable error (or /chat/config's transport error).
 			if (!bConnected || !Response.IsValid() || Response->GetResponseCode() != 200)
@@ -272,11 +297,13 @@ void FHaybaMCPAgentClient::PostConfig(const FString& UserPrompt)
 
 	TWeakPtr<FHaybaMCPAgentClient> WeakSelf = AsShared();
 	const FString CapturedPrompt = UserPrompt;
+	const uint32 Generation = TurnGeneration;
 	Request->OnProcessRequestComplete().BindLambda(
-		[WeakSelf, CapturedPrompt](FHttpRequestPtr /*Req*/, FHttpResponsePtr Response, bool bConnected)
+		[WeakSelf, CapturedPrompt, Generation](FHttpRequestPtr /*Req*/, FHttpResponsePtr Response, bool bConnected)
 		{
 			TSharedPtr<FHaybaMCPAgentClient> Self = WeakSelf.Pin();
-			if (!Self.IsValid()) return;
+			// Stopped (or superseded) while /chat/config was in flight: do not stream.
+			if (!Self.IsValid() || !Self->IsTurnCurrent(Generation)) return;
 
 			if (!bConnected || !Response.IsValid())
 			{
@@ -334,6 +361,7 @@ TSharedRef<IHttpRequest, ESPMode::ThreadSafe> FHaybaMCPAgentClient::CreateStream
 	// An approval resume may fail before its first semantic frame. Keep its
 	// unresolved identity across requests so that loss can still mark it Unknown.
 	bStreaming = true;
+	bTurnPending = false;   // the pre-stream phase of this turn is over
 
 	TSharedRef<FJsonObject> Body = MakeShared<FJsonObject>();
 	Body->SetStringField(TEXT("session_id"), SessionId);
@@ -683,6 +711,20 @@ void FHaybaMCPAgentClient::PostApprove()
 // ─────────────────────────────────────────────────────────────────────────────
 void FHaybaMCPAgentClient::Cancel()
 {
+	// Stop during the pre-stream round-trips (/brain/status, /brain/config,
+	// /chat/config): no server turn exists yet. Invalidate the pending
+	// continuations and finish the turn locally.
+	if (bTurnPending && !bStreaming)
+	{
+		bTurnPending = false;
+		++TurnGeneration;
+		if (bCurrentTurnPro)
+		{
+			StoreRotatedBrainToken();
+		}
+		EmitLocalDone(TEXT("cancelled"), /*cancelled*/ true);
+		return;
+	}
 	if (!bStreaming && !StreamRequest.IsValid())
 	{
 		return;
@@ -745,6 +787,7 @@ void FHaybaMCPAgentClient::AbortServerTurn()
 
 void FHaybaMCPAgentClient::EmitLocalDone(const FString& Reason, bool bCancelled)
 {
+	bTurnPending = false;   // a terminated turn has no pending continuation
 	if (bTerminalEmitted)
 	{
 		return;

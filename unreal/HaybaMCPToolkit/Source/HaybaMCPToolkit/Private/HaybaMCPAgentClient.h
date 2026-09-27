@@ -148,6 +148,8 @@ public:
 
 	/** True while a stream request is in flight. */
 	bool IsStreaming() const { return bStreaming; }
+	/** True while a turn is in flight, including its pre-stream round-trips. */
+	bool IsTurnActive() const { return bStreaming || bTurnPending; }
 
 	/** The session id used against the sidecar (stable for this client). */
 	const FString& GetSessionId() const { return SessionId; }
@@ -203,7 +205,13 @@ private:
 	bool bConfigDone = false;
 	bool bStreaming = false;
 	bool bTerminalEmitted = false;   // guards against double done (local + server)
-	bool bCurrentTurnPro = false;    // the in-flight/last stream request asked for loop=pro
+	bool bCurrentTurnPro = false;    // the in-flight/last turn asked for loop=pro
+	/** SendPrompt until /chat/stream starts: the /brain/status, /brain/config, /chat/config round-trips. */
+	bool bTurnPending = false;
+	/** Bumped per SendPrompt and on a pending-phase Cancel; captured by every pre-stream continuation. */
+	uint32 TurnGeneration = 0;
+	/** True while the pre-stream phase of turn Generation is still the live one. */
+	bool IsTurnCurrent(uint32 Generation) const;
 
 	/** Index into the decoded stream body up to which frames have been parsed. */
 	int32 ParseCursor = 0;

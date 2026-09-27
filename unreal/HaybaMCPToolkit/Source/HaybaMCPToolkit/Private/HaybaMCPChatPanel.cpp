@@ -610,7 +610,7 @@ TSharedRef<SWidget> SHaybaMCPChatPanel::BuildMessageRow(const FHaybaMCPChatMessa
             SNew(SButton)
             .Text(LOCTEXT("UseCommunity", "Use Community for this chat"))
             .ToolTipText(LOCTEXT("UseCommunityTip", "Continue this conversation on the local Community loop. Other chats keep using Hayba Pro."))
-            .IsEnabled_Lambda([this]() { return CanSend() && AgentClient.IsValid() && !AgentClient->IsStreaming(); })
+            .IsEnabled_Lambda([this]() { return CanSend() && AgentClient.IsValid() && !AgentClient->IsTurnActive(); })
             .OnClicked(this, &SHaybaMCPChatPanel::OnUseCommunityForThisChat)
         ];
 
@@ -1123,7 +1123,7 @@ void SHaybaMCPChatPanel::HandleStreamError(const FHaybaChatError& Error)
 
 FReply SHaybaMCPChatPanel::OnUseCommunityForThisChat()
 {
-    if (!CanSend() || !AgentClient.IsValid() || AgentClient->IsStreaming()) return FReply::Handled();
+    if (!CanSend() || !AgentClient.IsValid() || AgentClient->IsTurnActive()) return FReply::Handled();
     // Community runs on the local provider key.
     if (!FHaybaMCPSettings::Get().HasApiKey())
     {
