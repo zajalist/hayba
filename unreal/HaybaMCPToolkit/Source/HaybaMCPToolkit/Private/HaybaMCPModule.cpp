@@ -55,6 +55,7 @@
 #include "handlers/HaybaMCPPerfHandler.h"
 #include "handlers/HaybaMCPIdleHandler.h"
 #include "handlers/HaybaMCPRenderHandler.h"
+#include "handlers/HaybaMCPLeaseHandler.h"
 #include "HaybaMCPCaptureActor.h"
 #include "HaybaMCPSettings.h"
 #include "HaybaMCPRenderSafety.h"
@@ -205,6 +206,7 @@ void FHaybaMCPModule::StartupModule()
     CommandHandler->RegisterHandler(MakeShared<FHaybaMCPPerfHandler>());
     CommandHandler->RegisterHandler(MakeShared<FHaybaMCPIdleHandler>());
     CommandHandler->RegisterHandler(MakeShared<FHaybaMCPRenderHandler>());
+    CommandHandler->RegisterHandler(MakeShared<FHaybaMCPLeaseHandler>());
 
     // Optional-capability check: warn (log + editor notification) for any
     // satellite plugin that is disabled, so the user understands why a command

@@ -20,8 +20,15 @@ public:
      */
     void UnregisterHandler(const TSharedRef<IHaybaMCPHandler>& Handler);
 
-    /** Parse incoming TCP JSON, auth, dispatch, journal, return response JSON. */
+    /** Parse incoming TCP JSON, auth, dispatch, journal, return response JSON.
+     *  In-process callers have no connection (ConnId 0, owner "local"). */
     FString ProcessCommand(const FString& CommandJson);
+
+    /** The TCP path: ConnId identifies the caller for leases and Plan Mode. */
+    FString ProcessCommand(const FString& CommandJson, int32 ConnId);
+
+    /** A TCP connection closed: release the leases bound to it. Game thread. */
+    void NotifyConnectionClosed(int32 ConnId);
 
     /** Returns all registered command names. */
     TArray<FString> GetAllCommands() const;
@@ -63,6 +70,9 @@ public:
         bool bKnownPreflight = false);
 
 private:
+    /** ProcessCommand's body, run inside the request's lease context. */
+    FString ProcessCommandInContext(const FString& CommandJson);
+
     /** Rebuild CommandToHandler from the live handlers. The map is derived
      *  data and can go stale — see the call site in ProcessCommand. */
     void RebuildCommandMap();

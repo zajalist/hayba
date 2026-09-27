@@ -71,6 +71,9 @@ public:
     // Plan Mode handshake — set by Plan panel's Approve click, reset by every
     // destructive command so each plan must be approved exactly once.
     bool bPlanApproved = false;
+    // Owner (envelope `owner`, else per connection) of the plan on the panel.
+    // Only that owner may spend bPlanApproved; empty = pre-lease global rule.
+    FString PlanOwner;
 
     // Satellite modules (HaybaMCPGAS/Niagara/MetaSound/Sequencer) register their
     // command handlers into the core router at their own StartupModule, so an

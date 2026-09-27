@@ -10,6 +10,11 @@ public:
     virtual TArray<FString> GetCommands() const override;
     virtual FHaybaHandlerResult Handle(const FString& Cmd, const TSharedPtr<FJsonObject>& Params) override;
 
+    /** True when the lexical tier classifier finds no mutation or unsafe
+     *  keyword. Weak evidence (see HaybaMCPAccess::ClassifyPythonRun); used
+     *  only to pick the script's lease access class. */
+    static bool IsReadOnlyScriptForAccess(const FString& Code) { return ClassifyScript(Code) == EPythonTier::ReadOnly; }
+
 #if WITH_DEV_AUTOMATION_TESTS
     /** Exact fatal table exported only to prove every native deny rule through
      *  the pure source-policy matcher. Destructive examples must never reach
