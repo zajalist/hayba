@@ -150,11 +150,6 @@ private:
     FReply OnFooterConnectionClick();
     FReply OnFooterModelClick();
 
-    // ── Send helpers (existing wiring) ────────────────────────────────────
-    void InitializeSession(const FString& Goal);
-    void SendToMCP(const FString& UserMessage);
-    void OnClaudeResponse(bool bSuccess, const FString& ResponseText);
-
     // ── Empty-state prompt helpers ────────────────────────────────────────
     FReply OnPromptCardClicked(FString Prompt);
 

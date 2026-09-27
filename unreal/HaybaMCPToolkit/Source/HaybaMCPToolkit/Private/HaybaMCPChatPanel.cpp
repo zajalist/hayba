@@ -8,7 +8,6 @@
 #include "HaybaMCPChatPanel.h"
 #include "HaybaMCPModule.h"
 #include "HaybaMCPMainPanel.h"
-#include "HaybaMCPClaudeClient.h"
 #include "HaybaMCPAgentClient.h"
 #include "HaybaMCPActivityModel.h"
 #include "HaybaMCPStyle.h"
@@ -746,9 +745,7 @@ FReply SHaybaMCPChatPanel::OnSendCurrentInput()
     // First user message names the conversation (title dropdown / recents).
     if (Session.Goal.IsEmpty()) Session.Goal = Text;
 
-    // Streaming agent path (Task 8). The legacy single-POST pipeline
-    // (InitializeSession / SendToMCP / OnClaudeResponse) is retained below but
-    // no longer wired — see the "Legacy send pipeline" section.
+    // Streaming agent path (Task 8).
     StartAgentTurn(Text);
 
     return FReply::Handled();
@@ -1087,73 +1084,6 @@ void SHaybaMCPChatPanel::HandleStreamError(const FHaybaChatError& Error)
     // Keep any partial content, then surface the error inline.
     FinalizeInProgressBubble(TEXT(""));
     AddSystemError(Error.Error.IsEmpty() ? TEXT("Chat error") : Error.Error, TEXT(""));
-}
-
-// ── Legacy send pipeline (UNUSED — retained for least-risk fallback) ──────
-// The single-POST FHaybaMCPClaudeClient path below is no longer wired into the
-// send button; StartAgentTurn() replaced it. Kept compilable so the fallback
-// remains available and to avoid a wide deletion. See HaybaMCPWizardPrompt.h
-// for the system-prompt ownership decision.
-
-void SHaybaMCPChatPanel::InitializeSession(const FString& Goal)
-{
-    Session.Goal      = Goal;
-    Session.SessionId = FGuid::NewGuid().ToString();
-    AddAIMessage(TEXT("Planning your project steps…"));
-    SendToMCP(FString::Printf(TEXT("[INIT] Goal: %s"), *Goal));
-}
-
-void SHaybaMCPChatPanel::SendToMCP(const FString& UserMessage)
-{
-    const FHaybaMCPSettings& S = FHaybaMCPSettings::Get();
-    if (!S.HasApiKey())
-    {
-        AddSystemError(TEXT("No API key set — open Settings"), TEXT(""));
-        return;
-    }
-
-    Session.bWaitingForAI = true;
-    bIsStreaming = true;
-
-    BeginInProgressBubble();
-
-    FOnClaudeResponse Callback;
-    Callback.BindSP(this, &SHaybaMCPChatPanel::OnClaudeResponse);
-    FHaybaMCPClaudeClient::SendMessage(GetHaybaMCPWizardSystemPrompt(), UserMessage,
-        FHaybaMCPSettings::GetSharedApiKey(), S.Model, Callback);
-}
-
-void SHaybaMCPChatPanel::OnClaudeResponse(bool bSuccess, const FString& ResponseText)
-{
-    Session.bWaitingForAI = false;
-    bIsStreaming = false;
-
-    // Consume the placeholder.
-    if (Session.Messages.IsValidIndex(InProgressMessageIndex))
-    {
-        Session.Messages.RemoveAt(InProgressMessageIndex);
-        InProgressMessageIndex = INDEX_NONE;
-    }
-
-    if (!bSuccess) { AddSystemError(ResponseText, TEXT("")); return; }
-
-    TSharedPtr<FJsonObject> Root;
-    TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(ResponseText);
-    FString ReplyText = ResponseText;
-    TSharedPtr<FJsonObject> Graph;
-    if (FJsonSerializer::Deserialize(Reader, Root) && Root.IsValid())
-    {
-        Root->TryGetStringField(TEXT("reply"), ReplyText);
-        const TSharedPtr<FJsonObject>* GraphObj;
-        if (Root->TryGetObjectField(TEXT("graph"), GraphObj) && GraphObj->IsValid())
-            Graph = *GraphObj;
-    }
-    if (Graph.IsValid() && Session.HasCurrentStep())
-    {
-        Session.GetCurrentStep().Graph  = Graph;
-        Session.GetCurrentStep().Status = EHaybaMCPWizardStepStatus::InProgress;
-    }
-    AddAIMessage(ReplyText, Graph);
 }
 
 #undef LOCTEXT_NAMESPACE

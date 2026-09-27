@@ -1,7 +1,7 @@
 # hayba-visual-sidecar
 
 The Hayba visual perception sidecar — **one** FastAPI process on
-`localhost:7821`. It serves CLIP image embeddings (always on), SpatialCLIP
+`localhost:7822`. It serves CLIP image embeddings (always on), SpatialCLIP
 depth-aware embeddings (opt-in), OWL-ViT open-vocabulary detection (opt-in), and
 SAM segmentation with world-position back-projection for the PLUMB Semantic
 Studio.
@@ -41,7 +41,7 @@ Environment variables:
 
 | Var | Default | Purpose |
 |---|---|---|
-| `HAYBA_SIDECAR_PORT` | `7821` | TCP port |
+| `HAYBA_SIDECAR_PORT` | `7822` | TCP port |
 | `HAYBA_ENABLE_SPATIAL_CLIP` | unset | Set `1` to enable spatial endpoint |
 | `HAYBA_ENABLE_OWL_VIT` | unset | Set `1` to enable detection endpoint |
 | `HAYBA_SPATIAL_CLIP_CHECKPOINT` | unset | Path to spatial adapter `.pt` |
@@ -68,7 +68,7 @@ been warmed up.
 ## Verify
 
 ```
-curl http://localhost:7821/health
+curl http://localhost:7822/health
 # {"ok":true,"models":{"clip":true,"spatial_clip":false,"owl_vit":false,"sam":false},"model_loaded":false}
 ```
 

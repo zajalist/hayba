@@ -1,4 +1,4 @@
-const DEFAULT_URL = 'http://localhost:7821';
+const DEFAULT_URL = 'http://localhost:7822';
 const DEFAULT_HEALTH_TIMEOUT_MS = 1500;
 const DEFAULT_EMBED_TIMEOUT_MS = 30000;
 

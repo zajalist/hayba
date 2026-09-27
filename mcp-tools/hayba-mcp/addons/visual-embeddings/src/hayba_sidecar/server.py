@@ -94,7 +94,7 @@ def segment_project(req: dict):
 
 
 def main():
-    port = int(os.getenv("HAYBA_SIDECAR_PORT", "7821"))
+    port = int(os.getenv("HAYBA_SIDECAR_PORT", "7822"))
     uvicorn.run(app, host="127.0.0.1", port=port)
 
 
