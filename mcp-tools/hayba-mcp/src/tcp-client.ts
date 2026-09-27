@@ -4,11 +4,17 @@ import { createConnection, Socket } from 'node:net';
 import { EventEmitter } from 'node:events';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { randomBytes } from 'node:crypto';
 
 export interface TcpCommand {
   cmd: string;
   id: string;
   params: Record<string, unknown>;
+  /** Which agent is calling. Optional on the wire; the editor falls back to
+   *  one owner per connection. Leases and Plan-Mode approval are per owner. */
+  owner?: string;
+  /** A held lease token to act under (e.g. handed to a helper process). */
+  lease?: string;
 }
 
 export interface TcpResponse {
@@ -20,6 +26,35 @@ export interface TcpResponse {
    *  and tool-disabled rejections so the TS ToolExecutor can map them onto a
    *  UeToolError code without string-matching UE's `error` text. */
   code?: string;
+  /** Advisory lease mode: the command ran but collided with another owner's lease. */
+  lease_warning?: Record<string, unknown>;
+  /** Enforced lease mode: the conflict that refused the command (code lease_conflict). */
+  lease?: Record<string, unknown>;
+}
+
+const MAX_OWNER_CHARS = 128;
+
+/** The envelope owner: HAYBA_AGENT_ID when set (lets several processes act as
+ *  one agent), otherwise unique to this process. */
+export function resolveAgentOwner(env: NodeJS.ProcessEnv = process.env, pid: number = process.pid): string {
+  const fromEnv = env.HAYBA_AGENT_ID?.trim();
+  if (fromEnv) return fromEnv.slice(0, MAX_OWNER_CHARS);
+  return `node-${pid}-${randomBytes(3).toString('hex')}`;
+}
+
+/** Build one wire envelope. `owner`/`lease` are omitted when empty so an
+ *  older editor sees exactly the envelope it always did. */
+export function buildEnvelope(
+  cmd: string,
+  id: string,
+  params: Record<string, unknown>,
+  owner?: string | null,
+  lease?: string | null,
+): TcpCommand {
+  const command: TcpCommand = { cmd, id, params };
+  if (owner) command.owner = owner;
+  if (lease) command.lease = lease;
+  return command;
 }
 
 // ── Injectable types (also used in tests) ────────────────────────────────────
@@ -45,6 +80,8 @@ export class UETcpClient extends EventEmitter {
   private frames = new FrameDecoder();
   private requestCounter = 0;
   private connected = false;
+  private owner: string = resolveAgentOwner();
+  private lease: string | null = process.env.HAYBA_LEASE_TOKEN?.trim() || null;
 
   constructor(host = '127.0.0.1', port = 52342) {
     super();
@@ -100,13 +137,30 @@ export class UETcpClient extends EventEmitter {
     return this.connected;
   }
 
+  getOwner(): string {
+    return this.owner;
+  }
+
+  setOwner(owner: string): void {
+    this.owner = owner.trim().slice(0, MAX_OWNER_CHARS) || resolveAgentOwner({});
+  }
+
+  /** Lease token sent with every command (null = none). HAYBA_LEASE_TOKEN seeds it. */
+  getLease(): string | null {
+    return this.lease;
+  }
+
+  setLease(token: string | null): void {
+    this.lease = token?.trim() || null;
+  }
+
   async send(cmd: string, params: Record<string, unknown> = {}, timeoutMs = 30000): Promise<TcpResponse> {
     if (!this.socket || !this.connected) {
       throw new Error('Not connected to UE TCP server');
     }
 
     const id = `req_${++this.requestCounter}`;
-    const command: TcpCommand = { cmd, id, params };
+    const command = buildEnvelope(cmd, id, params, this.owner, this.lease);
     const json = JSON.stringify(command);
     const payload = Buffer.from(json, 'utf-8');
 
