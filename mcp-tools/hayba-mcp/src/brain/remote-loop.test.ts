@@ -75,4 +75,34 @@ describe('runRemoteLoop', () => {
     sock.push({ type: 'event', seq: 2, event: { type: 'approval_requested', activityId: 'a', approvalId: 'p1', call: { id: 't', name: 'asset_delete', input: {} }, argsHash: '{}', source: 'ts' } });
     expect(await run).toHaveLength(1);
   });
+
+  it('ends the loop with a cancelled activity_completed when aborted while the brain is silent/offline', async () => {
+    const { session, sock } = await connected();
+    const ac = new AbortController();
+    const run = drain(runRemoteLoop({ session, messages: [{ role: 'user', content: 'x' }], mode: 'production', approvals: new LocalApprovals(), dispatchTool: vi.fn(), guard, signal: ac.signal }));
+    await tick();
+    sock.push({ type: 'event', seq: 2, event: { type: 'activity_started', activityId: 'act-1', title: 'Doing a thing' } });
+    await tick();
+    sock.drop(); // brain goes silent; nothing else will ever arrive on this session
+    ac.abort();
+    const events = await run;
+    expect(events).toEqual([
+      { type: 'activity_started', activityId: 'act-1', title: 'Doing a thing' },
+      { type: 'activity_completed', activityId: 'act-1', outcome: 'cancelled', reason: 'aborted' },
+    ]);
+  });
+
+  it('redacts secrets in a failed dispatchTool error message before it leaves the machine', async () => {
+    const { session, sock } = await connected();
+    const dispatchTool = vi.fn(async () => { throw new Error('upstream said Bearer sk-live-abc123 was rejected'); });
+    const run = drain(runRemoteLoop({ session, messages: [{ role: 'user', content: 'hi' }], mode: 'production', approvals: new LocalApprovals(), dispatchTool, guard, signal: new AbortController().signal }));
+    await tick();
+    sock.push({ type: 'tool_call', seq: 2, id: 't-9', name: 'world_inspect', args: {}, gated: false });
+    await tick();
+    sock.push({ type: 'event', seq: 3, event: { type: 'activity_completed', activityId: 'a', outcome: 'succeeded', reason: 'end_turn' } });
+    await run;
+    const sent = sock.sent.find((s) => s.id === 't-9') as { result: { message: string } };
+    expect(sent.result.message).not.toContain('sk-live-abc123');
+    expect(sent.result.message).toContain('[REDACTED');
+  });
 });

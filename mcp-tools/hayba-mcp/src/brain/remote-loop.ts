@@ -1,4 +1,4 @@
-import type { AgentStreamEvent } from '@hayba/brain-protocol';
+import type { AgentStreamEvent, Frame } from '@hayba/brain-protocol';
 import { argsHash } from '@hayba/brain-protocol';
 import type { LLMMessage } from '../agents/llm-client.js';
 import { isDestructiveToolName, type DispatchTool } from '../chat/agent-loop.js';
@@ -23,7 +23,10 @@ function isTerminal(e: AgentStreamEvent): boolean {
   return e.type === 'activity_completed' || e.type === 'approval_requested' || (e.type === 'error' && e.termination !== undefined);
 }
 
+type Race = { kind: 'frame'; result: IteratorResult<Frame> } | { kind: 'abort' };
+
 export async function* runRemoteLoop(p: RemoteLoopParams): AsyncGenerator<AgentStreamEvent> {
+  let lastActivityId = 'brain';
   if (p.approvedCall) {
     p.approvals.add(p.approvedCall);
     p.session.send({ type: 'approve', name: p.approvedCall.name, args_hash: p.approvedCall.argsHash });
@@ -36,11 +39,36 @@ export async function* runRemoteLoop(p: RemoteLoopParams): AsyncGenerator<AgentS
       ...(p.activityTitle ? { activity_title: p.activityTitle } : {}),
     });
   }
-  const onAbort = () => p.session.send({ type: 'cancel' });
-  p.signal.addEventListener('abort', onAbort, { once: true });
+
+  let cancelSent = false;
+  const sendCancelOnce = () => {
+    if (cancelSent) return;
+    cancelSent = true;
+    p.session.send({ type: 'cancel' });
+  };
+  const aborted = new Promise<void>((resolve) => {
+    if (p.signal.aborted) { resolve(); return; }
+    p.signal.addEventListener('abort', () => resolve(), { once: true });
+  });
+  p.signal.addEventListener('abort', sendCancelOnce, { once: true });
+
+  const gen = p.session.frames();
   try {
-    for await (const f of p.session.frames()) {
+    while (true) {
+      // Race the next brain frame against a local abort: a disconnected or silent
+      // brain must never keep this generator open once the caller has cancelled.
+      const race = await Promise.race<Race>([
+        gen.next().then((result) => ({ kind: 'frame', result })),
+        aborted.then(() => ({ kind: 'abort' })),
+      ]);
+      if (race.kind === 'abort') {
+        yield { type: 'activity_completed', activityId: lastActivityId, outcome: 'cancelled', reason: 'aborted' };
+        return;
+      }
+      if (race.result.done) return;
+      const f = race.result.value;
       if (f.type === 'event') {
+        lastActivityId = f.event.activityId;
         yield f.event;
         if (isTerminal(f.event)) return;
       } else if (f.type === 'tool_call') {
@@ -48,12 +76,12 @@ export async function* runRemoteLoop(p: RemoteLoopParams): AsyncGenerator<AgentS
       } else if (f.type === 'done') {
         return;
       } else if (f.type === 'pro_unavailable') {
-        yield { type: 'error', activityId: 'brain', error: f.message, kind: 'brain_unavailable' };
+        yield { type: 'error', activityId: lastActivityId, error: f.message, kind: 'brain_unavailable' };
         return;
       }
     }
   } finally {
-    p.signal.removeEventListener('abort', onAbort);
+    p.signal.removeEventListener('abort', sendCancelOnce);
   }
 }
 
@@ -61,14 +89,19 @@ async function executeLocally(
   p: RemoteLoopParams, name: string, args: Record<string, unknown>,
 ): Promise<{ ok: boolean; result: unknown; truncated?: boolean }> {
   const verdict = guardInboundToolCall(name, args, { ...p.guard, mode: p.mode });
-  if (!verdict.ok) return { ok: false, result: { error: verdict.code, message: verdict.message } };
+  if (!verdict.ok) return shaped(false, { error: verdict.code, message: verdict.message });
   if (isDestructiveToolName(name) && !p.approvals.consume(name, argsHash(args))) {
-    return { ok: false, result: { error: 'approval_required', message: `${name} needs the user's approval in the Hayba panel` } };
+    return shaped(false, { error: 'approval_required', message: `${name} needs the user's approval in the Hayba panel` });
   }
   try {
-    const shaped = shapeToolResult(await p.dispatchTool(name, args));
-    return { ok: true, result: shaped.result, truncated: shaped.truncated };
+    return shaped(true, await p.dispatchTool(name, args));
   } catch (err) {
-    return { ok: false, result: { error: 'tool_failed', message: err instanceof Error ? err.message : String(err) } };
+    return shaped(false, { error: 'tool_failed', message: err instanceof Error ? err.message : String(err) });
   }
+}
+
+/** Every outbound tool_result payload — success, refusal or failure — is redacted and size-capped. */
+function shaped(ok: boolean, payload: unknown): { ok: boolean; result: unknown; truncated?: boolean } {
+  const { result, truncated } = shapeToolResult(payload);
+  return { ok, result, truncated };
 }

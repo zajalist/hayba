@@ -44,6 +44,41 @@ describe('BrainSession', () => {
     s2.open(); await tick();
     expect(s2.sent[0]).toMatchObject({ type: 'resume', last_seq: 2, access_token: 'jwt' });
     expect(s2.sent[1]).toMatchObject({ type: 'tool_result', id: 't-1' });
+    expect((s2.sent[1].seq as number)).toBeGreaterThan(s2.sent[0].seq as number);
+  });
+
+  it('retries token refresh failures during reconnect and recovers once the token succeeds', async () => {
+    const sockets: FakeSocket[] = [];
+    let calls = 0;
+    const getAccessToken = async () => {
+      calls += 1;
+      if (calls === 2) throw new Error('token refresh failed'); // first reconnect attempt
+      return 'jwt';
+    };
+    const s = new BrainSession('s-1', { ...baseOpts(sockets), getAccessToken, backoffMs: [1, 1, 1] });
+    const p = s.open(); await tick(); sockets[0].open(); await tick(); sockets[0].push(welcome); await p;
+    sockets[0].drop();
+    // Give both the failing and the recovering reconnect attempts time to run; no
+    // unhandled rejection should escape (vitest would fail the test on one), and a
+    // second socket must eventually appear despite the first token refresh failing.
+    await new Promise((r) => setTimeout(r, 30));
+    expect(calls).toBeGreaterThanOrEqual(3);
+    expect(sockets.length).toBe(2);
+    sockets[1].open(); await tick();
+    expect(sockets[1].sent[0]).toMatchObject({ type: 'resume' });
+  });
+
+  it('gives up and delivers a synthetic pro_unavailable once the resume window elapses', async () => {
+    const sockets: FakeSocket[] = [];
+    const s = new BrainSession('s-1', { ...baseOpts(sockets), backoffMs: [1, 1, 1], resumeWindowMs: 1 });
+    const p = s.open(); await tick(); sockets[0].open(); await tick(); sockets[0].push(welcome); await p;
+    sockets[0].drop();
+    // Give the 1ms resume window time to elapse before the (1ms-delayed) reconnect attempt fires.
+    await new Promise((r) => setTimeout(r, 20));
+    const got: string[] = [];
+    for await (const f of s.frames()) { got.push(f.type); }
+    expect(got).toEqual(['pro_unavailable']);
+    expect(sockets.length).toBe(1); // never reconnected
   });
 
   it('drops duplicate inbound frames by seq after replay', async () => {
