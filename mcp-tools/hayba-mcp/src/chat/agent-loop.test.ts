@@ -360,6 +360,14 @@ describe('isDestructiveToolName', () => {
     expect(isDestructiveToolName('get_tool_signature')).toBe(false);
     expect(isDestructiveToolName('asset_search')).toBe(false);
   });
+
+  it('gates binding an event, whose name carries no mutation verb', () => {
+    // ui_bind_event adds a node to the graph; its wire command is gated in C++,
+    // so the TS mirror must agree even though "bind" matches no verb pattern.
+    expect(isDestructiveToolName('ui_bind_event')).toBe(true);
+    expect(isDestructiveToolName('blueprint_add_bound_event')).toBe(true);
+    expect(isDestructiveToolName('blueprint_remove_node')).toBe(true);
+  });
 });
 
 describe('runAgentLoop', () => {

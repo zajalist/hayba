@@ -31,6 +31,9 @@ const CASES: Case[] = [
   { query: 'check my UI for text that gets cut off', expect: ['ui_validate', 'ui_measure_text'] },
   { query: 'how wide is this text going to render', expect: ['ui_measure_text', 'ui_layout_snapshot'] },
   { query: 'change the font on a label', expect: ['ui_set_text_style', 'ui_set_property'] },
+  // The capability a Blueprint-only menu cannot exist without — before it, the
+  // only way to react to a click was polling the button on Tick.
+  { query: 'make a button do something when clicked', expect: ['ui_bind_event'] },
 
   // Domain words people use instead of the internal name.
   { query: 'shader', expect: ['material_create', 'material_add_node', 'material_compile', 'material_list'] },
@@ -43,6 +46,7 @@ const CASES: Case[] = [
 
   // Capability phrasing.
   { query: 'compile a blueprint', expect: ['blueprint_compile', 'ui_compile_widget'] },
+  { query: 'add a custom event to a blueprint', expect: ['blueprint_add_custom_event'] },
   { query: 'save an asset to disk', expect: ['asset_save'] },
   { query: 'delete an actor', expect: ['actor_delete'] },
   { query: 'set a material parameter', expect: ['material_set_param', 'material_set_property'] },
