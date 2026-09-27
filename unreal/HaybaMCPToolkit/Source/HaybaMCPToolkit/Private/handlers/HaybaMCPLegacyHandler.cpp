@@ -148,6 +148,12 @@ FHaybaHandlerResult FHaybaMCPLegacyHandler::Cmd_Ping(const TSharedPtr<FJsonObjec
 			const bool bEnabled = P.IsValid() && P->IsEnabled();
 			Caps->SetBoolField(S.Key, bEnabled);
 		}
+		// Multi-agent coordination (docs/adr/0010). Host-project scripts such
+		// as editor_gate.py switch from a file lock to lease_acquire when
+		// lease_manager is true, and fall back to the file lock when absent.
+		Caps->SetBoolField(TEXT("lease_manager"), true);
+		Caps->SetBoolField(TEXT("editor_batch"), true);
+		Caps->SetBoolField(TEXT("wp_region_steps"), true);
 		Data->SetObjectField(TEXT("capabilities"), Caps);
 	}
 
