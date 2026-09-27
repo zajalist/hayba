@@ -20,6 +20,11 @@ struct FHaybaMCPRequestContext
 	FString LeaseToken;
 	/** Set by the Advisory check; merged into the response as `lease_warning`. */
 	TSharedPtr<FJsonObject> LeaseWarning;
+	/** A step of this editor_batch job (empty for an ordinary request). */
+	FString BatchJobId;
+	/** The batch itself passed the Plan-Mode gate, so its steps are covered
+	 *  by that approval and do not spend it again. */
+	bool bPlanPreApproved = false;
 };
 
 /**

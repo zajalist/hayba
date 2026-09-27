@@ -402,7 +402,8 @@ bool FHaybaMCPLeaseClassificationDriftTest::RunTest(const FString& Parameters)
 		}
 	}
 	for (const FString& Cmd : { FString(TEXT("lease_acquire")), FString(TEXT("lease_renew")),
-		FString(TEXT("lease_release")), FString(TEXT("lease_status")) })
+		FString(TEXT("lease_release")), FString(TEXT("lease_status")),
+		FString(TEXT("editor_batch")), FString(TEXT("batch_status")) })
 	{
 		TestTrue(*FString::Printf(TEXT("lease command is registered: %s"), *Cmd), Registered.Contains(Cmd));
 	}

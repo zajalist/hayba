@@ -3,6 +3,7 @@
 #include "Dom/JsonObject.h"
 
 class IHaybaMCPHandler;
+struct FHaybaMCPRequestContext;
 
 class FHaybaMCPCommandHandler
 {
@@ -26,6 +27,14 @@ public:
 
     /** The TCP path: ConnId identifies the caller for leases and Plan Mode. */
     FString ProcessCommand(const FString& CommandJson, int32 ConnId);
+
+    /**
+     * One editor_batch step, through the normal path (auth, lease check, Plan
+     * gate, transaction, dispatch, journal). `bPlanPreApproved` is true when
+     * the batch itself passed the Plan-Mode gate: its steps are covered by
+     * that approval. Game thread only; no connection (the batch owns it).
+     */
+    FString ProcessBatchStep(const FString& CommandJson, const FString& BatchJobId, bool bPlanPreApproved);
 
     /** A TCP connection closed: release the leases bound to it. Game thread. */
     void NotifyConnectionClosed(int32 ConnId);
@@ -72,6 +81,9 @@ public:
 private:
     /** ProcessCommand's body, run inside the request's lease context. */
     FString ProcessCommandInContext(const FString& CommandJson);
+
+    /** Publish `Context`, run the command, then fold in any lease warning. */
+    FString ProcessWithContext(const FString& CommandJson, FHaybaMCPRequestContext& Context);
 
     /** Rebuild CommandToHandler from the live handlers. The map is derived
      *  data and can go stale — see the call site in ProcessCommand. */

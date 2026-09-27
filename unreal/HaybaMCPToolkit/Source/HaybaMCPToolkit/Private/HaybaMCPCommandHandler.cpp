@@ -429,6 +429,9 @@ static bool IsDestructiveCommand(const FString& Cmd)
     static const TSet<FString> DestructiveCommands = {
         // Arbitrary code / wildcard invocation
         TEXT("python_run"),
+        // Runs any number of commands under one lease (each step is gated
+        // again unless the batch itself was approved). See docs/adr/0010.
+        TEXT("editor_batch"),
         TEXT("actor_call_function"),
         TEXT("editor_run_console_command"),
         TEXT("editor_save_all_and_quit"),
@@ -1196,6 +1199,25 @@ FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson, int3
     FHaybaMCPRequestContext Context;
     Context.ConnId = ConnId;
     Context.Owner = FHaybaMCPLeaseManager::ResolveOwner(nullptr, ConnId);
+    return ProcessWithContext(CommandJson, Context);
+}
+
+FString FHaybaMCPCommandHandler::ProcessBatchStep(
+    const FString& CommandJson, const FString& BatchJobId, bool bPlanPreApproved)
+{
+    if (!IsInGameThread())
+    {
+        return MakeOffGameThreadResponse();
+    }
+    FHaybaMCPRequestContext Context;
+    Context.Owner = FHaybaMCPLeaseManager::ResolveOwner(nullptr, 0);
+    Context.BatchJobId = BatchJobId;
+    Context.bPlanPreApproved = bPlanPreApproved;
+    return ProcessWithContext(CommandJson, Context);
+}
+
+FString FHaybaMCPCommandHandler::ProcessWithContext(const FString& CommandJson, FHaybaMCPRequestContext& Context)
+{
     FString Response;
     {
         FHaybaMCPLeaseManager::FScope Scope(Context);
@@ -1377,7 +1399,11 @@ FString FHaybaMCPCommandHandler::ProcessCommandInContext(const FString& CommandJ
             FHaybaMCPModule* M = FModuleManager::GetModulePtr<FHaybaMCPModule>("HaybaMCPToolkit");
             const FString Caller = Leases.EffectiveOwner();
             // Approval is per owner: another agent's Approve does not cover this caller.
-            const bool bApproved = M && HaybaMCPLease::PlanApprovalApplies(M->bPlanApproved, M->PlanOwner, Caller);
+            // An editor_batch step is covered by the approval its batch passed.
+            const FHaybaMCPRequestContext* GateContext = Leases.Current();
+            const bool bBatchCovered = GateContext && GateContext->bPlanPreApproved;
+            const bool bApproved = bBatchCovered
+                || (M && HaybaMCPLease::PlanApprovalApplies(M->bPlanApproved, M->PlanOwner, Caller));
             if (!bApproved)
             {
                 auto Data = MakeShared<FJsonObject>();
@@ -1414,7 +1440,7 @@ FString FHaybaMCPCommandHandler::ProcessCommandInContext(const FString& CommandJ
             // after the first one. Strict consume spends the approval on the
             // first destructive command, which is what an unattended agent
             // against content that matters wants.
-            if (S.bPlanApprovalStrictConsume && M)
+            if (S.bPlanApprovalStrictConsume && M && !bBatchCovered)
             {
                 M->bPlanApproved = false;
             }
