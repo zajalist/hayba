@@ -271,6 +271,38 @@ function dropBrain(session: ChatSession): Promise<void> {
 /** Hosted providers Hayba Pro accepts a BYOK key for; anything else (local, custom) stays on Community. */
 const PRO_BYOK_PROVIDERS: ReadonlySet<string> = new Set(['anthropic', 'openai', 'groq', 'openrouter']);
 const CUSTOM_ENDPOINT_MESSAGE = "Custom endpoints aren't supported in Hayba Pro — use Community for local models";
+const NO_BYOK_KEY_MESSAGE = 'No API key configured for Bring-your-own-key. Add one in Settings or switch Hayba Pro to Hayba models.';
+
+/**
+ * The LLM mode a Pro hello carries. Pro never silently switches modes: a BYOK
+ * request is refused locally — before anything leaves the machine — when it
+ * names a local/custom endpoint (the brain would refuse it only after the key
+ * was sent) or has no key to send. Both refusals use `not_entitled`, the reason
+ * the brain itself gives for an LLM mode it won't run; `auth` means the Pro
+ * sign-in, which is fine here.
+ */
+function proLlmMode(
+  requested: unknown, cfg: SessionConfig | undefined,
+): { ok: true; mode: LlmMode } | { ok: false; reason: 'not_entitled'; message: string } {
+  if (requested !== 'byok') return { ok: true, mode: { mode: 'subscription' } };
+  if (cfg && (!PRO_BYOK_PROVIDERS.has(cfg.provider) || cfg.baseURL)) {
+    return { ok: false, reason: 'not_entitled', message: CUSTOM_ENDPOINT_MESSAGE };
+  }
+  if (!cfg?.apiKey) return { ok: false, reason: 'not_entitled', message: NO_BYOK_KEY_MESSAGE };
+  return { ok: true, mode: { mode: 'byok', provider: cfg.provider, ...(cfg.model ? { model: cfg.model } : {}), api_key: cfg.apiKey } };
+}
+
+/**
+ * Pro openers take turns: each one's eviction wait AND open finish before the
+ * next counts open sessions. Awaiting only pending evictions isn't enough — a
+ * second opener would still not see the first one's session until it opened.
+ */
+let proOpenQueue: Promise<unknown> = Promise.resolve();
+function withProOpenSlot<T>(open: () => Promise<T>): Promise<T> {
+  const run = proOpenQueue.then(open);
+  proOpenQueue = run.catch(() => undefined);
+  return run;
+}
 
 /** The brain admits two concurrent Pro sessions per user. */
 const MAX_OPEN_PRO_SESSIONS = 2;
@@ -758,27 +790,23 @@ export function registerChatRoutes(app: Express, options: ChatRoutesOptions = {}
       // A session that was closed or gave up can never carry another turn.
       if (session.brain && !session.brain.isAlive()) void dropBrain(session);
       if (!session.brain) {
-        const cfg = resolveSessionConfig(sessionId);
-        // The brain refuses local/custom endpoints, but only after the key was sent:
-        // refuse them here so the key never leaves the machine.
-        const customEndpoint = body.llm === 'byok' && cfg !== undefined &&
-          (!PRO_BYOK_PROVIDERS.has(cfg.provider) || Boolean(cfg.baseURL));
-        const llm: LlmMode = body.llm === 'byok' && cfg?.apiKey
-          ? { mode: 'byok', provider: cfg.provider, ...(cfg.model ? { model: cfg.model } : {}), api_key: cfg.apiKey }
-          : { mode: 'subscription' };
-        if (!customEndpoint) await makeRoomForProSession(session);
-        const opened = customEndpoint
-          ? { ok: false as const, reason: 'not_entitled', message: CUSTOM_ENDPOINT_MESSAGE }
-          : options.brain
-            ? await options.brain.openSession(sessionId, llm, buildHandsManifest(catalog), permissions)
+        const llm = proLlmMode(body.llm, resolveSessionConfig(sessionId));
+        const opened = !llm.ok ? llm : await withProOpenSlot(async () => {
+          await makeRoomForProSession(session);
+          const r = options.brain
+            ? await options.brain.openSession(sessionId, llm.mode, buildHandsManifest(catalog), permissions)
             : { ok: false as const, reason: 'not_configured', message: 'Hayba Pro is not configured on this machine.' };
+          // Counted as open before the next opener takes the slot.
+          if (r.ok) session.brain = r.session;
+          return r;
+        });
         if (!opened.ok) {
           emit(session, 'error', { error: opened.message, kind: 'brain_unavailable', reason: opened.reason });
           finalize(session, 'brain_unavailable');
           cleanup();
           return;
         }
-        session.brain = opened.session;
+        session.brain = opened.session; // already set inside the slot; restated for the type narrowing below
       }
       // Only a turn the brain actually parked can be resumed by `approve`.
       const approvedCall = session.brainTurnParked ? approvalFor(session.approvedCall, 'pro') : undefined;
@@ -1203,6 +1231,7 @@ export function __resetChatState(): void {
   sessions.clear();
   configStore.clear();
   sessionCounter = 0;
+  proOpenQueue = Promise.resolve();
   chatRoutesRegistered = false;
   if (sweeper) {
     clearInterval(sweeper);

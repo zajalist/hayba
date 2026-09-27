@@ -20,6 +20,8 @@ const H = argsHash(ARGS);
  */
 class FakeBrain {
   sockets: FakeSocket[] = [];
+  /** For each hello: how many of this user's sockets the brain could still be counting (not fully closed). */
+  liveAtHello: number[] = [];
   private seq = new Map<FakeSocket, number>();
   get sock(): FakeSocket { return this.sockets[this.sockets.length - 1]; }
   factory = (): SocketLike => {
@@ -29,6 +31,7 @@ class FakeBrain {
     s.send = (d: string) => {
       send(d);
       if ((JSON.parse(d) as { type?: string }).type === 'hello') {
+        this.liveAtHello.push(this.sockets.filter((x) => x.readyState !== 3).length);
         setTimeout(() => this.push({ type: 'welcome', limits: { max_steps: 40, max_tokens: 1, wall_clock_ms: 1 }, protocol_range: [1, 1], resumed: false }, s));
       }
     };
@@ -41,9 +44,9 @@ class FakeBrain {
     sock.push({ seq, ...frame });
   }
   /** Ends the current turn the way the protocol ruling requires: an outcome, then exactly one `done`. */
-  finishTurn(activityId: string): void {
-    this.push({ type: 'event', event: { type: 'activity_completed', activityId, outcome: 'succeeded', reason: 'end_turn' } });
-    this.push({ type: 'done', reason: 'end_turn' });
+  finishTurn(activityId: string, sock: FakeSocket = this.sock): void {
+    this.push({ type: 'event', event: { type: 'activity_completed', activityId, outcome: 'succeeded', reason: 'end_turn' } }, sock);
+    this.push({ type: 'done', reason: 'end_turn' }, sock);
   }
   sentTypes(sock: FakeSocket = this.sock): string[] { return sock.sent.map((f) => f.type as string); }
 }
@@ -162,6 +165,41 @@ describe('chat server Pro loop', () => {
       } }]);
       expect(got.at(-1)).toMatchObject({ event: 'done', data: { reason: 'brain_unavailable' } });
       expect(brain.sockets).toHaveLength(0); // the key never left the machine
+      server.close();
+      __resetChatState();
+    }
+  });
+
+  it('refuses BYOK with no stored key instead of silently switching to Hayba models', async () => {
+    for (const cfg of [undefined, { provider: 'anthropic' }]) {
+      const brain = new FakeBrain();
+      start(brainConnector(brain));
+      if (cfg) expect((await post('/chat/config', cfg)).status).toBe(200);
+      const { frames } = await stream({ prompt: 'hi', loop: 'pro', llm: 'byok' });
+      const got = await frames;
+      const errors = got.filter((f) => f.event === 'error' && f.data.type === undefined);
+      expect(errors).toEqual([{ event: 'error', data: {
+        error: 'No API key configured for Bring-your-own-key. Add one in Settings or switch Hayba Pro to Hayba models.',
+        kind: 'brain_unavailable', reason: 'not_entitled',
+      } }]);
+      expect(got.at(-1)).toMatchObject({ event: 'done', data: { reason: 'brain_unavailable' } });
+      expect(brain.sockets).toHaveLength(0);
+      server.close();
+      __resetChatState();
+    }
+  });
+
+  it('uses Hayba models when llm is subscription or omitted, whatever Community config is stored', async () => {
+    for (const llm of ['subscription', undefined]) {
+      const brain = new FakeBrain();
+      start(brainConnector(brain));
+      await post('/chat/config', { provider: 'ollama', base_url: 'http://127.0.0.1:11434', api_key: 'local-key' });
+      const s = await stream({ prompt: 'hi', loop: 'pro', ...(llm ? { llm } : {}) });
+      await waitFor(() => brain.sentTypes().includes('turn'));
+      expect(brain.sock.sent[0]).toMatchObject({ type: 'hello' });
+      expect(brain.sock.sent[0].llm).toEqual({ mode: 'subscription' });
+      brain.finishTurn('a1');
+      await s.frames;
       server.close();
       __resetChatState();
     }
@@ -346,6 +384,35 @@ describe('chat server Pro loop', () => {
     expect(brain.sentTypes()[0]).toBe('hello');
     brain.finishTurn('a2');
     await third.frames;
+  });
+
+  it('R9: two chats opening Pro at once never exceed the allowance while an eviction is in flight', async () => {
+    const brain = new FakeBrain();
+    const connector = brainConnector(brain);
+    start(connector);
+    for (let i = 0; i < 2; i++) {
+      const s = await stream({ prompt: `chat ${i}`, loop: 'pro' });
+      await waitFor(() => brain.sockets.length === i + 1 && brain.sentTypes().includes('turn'));
+      brain.finishTurn(`a${i}`);
+      await s.frames;
+      await new Promise((r) => setTimeout(r, 5));
+    }
+    for (const s of brain.sockets) s.deferClose = true;
+    const [a, b] = await Promise.all([
+      stream({ prompt: 'chat A', loop: 'pro' }),
+      stream({ prompt: 'chat B', loop: 'pro' }),
+    ]);
+    // Let each eviction finish closing only after a pause, so a racing opener would send its hello first.
+    for (let i = 0; i < 200 && brain.sockets.length < 4; i++) {
+      await new Promise((r) => setTimeout(r, 10));
+      for (const s of brain.sockets) if (s.readyState === 2) s.finishClose();
+    }
+    expect(brain.sockets).toHaveLength(4);
+    await waitFor(() => brain.sockets.slice(2).every((s) => s.sent.some((f) => f.type === 'turn')));
+    expect(brain.liveAtHello.slice(2)).toEqual([2, 2]); // each new hello: at most itself + one other
+    brain.finishTurn('aA', brain.sockets[2]);
+    brain.finishTurn('aB', brain.sockets[3]);
+    await Promise.all([a.frames, b.frames]);
   });
 
   it('R9: closes the brain session of a deleted chat', async () => {
