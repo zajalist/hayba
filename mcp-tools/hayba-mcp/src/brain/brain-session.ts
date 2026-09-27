@@ -2,6 +2,7 @@ import {
   PROTOCOL_VERSION, parseFrame,
   type Frame, type Outbound, type Welcome, type ToolManifestEntry, type Permissions, type LlmMode, type ProUnavailableReason,
 } from '@hayba/brain-protocol';
+import { shapeToolResult } from './hands-guard.js';
 
 export interface SocketLike {
   readyState: number;
@@ -45,6 +46,8 @@ export class BrainSession {
   private established = false;
   /** Set when a post-welcome socket drops; cleared once reconnected. Drives the give-up deadline. */
   private disconnectedAt?: number;
+  /** True while absorbing a locally-cancelled turn's remaining frames (see `cancelTurn`). */
+  private discardingTurn = false;
 
   constructor(readonly sessionId: string, private readonly opts: BrainSessionOptions) {}
 
@@ -78,6 +81,49 @@ export class BrainSession {
   send<T extends Frame>(body: Outbound<T>): void {
     if (this.socket?.readyState === OPEN && this.established) this.write(body);
     else this.pending.push(body);
+  }
+
+  /**
+   * The local caller has abandoned the in-flight turn (e.g. it aborted while this
+   * session was disconnected or silent). Two things must happen so the session
+   * stays usable for the NEXT turn:
+   *  - any `frames()` consumer currently parked waiting for the next frame is
+   *    released now (with `null`, ending its iteration) instead of being left to
+   *    accidentally swallow whatever the brain sends next;
+   *  - this turn's remaining frames (its reply to `cancel`, straggling events,
+   *    a stray tool_call) must never reach the next `frames()` call. They are
+   *    silently absorbed — a `tool_call` gets an immediate cancelled result so
+   *    the brain isn't left waiting — until the brain's own terminal for this
+   *    turn arrives.
+   */
+  cancelTurn(): void {
+    this.discardingTurn = true;
+    if (this.waiter) { const w = this.waiter; this.waiter = undefined; w(null); }
+    const queued = this.inbox.splice(0);
+    for (const f of queued) {
+      if (!this.absorbDiscardedFrame(f)) this.inbox.push(f);
+    }
+  }
+
+  /** Returns true if `f` belonged to the cancelled turn and was absorbed (never to be delivered). */
+  private absorbDiscardedFrame(f: Frame): boolean {
+    if (!this.discardingTurn) return false;
+    if (f.type === 'tool_call') {
+      const shaped = shapeToolResult({ error: 'cancelled' });
+      this.send({ type: 'tool_result', id: f.id, ok: false, result: shaped.result, truncated: shaped.truncated });
+      return true;
+    }
+    if (f.type === 'event') {
+      // Absorbed unconditionally: a cancelled turn's activity_completed (or a
+      // terminal error) doesn't by itself prove the brain is done talking about
+      // it — `done` is the one frame that reliably closes out the exchange.
+      return true;
+    }
+    if (f.type === 'done') {
+      this.discardingTurn = false;
+      return true;
+    }
+    return false; // welcome/ping/pro_unavailable/upgrade_required/resume echoes are session-level, not turn-scoped
   }
 
   async *frames(): AsyncGenerator<Frame> {
@@ -115,6 +161,7 @@ export class BrainSession {
       const f = parsed.frame;
       if (f.seq <= this.lastInSeq) return; // replay duplicate
       this.lastInSeq = f.seq;
+      if (this.absorbDiscardedFrame(f)) return;
       if (intercept?.(f)) return;
       this.deliver(f);
     });

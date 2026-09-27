@@ -40,17 +40,33 @@ export async function* runRemoteLoop(p: RemoteLoopParams): AsyncGenerator<AgentS
     });
   }
 
+  // A local abort must both tell the brain (`cancel`) and tell OUR session that
+  // this turn is dead, so the session absorbs its stragglers instead of leaking
+  // them into whatever turn runs next on the same (reused) BrainSession.
+  const cancelLocally = () => {
+    p.session.send({ type: 'cancel' });
+    p.session.cancelTurn();
+  };
+
+  if (p.signal.aborted) {
+    // AbortSignal never fires 'abort' for a signal that was already aborted
+    // before we started listening, so this must be handled up front.
+    cancelLocally();
+    yield { type: 'activity_completed', activityId: lastActivityId, outcome: 'cancelled', reason: 'aborted' };
+    return;
+  }
+
   let cancelSent = false;
   const sendCancelOnce = () => {
     if (cancelSent) return;
     cancelSent = true;
-    p.session.send({ type: 'cancel' });
+    cancelLocally();
   };
-  const aborted = new Promise<void>((resolve) => {
-    if (p.signal.aborted) { resolve(); return; }
-    p.signal.addEventListener('abort', () => resolve(), { once: true });
-  });
+  let resolveAborted!: () => void;
+  const aborted = new Promise<void>((resolve) => { resolveAborted = resolve; });
+  const onAbort = () => resolveAborted();
   p.signal.addEventListener('abort', sendCancelOnce, { once: true });
+  p.signal.addEventListener('abort', onAbort, { once: true });
 
   const gen = p.session.frames();
   try {
@@ -82,6 +98,7 @@ export async function* runRemoteLoop(p: RemoteLoopParams): AsyncGenerator<AgentS
     }
   } finally {
     p.signal.removeEventListener('abort', sendCancelOnce);
+    p.signal.removeEventListener('abort', onAbort);
   }
 }
 

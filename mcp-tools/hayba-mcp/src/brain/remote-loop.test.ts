@@ -105,4 +105,50 @@ describe('runRemoteLoop', () => {
     expect(sent.result.message).not.toContain('sk-live-abc123');
     expect(sent.result.message).toContain('[REDACTED');
   });
+
+  it('ends locally on an already-aborted signal without waiting for the brain', async () => {
+    const { session, sock } = await connected();
+    const ac = new AbortController();
+    ac.abort();
+    const events = await drain(runRemoteLoop({ session, messages: [{ role: 'user', content: 'x' }], mode: 'production', approvals: new LocalApprovals(), dispatchTool: vi.fn(), guard, signal: ac.signal }));
+    expect(events).toEqual([{ type: 'activity_completed', activityId: 'brain', outcome: 'cancelled', reason: 'aborted' }]);
+    expect(sock.sent.at(-1)).toMatchObject({ type: 'cancel' });
+  });
+
+  it('discards turn 1 stragglers on the reused session so turn 2 never sees them', async () => {
+    const { session, sock } = await connected();
+    const dispatchTool1 = vi.fn();
+    const ac = new AbortController();
+    const run1 = drain(runRemoteLoop({ session, messages: [{ role: 'user', content: 'turn 1' }], mode: 'production', approvals: new LocalApprovals(), dispatchTool: dispatchTool1, guard, signal: ac.signal }));
+    await tick();
+    // Turn 1 is aborted locally while the brain is silent (nothing pending yet).
+    ac.abort();
+    await tick();
+    expect(await run1).toEqual([{ type: 'activity_completed', activityId: 'brain', outcome: 'cancelled', reason: 'aborted' }]);
+
+    // The brain only now replies to the cancelled turn: a message, a tool_call, then its terminal + done.
+    sock.push({ type: 'event', seq: 2, event: { type: 'message_delta', activityId: 'a', text: 'stale' } });
+    sock.push({ type: 'tool_call', seq: 3, id: 't-stale', name: 'world_inspect', args: {}, gated: false });
+    sock.push({ type: 'event', seq: 4, event: { type: 'activity_completed', activityId: 'a', outcome: 'cancelled', reason: 'aborted' } });
+    sock.push({ type: 'done', seq: 5, reason: 'aborted' });
+    await tick();
+    // The stale tool_call must be answered as cancelled, never dispatched.
+    expect(dispatchTool1).not.toHaveBeenCalled();
+    expect(sock.sent.find((s) => s.id === 't-stale')).toMatchObject({ ok: false, result: { error: 'cancelled' } });
+
+    // Turn 2 on the SAME session must only see its own frames and complete normally.
+    const dispatchTool2 = vi.fn(async () => ({ ok: true }));
+    const run2 = drain(runRemoteLoop({ session, messages: [{ role: 'user', content: 'turn 2' }], mode: 'production', approvals: new LocalApprovals(), dispatchTool: dispatchTool2, guard, signal: new AbortController().signal }));
+    await tick();
+    sock.push({ type: 'event', seq: 6, event: { type: 'message_delta', activityId: 'b', text: 'fresh' } });
+    sock.push({ type: 'tool_call', seq: 7, id: 't-fresh', name: 'world_inspect', args: {}, gated: false });
+    await tick();
+    expect(dispatchTool2).toHaveBeenCalledWith('world_inspect', {});
+    sock.push({ type: 'event', seq: 8, event: { type: 'activity_completed', activityId: 'b', outcome: 'succeeded', reason: 'end_turn' } });
+    const events2 = await run2;
+    expect(events2).toEqual([
+      { type: 'message_delta', activityId: 'b', text: 'fresh' },
+      { type: 'activity_completed', activityId: 'b', outcome: 'succeeded', reason: 'end_turn' },
+    ]);
+  });
 });
