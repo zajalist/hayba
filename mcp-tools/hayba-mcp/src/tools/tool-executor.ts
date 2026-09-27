@@ -3,7 +3,15 @@ import type { TcpResponse } from '../tcp-client.js';
 import { getToolMeta } from './tool-meta-registry.js';
 import { isHeavyOp, HEAVY_OP_TIMEOUT_MS } from './heavy-ops.js';
 
-export type UeToolErrorCode = 'transport' | 'timeout' | 'plan_gate' | 'tool_disabled' | 'ue_error' | 'editor_busy';
+export type UeToolErrorCode =
+  | 'transport'
+  | 'timeout'
+  | 'plan_gate'
+  | 'tool_disabled'
+  | 'ue_error'
+  | 'editor_busy'
+  // Another agent holds a lease on what this command touches (Enforced mode).
+  | 'lease_conflict';
 
 export class UeToolError extends Error {
   readonly code: UeToolErrorCode;
@@ -16,7 +24,7 @@ export class UeToolError extends Error {
   }
 }
 
-const KNOWN_UE_CODES = new Set<UeToolErrorCode>(['plan_gate', 'tool_disabled']);
+const KNOWN_UE_CODES = new Set<UeToolErrorCode>(['plan_gate', 'tool_disabled', 'lease_conflict']);
 function mapUeCode(raw: string | undefined): UeToolErrorCode {
   if (raw && KNOWN_UE_CODES.has(raw as UeToolErrorCode)) return raw as UeToolErrorCode;
   return 'ue_error';
@@ -280,7 +288,16 @@ export async function executeCommand<T = Record<string, unknown>>(
     }
   }
 
-  if (resp.ok) return (resp.data ?? {}) as T;
+  if (resp.ok) {
+    const data = resp.data ?? {};
+    // Advisory lease mode runs the command but says it collided with another
+    // agent's lease. The warning is a top-level envelope field; surface it in
+    // the data every tool returns so the agent actually sees it.
+    if (resp.lease_warning && typeof data === 'object' && !Array.isArray(data)) {
+      return { ...data, lease_warning: resp.lease_warning } as T;
+    }
+    return data as T;
+  }
   const code = mapUeCode(resp.code);
   throw new UeToolError(resp.error ?? 'unknown UE error', { code, uePayload: resp });
 }

@@ -17,6 +17,7 @@ import { defineTool, materializeTool, registerTool, recordToolSchema, type ToolD
 import { resolveAliases } from './param-aliases.js';
 import { TOOL_ALIASES } from './tool-aliases.js';
 import { AUDIO_DESCRIPTORS } from './audio/audio-tools.js';
+import { LEASE_DESCRIPTORS } from './lease/lease-tools.js';
 import { errorResult, okResult } from './tool-result.js';
 
 // ── Code Mode meta-tools (always-on) ──────────────────────────────────────────
@@ -3679,6 +3680,7 @@ const PYTHON_SCRIPT_FIELD_DESCRIPTION =
 export const STANDARD_DESCRIPTORS: ToolDescriptor[] = [
   ...HANDWRITTEN_STANDARD_DESCRIPTORS,
   ...AUDIO_DESCRIPTORS,
+  ...LEASE_DESCRIPTORS,
   ...VALIDATOR_DESCRIPTORS,
   ...PLUMB_DESCRIPTORS,
   ...PCG_DESCRIPTORS,
@@ -3687,6 +3689,7 @@ export const STANDARD_DESCRIPTORS: ToolDescriptor[] = [
       [
         ...HANDWRITTEN_STANDARD_DESCRIPTORS,
         ...AUDIO_DESCRIPTORS,
+        ...LEASE_DESCRIPTORS,
         ...VALIDATOR_DESCRIPTORS,
         ...PLUMB_DESCRIPTORS,
         ...PCG_DESCRIPTORS,
