@@ -23,7 +23,8 @@ export function isExploreReadOnlyTool(name: string): boolean {
 }
 
 export type GuardVerdict =
-  | { ok: true }
+  /** `args` are the schema-parsed arguments (defaults applied, unknown keys dropped): dispatch these, never the raw ones. */
+  | { ok: true; args: Record<string, unknown> }
   | { ok: false; code: 'unknown_tool' | 'invalid_args' | 'permission_denied' | 'read_only_mode'; message: string };
 
 export interface GuardContext {
@@ -43,18 +44,25 @@ export function guardInboundToolCall(name: string, args: Record<string, unknown>
   if (name.startsWith('python_') && !ctx.permissions.python_run) {
     return { ok: false, code: 'permission_denied', message: 'Python tools need the local python_run permission' };
   }
+  // The console's `py` command is python_run by another name.
+  if (name === 'editor_run_console_command' && !ctx.permissions.python_run && isPythonConsoleCommand(args.command)) {
+    return { ok: false, code: 'permission_denied', message: 'The py console command needs the local python_run permission' };
+  }
   if (ctx.mode === 'explore' && !isExploreReadOnlyTool(name)) {
     return { ok: false, code: 'read_only_mode', message: `${name} mutates the project; Explore mode is read-only` };
   }
   const shape = (ctx.rawShape ?? ((n: string) => getRawShape(n) ?? undefined))(name);
-  if (shape) {
-    const parsed = z.object(shape).safeParse(args);
-    if (!parsed.success) {
-      const detail = parsed.error.issues.slice(0, 3).map((i) => `${i.path.join('.') || '(args)'}: ${i.message}`).join('; ');
-      return { ok: false, code: 'invalid_args', message: detail };
-    }
+  if (!shape) return { ok: true, args };
+  const parsed = z.object(shape).safeParse(args);
+  if (!parsed.success) {
+    const detail = parsed.error.issues.slice(0, 3).map((i) => `${i.path.join('.') || '(args)'}: ${i.message}`).join('; ');
+    return { ok: false, code: 'invalid_args', message: detail };
   }
-  return { ok: true };
+  return { ok: true, args: parsed.data as Record<string, unknown> };
+}
+
+function isPythonConsoleCommand(command: unknown): boolean {
+  return typeof command === 'string' && /^\s*py(?:\.\w+)?(?:\s|$)/i.test(command);
 }
 
 const omittedImage = () => ({ omitted: 'image' });

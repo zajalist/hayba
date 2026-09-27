@@ -111,6 +111,7 @@ export async function* runRemoteLoop(p: RemoteLoopParams): AsyncGenerator<AgentS
       } else if (f.type === 'tool_call') {
         p.session.send({ type: 'tool_result', id: f.id, ...(await executeLocally(p, f.name, f.args)) });
       } else if (f.type === 'done') {
+        p.approvals.clear();
         return;
       } else if (f.type === 'pro_unavailable') {
         p.onUnavailable?.(f.reason);
@@ -133,11 +134,12 @@ async function executeLocally(
 ): Promise<{ ok: boolean; result: unknown; truncated?: boolean }> {
   const verdict = guardInboundToolCall(name, args, { ...p.guard, mode: p.mode });
   if (!verdict.ok) return shaped(false, { error: verdict.code, message: verdict.message });
+  // The approval was granted for the args the user saw (the raw ones); what runs is the parsed form.
   if (isDestructiveToolName(name) && !p.approvals.consume(name, argsHash(args))) {
     return shaped(false, { error: 'approval_required', message: `${name} needs the user's approval in the Hayba panel` });
   }
   try {
-    return shaped(true, await p.dispatchTool(name, args));
+    return shaped(true, await p.dispatchTool(name, verdict.args));
   } catch (err) {
     return shaped(false, { error: 'tool_failed', message: err instanceof Error ? err.message : String(err) });
   }

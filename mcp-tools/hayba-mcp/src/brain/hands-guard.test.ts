@@ -6,6 +6,8 @@ const perms = { 'tools.execute': true, 'facts.vision': false, 'facts.scene': fal
 const shapes: Record<string, z.ZodRawShape> = {
   asset_delete: { path: z.string() },
   world_inspect: {},
+  editor_run_console_command: { command: z.string() },
+  level_query: { limit: z.number().default(10) },
   python_run: { script: z.string() },
 };
 const ctx = (over: Partial<Parameters<typeof guardInboundToolCall>[2]> = {}) => ({
@@ -35,7 +37,18 @@ describe('guardInboundToolCall', () => {
       .toMatchObject({ ok: false, code: 'read_only_mode' });
   });
   it('allows a valid manifest call', () => {
-    expect(guardInboundToolCall('asset_delete', { path: '/Game/X' }, ctx())).toEqual({ ok: true });
+    expect(guardInboundToolCall('asset_delete', { path: '/Game/X' }, ctx())).toEqual({ ok: true, args: { path: '/Game/X' } });
+  });
+  it('hands back the Zod-parsed args (defaults applied, unknown keys dropped), not the raw ones', () => {
+    expect(guardInboundToolCall('level_query', { sneaky: true }, ctx())).toEqual({ ok: true, args: { limit: 10 } });
+  });
+  it('blocks the py console command when python_run is off', () => {
+    for (const command of ['py import os', 'PY print(1)', '  py.cmd x']) {
+      expect(guardInboundToolCall('editor_run_console_command', { command }, ctx())).toMatchObject({ ok: false, code: 'permission_denied' });
+    }
+    expect(guardInboundToolCall('editor_run_console_command', { command: 'stat unit' }, ctx())).toMatchObject({ ok: true });
+    expect(guardInboundToolCall('editor_run_console_command', { command: 'py print(1)' }, ctx({ permissions: { ...perms, python_run: true } })))
+      .toMatchObject({ ok: true });
   });
 });
 

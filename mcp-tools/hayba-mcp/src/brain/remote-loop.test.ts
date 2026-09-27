@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { z } from 'zod';
 import { argsHash } from '@hayba/brain-protocol';
 import { BrainSession } from './brain-session.js';
 import { LocalApprovals } from './local-approvals.js';
@@ -216,5 +217,28 @@ describe('runRemoteLoop', () => {
     expect(events.at(-1)).toMatchObject({ type: 'error', kind: 'brain_unavailable' });
     expect(reasons).toEqual(['session_expired']);
     expect(session.isAlive()).toBe(false);
+  });
+
+  it('dispatches the schema-parsed args, not the raw ones the brain sent', async () => {
+    const { session, sock } = await connected();
+    const dispatchTool = vi.fn(async () => ({}));
+    const parsedGuard = { ...guard, rawShape: (n: string) => (n === 'world_inspect' ? { limit: z.number().default(5) } : undefined) };
+    const run = drain(runRemoteLoop({ session, messages: [{ role: 'user', content: 'hi' }], mode: 'production', approvals: new LocalApprovals(), dispatchTool, guard: parsedGuard, signal: new AbortController().signal }));
+    await tick();
+    sock.push({ type: 'tool_call', seq: 2, id: 't-1', name: 'world_inspect', args: { extra: 'x' }, gated: false });
+    await tick();
+    expect(dispatchTool).toHaveBeenCalledWith('world_inspect', { limit: 5 });
+    sock.push({ type: 'done', seq: 3, reason: 'end_turn' });
+    await run;
+  });
+
+  it('an approval the turn never used expires when that turn reaches done', async () => {
+    const { session, sock } = await connected();
+    const approvals = new LocalApprovals();
+    const run = drain(runRemoteLoop({ session, messages: [], mode: 'production', approvedCall: { name: 'asset_delete', argsHash: argsHash({ path: '/Game/A' }) }, approvals, dispatchTool: vi.fn(), guard, signal: new AbortController().signal }));
+    await tick();
+    sock.push({ type: 'done', seq: 2, reason: 'end_turn' });
+    await run;
+    expect(approvals.consume('asset_delete', argsHash({ path: '/Game/A' }))).toBe(false);
   });
 });
