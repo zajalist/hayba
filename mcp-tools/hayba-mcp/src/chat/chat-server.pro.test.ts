@@ -144,6 +144,40 @@ describe('chat server Pro loop', () => {
     expect(got.indexOf(errors[0])).toBeLessThan(got.length - 1);
   });
 
+  it('refuses a local or custom-endpoint BYOK config before any brain socket opens', async () => {
+    for (const cfg of [
+      { provider: 'ollama', api_key: 'sk-local-secret' },
+      { provider: 'custom', base_url: 'http://127.0.0.1:9999/v1', api_key: 'sk-custom-secret' },
+      { provider: 'anthropic', base_url: 'https://proxy.example/v1', api_key: 'sk-ant-proxied-secret' },
+    ]) {
+      const brain = new FakeBrain();
+      start(brainConnector(brain));
+      expect((await post('/chat/config', cfg)).status).toBe(200);
+      const { frames } = await stream({ prompt: 'hi', loop: 'pro', llm: 'byok' });
+      const got = await frames;
+      const errors = got.filter((f) => f.event === 'error' && f.data.type === undefined);
+      expect(errors).toEqual([{ event: 'error', data: {
+        error: "Custom endpoints aren't supported in Hayba Pro — use Community for local models",
+        kind: 'brain_unavailable', reason: 'not_entitled',
+      } }]);
+      expect(got.at(-1)).toMatchObject({ event: 'done', data: { reason: 'brain_unavailable' } });
+      expect(brain.sockets).toHaveLength(0); // the key never left the machine
+      server.close();
+      __resetChatState();
+    }
+  });
+
+  it('sends a supported hosted-provider BYOK config to the brain', async () => {
+    const brain = new FakeBrain();
+    start(brainConnector(brain));
+    await post('/chat/config', { provider: 'openrouter', model: 'm', api_key: 'sk-or-key' });
+    const s = await stream({ prompt: 'hi', loop: 'pro', llm: 'byok' });
+    await waitFor(() => brain.sentTypes().includes('turn'));
+    expect(brain.sock.sent[0]).toMatchObject({ type: 'hello', llm: { mode: 'byok', provider: 'openrouter', model: 'm', api_key: 'sk-or-key' } });
+    brain.finishTurn('a1');
+    await s.frames;
+  });
+
   it('rejects an unknown loop value', async () => {
     start(brainConnector(new FakeBrain()));
     const res = await post('/chat/stream', { prompt: 'hi', loop: 'turbo' });

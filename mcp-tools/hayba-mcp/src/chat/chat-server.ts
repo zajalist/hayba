@@ -268,6 +268,10 @@ function dropBrain(session: ChatSession): Promise<void> {
   return closing;
 }
 
+/** Hosted providers Hayba Pro accepts a BYOK key for; anything else (local, custom) stays on Community. */
+const PRO_BYOK_PROVIDERS: ReadonlySet<string> = new Set(['anthropic', 'openai', 'groq', 'openrouter']);
+const CUSTOM_ENDPOINT_MESSAGE = "Custom endpoints aren't supported in Hayba Pro — use Community for local models";
+
 /** The brain admits two concurrent Pro sessions per user. */
 const MAX_OPEN_PRO_SESSIONS = 2;
 
@@ -755,13 +759,19 @@ export function registerChatRoutes(app: Express, options: ChatRoutesOptions = {}
       if (session.brain && !session.brain.isAlive()) void dropBrain(session);
       if (!session.brain) {
         const cfg = resolveSessionConfig(sessionId);
+        // The brain refuses local/custom endpoints, but only after the key was sent:
+        // refuse them here so the key never leaves the machine.
+        const customEndpoint = body.llm === 'byok' && cfg !== undefined &&
+          (!PRO_BYOK_PROVIDERS.has(cfg.provider) || Boolean(cfg.baseURL));
         const llm: LlmMode = body.llm === 'byok' && cfg?.apiKey
-          ? { mode: 'byok', provider: cfg.provider, ...(cfg.model ? { model: cfg.model } : {}), ...(cfg.baseURL ? { base_url: cfg.baseURL } : {}), api_key: cfg.apiKey }
+          ? { mode: 'byok', provider: cfg.provider, ...(cfg.model ? { model: cfg.model } : {}), api_key: cfg.apiKey }
           : { mode: 'subscription' };
-        await makeRoomForProSession(session);
-        const opened = options.brain
-          ? await options.brain.openSession(sessionId, llm, buildHandsManifest(catalog), permissions)
-          : { ok: false as const, reason: 'not_configured', message: 'Hayba Pro is not configured on this machine.' };
+        if (!customEndpoint) await makeRoomForProSession(session);
+        const opened = customEndpoint
+          ? { ok: false as const, reason: 'not_entitled', message: CUSTOM_ENDPOINT_MESSAGE }
+          : options.brain
+            ? await options.brain.openSession(sessionId, llm, buildHandsManifest(catalog), permissions)
+            : { ok: false as const, reason: 'not_configured', message: 'Hayba Pro is not configured on this machine.' };
         if (!opened.ok) {
           emit(session, 'error', { error: opened.message, kind: 'brain_unavailable', reason: opened.reason });
           finalize(session, 'brain_unavailable');
