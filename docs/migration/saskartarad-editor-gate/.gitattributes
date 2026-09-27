@@ -1,0 +1,2 @@
+# Keep these byte-exact: the patch applies to a repo that stores them with LF.
+* text eol=lf
