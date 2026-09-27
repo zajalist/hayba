@@ -4,7 +4,28 @@ All notable changes to Hayba MCP Toolkit are documented here. Format based on [K
 
 ## [Unreleased]
 
+### Added
+- Multi-agent editor leases (ADR-0010). `lease_acquire` / `lease_renew` /
+  `lease_release` / `lease_status` claim `global`, `world:`, `wp-region:`,
+  `asset:`, `actor:` or `pie` resources. Acquire never blocks: it answers
+  granted or queued with position, holder and ETA. The envelope gains optional
+  `owner` and `lease` fields; the Node client sends `HAYBA_AGENT_ID` (or a
+  per-process id) and renews granted leases in the background. The new
+  `LeaseEnforcement` setting is `Advisory` by default (commands run and carry a
+  `lease_warning`); `Enforced` refuses them with `code: "lease_conflict"`.
+- `python_run` accepts `deadline_s` (5 to 60 s) from a caller holding an
+  exclusive lease on the current world, `transaction: false`, and
+  `world_partition: true`.
+
+### Changed
+- Plan-Mode approval is per owner: only the agent that proposed a plan can
+  spend its Approve.
+
 ### Fixed
+- `python_run` scripts that load or unload World Partition actors no longer
+  run inside the global editor transaction, which left `UTransBuffer` with a
+  non-zero active count and crashed the next tick in Landscape.
+- `python_run` is no longer re-sent after a transport timeout.
 - `material_get_info` now reports each graph parameter's authored name, exact
   parameter type, and typed default value, with explicit availability flags
   for invalid/non-finite metadata instead of plausible omissions. Master
