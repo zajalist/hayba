@@ -156,6 +156,11 @@ export const NON_IDEMPOTENT = new Set<string>([
   // A world click can select, move, attack or open game state. Never repeat it
   // after a lost response; the first dispatch may already have landed.
   'editor_pie_click_actor',
+  // Arbitrary editor Python. A transport timeout does not mean the script did
+  // not run: the game thread may still be executing it (or have finished and
+  // lost the reply). Re-sending ran the same mutation twice, including World
+  // Partition load/unload sequences that must never overlap.
+  'python_run',
   // GAS
   'gas_create_ability',
   'gas_create_effect',
