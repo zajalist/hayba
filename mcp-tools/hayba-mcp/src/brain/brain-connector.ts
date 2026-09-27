@@ -21,6 +21,11 @@ export interface BrainConnector {
   ): Promise<{ ok: true; session: BrainSession } | { ok: false; reason: string; message: string }>;
 }
 
+/** A non-2xx answer from the brain's HTTP endpoints. */
+class BrainHttpError extends Error {
+  constructor(readonly path: string, readonly status: number) { super(`brain ${path} failed: HTTP ${status}`); }
+}
+
 export function createBrainConnector(opts: {
   brainUrl: string; clientVersion: string; fetchImpl?: typeof fetch; socketFactory?: SocketFactory;
 }): BrainConnector {
@@ -34,18 +39,29 @@ export function createBrainConnector(opts: {
 
   async function post<T>(path: string, body: unknown): Promise<T> {
     const res = await doFetch(`${http}${path}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
-    if (!res.ok) throw new Error(`brain ${path} failed: HTTP ${res.status}`);
+    if (!res.ok) throw new BrainHttpError(path, res.status);
     return (await res.json()) as T;
   }
 
-  async function getAccessToken(): Promise<string> {
-    if (access && access.expiresAt - 60_000 > Date.now()) return access.token;
+  /** One refresh at a time: refresh tokens rotate, so a second concurrent refresh with the old one would fail. */
+  let inflight: Promise<string> | null = null;
+
+  async function refresh(): Promise<string> {
     if (!refreshToken) throw new Error('not signed in to Hayba Pro');
-    const t = await post<{ access_token: string; refresh_token: string; expires_in: number }>('/auth/refresh', { refresh_token: refreshToken });
+    const sent = refreshToken;
+    const t = await post<{ access_token: string; refresh_token: string; expires_in: number }>('/auth/refresh', { refresh_token: sent });
+    // A sign-out or new sign-in while this was in flight wins.
+    if (refreshToken !== sent) throw new Error('Hayba Pro sign-in changed');
     if (t.refresh_token !== refreshToken) rotated = t.refresh_token;
     refreshToken = t.refresh_token;
     access = { token: t.access_token, expiresAt: Date.now() + t.expires_in * 1000 };
     return access.token;
+  }
+
+  function getAccessToken(): Promise<string> {
+    if (access && access.expiresAt - 60_000 > Date.now()) return Promise.resolve(access.token);
+    inflight ??= refresh().finally(() => { inflight = null; });
+    return inflight;
   }
 
   return {
@@ -70,6 +86,7 @@ export function createBrainConnector(opts: {
         const r = await session.open();
         return r.ok ? { ok: true, session } : { ok: false, reason: r.reason, message: r.message };
       } catch (err) {
+        if (err instanceof BrainHttpError && err.status === 401) return { ok: false, reason: 'auth', message: 'Sign in to Hayba Pro again' };
         return { ok: false, reason: 'unreachable', message: err instanceof Error ? err.message : String(err) };
       }
     },

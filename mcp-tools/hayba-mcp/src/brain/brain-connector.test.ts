@@ -42,4 +42,38 @@ describe('createBrainConnector', () => {
     expect(c.signedIn()).toEqual({ signedIn: true, email: 'a@b.c' });
     if (r.ok) r.session.close();
   });
+
+  it('maps a 401 from /auth/refresh to reason auth with a sign-in-again message', async () => {
+    const fetchImpl = (async () => new Response(JSON.stringify({ error: 'refresh failed' }), { status: 401 })) as unknown as typeof fetch;
+    const c = createBrainConnector({ brainUrl: 'wss://brain.test', clientVersion: 't', fetchImpl, socketFactory: () => new FakeSocket() });
+    c.setRefreshToken('revoked');
+    expect(await c.openSession('s', { mode: 'subscription' }, [], permissions)).toEqual({ ok: false, reason: 'auth', message: 'Sign in to Hayba Pro again' });
+  });
+
+  it('shares one in-flight refresh between concurrent callers (refresh tokens rotate)', async () => {
+    let refreshes = 0;
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    const fetchImpl = (async () => {
+      refreshes += 1;
+      await gate;
+      return new Response(JSON.stringify({ access_token: 'jwt', refresh_token: 'rt2', expires_in: 3600 }));
+    }) as unknown as typeof fetch;
+    const socketFactory = () => {
+      const s = new FakeSocket();
+      const send = s.send.bind(s);
+      s.send = (d: string) => { send(d); setTimeout(() => s.push({ type: 'welcome', seq: 1, limits: { max_steps: 40, max_tokens: 1, wall_clock_ms: 1 }, protocol_range: [1, 1], resumed: false })); };
+      setTimeout(() => s.open());
+      return s;
+    };
+    const c = createBrainConnector({ brainUrl: 'wss://brain.test', clientVersion: 't', fetchImpl, socketFactory });
+    c.setRefreshToken('rt1');
+    const both = Promise.all([c.openSession('a', { mode: 'subscription' }, [], permissions), c.openSession('b', { mode: 'subscription' }, [], permissions)]);
+    await new Promise((r) => setTimeout(r, 10));
+    release();
+    const [a, b] = await both;
+    expect(a.ok && b.ok).toBe(true);
+    expect(refreshes).toBe(1);
+    for (const r of [a, b]) if (r.ok) r.session.close();
+  });
 });
