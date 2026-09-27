@@ -3,6 +3,7 @@
 #include "HaybaMCPAdvisoryTypes.h"
 #include "Widgets/SCompoundWidget.h"
 #include "Input/Reply.h"
+#include "Containers/Ticker.h"
 
 class SEditableTextBox;
 class STextBlock;
@@ -18,6 +19,8 @@ public:
     SLATE_END_ARGS()
 
     void Construct(const FArguments& InArgs);
+    // Stops a pending Hayba Pro sign-in poll so the ticker cannot outlive the panel.
+    virtual ~SHaybaMCPSettingsPanel() override;
 
 private:
     SHaybaMCPMainPanel* MainPanel = nullptr;
@@ -51,6 +54,25 @@ private:
     void RefreshKeyStatus();
     void OnAdvisoryVerbosityChanged(TSharedPtr<EHaybaMCPAdvisoryVerbosity> NewValue, ESelectInfo::Type);
     static FText AdvisoryVerbosityLabel(EHaybaMCPAdvisoryVerbosity Value);
+
+    // ── Hayba Pro (hosted brain) ────────────────────────────────────────────
+    // Sign-in is a device-code flow proxied by the chat sidecar's /brain/* routes.
+    // The refresh token goes straight into the DPAPI vault under "hayba-brain".
+    TArray<TSharedPtr<FString>>                BrainLlmModeOptions;  // "subscription" / "byok"
+    TSharedPtr<FString>                        SelectedBrainLlmMode;
+    TSharedPtr<SComboBox<TSharedPtr<FString>>> BrainLlmModeCombo;
+    TSharedPtr<STextBlock>                     BrainStatusText;      // "Signed in as ..." / sign-in progress
+    FTSTicker::FDelegateHandle                 BrainPollTicker;
+    FString                                    BrainDeviceCode;
+    double                                     BrainSignInDeadline = 0.0; // FPlatformTime::Seconds()
+    bool                                       bBrainSignInStarting = false;
+    bool                                       bBrainPollInFlight = false;
+
+    void   RefreshBrainStatus();
+    FReply OnBrainSignIn();
+    FReply OnBrainSignOut();
+    bool   TickBrainSignInPoll(float DeltaTime);
+    void   StopBrainSignInPoll();
 
     // Dirty tracking — Save button only enables when something has changed.
     bool bIsDirty = false;

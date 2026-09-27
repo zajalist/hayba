@@ -171,6 +171,12 @@ TSharedRef<SWidget> SHaybaMCPChatPanel::BuildToolbar()
     return SNew(SHorizontalBox)
         + SHorizontalBox::Slot().FillWidth(1.f).VAlign(VAlign_Center)
         [ SNew(STextBlock).Text(LOCTEXT("AgentHeading", "Agent")).Font(FCoreStyle::GetDefaultFontStyle("Bold", 16)) ]
+        // Active loop: Hayba Pro (hosted) or the local Community loop.
+        + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0.f, 0.f, 8.f, 0.f)
+        [ SNew(STextBlock)
+            .Text_Lambda([this]() { return IsProLoopActive() ? LOCTEXT("LoopPro", "Pro") : LOCTEXT("LoopCommunity", "Community"); })
+            .ToolTipText(LOCTEXT("LoopTip", "Which agent loop this chat uses. Change it in Settings > Hayba Pro."))
+            .ColorAndOpacity(FSlateColor(ColorMuted)) ]
         + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0.f, 0.f, 5.f, 0.f)
         [ SNew(SButton).ButtonStyle(FAppStyle::Get(), "SimpleButton")
             .Text(LOCTEXT("InspectWorldAction", "Inspect world"))
@@ -597,6 +603,17 @@ TSharedRef<SWidget> SHaybaMCPChatPanel::BuildMessageRow(const FHaybaMCPChatMessa
         Stack->AddSlot().AutoHeight().Padding(28.f, 4.f, 0.f, 1.f)
         [ BuildActivityCard(Msg.ActivityId) ];
 
+    // Hayba Pro unavailable: offer to finish this chat on the local Community loop.
+    if (MessageIndex == CommunityFallbackMessageIndex)
+        Stack->AddSlot().AutoHeight().HAlign(HAlign_Left).Padding(28.f, 6.f, 0.f, 1.f)
+        [
+            SNew(SButton)
+            .Text(LOCTEXT("UseCommunity", "Use Community for this chat"))
+            .ToolTipText(LOCTEXT("UseCommunityTip", "Re-send your last message using the local Community loop. Other chats keep using Hayba Pro."))
+            .IsEnabled_Lambda([this]() { return CanSend() && !LastPrompt.IsEmpty(); })
+            .OnClicked(this, &SHaybaMCPChatPanel::OnUseCommunityForThisChat)
+        ];
+
     return SNew(SBorder)
         .BorderImage(FAppStyle::GetBrush("NoBrush"))
         .Padding(FMargin(8.f, 4.f))
@@ -805,6 +822,8 @@ FReply SHaybaMCPChatPanel::OnNewConversation()
     PendingActivityId.Empty();
     InProgressMessageIndex = INDEX_NONE;
     InProgressAssistantText.Reset();
+    LastPrompt.Reset();
+    CommunityFallbackMessageIndex = INDEX_NONE;
 
     Session = FHaybaMCPWizardSession{};
     ExpandedActivityIds.Reset();
@@ -876,9 +895,17 @@ void SHaybaMCPChatPanel::EnsureAgentClient()
 
 }
 
+bool SHaybaMCPChatPanel::IsProLoopActive() const
+{
+    return AgentClient.IsValid() ? AgentClient->IsProLoopActive() : FHaybaMCPSettings::Get().bUseHaybaPro;
+}
+
 void SHaybaMCPChatPanel::StartAgentTurn(const FString& Prompt)
 {
-    if (!FHaybaMCPSettings::Get().HasApiKey())
+    // Hayba Pro on subscription models needs no local provider key.
+    const bool bNeedsProviderKey =
+        !(IsProLoopActive() && FHaybaMCPSettings::Get().BrainLlmMode == TEXT("subscription"));
+    if (bNeedsProviderKey && !FHaybaMCPSettings::Get().HasApiKey())
     {
         AddSystemError(TEXT("No API key configured — add one in Settings to chat"), TEXT(""));
         return;
@@ -886,6 +913,8 @@ void SHaybaMCPChatPanel::StartAgentTurn(const FString& Prompt)
 
     EnsureAgentClient();
 
+    LastPrompt = Prompt;
+    CommunityFallbackMessageIndex = INDEX_NONE;
     Session.bWaitingForAI = true;
     bIsStreaming = true;
     BeginInProgressBubble();
@@ -1084,6 +1113,25 @@ void SHaybaMCPChatPanel::HandleStreamError(const FHaybaChatError& Error)
     // Keep any partial content, then surface the error inline.
     FinalizeInProgressBubble(TEXT(""));
     AddSystemError(Error.Error.IsEmpty() ? TEXT("Chat error") : Error.Error, TEXT(""));
+    if (Error.Kind == TEXT("brain_unavailable"))
+    {
+        // Attach "Use Community for this chat" to the error row just added.
+        CommunityFallbackMessageIndex = Session.Messages.Num() - 1;
+        RebuildChat();
+    }
+}
+
+FReply SHaybaMCPChatPanel::OnUseCommunityForThisChat()
+{
+    if (!CanSend() || LastPrompt.IsEmpty()) return FReply::Handled();
+    EnsureAgentClient();
+    AgentClient->bForceCommunityThisChat = true;
+    CommunityFallbackMessageIndex = INDEX_NONE;
+    // StartAgentTurn wraps AgentClient->SendPrompt(LastPrompt, WorkMode) with the
+    // same in-progress bubble / waiting state as a normal send.
+    const FString Prompt = LastPrompt;
+    StartAgentTurn(Prompt);
+    return FReply::Handled();
 }
 
 #undef LOCTEXT_NAMESPACE

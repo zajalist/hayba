@@ -129,6 +129,17 @@ public:
 	 */
 	void AbortServerTurn();
 
+	/**
+	 * Hayba Pro fallback: when true, this chat's turns use the local Community
+	 * loop even if FHaybaMCPSettings::bUseHaybaPro is on (set by the panel's
+	 * "Use Community for this chat" after a brain_unavailable error). Reset to
+	 * false whenever the client starts or adopts a chat session id.
+	 */
+	bool bForceCommunityThisChat = false;
+
+	/** True when the next turn routes through Hayba Pro (setting on, not forced to Community). */
+	bool IsProLoopActive() const;
+
 	/** True while a stream request is in flight. */
 	bool IsStreaming() const { return bStreaming; }
 
@@ -153,6 +164,12 @@ private:
     friend class FHaybaActivityClientFramesTest;
     friend class FHaybaActivityResumeDisconnectTest;
 	void PostConfig(const FString& UserPrompt);
+	/** /chat/config when this session has none yet, then /chat/stream. */
+	void ConfigureAndStream(const FString& UserPrompt);
+	/** Hayba Pro: push the DPAPI-stored refresh token (POST /brain/config), then ConfigureAndStream. */
+	void PostBrainConfig(const FString& UserPrompt, const FString& RefreshToken);
+	/** Hayba Pro: after a Pro turn's done, GET /brain/status and re-store any rotated refresh token. */
+	void StoreRotatedBrainToken();
 	void StartStream(const FString& UserPrompt);
 	/** Prepare callbacks/state separately from sending, so transport outcomes can be tested offline. */
 	TSharedRef<IHttpRequest, ESPMode::ThreadSafe> CreateStreamRequest(const FString& UserPrompt);
@@ -178,6 +195,7 @@ private:
 	bool bConfigDone = false;
 	bool bStreaming = false;
 	bool bTerminalEmitted = false;   // guards against double done (local + server)
+	bool bCurrentTurnPro = false;    // the in-flight/last stream request asked for loop=pro
 
 	/** Index into the decoded stream body up to which frames have been parsed. */
 	int32 ParseCursor = 0;

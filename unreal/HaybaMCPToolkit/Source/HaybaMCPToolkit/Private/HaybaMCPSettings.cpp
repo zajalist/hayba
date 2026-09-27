@@ -272,6 +272,10 @@ void FHaybaMCPSettings::Load()
     GConfig->GetBool(Section, TEXT("bHasSeenOnboarding"), bHasSeenOnboarding, GEditorPerProjectIni);
     GConfig->GetBool(Section, TEXT("bPlanModeEnabled"), bPlanModeEnabled, GEditorPerProjectIni);
     GConfig->GetBool(Section, TEXT("bPlanApprovalStrictConsume"), bPlanApprovalStrictConsume, GEditorPerProjectIni);
+    GConfig->GetBool(Section, TEXT("bUseHaybaPro"), bUseHaybaPro, GEditorPerProjectIni);
+    GConfig->GetString(Section, TEXT("BrainLlmMode"), BrainLlmMode, GEditorPerProjectIni);
+    if (BrainLlmMode != TEXT("subscription") && BrainLlmMode != TEXT("byok")) BrainLlmMode = TEXT("subscription");
+    GConfig->GetString(Section, TEXT("BrainAccountEmail"), BrainAccountEmail, GEditorPerProjectIni);
     GConfig->GetInt(Section, TEXT("PlanModeToolCallCount"), PlanModeToolCallCount, GEditorPerProjectIni);
     GConfig->GetBool(Section, TEXT("bShownPlanModePrompt"), bShownPlanModePrompt, GEditorPerProjectIni);
     {
@@ -336,6 +340,9 @@ void FHaybaMCPSettings::Save() const
     GConfig->SetBool(Section, TEXT("bHasSeenOnboarding"), bHasSeenOnboarding, GEditorPerProjectIni);
     GConfig->SetBool(Section, TEXT("bPlanModeEnabled"), bPlanModeEnabled, GEditorPerProjectIni);
     GConfig->SetBool(Section, TEXT("bPlanApprovalStrictConsume"), bPlanApprovalStrictConsume, GEditorPerProjectIni);
+    GConfig->SetBool(Section, TEXT("bUseHaybaPro"), bUseHaybaPro, GEditorPerProjectIni);
+    GConfig->SetString(Section, TEXT("BrainLlmMode"), *BrainLlmMode, GEditorPerProjectIni);
+    GConfig->SetString(Section, TEXT("BrainAccountEmail"), *BrainAccountEmail, GEditorPerProjectIni);
     GConfig->SetInt(Section, TEXT("PlanModeToolCallCount"), PlanModeToolCallCount, GEditorPerProjectIni);
     GConfig->SetBool(Section, TEXT("bShownPlanModePrompt"), bShownPlanModePrompt, GEditorPerProjectIni);
     GConfig->SetString(Section, TEXT("PlanModeFirstUseDate"), *PlanModeFirstUseDate.ToIso8601(), GEditorPerProjectIni);

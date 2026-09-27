@@ -94,6 +94,17 @@ private:
     bool            bAwaitingPlanApproval = false;
     FString         PendingActivityId;
 
+    // ── Hayba Pro loop selection / unavailable fallback ─────────────────────
+    // Last prompt handed to the agent, so "Use Community for this chat" can
+    // re-send it after a brain_unavailable error.
+    FString         LastPrompt;
+    // Row (Session.Messages index) that carries the inline Community-fallback
+    // button; INDEX_NONE when no fallback is offered.
+    int32           CommunityFallbackMessageIndex = INDEX_NONE;
+    /** True when the next turn routes through Hayba Pro (setting on, not forced to Community). */
+    bool            IsProLoopActive() const;
+    FReply          OnUseCommunityForThisChat();
+
     void            EnsureAgentClient();
     void            StartAgentTurn(const FString& Prompt);
     void            BeginInProgressBubble();

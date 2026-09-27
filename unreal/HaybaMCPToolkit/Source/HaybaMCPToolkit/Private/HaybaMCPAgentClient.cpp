@@ -77,10 +77,33 @@ void FHaybaMCPAgentClient::SendPrompt(const FString& UserPrompt, const FString& 
 	if (SessionId.IsEmpty())
 	{
 		SessionId = MakeSessionId();
+		bForceCommunityThisChat = false;
 	}
 	bTerminalEmitted = false;
 	WorkMode = InWorkMode;
 
+	// Hayba Pro: the sidecar holds the refresh token only in memory, so push the
+	// DPAPI-stored one before every Pro turn. With no stored token, skip the push;
+	// the sidecar answers brain_unavailable, which the panel renders.
+	if (IsProLoopActive())
+	{
+		const FString RefreshToken = FHaybaMCPSettings::GetProviderKey(TEXT("hayba-brain"));
+		if (!RefreshToken.IsEmpty())
+		{
+			PostBrainConfig(UserPrompt, RefreshToken);
+			return;
+		}
+	}
+	ConfigureAndStream(UserPrompt);
+}
+
+bool FHaybaMCPAgentClient::IsProLoopActive() const
+{
+	return FHaybaMCPSettings::Get().bUseHaybaPro && !bForceCommunityThisChat;
+}
+
+void FHaybaMCPAgentClient::ConfigureAndStream(const FString& UserPrompt)
+{
 	if (bConfigDone)
 	{
 		StartStream(UserPrompt);
@@ -89,6 +112,72 @@ void FHaybaMCPAgentClient::SendPrompt(const FString& UserPrompt, const FString& 
 	{
 		PostConfig(UserPrompt);
 	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Hayba Pro — POST /brain/config (refresh-token handoff, loopback only, never logged)
+// ─────────────────────────────────────────────────────────────────────────────
+void FHaybaMCPAgentClient::PostBrainConfig(const FString& UserPrompt, const FString& RefreshToken)
+{
+	const FHaybaMCPSettings& Settings = FHaybaMCPSettings::Get();
+
+	TSharedRef<FJsonObject> Body = MakeShared<FJsonObject>();
+	Body->SetStringField(TEXT("refresh_token"), RefreshToken);   // loopback only — never logged
+	if (!Settings.BrainAccountEmail.IsEmpty())
+	{
+		Body->SetStringField(TEXT("email"), Settings.BrainAccountEmail);
+	}
+
+	TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();
+	Request->SetURL(Settings.SidecarURL / TEXT("brain/config"));
+	Request->SetVerb(TEXT("POST"));
+	Request->SetHeader(TEXT("Content-Type"), TEXT("application/json"));
+	Request->SetContentAsString(JsonToString(Body));
+
+	// NB: never log the body — it carries the refresh token.
+	UE_LOG(LogHaybaAgentClient, Verbose, TEXT("POST /brain/config (token %d bytes, not logged)"), RefreshToken.Len());
+
+	TWeakPtr<FHaybaMCPAgentClient> WeakSelf = AsShared();
+	const FString CapturedPrompt = UserPrompt;
+	Request->OnProcessRequestComplete().BindLambda(
+		[WeakSelf, CapturedPrompt](FHttpRequestPtr /*Req*/, FHttpResponsePtr Response, bool bConnected)
+		{
+			TSharedPtr<FHaybaMCPAgentClient> Self = WeakSelf.Pin();
+			if (!Self.IsValid()) return;
+			// Stream either way: a failed push surfaces as the sidecar's own
+			// brain_unavailable error (or /chat/config's transport error).
+			if (!bConnected || !Response.IsValid() || Response->GetResponseCode() != 200)
+			{
+				UE_LOG(LogHaybaAgentClient, Verbose, TEXT("POST /brain/config did not succeed (HTTP %d)"),
+					Response.IsValid() ? Response->GetResponseCode() : 0);
+			}
+			Self->ConfigureAndStream(CapturedPrompt);
+		});
+
+	Request->ProcessRequest();
+}
+
+// Supabase rotates the refresh token on every refresh; the sidecar hands the new
+// one back exactly once via /brain/status so the next editor launch still signs in.
+void FHaybaMCPAgentClient::StoreRotatedBrainToken()
+{
+	TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();
+	Request->SetURL(FHaybaMCPSettings::Get().SidecarURL / TEXT("brain/status"));
+	Request->SetVerb(TEXT("GET"));
+	Request->OnProcessRequestComplete().BindLambda(
+		[](FHttpRequestPtr /*Req*/, FHttpResponsePtr Response, bool bConnected)
+		{
+			if (!bConnected || !Response.IsValid() || Response->GetResponseCode() != 200) return;
+			TSharedPtr<FJsonObject> Root;
+			if (!FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Response->GetContentAsString()), Root) ||
+				!Root.IsValid()) return;
+			FString Rotated;
+			if (Root->TryGetStringField(TEXT("rotated_refresh_token"), Rotated) && !Rotated.IsEmpty())
+			{
+				FHaybaMCPSettings::SetProviderKey(TEXT("hayba-brain"), Rotated);   // never logged
+			}
+		});
+	Request->ProcessRequest();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -178,6 +267,7 @@ bool FHaybaMCPAgentClient::AdoptSavedSession(const FString& InSessionId)
 	}
 	SessionId = InSessionId;
 	bConfigDone = false;
+	bForceCommunityThisChat = false;
 	StreamActivityIds.Reset();
 	return true;
 }
@@ -198,6 +288,13 @@ TSharedRef<IHttpRequest, ESPMode::ThreadSafe> FHaybaMCPAgentClient::CreateStream
 	Body->SetStringField(TEXT("session_id"), SessionId);
 	Body->SetStringField(TEXT("prompt"), UserPrompt);
 	Body->SetStringField(TEXT("mode"), WorkMode);
+	const bool bPro = Settings.bUseHaybaPro && !bForceCommunityThisChat;
+	Body->SetStringField(TEXT("loop"), bPro ? TEXT("pro") : TEXT("community"));
+	if (bPro)
+	{
+		Body->SetStringField(TEXT("llm"), Settings.BrainLlmMode);
+	}
+	bCurrentTurnPro = bPro;
 	// provider/model/key already registered via /chat/config for this session.
 
 	TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();
@@ -442,6 +539,10 @@ void FHaybaMCPAgentClient::DispatchFrame(const FString& FrameBlock)
 			Data->TryGetBoolField(TEXT("cancelled"), Done.bCancelled);
 		}
 		bTerminalEmitted = true;
+		if (bCurrentTurnPro)
+		{
+			StoreRotatedBrainToken();
+		}
 		OnDone.Broadcast(Done);
 	}
 	else if (EventType == TEXT("error"))
