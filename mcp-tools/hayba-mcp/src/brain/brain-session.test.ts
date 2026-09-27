@@ -70,7 +70,7 @@ describe('BrainSession', () => {
 
   it('gives up and delivers a synthetic pro_unavailable once the resume window elapses', async () => {
     const sockets: FakeSocket[] = [];
-    const s = new BrainSession('s-1', { ...baseOpts(sockets), backoffMs: [1, 1, 1], resumeWindowMs: 1 });
+    const s = new BrainSession('s-1', { ...baseOpts(sockets), backoffMs: [10, 10, 10], resumeWindowMs: 1 });
     const p = s.open(); await tick(); sockets[0].open(); await tick(); sockets[0].push(welcome); await p;
     sockets[0].drop();
     // Give the 1ms resume window time to elapse before the (1ms-delayed) reconnect attempt fires.
@@ -107,6 +107,21 @@ describe('BrainSession', () => {
     const got: Array<{ type: string }> = [];
     for await (const f of s.frames()) { got.push(f); if (f.type === 'tool_call') break; }
     expect(got.at(-1)).toMatchObject({ type: 'tool_call', id: 't-1' });
+  });
+
+  it('reports alive while usable and dead after close or give-up', async () => {
+    const sockets: FakeSocket[] = [];
+    const s = new BrainSession('s-1', baseOpts(sockets));
+    const p = s.open(); await tick(); sockets[0].open(); await tick(); sockets[0].push(welcome); await p;
+    expect(s.isAlive()).toBe(true);
+    s.close();
+    expect(s.isAlive()).toBe(false);
+
+    const gaveUp = new BrainSession('s-1', { ...baseOpts(sockets), backoffMs: [10, 10, 10], resumeWindowMs: 1 });
+    const p2 = gaveUp.open(); await tick(); sockets[1].open(); await tick(); sockets[1].push(welcome); await p2;
+    sockets[1].drop();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(gaveUp.isAlive()).toBe(false);
   });
 
   it('drops duplicate inbound frames by seq after replay', async () => {

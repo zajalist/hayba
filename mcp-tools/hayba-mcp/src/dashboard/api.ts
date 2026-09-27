@@ -19,6 +19,9 @@ import { getEntries, addEntry, deleteEntry, getBaseTemplates } from '../encyclop
 import type { EncyclopediaEntry } from '../encyclopedia.js';
 import { getCachedSidecarHealth, pingSidecar } from '../tools/visual/sidecar-client.js';
 import { registerChatRoutes } from '../chat/chat-server.js';
+import { createBrainConnector } from '../brain/brain-connector.js';
+import { registerBrainRoutes } from '../brain/brain-routes.js';
+import { HAYBA_VERSION } from '../version.js';
 import { jsonObjectBody, stringQuery } from '../http/express-boundary.js';
 
 /**
@@ -27,7 +30,10 @@ import { jsonObjectBody, stringQuery } from '../http/express-boundary.js';
 export function registerApiRoutes(app: Express): void {
   // BYOK copilot SSE surface (Task 4) — /chat/stream, /chat/cancel,
   // /chat/approve, /chat/config. Localhost-only, key never persisted/echoed.
-  registerChatRoutes(app);
+  // Hayba Pro: one connector shared by the /brain/* sign-in routes and Pro chat turns.
+  const brain = createBrainConnector({ brainUrl: config.brainUrl, clientVersion: HAYBA_VERSION });
+  registerBrainRoutes(app, brain);
+  registerChatRoutes(app, { brain });
 
   // Server health
   app.get('/api/health', (_req: Request, res: Response) => {

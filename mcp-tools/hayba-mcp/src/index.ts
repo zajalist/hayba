@@ -2,6 +2,7 @@
 import { McpServer, ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { config } from './config.js';
+import { HAYBA_VERSION } from './version.js';
 import { listCatalogResources, readCatalogResource } from './resources.js';
 import { registerTools } from './tools/index.js';
 import { startDashboard } from './dashboard/server.js';
@@ -17,7 +18,7 @@ installConsoleSecretRedaction();
 // ── MCP server setup ─────────────────────────────────────────────────────────
 const server = new McpServer({
   name: 'hayba-mcp',
-  version: '1.0.0'
+  version: HAYBA_VERSION
 });
 
 // Register catalog resources (PCGEx node catalog)

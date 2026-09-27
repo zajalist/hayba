@@ -55,6 +55,15 @@ export class BrainSession {
 
   constructor(readonly sessionId: string, private readonly opts: BrainSessionOptions) {}
 
+  /**
+   * False once this session can never carry another turn: it was closed locally,
+   * gave up after its resume window, or its frame stream ended. A caller holding
+   * a dead session must drop it and open a fresh one.
+   */
+  isAlive(): boolean {
+    return !this.closed && !this.ended;
+  }
+
   async open(): Promise<OpenResult> {
     const token = await this.opts.getAccessToken();
     return new Promise<OpenResult>((resolve) => {

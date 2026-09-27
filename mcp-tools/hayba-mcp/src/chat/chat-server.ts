@@ -45,7 +45,8 @@ import type { AddressInfo } from 'node:net';
 import { createLLMClient, type LLMMessage } from '../agents/llm-client.js';
 import { getProvider } from '../agents/providers.js';
 import {
-  runLegacyAgentLoop as runAgentLoop,
+  runAgentLoop as runAgentLoopStreaming,
+  adaptToLegacy,
   argsHash,
   buildToolCatalog,
   type AgentEvent,
@@ -54,7 +55,12 @@ import {
 } from './agent-loop.js';
 import type { LLMTool, LLMUsage } from '../agents/llm-client.js';
 import { createChatDispatcher } from './tool-dispatch.js';
-import { isExploreReadOnlyTool } from '../brain/hands-guard.js';
+import { buildHandsManifest, isExploreReadOnlyTool, type GuardContext } from '../brain/hands-guard.js';
+import type { BrainConnector } from '../brain/brain-connector.js';
+import type { BrainSession } from '../brain/brain-session.js';
+import { LocalApprovals } from '../brain/local-approvals.js';
+import { runRemoteLoop } from '../brain/remote-loop.js';
+import type { LlmMode, Permissions } from '@hayba/brain-protocol';
 import { getArchetype } from '../agents/agent-registry.js';
 import { installExpressJsonRedaction, redactBoundaryValue } from '../security/secret-redaction.js';
 import { jsonObjectBody, stringQuery } from '../http/express-boundary.js';
@@ -184,6 +190,15 @@ interface ChatSession {
   lastActivity: number;
   /** Set once the current/last turn has ended (final done frame emitted). */
   lastDone?: BufferedFrame;
+  /** Hayba Pro: the live remote brain session carrying this chat's Pro turns. */
+  brain?: BrainSession;
+  /**
+   * Hayba Pro: true while the brain holds a turn PARKED at an approval request
+   * (no `done` yet). Resolved either by an approve-resume or by a `cancel`.
+   */
+  brainTurnParked?: boolean;
+  /** Tool calls the LOCAL user approved for the brain; the brain cannot mint these. */
+  approvals: LocalApprovals;
 }
 
 const BUFFER_LIMIT = 500;
@@ -230,7 +245,15 @@ function evictSession(session: ChatSession): void {
   }
   session.clients.clear();
   session.running = false;
+  dropBrain(session);
   sessions.delete(session.id);
+}
+
+/** Close and forget this chat's remote brain session (if any). */
+function dropBrain(session: ChatSession): void {
+  session.brain?.close();
+  session.brain = undefined;
+  session.brainTurnParked = false;
 }
 
 function sweepSessions(now: number = Date.now()): void {
@@ -271,6 +294,7 @@ function getOrCreateSession(id: string): ChatSession {
       assistantText: '',
       toolTrace: [],
       lastActivity: Date.now(),
+      approvals: new LocalApprovals(),
     };
     sessions.set(id, s);
     enforceSessionCap();
@@ -382,6 +406,26 @@ export interface ChatRoutesOptions {
    * from the live registry (filtered by archetype). Primarily a test seam.
    */
   tools?: LLMTool[];
+  /** Hayba Pro connector. Absent = every `loop: 'pro'` turn reports brain_unavailable. */
+  brain?: BrainConnector;
+}
+
+const LOOPS = ['community', 'pro'] as const;
+const PERMISSION_KEYS = ['tools.execute', 'facts.vision', 'facts.scene', 'python_run'] as const;
+
+/**
+ * Local Pro permissions: safe defaults overlaid with only the known boolean keys
+ * from the request (the brain's hello schema is strict; stray keys would fail it).
+ */
+function resolvePermissions(requested: unknown): Permissions {
+  const permissions: Permissions = { 'tools.execute': true, 'facts.vision': false, 'facts.scene': false, python_run: false };
+  if (requested && typeof requested === 'object') {
+    for (const key of PERMISSION_KEYS) {
+      const value = (requested as Record<string, unknown>)[key];
+      if (typeof value === 'boolean') permissions[key] = value;
+    }
+  }
+  return permissions;
 }
 
 /**
@@ -544,12 +588,18 @@ export function registerChatRoutes(app: Express, options: ChatRoutesOptions = {}
       archetype_filter?: string[];
       mode?: AgentWorkMode;
       last_seq?: number;
+      loop?: 'community' | 'pro';
+      llm?: 'subscription' | 'byok';
+      permissions?: Partial<Permissions>;
     };
     if (body.session_id !== undefined && !isValidSessionId(body.session_id)) {
       return res.status(400).json({ error: 'invalid session id' });
     }
     if (body.mode !== undefined && !isAgentWorkMode(body.mode)) {
       return res.status(400).json({ error: 'invalid agent mode' });
+    }
+    if (body.loop !== undefined && !(LOOPS as readonly unknown[]).includes(body.loop)) {
+      return res.status(400).json({ error: 'invalid loop' });
     }
     const mode: AgentWorkMode = body.mode ?? 'production';
 
@@ -666,6 +716,64 @@ export function registerChatRoutes(app: Express, options: ChatRoutesOptions = {}
       return;
     }
 
+    // ── Hayba Pro: route the turn through the hosted brain ──────────────────
+    if (body.loop === 'pro') {
+      const permissions = resolvePermissions(body.permissions);
+      const catalog = options.tools ?? buildToolCatalog();
+      // A session that was closed or gave up can never carry another turn.
+      if (session.brain && !session.brain.isAlive()) dropBrain(session);
+      if (!session.brain) {
+        const cfg = resolveSessionConfig(sessionId);
+        const llm: LlmMode = body.llm === 'byok' && cfg?.apiKey
+          ? { mode: 'byok', provider: cfg.provider, ...(cfg.model ? { model: cfg.model } : {}), ...(cfg.baseURL ? { base_url: cfg.baseURL } : {}), api_key: cfg.apiKey }
+          : { mode: 'subscription' };
+        const opened = options.brain
+          ? await options.brain.openSession(sessionId, llm, buildHandsManifest(catalog), permissions)
+          : { ok: false as const, reason: 'not_configured', message: 'Hayba Pro is not configured on this machine.' };
+        if (!opened.ok) {
+          emit(session, 'error', { error: opened.message, kind: 'brain_unavailable', reason: opened.reason });
+          finalize(session, 'brain_unavailable');
+          cleanup();
+          return;
+        }
+        session.brain = opened.session;
+      }
+      // Only a turn the brain actually parked can be resumed by `approve`.
+      const approvedCall = session.brainTurnParked ? session.approvedCall : undefined;
+      if (session.brainTurnParked && !approvedCall) {
+        // The user moved on without approving: close the parked turn out first.
+        // cancelTurn() absorbs its stragglers through its `done`, so the new
+        // turn sent below only ever sees its own frames.
+        session.brain.send({ type: 'cancel' });
+        session.brain.cancelTurn();
+        session.pendingPlanCall = undefined;
+      }
+      session.brainTurnParked = false;
+      res.on('close', () => {
+        session.clients.delete(res);
+        cleanup();
+      });
+      void runTurn(session, {
+        remote: {
+          session: session.brain,
+          approvals: session.approvals,
+          guard: { manifest: new Set(catalog.map((t) => t.name)), permissions },
+          pinnedSpecialistId: body.archetype,
+        },
+        system: '',
+        messages,
+        dispatchTool,
+        signal: session.abortController.signal,
+        approvedCall,
+        sessionStore,
+        mode,
+      }).finally(() => {
+        cleanup();
+        session.approvedCall = undefined;
+      });
+      return undefined;
+    }
+
     // Resolve `archetype` (an id into hayba.agents.json) to its tool_filter +
     // system_prompt. Hand-passed `archetype_filter` keeps working unchanged —
     // this is additive: if both are given, the explicit filter wins (the
@@ -768,7 +876,15 @@ export function registerChatRoutes(app: Express, options: ChatRoutesOptions = {}
 
 interface RunTurnParams {
   sessionStore: SessionStore;
-  client: ReturnType<typeof createLLMClient>;
+  /** Local Community loop client; unused when `remote` routes the turn to the brain. */
+  client?: ReturnType<typeof createLLMClient>;
+  /** Hayba Pro: drive this turn through the remote brain session instead of the local loop. */
+  remote?: {
+    session: BrainSession;
+    approvals: LocalApprovals;
+    guard: Omit<GuardContext, 'mode'>;
+    pinnedSpecialistId?: string;
+  };
   system: string;
   messages: LLMMessage[];
   archetypeFilter?: string[];
@@ -857,24 +973,34 @@ async function runTurn(session: ChatSession, params: RunTurnParams): Promise<voi
   };
 
   try {
-    for await (const ev of runAgentLoop(
-      {
-        client: params.client,
-        system: params.system,
-        messages: params.messages,
-        tools:
-          params.mode === 'explore'
-            ? (params.tools ?? buildToolCatalog()).filter((tool) => isExploreReadOnlyTool(tool.name))
-            : params.tools,
-        archetypeFilter: params.archetypeFilter,
-        pinnedSpecialistId: params.pinnedSpecialistId,
-        dispatchTool: params.dispatchTool,
-        signal: params.signal,
-        planMode: true, // honour Plan Mode; UE side is authoritative, TS side gated
-        approvedCall: params.approvedCall,
-      },
-      observe,
-    )) {
+    const source = params.remote
+      ? runRemoteLoop({
+          session: params.remote.session,
+          messages: params.messages,
+          mode: params.mode,
+          pinnedSpecialistId: params.remote.pinnedSpecialistId,
+          approvals: params.remote.approvals,
+          approvedCall: params.approvedCall,
+          dispatchTool: params.dispatchTool,
+          guard: params.remote.guard,
+          signal: params.signal,
+        })
+      : runAgentLoopStreaming({
+          client: params.client!,
+          system: params.system,
+          messages: params.messages,
+          tools:
+            params.mode === 'explore'
+              ? (params.tools ?? buildToolCatalog()).filter((tool) => isExploreReadOnlyTool(tool.name))
+              : params.tools,
+          archetypeFilter: params.archetypeFilter,
+          pinnedSpecialistId: params.pinnedSpecialistId,
+          dispatchTool: params.dispatchTool,
+          signal: params.signal,
+          planMode: true, // honour Plan Mode; UE side is authoritative, TS side gated
+          approvedCall: params.approvedCall,
+        });
+    for await (const ev of adaptToLegacy(source, observe)) {
       forwardEvent(
         session,
         ev,
@@ -907,6 +1033,17 @@ async function runTurn(session: ChatSession, params: RunTurnParams): Promise<voi
     lastError = { error: 'Unable to save session history', kind: 'persistence' };
     emit(session, 'error', lastError);
     finalReason = null;
+  }
+
+  if (params.remote) {
+    // The brain parks a turn at an approval request (no `done` yet); remember
+    // that so the next Pro turn either resumes it (approve) or cancels it.
+    if (finalReason === 'plan_request') session.brainTurnParked = true;
+    // A brain that became unavailable mid-turn is not reused; the next Pro
+    // turn opens a fresh session (or reports brain_unavailable).
+    const brainLost = (lastError as { kind?: string } | null)?.kind === 'brain_unavailable';
+    if (brainLost && session.brain === params.remote.session) dropBrain(session);
+    if (brainLost && !finalReason) finalReason = 'brain_unavailable';
   }
 
   // Consolidated terminal frame. `usage` is included whenever the loop
@@ -993,6 +1130,7 @@ function forwardEvent(
 
 /** Clear all in-memory session + config state (tests). */
 export function __resetChatState(): void {
+  for (const session of sessions.values()) dropBrain(session);
   sessions.clear();
   configStore.clear();
   sessionCounter = 0;

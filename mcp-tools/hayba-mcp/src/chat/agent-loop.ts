@@ -759,12 +759,15 @@ export async function* runAgentLoop(params: AgentLoopParams): AsyncGenerator<Age
   if (pendingError) yield { ...pendingError, activityId };
 }
 
-/** Temporary old-frame adapter for chat-server; all execution goes through the semantic stream. */
-export async function* runLegacyAgentLoop(
-  params: AgentLoopParams,
+/**
+ * Old-frame adapter for chat-server: translates any semantic event stream (the
+ * local Community loop or a remote Pro brain session) into legacy AgentEvents.
+ */
+export async function* adaptToLegacy(
+  source: AsyncIterable<AgentStreamEvent>,
   observe?: (event: AgentStreamEvent) => void,
 ): AsyncGenerator<AgentEvent, void, unknown> {
-  for await (const event of runAgentLoop(params)) {
+  for await (const event of source) {
     observe?.(event);
     switch (event.type) {
       case 'message_delta':
@@ -804,4 +807,12 @@ export async function* runLegacyAgentLoop(
         break;
     }
   }
+}
+
+/** Temporary old-frame adapter for chat-server; all execution goes through the semantic stream. */
+export async function* runLegacyAgentLoop(
+  params: AgentLoopParams,
+  observe?: (event: AgentStreamEvent) => void,
+): AsyncGenerator<AgentEvent, void, unknown> {
+  yield* adaptToLegacy(runAgentLoop(params), observe);
 }

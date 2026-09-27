@@ -101,4 +101,7 @@ export const config = {
 
   /** Whether terrain critique is enabled */
   critiqueEnabled: process.env.HAYBA_CRITIQUE_ENABLED !== 'false',
+
+  /** Hayba Pro brain endpoint, e.g. wss://brain.example.com. Empty = Pro disabled ("not_configured"). */
+  brainUrl: process.env.HAYBA_BRAIN_URL ?? '',
 };
