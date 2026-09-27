@@ -4,6 +4,8 @@
 #include "Misc/Base64.h"
 #include "Dom/JsonObject.h"
 #include "HaybaMCPSeh.h"   // world-switch repair after a swallowed fault
+#include "HaybaMCPAccessPolicy.h"
+#include "HaybaMCPDeveloperSettings.h"
 #if PLATFORM_WINDOWS
 #include <excpt.h>   // EXCEPTION_EXECUTE_HANDLER for the SEH guard below
 #endif
@@ -19,8 +21,14 @@ namespace
     constexpr int32 MaxPythonPolicyTokens = MaxPythonScriptChars;
     constexpr int32 MaxPythonPolicyLexedChars = MaxPythonPolicyExpandedChars;
     constexpr int32 MaxPythonCapturedCharsPerStream = 64 * 1024;
-    constexpr double MaxPythonExecutionSeconds = 5.0;
     constexpr int32 PythonDeadlineCheckInterval = 256;
+
+    // No lease manager exists yet, so a deadline above 5 s is only reachable
+    // through the server setting.
+    bool CallerHoldsExclusiveLease()
+    {
+        return false;
+    }
 
     // Operations whose failure happens outside Python exception handling (or
     // outside this command entirely). `allow_unsafe` is a deprecated wire
@@ -1939,6 +1947,33 @@ FHaybaHandlerResult FHaybaMCPPythonHandler::Run(const TSharedPtr<FJsonObject>& P
             bAllowUnsafeRequested ? TEXT("true") : TEXT("false")));
     }
 
+    // Cooperative deadline. Default 5 s; `deadline_s` may raise it to at most
+    // 60 s, but only for a caller holding an exclusive lease on the world (or
+    // with the server setting on). A long script holds the game thread and
+    // with it every other agent's queue, so it is refused, not clamped.
+    double RequestedDeadlineSeconds = 0.0;
+    const bool bHasDeadline = P->HasField(TEXT("deadline_s"));
+    if (bHasDeadline && !P->TryGetNumberField(TEXT("deadline_s"), RequestedDeadlineSeconds))
+    {
+        return FHaybaHandlerResult::Err(TEXT(
+            "python_run invalid_request [HCR-INPUT-002]: matched 'deadline_s_type'; field 'deadline_s' must be a number of seconds when present. "
+            "Retry unchanged: forbidden."));
+    }
+    const UHaybaMCPDeveloperSettings* DevSettings = GetDefault<UHaybaMCPDeveloperSettings>();
+    const HaybaMCPAccess::FPythonDeadline Deadline = HaybaMCPAccess::ResolvePythonDeadline(
+        bHasDeadline,
+        RequestedDeadlineSeconds,
+        CallerHoldsExclusiveLease(),
+        DevSettings && DevSettings->bAllowLongPythonDeadlineWithoutLease);
+    if (!Deadline.bAllowed)
+    {
+        return FHaybaHandlerResult::Err(FString::Printf(
+            TEXT("python_run policy_blocked [HCR-TIME-002]: matched 'deadline_s'; %s. Safe alternative: acquire an exclusive lease first, ")
+            TEXT("or split the work into requests that each finish within %.0f s. Retry unchanged: forbidden."),
+            *Deadline.Error, HaybaMCPAccess::DefaultPythonDeadlineSeconds));
+    }
+    const double MaxPythonExecutionSeconds = Deadline.Seconds;
+
     // Check Python plugin
     IPythonScriptPlugin* PythonPlugin = IPythonScriptPlugin::Get();
     if (!PythonPlugin)
@@ -2250,6 +2285,7 @@ FHaybaHandlerResult FHaybaMCPPythonHandler::Run(const TSharedPtr<FJsonObject>& P
     TSharedPtr<FJsonObject> Out = MakeShareable(new FJsonObject());
     Out->SetBoolField(TEXT("ok"), bExecOk && bUserOk);
     Out->SetNumberField(TEXT("tier"), static_cast<int32>(Tier));
+    Out->SetNumberField(TEXT("deadline_s"), MaxPythonExecutionSeconds);
     Out->SetBoolField(TEXT("allow_unsafe_requested"), bAllowUnsafeRequested);
     Out->SetBoolField(TEXT("allow_unsafe_effective"), false);
     Out->SetBoolField(TEXT("allow_unsafe_deprecated"), true);

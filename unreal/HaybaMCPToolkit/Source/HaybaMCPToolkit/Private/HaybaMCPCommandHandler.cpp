@@ -16,6 +16,7 @@
 #include "HaybaMCPValidationPanel.h"
 #include "HaybaMCPMemoryPanel.h"
 #include "HaybaMCPDiffPanel.h"
+#include "HaybaMCPAccessPolicy.h"
 #include "Json.h"
 #include "Editor.h"
 #include "EngineUtils.h"
@@ -592,6 +593,13 @@ bool FHaybaMCPCommandHandler::ShouldCreateEditorTransaction(const FString& Cmd)
     if (Cmd == TEXT("data_set")) return false;
 
     return true;
+}
+
+bool FHaybaMCPCommandHandler::ShouldCreateEditorTransaction(
+    const FString& Cmd, const TSharedPtr<FJsonObject>& Params)
+{
+    return ShouldCreateEditorTransaction(Cmd)
+        && HaybaMCPAccess::ParamsAllowEditorTransaction(Cmd, Params);
 }
 
 static void MaybeShowPlanModePrompt()
@@ -1375,7 +1383,11 @@ FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
     // world/GameInstance, which crashes the editor on PIE stop with
     // "Object 'GameInstance ...' from PIE level still referenced". AI-driven
     // edits made mid-PIE don't need undo support badly enough to risk that.
-    const bool bCreateEditorTransaction = ShouldCreateEditorTransaction(Cmd);
+    // A caller may opt a single request out (`transaction:false`), and a
+    // python_run that loads/unloads World Partition actors is always opted
+    // out: unloading inside BeginTransaction left UTransBuffer with a non-zero
+    // active count and the next tick crashed in Landscape.
+    const bool bCreateEditorTransaction = ShouldCreateEditorTransaction(Cmd, Params);
     const bool bInPIE = GEditor && GEditor->PlayWorld != nullptr;
     if (bCreateEditorTransaction && GEditor && !bInPIE)
     {

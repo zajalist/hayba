@@ -366,7 +366,12 @@ describe('python_run native/TS crash policy contract', () => {
   });
 
   it('bounds bytecode cooperatively and always restores the trace hook', () => {
-    expect(cpp).toContain('MaxPythonExecutionSeconds = 5.0');
+    // The deadline is 5 s unless deadline_s is granted (max 60 s, exclusive
+    // lease or server setting); the numbers live in the pure access policy.
+    const accessPolicy = readFileSync(join(privateDir, 'HaybaMCPAccessPolicy.h'), 'utf8');
+    expect(accessPolicy).toContain('DefaultPythonDeadlineSeconds = 5.0');
+    expect(accessPolicy).toContain('MaxPythonDeadlineSeconds = 60.0');
+    expect(cpp).toContain('const double MaxPythonExecutionSeconds = Deadline.Seconds');
     expect(cpp).toContain('_hb_trusted_settrace = _hb_sys.settrace');
     expect(cpp).toContain('_hb_trusted_gettrace = _hb_sys.gettrace');
     expect(cpp).toContain('def _hb_execute_user(');

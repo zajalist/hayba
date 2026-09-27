@@ -139,9 +139,32 @@ export const meta: HaybaToolMeta = {
   not_when: 'an existing actor_/asset_/blueprint_ command can do the job — prefer those',
 };
 
+/** Fields forwarded to the native handler unchanged. See HaybaMCPAccessPolicy.h. */
+export const executionFields = {
+  deadline_s: z
+    .number()
+    .min(5)
+    .max(60)
+    .optional()
+    .describe(
+      'Cooperative deadline in seconds (default 5, max 60). Above 5 requires an exclusive lease on the current world (lease_acquire mode:"exclusive"); otherwise the editor refuses it with HCR-TIME-002.',
+    ),
+  world_partition: z
+    .boolean()
+    .optional()
+    .describe(
+      'Set true when the script loads or unloads World Partition actors. The editor then skips its global undo transaction, which WP unloads corrupt (UTransBuffer non-zero active count, then a Landscape crash). Scripts using WorldPartitionEditorLoaderAdapter / load_actors / unload_actors are detected automatically.',
+    ),
+  transaction: z
+    .boolean()
+    .optional()
+    .describe('false = do not wrap this call in an editor undo transaction (no Ctrl+Z for it). Default true.'),
+};
+
 export const schema = z.object({
   script: z.string().min(1),
   allow_unsafe: z.boolean().optional(),
+  ...executionFields,
 });
 
 export const pythonRunHandler: ToolHandler = async (args) => {
@@ -196,6 +219,9 @@ export const pythonRunHandler: ToolHandler = async (args) => {
     // Never forward the deprecated compatibility field as authority. Native
     // C++ independently refuses Tier 3 for direct/stale callers.
     const payload: Record<string, unknown> = { script };
+    for (const key of Object.keys(executionFields) as Array<keyof typeof executionFields>) {
+      if (parsed.data[key] !== undefined) payload[key] = parsed.data[key];
+    }
     const data = await executeCommand<Record<string, unknown>>('python_run', payload);
     // The sidecar intentionally strips the compatibility field before the
     // native call, so restore truthful caller-observation facts on the reply.

@@ -22,7 +22,7 @@ import { errorResult, okResult } from './tool-result.js';
 // ── Code Mode meta-tools (always-on) ──────────────────────────────────────────
 import { listToolCategoriesHandler, meta as listMeta } from './code-mode/list-tool-categories.js';
 import { getToolSignatureHandler, meta as sigMeta } from './code-mode/get-tool-signature.js';
-import { pythonRunHandler, meta as pyMeta } from './python/python-run.js';
+import { pythonRunHandler, meta as pyMeta, executionFields as pyExecutionFields } from './python/python-run.js';
 
 // ── New UE-domain tool handlers ───────────────────────────────────────────────
 import { actorSpawnHandler, meta as actorSpawnMeta } from './actor/actor-spawn.js';
@@ -3753,6 +3753,7 @@ export const CODE_MODE_DESCRIPTORS: ToolDescriptor[] = [
         .describe(
           'Deprecated compatibility field; accepted but always ineffective. Embedded python_run permanently refuses Tier 3 host filesystem, subprocess, and network access. Use typed brokered tools (#412/#415).',
         ),
+      ...pyExecutionFields,
     },
     wireSchema: {
       script: z.string().optional().describe(PYTHON_SCRIPT_FIELD_DESCRIPTION),
@@ -3763,9 +3764,10 @@ export const CODE_MODE_DESCRIPTORS: ToolDescriptor[] = [
         .describe(
           'Deprecated compatibility field; accepted but always ineffective. Embedded python_run permanently refuses Tier 3 host filesystem, subprocess, and network access. Use typed brokered tools (#412/#415).',
         ),
+      ...pyExecutionFields,
     },
     cost: 'high',
-    returns: '{ok, tier, stdout, stderr}',
+    returns: '{ok, tier, deadline_s, stdout, stderr}',
     handler: async (params, session) => pythonRunHandler(params as Record<string, unknown>, session),
   }),
 ];
