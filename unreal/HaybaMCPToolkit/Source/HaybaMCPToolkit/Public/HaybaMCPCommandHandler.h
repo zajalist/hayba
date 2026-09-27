@@ -45,6 +45,11 @@ public:
      */
     static bool ShouldCreateEditorTransaction(const FString& Cmd, const TSharedPtr<FJsonObject>& Params);
 
+    /** The Plan-Mode gate's verdict (IsDestructiveCommand). Public so the
+     *  lease classification can default from it and its drift test can
+     *  check every registered command against it. */
+    static bool IsPlanGatedCommand(const FString& Cmd);
+
     static FString MakeOkResponse(
         const FString& Id,
         const TSharedPtr<FJsonObject>& Data,
