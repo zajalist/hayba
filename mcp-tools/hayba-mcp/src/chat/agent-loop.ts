@@ -270,7 +270,8 @@ export type AgentDoneReason =
   | 'provider_stop'
   | 'max_steps'
   | 'token_budget'
-  | 'aborted';
+  | 'aborted'
+  | 'wall_clock';
 
 export type AgentEvent =
   | { type: 'text_delta'; text: string }

@@ -1,0 +1,1 @@
+{"v":1,"type":"welcome","session_id":"s-1","seq":1,"limits":{"max_steps":40,"max_tokens":400000,"wall_clock_ms":1800000},"protocol_range":[1,1],"resumed":false}

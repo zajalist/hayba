@@ -1,0 +1,14 @@
+{
+  "name": "@hayba/brain-protocol",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": { ".": { "import": "./dist/index.js", "types": "./dist/index.d.ts" } },
+  "files": ["dist", "fixtures"],
+  "scripts": { "build": "tsc", "test": "tsc && vitest run", "typecheck": "tsc --noEmit" },
+  "dependencies": { "zod": "^4.4.3" },
+  "devDependencies": { "@types/node": "^26.1.2", "typescript": "^7.0.2", "vitest": "^4.1.10" },
+  "license": "MIT"
+}

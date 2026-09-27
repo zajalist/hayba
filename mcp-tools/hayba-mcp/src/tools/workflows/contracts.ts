@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { ResourceRefSchema, DirectionalVerdictSchema } from '@hayba/brain-protocol';
+export { ResourceRefSchema, DirectionalVerdictSchema };
 
 const PathSchema = z.string().min(1);
 
@@ -95,19 +97,6 @@ export const WorldIngestRequestSchema = z.object({
   materials: MaterialPolicySchema.optional(),
   validation: ValidationPolicySchema.optional(),
   execution: ExecutionPolicySchema.optional(),
-}).strict();
-
-export const ResourceRefSchema = z.object({
-  kind: z.string().min(1),
-  id: z.string().min(1),
-  path: z.string().min(1).optional(),
-}).strict();
-
-export const DirectionalVerdictSchema = z.object({
-  code: z.string().min(1),
-  message: z.string().min(1),
-  severity: z.enum(['info', 'warning', 'error']),
-  direction: z.enum(['proceed', 'review', 'block']),
 }).strict();
 
 export const UndoDescriptorSchema = z.object({
