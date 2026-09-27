@@ -78,6 +78,9 @@ public:
     // unregistered (the router returns a clean "unknown command" instead of the
     // whole plugin failing to load). No-ops safely if the core router isn't up.
     HAYBAMCPTOOLKIT_API void RegisterExternalHandler(TSharedRef<IHaybaMCPHandler> Handler);
+
+    /** The live command router (tests read its registered command set). */
+    TSharedPtr<FHaybaMCPCommandHandler> GetCommandHandler() const { return CommandHandler; }
     HAYBAMCPTOOLKIT_API void UnregisterExternalHandler(const TSharedRef<IHaybaMCPHandler>& Handler);
 
     // Multicast — fires synchronously when a tool call is recorded on the Game

@@ -595,6 +595,11 @@ bool FHaybaMCPCommandHandler::ShouldCreateEditorTransaction(const FString& Cmd)
     return true;
 }
 
+bool FHaybaMCPCommandHandler::IsPlanGatedCommand(const FString& Cmd)
+{
+    return IsDestructiveCommand(Cmd);
+}
+
 bool FHaybaMCPCommandHandler::ShouldCreateEditorTransaction(
     const FString& Cmd, const TSharedPtr<FJsonObject>& Params)
 {
