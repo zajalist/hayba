@@ -8,7 +8,7 @@
 import { parseSpecText, parseType } from './spec-parse.js';
 import type { BlueprintSpec, NodeKind } from './spec-types.js';
 
-export type Obj = Record<string, unknown>;
+type Obj = Record<string, unknown>;
 
 const IDENT = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const PIN = /^[A-Za-z_](?:[A-Za-z0-9_ /]*[A-Za-z0-9_])?$/; // '/' for template pins such as 'Left / Right'
@@ -63,11 +63,22 @@ const NODE_KINDS: Record<NodeKind, KindRule> = {
 export const NODE_KIND_NAMES: readonly NodeKind[] = Object.keys(NODE_KINDS) as NodeKind[];
 export const EVENT_KINDS: ReadonlySet<NodeKind> = new Set<NodeKind>(['event', 'custom_event', 'bound_event']);
 const POSITION_KEYS = new Set(['x', 'y']);
+/** A node kind key; an inherited name such as "toString" is not one. */
+const isKindKey = (k: string): boolean => Object.hasOwn(NODE_KINDS, k);
+
+/**
+ * Whether a graph's `nodes` object declares `name` as its own key. An
+ * inherited name such as "toString" or "constructor" is not a declared node
+ * (`name in nodes` would say it is).
+ */
+export function isDeclaredNode(nodes: unknown, name: string): boolean {
+  return isObj(nodes) && Object.hasOwn(nodes, name);
+}
 
 /** The one kind key of a node spec, or null. */
 export function nodeKind(node: unknown): NodeKind | null {
   if (!isObj(node)) return null;
-  const kinds = Object.keys(node).filter((k) => k in NODE_KINDS);
+  const kinds = Object.keys(node).filter(isKindKey);
   return kinds.length === 1 ? (kinds[0] as NodeKind) : null;
 }
 
@@ -233,9 +244,9 @@ export function check(input: unknown): string[] {
         errors.push(`${nat}: must be an object with one kind key (${NODE_KIND_NAMES.join(', ')})`);
         continue;
       }
-      const present = Object.keys(node).filter((k) => k in NODE_KINDS);
+      const present = Object.keys(node).filter(isKindKey);
       if (present.length !== 1) {
-        const unknown = Object.keys(node).filter((k) => !(k in NODE_KINDS) && !POSITION_KEYS.has(k) && k !== 'class' && k !== 'inputs');
+        const unknown = Object.keys(node).filter((k) => !isKindKey(k) && !POSITION_KEYS.has(k) && k !== 'class' && k !== 'inputs');
         errors.push(present.length === 0
           ? `${nat}: unknown node kind${unknown.length ? ` "${unknown.join('", "')}"` : ''}; valid kinds: ${NODE_KIND_NAMES.join(', ')}`
           : `${nat}: has ${present.length} kind keys (${present.join(', ')}); a node has exactly one`);
@@ -291,7 +302,7 @@ export function check(input: unknown): string[] {
       if (!a || !b) return;
       const text = `${link[0]} -> ${link[1]}`;
       for (const [end, role] of [[a, 'from'], [b, 'to']] as const) {
-        if (!isObj(nodes) || !(end.node in nodes)) errors.push(`${lat} (${text}): ${role} node "${end.node}" is not declared in nodes`);
+        if (!isDeclaredNode(nodes, end.node)) errors.push(`${lat} (${text}): ${role} node "${end.node}" is not declared in nodes`);
       }
       const ka = kinds.get(a.node);
       const kb = kinds.get(b.node);
@@ -326,7 +337,7 @@ export function check(input: unknown): string[] {
         errors.push(`${dat}: key is not "node.Pin"`);
         continue;
       }
-      if (!isObj(nodes) || !(e.node in nodes)) errors.push(`${dat}: node "${e.node}" is not declared in nodes`);
+      if (!isDeclaredNode(nodes, e.node)) errors.push(`${dat}: node "${e.node}" is not declared in nodes`);
       const k = kinds.get(e.node);
       if (k && !NODE_KINDS[k].inputs) errors.push(`${dat}: a ${k} node has no input pins to set`);
       if (!isScalar(value)) errors.push(`${dat}: value must be a string, number or boolean`);
@@ -373,7 +384,7 @@ export function byRefLiteralWarnings(spec: BlueprintSpec, byRef: ReadonlyMap<str
     for (const endpoint of Object.keys(g.defaults ?? {})) {
       const e = parseEndpoint(endpoint);
       if (!e) continue;
-      const node = g.nodes?.[e.node];
+      const node = isDeclaredNode(g.nodes, e.node) ? g.nodes[e.node] : undefined;
       const fn = node && typeof node.call === 'string' ? node.call : undefined;
       const pins = fn ? [...byRef.entries()].find(([name]) => loose(name) === loose(fn))?.[1] : undefined;
       if (pins?.some((p) => loose(p) === loose(e.pin))) {

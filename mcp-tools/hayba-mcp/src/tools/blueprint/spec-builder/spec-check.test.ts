@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { byRefLiteralWarnings, check, checkAcross, countSpec, NODE_KIND_NAMES, nodeKind } from './spec-check.js';
+import { byRefLiteralWarnings, check, checkAcross, countSpec, isDeclaredNode, NODE_KIND_NAMES, nodeKind } from './spec-check.js';
 import { parseSpecText } from './spec-parse.js';
 import { sample } from './__fixtures__/sample-spec.js';
 import type { BlueprintSpec, GraphSpec } from './spec-types.js';
@@ -186,6 +186,37 @@ describe('component template properties (new in the Hayba port)', () => {
     (bad.components![0] as { properties: unknown }).properties = { 'bad name': true, Nested: { a: 1 } };
     rejects(bad, /properties\["bad name"\]: property names are identifiers/);
     rejects(bad, /properties\["Nested"\]: value must be a string, number or boolean/);
+  });
+});
+
+describe('inherited names (new in the Hayba port)', () => {
+  it('never treats an inherited name such as toString as a declared node', () => {
+    // bpgraph tested "name in nodes", which an inherited name passes.
+    const spec = clone(sample());
+    graph(spec, 'EventGraph').links!.push(['toString.ReturnValue', 'sel.Option 0']);
+    graph(spec, 'EventGraph').defaults!['constructor.A'] = 1;
+    expect(check(spec)).toEqual([
+      'graph EventGraph links[6] (toString.ReturnValue -> sel.Option 0): from node "toString" is not declared in nodes',
+      'graph EventGraph defaults["constructor.A"]: node "constructor" is not declared in nodes',
+    ]);
+    expect(isDeclaredNode({}, 'toString')).toBe(false);
+    expect(isDeclaredNode('not an object', 'length')).toBe(false);
+  });
+
+  it('accepts a node that really is named toString', () => {
+    const spec = clone(sample());
+    Object.assign(graph(spec, 'EventGraph').nodes, { toString: { custom_event: 'Ping' } }); // own key; `nodes.toString =` does not type-check
+    graph(spec, 'EventGraph').links!.push(['toString.then', 'w.execute']);
+    expect(check(spec)).toEqual([]);
+    expect(isDeclaredNode(graph(spec, 'EventGraph').nodes, 'toString')).toBe(true);
+  });
+
+  it('never treats an inherited name as a node kind', () => {
+    expect(nodeKind({ toString: true })).toBeNull();
+    expect(nodeKind({ constructor: 1, branch: true })).toBe('branch');
+    const spec = clone(sample());
+    graph(spec, 'EventGraph').nodes.odd = { constructor: 1 };
+    rejects(spec, /node "odd": unknown node kind "constructor"/);
   });
 });
 

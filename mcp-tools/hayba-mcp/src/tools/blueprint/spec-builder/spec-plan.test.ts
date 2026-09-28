@@ -7,6 +7,7 @@ import {
   protectedAssetRoots, resolvePin, rewriteTargetRoot, signatureProblems,
   type BuildPlan, type InspectedNode, type InspectedPin, type PlannedGraph,
 } from './spec-plan.js';
+import { check } from './spec-check.js';
 import { parseSpecText } from './spec-parse.js';
 import { sample } from './__fixtures__/sample-spec.js';
 import type { BlueprintSpec, FunctionSpec, SpecEntry } from './spec-types.js';
@@ -84,6 +85,13 @@ describe('target_root rewrite', () => {
   it('finds the common folder of the batch', () => {
     expect(commonAssetRoot(['/Game/A/B/X', '/Game/A/B/UI/Y'])).toBe('/Game/A/B');
     expect(commonAssetRoot(['/Game/A/B/X'])).toBe('/Game/A/B');
+  });
+
+  it('compares folder names case-insensitively, keeping the first asset\'s spelling', () => {
+    expect(commonAssetRoot(['/Game/Live/Flow/X', '/Game/live/FLOW/UI/Y'])).toBe('/Game/Live/Flow');
+    expect(commonAssetRoot(['/Game/Live/Flow/X', '/Game/Live/Other/Y'])).toBe('/Game/Live');
+    const [x, y] = rewriteTargetRoot([entry({ asset: '/Game/Live/Flow/X' }), entry({ asset: '/Game/live/FLOW/UI/Y' })], TARGET);
+    expect([x!.spec.asset, y!.spec.asset]).toEqual([`${TARGET}/X`, `${TARGET}/UI/Y`]);
   });
 
   it('rewrites every reference to a batch asset, and nothing else', () => {
@@ -260,7 +268,8 @@ describe('planBuild on the sample spec', () => {
 
 describe('node names are looked up as own keys only', () => {
   it('never treats an inherited name such as toString as a declared node', () => {
-    // check() tests "name in nodes", which an inherited name passes; planning must not.
+    // check() refuses these too (spec-check.test.ts); planning re-checks through the
+    // same isDeclaredNode, so a spec that skipped check() cannot plan one either.
     const spec = sample();
     const eg = spec.graphs!.find((g) => g.graph === 'EventGraph')!;
     eg.links!.push(['toString.ReturnValue', 'sel.Option 0']);
@@ -276,6 +285,21 @@ describe('node names are looked up as own keys only', () => {
     expect(g.applyLinks.map((l) => l.from_node)).not.toContain('toString');
     expect(g.applyDefaults.map((d) => d.node)).not.toContain('constructor');
     expect(plan.totals.links).toBe(15); // the sample's own 6 + 3 + 6; the refused link is not planned
+  });
+
+  it('refuses undeclared and malformed endpoints with the same wording as check()', () => {
+    const spec = sample();
+    const eg = spec.graphs!.find((g) => g.graph === 'EventGraph')!;
+    eg.links!.push(['toString.ReturnValue', 'sel.Option 0'], ['me.self', 'ghost.Target'], ['bad', 'w.execute']);
+    eg.defaults!['constructor.A'] = 1;
+    const refused = [
+      'graph EventGraph links[6] (toString.ReturnValue -> sel.Option 0): from node "toString" is not declared in nodes',
+      'graph EventGraph links[7] (me.self -> ghost.Target): to node "ghost" is not declared in nodes',
+      'graph EventGraph links[8]: "bad" is not "node.Pin"',
+      'graph EventGraph defaults["constructor.A"]: node "constructor" is not declared in nodes',
+    ];
+    expect(check(spec)).toEqual(refused);
+    expect(planBuild([{ file: 'a.json', spec }], { targetRoot: TARGET }).errors).toEqual(refused.map((e) => `a.json: ${e}`));
   });
 
   it('never takes an inherited property of the id map for a placed node id', () => {

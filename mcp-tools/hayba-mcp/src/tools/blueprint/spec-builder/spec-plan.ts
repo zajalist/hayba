@@ -3,7 +3,7 @@
 //
 // resolvePin, layoutNodes, findTerminals and signatureProblems are ported from
 // the first consumer project's bpgraph.mjs (2026-09-27).
-import { isObj, lc, loose, nodeKind, parseEndpoint, type Endpoint } from './spec-check.js';
+import { isDeclaredNode, isObj, lc, loose, nodeKind, parseEndpoint, type Endpoint } from './spec-check.js';
 import type {
   BlueprintSpec, ComponentSpec, FunctionSpec, GraphSpec, NodeKind, NodeSpec, ParamSpec, SpecEntry, VariableSpec,
 } from './spec-types.js';
@@ -194,14 +194,15 @@ export function protectedAssetRoots(): readonly string[] {
 const PACKAGE_FOLDER = /^\/Game(\/[A-Za-z_][A-Za-z0-9_]*)+$/;
 const escapeRegExp = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-/** The longest folder every asset of the batch lives under. */
+/** The longest folder every asset of the batch lives under, spelled as in the
+ *  first asset. Folder names compare case-insensitively, as in the editor. */
 export function commonAssetRoot(assets: string[]): string {
   if (assets.length === 0) return '';
   const dirs = assets.map((a) => a.slice(0, a.lastIndexOf('/')).split('/'));
   let n = dirs[0].length;
   for (const d of dirs) {
     let i = 0;
-    while (i < n && i < d.length && d[i] === dirs[0][i]) i++;
+    while (i < n && i < d.length && lc(d[i]) === lc(dirs[0][i])) i++;
     n = i;
   }
   return dirs[0].slice(0, n).join('/');
@@ -268,9 +269,10 @@ function toApplyNode(key: string, kind: NodeKind, node: NodeSpec, x: number, y: 
 }
 
 /**
- * Plan one graph. The spec has passed check(), but check() tests "name in
- * nodes", which an inherited name such as "toString" passes; here every node
- * name is an own key of `nodes` or it is refused (into `errors`) and left out.
+ * Plan one graph of a spec that passed check(). An endpoint whose node is not
+ * declared (isDeclaredNode: an own key of `nodes`, so never an inherited name
+ * such as "toString") is refused into `errors` with check()'s wording and left
+ * out of the plan, so a spec that skipped check() cannot plan one either.
  */
 function planGraph(g: GraphSpec, file: string, errors: string[]): PlannedGraph {
   const at = `${file}: graph ${g.graph}`;
@@ -300,15 +302,14 @@ function planGraph(g: GraphSpec, file: string, errors: string[]): PlannedGraph {
     } else plan.applyNodes.push(toApplyNode(key, kind, node, x, y));
   }
   links.forEach(([a, b], li) => {
-    const lat = `${at} links[${li}] (${a} -> ${b})`;
+    const lat = `${at} links[${li}]`;
     const from = parseEndpoint(a);
     const to = parseEndpoint(b);
-    if (!from || !to) {
-      errors.push(`${lat}: each end must be "node.Pin"`);
-      return;
-    }
+    if (!from) errors.push(`${lat}: "${a}" is not "node.Pin"`);
+    if (!to) errors.push(`${lat}: "${b}" is not "node.Pin"`);
+    if (!from || !to) return;
     for (const [end, role] of [[from, 'from'], [to, 'to']] as const) {
-      if (!Object.hasOwn(nodes, end.node)) errors.push(`${lat}: ${role} node "${end.node}" is not declared in nodes`);
+      if (!isDeclaredNode(nodes, end.node)) errors.push(`${lat} (${a} -> ${b}): ${role} node "${end.node}" is not declared in nodes`);
     }
     if (!planned(from.node) || !planned(to.node)) return;
     plan.applyLinks.push({ from_node: from.node, from_pin: from.pin, to_node: to.node, to_pin: to.pin });
@@ -321,7 +322,7 @@ function planGraph(g: GraphSpec, file: string, errors: string[]): PlannedGraph {
       errors.push(`${dat}: key is not "node.Pin"`);
       continue;
     }
-    if (!Object.hasOwn(nodes, e.node)) errors.push(`${dat}: node "${e.node}" is not declared in nodes`);
+    if (!isDeclaredNode(nodes, e.node)) errors.push(`${dat}: node "${e.node}" is not declared in nodes`);
     if (!planned(e.node)) continue;
     plan.applyDefaults.push({ node: e.node, pin: e.pin, value: String(value) });
   }
