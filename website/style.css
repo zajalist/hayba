@@ -780,7 +780,7 @@ body { background: var(--bg-base); }
   margin: 12px auto 0;
   padding: 0 48px 100px;
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(2, 1fr);
   gap: 14px;
 }
 .roadmap-item {
