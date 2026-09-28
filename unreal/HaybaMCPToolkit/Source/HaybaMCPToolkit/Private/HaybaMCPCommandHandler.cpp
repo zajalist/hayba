@@ -619,7 +619,7 @@ static void MaybeShowPlanModePrompt()
     S.bShownPlanModePrompt = true;
     S.Save();
     FNotificationInfo Info(NSLOCTEXT("Hayba", "PlanModePrompt",
-        "You've been using Plan Mode for a while — consider disabling it from the toolbar if you trust your workflow."));
+        "You've been using Plan Mode for a while — consider turning it off in Settings > Preferences > External MCP safety if you trust your workflow."));
     Info.ExpireDuration = 10.f;
     FSlateNotificationManager::Get().AddNotification(Info);
 }
