@@ -204,6 +204,30 @@ describe('by-reference literal warnings', () => {
   it('is silent when nothing is known about the function', () => {
     expect(byRefLiteralWarnings(sample())).toEqual([]);
   });
+
+  it('warns about the K2_ClearAndInvalidateTimerHandle entry, matching the pin case-insensitively', () => {
+    const spec = clone(sample());
+    const g = graph(spec, 'CheckGlow');
+    g.nodes.clearTimer = { call: 'K2_ClearAndInvalidateTimerHandle', class: '/Script/Engine.KismetSystemLibrary' };
+    g.defaults = { ...g.defaults, 'clearTimer.handle': 'x' };
+    expect(check(spec)).toEqual([]);
+    expect(byRefLiteralWarnings(spec)).toEqual([
+      'graph CheckGlow defaults["clearTimer.handle"]: handle is a by-reference input of K2_ClearAndInvalidateTimerHandle; the editor refuses a literal there — link a variable get into it instead',
+    ]);
+  });
+
+  it('accepts an injected byRef map, matching the function name loosely', () => {
+    const spec = clone(sample());
+    const g = graph(spec, 'CheckGlow');
+    g.nodes.custom = { call: 'MyCustomFn', class: '/Script/Engine.KismetSystemLibrary' };
+    g.defaults = { ...g.defaults, 'custom.Target': 'literal' };
+    expect(check(spec)).toEqual([]);
+    expect(byRefLiteralWarnings(spec)).toEqual([]); // the default table knows nothing about MyCustomFn
+    const custom = new Map([['mycustomfn', ['Target']]]);
+    expect(byRefLiteralWarnings(spec, custom)).toEqual([
+      'graph CheckGlow defaults["custom.Target"]: Target is a by-reference input of MyCustomFn; the editor refuses a literal there — link a variable get into it instead',
+    ]);
+  });
 });
 
 const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), '__fixtures__', 'synthetic');

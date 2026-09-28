@@ -60,7 +60,7 @@ const NODE_KINDS: Record<NodeKind, KindRule> = {
   create_widget: { value: (v) => classPathProblem(v) === null || `class ${classPathProblem(v)}`, extras: [], inputs: true, outputs: true },
   timer: { value: (v) => v === true || 'must be true', extras: [], inputs: true, outputs: true },
 };
-export const NODE_KIND_NAMES = Object.keys(NODE_KINDS) as NodeKind[];
+export const NODE_KIND_NAMES: readonly NodeKind[] = Object.keys(NODE_KINDS) as NodeKind[];
 export const EVENT_KINDS: ReadonlySet<NodeKind> = new Set<NodeKind>(['event', 'custom_event', 'bound_event']);
 const POSITION_KEYS = new Set(['x', 'y']);
 
@@ -375,8 +375,8 @@ export function byRefLiteralWarnings(spec: BlueprintSpec, byRef: ReadonlyMap<str
       if (!e) continue;
       const node = g.nodes?.[e.node];
       const fn = node && typeof node.call === 'string' ? node.call : undefined;
-      const pins = fn ? byRef.get(fn) : undefined;
-      if (pins?.some((p) => p.toLowerCase() === e.pin.toLowerCase())) {
+      const pins = fn ? [...byRef.entries()].find(([name]) => loose(name) === loose(fn))?.[1] : undefined;
+      if (pins?.some((p) => loose(p) === loose(e.pin))) {
         out.push(`graph ${g.graph} defaults["${endpoint}"]: ${e.pin} is a by-reference input of ${fn}; the editor refuses a literal there — link a variable get into it instead`);
       }
     }
