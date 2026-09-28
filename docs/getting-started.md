@@ -4,7 +4,7 @@
 
 - **Node.js ≥ 22.5** (see [`.nvmrc`](../.nvmrc); the codebase uses
   `node:sqlite`)
-- **Unreal Engine 5.7+** and **Visual Studio 2022** (to build the plugin)
+- **Unreal Engine 5.7+** (UE 5.7 or 5.8) on Windows, and **Visual Studio with the C++ toolchain your Unreal Engine version requires** (to build the plugin)
 - Python 3.10+ and [`uv`](https://docs.astral.sh/uv/) (only for the
   optional visual sidecar, Tier 2)
 
@@ -28,9 +28,17 @@ npm --prefix mcp-tools/hayba-mcp run build
 
 ## Step 2 — Install the UE plugin
 
-Copy [`unreal/HaybaMCPToolkit/`](../unreal/HaybaMCPToolkit) into your UE
-project's `Plugins/` folder, regenerate Visual Studio project files, and
-recompile. See the [plugin README](../unreal/HaybaMCPToolkit/README.md).
+Create `<YourProject>\Plugins` first if it doesn't exist, then link
+[`unreal/HaybaMCPToolkit/`](../unreal/HaybaMCPToolkit) into it from an
+administrator prompt (or with Windows Developer Mode on), then regenerate
+Visual Studio project files and recompile:
+
+```bat
+mklink /D "<YourProject>\Plugins\HaybaMCPToolkit" "<repo>\unreal\HaybaMCPToolkit"
+```
+
+The link lets the plugin find the MCP server built in Step 1. If you copy the plugin instead, set `SidecarEntryPath` under `[HaybaMCPToolkit]` in `<YourProject>/Saved/Config/WindowsEditor/EditorPerProjectUserSettings.ini` to the full path of `mcp-tools/hayba-mcp/dist/index.js`.
+See the [plugin README](../unreal/HaybaMCPToolkit/README.md).
 
 ## Step 3 — Register the server with your agent host
 
@@ -39,8 +47,7 @@ recompile. See the [plugin README](../unreal/HaybaMCPToolkit/README.md).
 claude mcp add hayba-toolkit -- node /path/to/hayba/mcp-tools/hayba-mcp/dist/index.js
 ```
 
-Open UE; the **Hayba MCP Toolkit** panel appears in the toolbar. Pick
-**Integrated** or **API Key** mode in the onboarding wizard.
+On first launch the **Hayba MCP Toolkit** tab opens by itself (later: **Tools > Hayba MCP Toolkit**, or the console command `Hayba.MCP.Open`). Your MCP host drives the agent. To chat inside the editor instead, set a provider (and key, for cloud models) under **Settings > AI / LLM Backend**. Plan Mode is on by default: approve plans in the Plan tab.
 
 ## Add-on tiers
 

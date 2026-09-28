@@ -8,13 +8,21 @@ This page is a pointer + the handler-domain table.
 
 - **Plugin:** `HaybaMCPToolkit` · Editor module · `LoadingPhase:
   PostEngineInit`
-- **Engine:** UE 5.7.0, depends on the `PCG` plugin
+- **Engine:** UE 5.7+, depends on the `PCG` plugin
+- **Install:** create `<YourProject>\Plugins` if it doesn't exist, then
+  `mklink /D "<YourProject>\Plugins\HaybaMCPToolkit" "<repo>\unreal\HaybaMCPToolkit"`
+  from an administrator prompt (or with Windows Developer Mode on);
+  regenerate VS project files and rebuild (you need Visual Studio with the C++
+  toolchain your Unreal Engine version requires). Copying instead
+  needs `SidecarEntryPath`; see the plugin README.
 - **Role:** runs `FHaybaMCPTcpServer` inside the editor (the UE adapter on
   the TCP seam) and executes commands dispatched by the Node MCP server.
   Length-prefixed JSON envelope on `:52342` (fallback `:52343–52350`); port
   published to `Saved/HaybaMCP/instances/<pid>.json`.
-- **Plan Mode:** every destructive command is wrapped in
-  `GEditor->BeginTransaction` so `Ctrl+Z` works.
+- **Plan Mode:** with Plan Mode on (the default), destructive commands wait
+  until the user approves the plan. They run inside
+  `GEditor->BeginTransaction`, so most editor edits land on Unreal's normal
+  undo stack and Ctrl+Z works — not during Play-In-Editor, and not for asset deletes, saves to disk or arbitrary Python.
 - **Provenance:** snapshot-imported; treat the directory as canonical — see
   [`../adr/0004-ue-plugin-location.md`](../adr/0004-ue-plugin-location.md).
 

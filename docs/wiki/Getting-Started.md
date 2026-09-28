@@ -10,14 +10,15 @@ here — the outline below only frames the prerequisites.
 | Requirement | Version | Why |
 |---|---|---|
 | Node.js | **≥ 22.5** | `@hayba/mcp` `engines` field; older Node crashes on `node:sqlite`-adjacent native deps (see [Troubleshooting](Troubleshooting.md)) |
-| Unreal Engine | **5.7** | The `HaybaMCPToolkit` plugin targets UE 5.7.0 and depends on the `PCG` plugin |
-| Visual Studio | **2022** | Required to rebuild the UE C++ plugin |
+| Unreal Engine | **5.7+** | The `HaybaMCPToolkit` plugin compiles against UE 5.7 or 5.8 and depends on the `PCG` plugin |
+| Visual Studio | **C++ toolchain your UE version requires** | Required to rebuild the UE C++ plugin |
 
 ## Shape of setup
 
-1. **Tier 1 (core, required)** — install the UE plugin into your project's
-   `Plugins/`, regenerate VS project files, rebuild; install and build the
-   Node MCP server. Details:
+1. **Tier 1 (core, required)** — install and build the Node MCP server;
+   create `<YourProject>\Plugins` if it doesn't exist and symlink the UE
+   plugin into it (`mklink /D "<YourProject>\Plugins\HaybaMCPToolkit" "<repo>\unreal\HaybaMCPToolkit"`),
+   then regenerate VS project files and rebuild. Details:
    [`../getting-started.md`](../getting-started.md) §Tier 1 +
    [`../../mcp-tools/hayba-mcp/README.md`](../../mcp-tools/hayba-mcp/README.md).
 2. **Tier 2 (visual intelligence, optional, GPU recommended)** — the Python

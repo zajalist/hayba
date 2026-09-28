@@ -4,7 +4,6 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Hayba — Documentation</title>
-<link href="https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;500;600;700&family=Charis+SIL:wght@400;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/style.css">
 <link rel="icon" type="image/svg+xml" href="/assets/Logo.svg">
 </head>
@@ -22,33 +21,12 @@
         <a href="#first-run" class="docs-toc-link">First run</a>
       </div>
       <div class="docs-toc-group">
-        <div class="docs-toc-title">Linguistics</div>
-        <a href="#linguistics-workbench" class="docs-toc-link">Workbench</a>
-        <a href="#phonology" class="docs-toc-link">Phonology</a>
-        <a href="#sound-changes" class="docs-toc-link">Sound changes</a>
-        <a href="#lexicon" class="docs-toc-link">Lexicon</a>
-        <a href="#share-links" class="docs-toc-link">Share links</a>
-      </div>
-      <div class="docs-toc-group">
-        <div class="docs-toc-title">Tectonics</div>
-        <a href="#tectonics-pillars" class="docs-toc-link">Pillars</a>
-        <a href="#plates" class="docs-toc-link">Plate lifecycle</a>
-        <a href="#invariants" class="docs-toc-link">Invariants</a>
-      </div>
-      <div class="docs-toc-group">
-        <div class="docs-toc-title">UE5 plugin</div>
+        <div class="docs-toc-title">Unreal toolkit</div>
         <a href="#mcp-overview" class="docs-toc-link">MCP overview</a>
-        <a href="#tools-reference" class="docs-toc-link">Tools reference</a>
-        <a href="#scene" class="docs-toc-link">Scene</a>
-        <a href="#editor" class="docs-toc-link">Editor</a>
-        <a href="#pcgex" class="docs-toc-link">PCGEx</a>
-        <a href="#zone-painter" class="docs-toc-link">Zone Painter</a>
       </div>
       <div class="docs-toc-group">
-        <div class="docs-toc-title">Self-hosting</div>
-        <a href="#self-host" class="docs-toc-link">Bring up Supabase</a>
-        <a href="#admin" class="docs-toc-link">Admin queue</a>
-        <a href="#backups" class="docs-toc-link">Backups</a>
+        <div class="docs-toc-title">Early research</div>
+        <a href="#research" class="docs-toc-link">Research libraries</a>
       </div>
       <div class="docs-toc-group">
         <div class="docs-toc-title">FAQ</div>
@@ -59,80 +37,82 @@
 
   <main class="docs-main">
     <div class="docs-eyebrow">DOCUMENTATION</div>
-    <h1 id="overview">Hayba 0.5.0</h1>
+    <h1 id="overview">Hayba</h1>
     <p class="docs-lead">
-      A worldbuilding toolset — tectonics, conlangs, architecture, wired together by an
-      MCP your LLM can drive. The documentation below tracks the current 0.5 series.
+      An AI-agent toolkit for Unreal Engine: a Node/TypeScript MCP server plus a C++
+      editor plugin. These notes cover the current source on main; the latest tagged
+      release is v0.1.0 (August 2026).
     </p>
 
     <section class="docs-section">
       <h2 id="install">Install</h2>
       <p>
-        Local toolset: clone <code>github.com/zajalist/hayba</code> and run
-        <code>npm install</code>. The linguistics workbench builds with
-        <code>npm run dev --workspace @hayba/linguistics</code>.
+        Hayba builds from source on Windows. You need UE 5.7 or 5.8, Visual Studio with the
+        C++ toolchain your Unreal Engine version requires, and Node.js 22.5 or newer.
+      </p>
+      <p>
+        1. Clone and build the MCP server:
+        <code>git clone https://github.com/zajalist/hayba.git</code>, then in the repo run
+        <code>npm install</code> and <code>npm --prefix mcp-tools/hayba-mcp run build</code>.
+      </p>
+      <p>
+        2. Create <code>&lt;YourProject&gt;\Plugins</code> if it doesn't exist, then link the
+        plugin into it from an administrator prompt (or with Windows Developer Mode on):
+        <code>mklink /D "&lt;YourProject&gt;\Plugins\HaybaMCPToolkit" "&lt;repo&gt;\unreal\HaybaMCPToolkit"</code>,
+        then regenerate Visual Studio project files and compile. The link lets the plugin find
+        the MCP server you just built. If you copy the plugin instead, set
+        <code>SidecarEntryPath</code> under <code>[HaybaMCPToolkit]</code> in your project's
+        <code>Saved/Config/WindowsEditor/EditorPerProjectUserSettings.ini</code> to the full path
+        of <code>mcp-tools/hayba-mcp/dist/index.js</code>.
+      </p>
+      <p>
+        3. Register the server with your agent host. For Claude Code:
+        <code>claude mcp add hayba-toolkit -- node /path/to/hayba/mcp-tools/hayba-mcp/dist/index.js</code>
       </p>
       <p class="docs-status">
         <span class="docs-status-tag">WIP</span>
-        Full install guide is being written.  In the meantime, see the
-        <a href="https://github.com/zajalist/hayba#readme" target="_blank">repo README</a>
-        for the canonical setup.
+        Full install guide is being written. The
+        <a href="https://github.com/zajalist/hayba#readme" target="_blank" rel="noopener">repo README</a>
+        has the same steps.
       </p>
     </section>
 
     <section class="docs-section">
       <h2 id="first-run">First run</h2>
       <p>
-        Hayba opens to the conlang workbench by default. Pick a starter phonology, watch
-        the legality heatmap update as you toggle phonemes, then move on to sound changes
-        and lexicon. Everything persists locally; signed-in users get cloud sync and
-        share-links.
+        On first launch the Hayba MCP Toolkit tab opens by itself (later:
+        <strong>Tools &gt; Hayba MCP Toolkit</strong>, or the console command
+        <code>Hayba.MCP.Open</code>). Your MCP host drives the agent. To chat inside the
+        editor instead, set a provider (and key, for cloud models) under
+        <strong>Settings &gt; AI / LLM Backend</strong>. Plan Mode is on by default: approve
+        plans in the Plan tab.
       </p>
     </section>
 
     <section class="docs-section">
-      <h2 id="linguistics-workbench">Linguistics workbench</h2>
+      <h2 id="mcp-overview">Unreal toolkit (MCP)</h2>
       <p>
-        The conlang workbench covers phonology (IPA chart + phonotactic legality heatmap),
-        sound changes (rule stacks with regex selectors), paradigms, and family trees.
-        Built on PHOIBLE co-occurrence data so suggestions reflect what actually appears
-        in human languages.
-      </p>
-      <p class="docs-status"><span class="docs-status-tag">WIP</span> Per-feature pages in progress.</p>
-    </section>
-
-    <section class="docs-section">
-      <h2 id="tectonics-pillars">Tectonics pillars</h2>
-      <p>
-        The 0.5 series ships M0-M3 of the tectonics pillar: plate seeding, rift opening,
-        collision/subduction, and the dynamic-plate lifecycle. Visualised at each step
-        with real per-tile invariants (plate area, drift, divergence regime) rather than
-        abstracted summaries.
-      </p>
-      <p class="docs-status"><span class="docs-status-tag">WIP</span> Algorithm references in progress.</p>
-    </section>
-
-    <section class="docs-section">
-      <h2 id="mcp-overview">UE5 MCP plugin</h2>
-      <p>
-        Hayba speaks Model Context Protocol. Any LLM with MCP support — Claude Desktop,
-        Cursor, Continue, local Llama via Ollama-MCP — can author terrain, place actors,
-        apply conventions, and orchestrate the full toolset directly in Unreal.
+        Hayba speaks the Model Context Protocol over stdio. It works with Claude Code,
+        Claude Desktop and other MCP clients. The agent places actors, builds PCG graphs,
+        and authors materials, Blueprints and UMG widgets inside a live Unreal Engine 5.7+
+        editor.
       </p>
       <p>
-        35 tools across 8 domains: Code mode (meta-tools), Actor, Scene, Editor, PCGEx,
-        Conventions, Landscape &amp; Zone Painter, and others. Per-domain toggles let you
-        scope what the agent sees.
+        The current source on main has 400+ editor tools across 30+ editor domains. The
+        server starts with 7 tools; the agent searches the catalogue and calls the rest on
+        demand.
       </p>
       <p class="docs-status"><span class="docs-status-tag">WIP</span> Full tools reference rolls out per-domain.</p>
     </section>
 
     <section class="docs-section">
-      <h2 id="self-host">Self-hosting</h2>
+      <h2 id="research">Early research</h2>
       <p>
-        The hosted tier is one self-hosted Supabase plus a static Vercel front-end.
-        See <code>infra/README.md</code> in the repo for the full bring-up sequence —
-        docker-compose, Caddy, Cloudflare Tunnel, nightly pg_dump rotation.
+        The repository also holds early research libraries for worldbuilding: a
+        constructed-language toolkit (<code>packages/linguistics</code>), planet
+        plausibility checks (<code>packages/planet-physics</code>) and rule-based
+        architecture styles (<code>packages/architecture</code>). They are early-stage
+        and separate from the Unreal toolkit.
       </p>
     </section>
 
