@@ -172,13 +172,28 @@ describe('compile and persistence truth contract', () => {
     expect(shutdown).toContain('ClearTimer(AutoOpenTimerHandle)');
     expect(shutdown).toContain('AutoOpenTimerHandle.Invalidate()');
 
-    for (const handle of ['StudioMenuStartupHandle', 'PlanModeMenuStartupHandle']) {
+    // Derive the startup callbacks from the source, so a new registration that
+    // ShutdownModule never revokes fails here instead of slipping past a list.
+    const startupHandles = [
+      ...module.matchAll(/(\w+)\s*=\s*UToolMenus::RegisterStartupCallback\(/g),
+    ].map((match) => match[1]);
+    // Every registration must be stored in a handle; an unstored one cannot be revoked.
+    expect(module.match(/UToolMenus::RegisterStartupCallback\(/g) ?? []).toHaveLength(
+      startupHandles.length,
+    );
+    // The level-editor Plan Mode toolbar is gone (its toggle now lives in
+    // Settings > External MCP safety), leaving only the content-browser entry.
+    expect(startupHandles).toEqual(['StudioMenuStartupHandle']);
+    for (const handle of startupHandles) {
       expect(header).toContain(`FDelegateHandle ${handle}`);
-      expect(module).toContain(`${handle} = UToolMenus::RegisterStartupCallback(`);
       expect(shutdown).toContain(`UToolMenus::UnRegisterStartupCallback(${handle})`);
       expect(shutdown).toContain(`${handle}.Reset()`);
     }
-    expect(module.match(/FToolMenuOwnerScoped OwnerScoped\(this\)/g)).toHaveLength(2);
+    for (const removed of ['PlanModeMenuStartupHandle', 'RegisterPlanModeToolbar']) {
+      expect(header).not.toContain(removed);
+      expect(module).not.toContain(removed);
+    }
+    expect(module.match(/FToolMenuOwnerScoped OwnerScoped\(this\)/g)).toHaveLength(1);
     expect(shutdown).toContain('UToolMenus::UnregisterOwner(this)');
   });
 });

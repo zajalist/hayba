@@ -146,7 +146,6 @@ public:
 private:
     /** Adds the "Open with Hayba" entry to the StaticMesh content-browser menu. */
     void RegisterStudioContentMenu();
-    /** Adds the Plan Mode widget under this module's removable ToolMenus owner. */
     /** Tracked next-tick onboarding action; ShutdownModule cancels it if pending. */
     void OpenOnboardingTab();
     FString PendingStudioAsset;
