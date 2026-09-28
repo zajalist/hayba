@@ -40,8 +40,9 @@ All notable changes to Hayba MCP Toolkit are documented here. Format based on [K
 - The four Fab tools (`hayba_fab_login_status`, `hayba_fab_library_list`,
   `hayba_fab_marketplace_search`, `hayba_fab_download`). They sent
   `fab_*` commands that no editor handler ever implemented, so every call
-  failed with "Unknown command". They never worked; the earlier changelog
-  entry describing them was wrong. Fab content can still be added through the
+  failed with "Unknown command". They never worked; the "FAB connector"
+  entry in `mcp-tools/hayba-mcp/CHANGELOG.md` describing them was wrong. Fab
+  content can still be added through the
   Epic Games Launcher or the in-editor Fab plugin and then found with
   `hayba_asset_search` / `hayba_asset_browse`.
 

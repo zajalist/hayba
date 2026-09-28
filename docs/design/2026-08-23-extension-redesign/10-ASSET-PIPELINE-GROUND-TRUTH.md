@@ -64,7 +64,8 @@ up and considerably worse: it is in the shipped system prompt.
 ## What exists (verified)
 
 **Acquisition.** Four search integrations — PolyHaven, ambientCG, Sketchfab
-(token), Fab (Epic login) — plus project Content Browser search. A genuinely
+(token), Fab (Epic login; *never implemented, removed 2026-09-28*) — plus
+project Content Browser search. A genuinely
 hardened download path: bounded fetch, unique cache dirs, safe leaf names,
 zip-slip/symlink-safe extraction (`secure-archive.ts`, 1,008 lines),
 enumeration limits (4096 files / 8192 entries / depth 32 / 256 MB file / 2 GB
