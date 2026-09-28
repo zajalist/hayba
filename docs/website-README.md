@@ -17,10 +17,11 @@ Lives at the repo top level by decision — see
 index.html        landing page          main.js    nav/scroll behaviour
 style.css         global styles
 
-about/   app/   docs/   showcase/          ← each an index.html subpage
+about/   docs/   showcase/          ← each an index.html subpage
 assets/   logos (Logo.svg, Logo-white.svg) · fonts/ (Noto Sans woff2 + OFL.txt)
 lib/      gl-quad.js · hero-field.js · ripples.js · starfield.js ·
-          page-toc.js   (vanilla helpers, no bundler)
+          page-toc.js · docs-toc.js · command-blocks.js
+          (vanilla helpers, no bundler)
 ```
 
 The site collects no data: there are no forms, accounts or backend calls.
@@ -30,16 +31,8 @@ requests; only the outbound GitHub links leave the site.
 
 ## Routing
 
-[`../vercel.json`](../vercel.json) rewrites:
-
-| Source | Destination |
-|---|---|
-| `/app/:path*` | `/app/index.html` |
-| `/lang/:id` | `/app/index.html` |
-
-`/app` and `/lang/:id` both resolve to `app/index.html`, a placeholder
-saying the conlang workbench is not hosted on the site. The website has
-**no** build coupling to a worldbuilding package.
+[`../vercel.json`](../vercel.json) defines no rewrites: each page is served
+from its directory's `index.html` (`/about/`, `/docs/`, `/showcase/`).
 
 ## Deploys
 

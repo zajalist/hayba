@@ -22,7 +22,10 @@
       <img src="assets/Logo-white.svg" alt="Hayba" class="nav-logo-img" />
     </a>
     <div class="nav-sep"></div>
-    <div class="nav-links">
+    <button type="button" class="nav-menu-btn" aria-expanded="false" aria-controls="navLinks" hidden>
+      Menu<span class="nav-menu-icon" aria-hidden="true"></span>
+    </button>
+    <div class="nav-links" id="navLinks">
       <a href="#pipelines">Toolkit</a>
       <a href="/docs/">Docs</a>
       <a href="/showcase/">Showcase</a>
@@ -65,7 +68,6 @@
   <a href="#pipelines" data-target="pipelines" class="toc-link">Toolkit</a>
   <a href="#workflow" data-target="workflow" class="toc-link">Workflow</a>
   <a href="#opensource" data-target="opensource" class="toc-link">Open Source</a>
-  <a href="#research" data-target="research" class="toc-link">Early research</a>
   <a href="#roadmap" data-target="roadmap" class="toc-link">Roadmap</a>
   <a href="#faq" data-target="faq" class="toc-link">FAQ</a>
   <a href="https://github.com/zajalist/hayba" target="_blank" rel="noopener" class="toc-link toc-cta">View source</a>
@@ -75,7 +77,7 @@
 <nav class="subnav" aria-label="Jump to">
   <a href="#pipelines" class="subnav-link is-active">Toolkit</a>
   <a href="#workflow" class="subnav-link">Workflow</a>
-  <a href="#research" class="subnav-link">Early research</a>
+  <a href="#opensource" class="subnav-link">Open source</a>
   <a href="https://github.com/zajalist/hayba" target="_blank" rel="noopener" class="subnav-link">GitHub</a>
 </nav>
 
@@ -120,19 +122,6 @@
   </div>
 </section>
 
-<!-- ═══════════════════════════════ EARLY RESEARCH ═══════════════════════════════ -->
-<section class="feature-row" id="research">
-  <div class="feature-row-text">
-    <div class="feature-eyebrow">Early research</div>
-    <h2>Worldbuilding<br>research libraries.</h2>
-  </div>
-  <div class="feature-row-body">
-    <p>The repository also holds early research libraries for worldbuilding: a constructed-language toolkit (linguistics), planet plausibility checks, and rule-based architecture styles.</p>
-    <p>They are early-stage and separate from the Unreal toolkit. There is no hosted version.</p>
-    <a href="https://github.com/zajalist/hayba/tree/main/packages" target="_blank" rel="noopener" class="feature-cta">Browse the packages →</a>
-  </div>
-</section>
-
 <!-- ═══════════════════════════════ ROADMAP ═══════════════════════════════ -->
 <section class="feature-row roadmap-row" id="roadmap">
   <div class="feature-row-text">
@@ -153,11 +142,6 @@
     <div class="roadmap-ver">Now</div>
     <div class="roadmap-name">Toolkit development</div>
     <div class="roadmap-status">In progress · tracked in GitHub issues</div>
-  </div>
-  <div class="roadmap-item">
-    <div class="roadmap-ver">R&amp;D</div>
-    <div class="roadmap-name">Worldbuilding libraries</div>
-    <div class="roadmap-status">Early research · linguistics, planet plausibility, architecture</div>
   </div>
 </div>
 
@@ -196,7 +180,6 @@
   <a href="#pipelines" class="subnav-link">Toolkit</a>
   <a href="#workflow" class="subnav-link">Workflow</a>
   <a href="#opensource" class="subnav-link">Open source</a>
-  <a href="#research" class="subnav-link">Early research</a>
   <a href="#roadmap" class="subnav-link">Roadmap</a>
   <a href="#faq" class="subnav-link">FAQ</a>
 </div>
@@ -208,7 +191,6 @@
     <div class="footer-col">
       <h4>Tools</h4>
       <a href="#pipelines">Unreal toolkit</a>
-      <a href="#research">Early research</a>
     </div>
     <div class="footer-col">
       <h4>Learning</h4>

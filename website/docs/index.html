@@ -25,10 +25,6 @@
         <a href="#mcp-overview" class="docs-toc-link">MCP overview</a>
       </div>
       <div class="docs-toc-group">
-        <div class="docs-toc-title">Early research</div>
-        <a href="#research" class="docs-toc-link">Research libraries</a>
-      </div>
-      <div class="docs-toc-group">
         <div class="docs-toc-title">FAQ</div>
         <a href="/#faq" class="docs-toc-link">Common questions</a>
       </div>
@@ -47,33 +43,64 @@
     <section class="docs-section">
       <h2 id="install">Install</h2>
       <p>
-        Hayba builds from source on Windows. You need UE 5.7 or 5.8, Visual Studio with the
-        C++ toolchain your Unreal Engine version requires, and Node.js 22.5 or newer.
+        Hayba builds from source on Windows. You need Unreal Engine 5.7+, Visual Studio with
+        the C++ toolchain your Unreal Engine version requires, and Node.js 22.5 or newer.
       </p>
-      <p>
-        1. Clone and build the MCP server:
-        <code>git clone https://github.com/zajalist/hayba.git</code>, then in the repo run
-        <code>npm install</code> and <code>npm --prefix mcp-tools/hayba-mcp run build</code>.
-      </p>
-      <p>
-        2. Create <code>&lt;YourProject&gt;\Plugins</code> if it doesn't exist, then link the
-        plugin into it from an administrator prompt (or with Windows Developer Mode on):
-        <code>mklink /D "&lt;YourProject&gt;\Plugins\HaybaMCPToolkit" "&lt;repo&gt;\unreal\HaybaMCPToolkit"</code>,
-        then regenerate Visual Studio project files and compile. The link lets the plugin find
-        the MCP server you just built. If you copy the plugin instead, set
-        <code>SidecarEntryPath</code> under <code>[HaybaMCPToolkit]</code> in your project's
-        <code>Saved/Config/WindowsEditor/EditorPerProjectUserSettings.ini</code> to the full path
-        of <code>mcp-tools/hayba-mcp/dist/index.js</code>.
-      </p>
-      <p>
-        3. Register the server with your agent host. For Claude Code:
-        <code>claude mcp add hayba-toolkit -- node /path/to/hayba/mcp-tools/hayba-mcp/dist/index.js</code>
-      </p>
-      <p class="docs-status">
-        <span class="docs-status-tag">WIP</span>
-        Full install guide is being written. The
-        <a href="https://github.com/zajalist/hayba#readme" target="_blank" rel="noopener">repo README</a>
-        has the same steps.
+
+      <ol class="docs-steps" role="list">
+        <li>
+          <h3 class="docs-step-title">Build the MCP server</h3>
+          <p>Clone the repo, install its dependencies and build the server:</p>
+          <div class="docs-cmd" data-copy-name="build commands">
+            <div class="docs-cmd-bar"><span class="docs-cmd-label">Terminal</span></div>
+            <pre><code>git clone https://github.com/zajalist/hayba.git
+cd hayba
+npm install
+npm --prefix mcp-tools/hayba-mcp run build</code></pre>
+          </div>
+        </li>
+
+        <li>
+          <h3 class="docs-step-title">Add the plugin to your project</h3>
+          <p>
+            Create <code>&lt;YourProject&gt;\Plugins</code> if it doesn't exist, then link the
+            plugin into it from an administrator Command Prompt (or with Windows Developer Mode
+            on). Replace <code>&lt;YourProject&gt;</code> and <code>&lt;repo&gt;</code> with your
+            project folder and your Hayba clone:
+          </p>
+          <div class="docs-cmd" data-copy-name="plugin link command">
+            <div class="docs-cmd-bar"><span class="docs-cmd-label">Command Prompt</span></div>
+            <pre><code>mklink /D "&lt;YourProject&gt;\Plugins\HaybaMCPToolkit" "&lt;repo&gt;\unreal\HaybaMCPToolkit"</code></pre>
+          </div>
+          <p>
+            Then regenerate Visual Studio project files and compile. The link lets the plugin
+            find the MCP server you just built.
+          </p>
+          <p>
+            If you copy the plugin instead of linking it, point it at the server in
+            <code>&lt;YourProject&gt;/<wbr>Saved/<wbr>Config/<wbr>WindowsEditor/<wbr>EditorPerProjectUserSettings.ini</code>,
+            using the full path to your clone:
+          </p>
+          <div class="docs-cmd" data-copy-name="plugin settings">
+            <div class="docs-cmd-bar"><span class="docs-cmd-label docs-cmd-file" title="EditorPerProjectUserSettings.ini">EditorPerProjectUserSettings.ini</span></div>
+            <pre><code>[HaybaMCPToolkit]
+SidecarEntryPath=&lt;repo&gt;\mcp-tools\hayba-mcp\dist\index.js</code></pre>
+          </div>
+        </li>
+
+        <li>
+          <h3 class="docs-step-title">Register the server with your agent host</h3>
+          <p>For Claude Code:</p>
+          <div class="docs-cmd" data-copy-name="Claude Code command">
+            <div class="docs-cmd-bar"><span class="docs-cmd-label">Terminal</span></div>
+            <pre><code>claude mcp add hayba-toolkit -- node /path/to/hayba/mcp-tools/hayba-mcp/dist/index.js</code></pre>
+          </div>
+        </li>
+      </ol>
+
+      <p class="docs-note">
+        The <a href="https://github.com/zajalist/hayba#readme" target="_blank" rel="noopener">repo README</a>
+        has the same steps and the Claude Desktop config.
       </p>
     </section>
 
@@ -102,23 +129,20 @@
         server starts with 7 tools; the agent searches the catalogue and calls the rest on
         demand.
       </p>
-      <p class="docs-status"><span class="docs-status-tag">WIP</span> Full tools reference rolls out per-domain.</p>
-    </section>
-
-    <section class="docs-section">
-      <h2 id="research">Early research</h2>
-      <p>
-        The repository also holds early research libraries for worldbuilding: a
-        constructed-language toolkit (<code>packages/linguistics</code>), planet
-        plausibility checks (<code>packages/planet-physics</code>) and rule-based
-        architecture styles (<code>packages/architecture</code>). They are early-stage
-        and separate from the Unreal toolkit.
-      </p>
+      <p class="docs-status"><span class="docs-status-tag">WIP</span><span>Full tools reference rolls out per-domain.</span></p>
     </section>
 
     <p class="docs-footer-link">
       <a href="/">← Back to landing</a>
     </p>
   </main>
+
+  <script type="module">
+    import { mountDocsToc } from '/lib/docs-toc.js';
+    import { mountCommandBlocks } from '/lib/command-blocks.js';
+
+    mountDocsToc(document.querySelector('.docs-toc'));
+    mountCommandBlocks(document.querySelector('.docs-main'));
+  </script>
 </body>
 </html>
