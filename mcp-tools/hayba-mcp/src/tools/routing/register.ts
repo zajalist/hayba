@@ -104,6 +104,7 @@ export interface CapturedTool {
   description?: string;
   /** Original Zod raw shape. */
   schema: z.ZodRawShape;
+  inputSchema?: z.ZodType<Record<string, unknown>>;
   /** Original handler — same callable shape used by McpServer. */
   handler: (...args: unknown[]) => unknown;
   /** Directory under src/tools/, or null for root-level. */
@@ -395,8 +396,10 @@ export async function registerDeferredRouting(
     if (isToolDisabled(name)) return;
     const t = captured.get(name);
     if (!t) return;
-    // Match McpServer.tool overload: (name, description?, schema, handler)
-    if (t.description !== undefined) {
+    // Full schemas preserve strict object validation when a deferred pack is loaded.
+    if (t.inputSchema) {
+      server.registerTool(name, { description: t.description, inputSchema: t.inputSchema }, t.handler as never);
+    } else if (t.description !== undefined) {
       (server as unknown as { tool: (...a: unknown[]) => void }).tool(
         name, t.description, t.schema, t.handler,
       );
@@ -532,7 +535,9 @@ export async function registerDeferredRouting(
       console.warn(`[routing] always-on tool "${name}" missing from captured set`);
       return;
     }
-    if (t.description !== undefined) {
+    if (t.inputSchema) {
+      server.registerTool(name, { description: t.description, inputSchema: t.inputSchema }, t.handler as never);
+    } else if (t.description !== undefined) {
       (server as unknown as { tool: (...a: unknown[]) => void }).tool(
         name, t.description, t.schema, t.handler,
       );

@@ -37,6 +37,7 @@ import { isUnderEvidenceContract, withEvidenceWarning } from './response-evidenc
 import { recordSchema, type Cost } from './schema-registry.js';
 import { registerToolMeta } from './tool-meta-registry.js';
 import { appendNicheBriefing } from './niche-briefing.js';
+import { wrapToolHandlerForStream } from './tool-stream-mirror.js';
 import type { RichToolHandler, RichToolResult, ToolHandler, ToolResult, SessionManager } from './types.js';
 
 export type ToolDescriptor = {
@@ -46,6 +47,8 @@ export type ToolDescriptor = {
   description: string;
   /** Zod raw shape used both for server.tool validation and the schema registry. */
   schema: z.ZodRawShape;
+  /** Preserve object-level constraints at the eager MCP boundary. */
+  inputSchema?: z.ZodType<Record<string, unknown>>;
   /**
    * Optional wire-only shape accepted by McpServer.
    *
@@ -97,6 +100,7 @@ export function defineTool<S extends z.ZodRawShape>(d: {
   name: string;
   description: string;
   schema: S;
+  inputSchema?: z.ZodType<Record<string, unknown>>;
   wireSchema?: z.ZodRawShape;
   meta: HaybaToolMeta;
   cost: Cost;
@@ -149,7 +153,7 @@ export function materializeTool(
     description: appendMeta(d.description, d.meta),
     schema: d.wireSchema ?? d.schema,
     handler: async (params: Record<string, unknown>): Promise<RichToolResult> => {
-      const r = await d.handler(params, session);
+      const r = await d.handler(d.inputSchema ? d.inputSchema.parse(params) : params, session);
       const shaped = niche
         ? appendNicheBriefing(niche, session, r)
         : { content: r.content, isError: r.isError };
@@ -171,6 +175,11 @@ export function registerTool(
   d: ToolDescriptor,
 ): void {
   const tool = materializeTool(session, d);
+  if (d.inputSchema) {
+    server.registerTool(tool.name, { description: tool.description, inputSchema: d.inputSchema }, wrapToolHandlerForStream(tool.name, tool.handler));
+    registerToolMeta(d.name, d.meta);
+    return;
+  }
   server.tool(
     tool.name,
     tool.description,

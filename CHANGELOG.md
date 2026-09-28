@@ -4,7 +4,20 @@ All notable changes to Hayba MCP Toolkit are documented here. Format based on [K
 
 ## [Unreleased]
 
+### Deprecated
+- `hayba_import_landscape` and `import_landscape` remain callable for one release
+  as adapters to `world_ingest`. Responses include staged workflow results and
+  `deprecation` metadata; migrate legacy terrain fields using the
+  [MCP Tool Reference](docs/wiki/MCP-Tool-Reference.md#results-interruption-and-migration).
+
 ### Fixed
+- Generalized world/asset workflows preserve Plan Mode approval pauses, validate
+  LOD readback and retain partial progress, report each unsupported preparation
+  capability, and guard saves by the actual affected level package. Partitioned
+  ingestion now refuses unsupported external-actor persistence before mutation.
+  Legacy landscape aliases keep import-only behavior. Strict eager/loaded-pack
+  schemas reject misplaced dry-run fields before execution. The existing
+  `asset_inspect` accepts optional preparation policies with explicit evidence.
 - `material_get_info` now reports each graph parameter's authored name, exact
   parameter type, and typed default value, with explicit availability flags
   for invalid/non-finite metadata instead of plausible omissions. Master
@@ -21,6 +34,29 @@ All notable changes to Hayba MCP Toolkit are documented here. Format based on [K
 - `asset_registry_query` now uses a native, read-only AssetRegistry handler instead of blocked dynamic Python reflection, with deterministic bounded pagination, strict input checks, and fail-closed response validation.
 
 ### Added
+- Hayba Pro client. The chat panel can sign in to Hayba Pro (device-code sign-in;
+  the refresh token is stored with DPAPI) and route a chat through the hosted
+  service, which asks the sidecar to run editor tools. Every inbound tool call
+  passes a local guard first: it must be in the manifest this machine offered,
+  match the tool schema, respect the Explore read-only mode and the local
+  `python_run` permission, and destructive calls need a local approval.
+  Results are secret-redacted, capped at 32 KB and stripped of screenshots and
+  other binary payloads before they leave the machine. Sessions survive
+  dropped connections (resume with replay, keep-alive pings), and when Pro is
+  unavailable the chat falls back to Community (local/BYOK) per chat.
+  Bring-your-own-key Pro turns accept hosted providers only; local and custom
+  endpoints are refused before the key is sent.
+- `@hayba/brain-protocol`: versioned, strict Zod schemas for the Pro wire
+  frames and the shared activity-event vocabulary, with valid/invalid fixtures.
+- Generalized `world_inspect`, `world_ingest` and `asset_prepare` workflows,
+  alongside the existing `asset_inspect` metadata tool. World ingestion reports
+  ordered stages, dry-run plans, retained resources and explicit unsupported
+  capabilities. The current native success path imports one heightmap into an
+  existing writable non-partitioned world and verifies map saving and landscape
+  presence. Asset preparation supports editing existing LOD reductions; native
+  mesh-terrain/managed-update ingestion, partition/HLOD configuration and
+  Nanite/collision/lightmap/material writers remain unavailable. Contract tests
+  cover success, refusal, partial failure and programmatic cancellation.
 - `editor_pie_click_actor` performs exact OS-input-free world interaction
   against a live visible PIE viewport without moving the desktop cursor or
   foregrounding its window. It reuses player-controller projection, rejects
@@ -66,6 +102,12 @@ All notable changes to Hayba MCP Toolkit are documented here. Format based on [K
   `mcp-tools/hayba-mcp/examples/github-actions-hayba-cli.yml`.
 
 ### Changed
+- `/chat` and `/brain` sidecar routes refuse requests whose `Host` or
+  `Origin` is not loopback, closing DNS-rebinding access from web pages.
+- The visual-embeddings sidecar now listens on port 7822 by default (was 7821,
+  which the chat sidecar uses). Set `HAYBA_SIDECAR_PORT` to override.
+- Removed the editor plugin's unused single-request chat client; the chat panel
+  talks only to the local chat sidecar.
 - Removed the optional local `@huggingface/transformers` embedding backend and
   its vulnerable Sharp/ONNX/AdmZip production graph. Tool and asset search now
   select Ollama when a bounded local probe succeeds and otherwise use the

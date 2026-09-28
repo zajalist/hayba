@@ -20,6 +20,7 @@ import { z } from 'zod';
 export const ArchetypeConfigSchema = z.object({
   id: z.string().min(1, 'id must be a non-empty string'),
   role: z.string().min(1, 'role must be a non-empty string'),
+  intent_keywords: z.array(z.string().min(1)).optional(),
   system_prompt: z.string().min(1, 'system_prompt must be a non-empty string'),
   tool_filter: z
     .array(z.string().min(1, 'tool_filter entries must be non-empty strings'))

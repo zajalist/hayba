@@ -14,6 +14,12 @@
 // question needs a human — the caller supplied the name and can supply another —
 // so it is answered here, before the dialog can appear.
 //
+// AssetDelete has the same failure class via a different API: DeleteAsset /
+// ObjectTools can raise save/confirm dialogs when closing open editors. That
+// path sets GIsRunningUnattendedScript and calls ForceDeleteObjects with
+// bShowConfirmation=false (see HaybaMCPAssetHandler::AssetDelete) — do not
+// regress to a bare DeleteAsset without those guards.
+//
 // Any handler calling an editor API that can prompt should check first. If you
 // add a call to CreateAsset, DeleteAssets, RenameAssets or friends, assume it
 // prompts until you have checked the engine source.

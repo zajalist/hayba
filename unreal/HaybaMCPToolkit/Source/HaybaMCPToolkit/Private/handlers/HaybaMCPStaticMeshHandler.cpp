@@ -169,7 +169,8 @@ static FHaybaHandlerResult MeshSetLOD(const TSharedPtr<FJsonObject>& P)
     Out->SetBoolField(TEXT("ok"), true);
     Out->SetStringField(TEXT("path"), Path);
     Out->SetNumberField(TEXT("lod_index"), LodIndex);
-    Out->SetNumberField(TEXT("screen_size"), ScreenSize);
+    Out->SetNumberField(TEXT("screen_size"), Mesh->GetSourceModel(LodIndex).ScreenSize.Default);
+    Out->SetNumberField(TEXT("reduction_percent_triangles"), Mesh->GetSourceModel(LodIndex).ReductionSettings.PercentTriangles);
     return FHaybaHandlerResult::Ok(Out);
 #else
     return FHaybaHandlerResult::Err(TEXT("mesh_set_lod: editor-only command"));

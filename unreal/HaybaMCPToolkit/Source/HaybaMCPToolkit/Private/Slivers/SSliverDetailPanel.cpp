@@ -51,7 +51,7 @@ void SSliverDetailPanel::Construct(const FArguments& InArgs)
             [
                 SNew(SButton)
                 .ContentPadding(FMargin(14, 4))
-                .ToolTipText(FText::FromString(TEXT("Run this sliver with the parameters above.")))
+                .ToolTipText(FText::FromString(TEXT("Run this recipe with the parameters above.")))
                 .Text(FText::FromString(TEXT("Run")))
                 .OnClicked(this, &SSliverDetailPanel::OnRunClicked)
             ]

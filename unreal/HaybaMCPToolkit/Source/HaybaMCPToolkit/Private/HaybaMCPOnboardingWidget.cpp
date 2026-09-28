@@ -101,7 +101,7 @@ void SHaybaMCPOnboardingWidget::ShowScreen(EHaybaOnboardingScreen Screen)
         case EHaybaOnboardingScreen::PlanMode:
             ScreenSwitcher->SetContent(BuildSubScreen(
                 NSLOCTEXT("Hayba", "PlanModeTitle", "Plan Mode — AI Safety"),
-                NSLOCTEXT("Hayba", "PlanModeDesc", "Plan Mode prevents the AI from modifying your scene without showing you a plan first. It is ON by default. You can disable it from the toolbar once you trust your workflow."),
+                NSLOCTEXT("Hayba", "PlanModeDesc", "Plan Mode prevents the AI from modifying your scene without showing you a plan first. It is ON by default. You can turn it off in Settings > Preferences > External MCP safety once you trust your workflow."),
                 EHaybaOnboardingScreen::VisualSidecar));
             break;
         case EHaybaOnboardingScreen::VisualSidecar:

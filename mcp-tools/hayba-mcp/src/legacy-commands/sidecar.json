@@ -2187,12 +2187,17 @@
           {
             "name": "path",
             "type": "string"
+          },
+          {
+            "name": "blueprint_type",
+            "type": "string",
+            "description": "\"function_library\" or \"normal\", read back from the created asset"
           }
         ]
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "package_path is the full intended asset path (trailing component = asset name), matching material_create. The handler derives the directory via FPackageName::GetLongPackagePath and re-composes <dir>/<name> so the asset lands at the standard /Game/Dir/Name.Name."
+      "notes": "package_path is the full intended asset path (trailing component = asset name), matching material_create. The handler derives the directory via FPackageName::GetLongPackagePath and re-composes <dir>/<name> so the asset lands at the standard /Game/Dir/Name.Name. A parent of /Script/Engine.BlueprintFunctionLibrary creates a real function library (static functions callable from any blueprint); check blueprint_type in the reply."
     },
     "blueprint_get_info": {
       "aliases": [],
@@ -2263,16 +2268,37 @@
           "name": "variable_type",
           "type": "string",
           "required": true,
-          "description": "bool/int/float/string/name/vector or a class/struct path"
+          "description": "bool, int, int64, float, string, name, text, byte, vector, rotator, transform, linear_color, vector2d, object:<class path>, class:<class path>, soft_object:<class path>, soft_class:<class path>, struct:<struct path>, enum:<enum path>, or array<any of those>. Blueprint classes end in _C, e.g. object:/Game/UI/WBP_Menu.WBP_Menu_C"
+        },
+        {
+          "name": "default_value",
+          "type": "string",
+          "required": false,
+          "description": "Default in Unreal's text form, e.g. \"0.2\", \"true\", \"Title\". For arrays and structs set the default afterwards with blueprint_set_defaults."
         }
       ],
       "returns": {
         "shape": "object",
-        "fields": []
+        "fields": [
+          {
+            "name": "verified",
+            "type": "boolean",
+            "description": "The variable exists with the requested type and, when given, the requested default"
+          },
+          {
+            "name": "compiled_clean",
+            "type": "boolean"
+          },
+          {
+            "name": "default_value",
+            "type": "string",
+            "description": "The default as stored on the variable"
+          }
+        ]
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Add a variable to a Blueprint. variable_type takes bool/int/float/string/name/vector or a class/struct path. Staged until blueprint_compile."
+      "notes": "Add a member variable to a Blueprint and recompile. Object, class and struct references are resolved when added, so a mistyped path is refused with the path in the message instead of compiling into a broken pin. Refuses a name the blueprint already has."
     },
     "blueprint_compile": {
       "aliases": [],
@@ -2642,12 +2668,24 @@
           {
             "name": "saved",
             "type": "boolean"
+          },
+          {
+            "name": "path",
+            "type": "string"
+          },
+          {
+            "name": "dirty",
+            "type": "boolean"
+          },
+          {
+            "name": "verified",
+            "type": "boolean"
           }
         ]
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Save the current level, or the one at `path`. Editor edits live in memory until this runs, so an unsaved level loses everything on restart or a rebuild."
+      "notes": "Save the current level. Optional path is an expected current-level package guard, not Save As; a mismatch is refused before mutation. Returns saved, path, dirty and verified readback for that package only, not external actor packages. Plan Mode gated; disk persistence is not undoable."
     },
     "level_load": {
       "aliases": [],
@@ -3776,18 +3814,26 @@
             "type": "boolean"
           },
           {
+            "name": "path",
+            "type": "string"
+          },
+          {
             "name": "lod_index",
             "type": "number"
           },
           {
             "name": "screen_size",
             "type": "number"
+          },
+          {
+            "name": "reduction_percent_triangles",
+            "type": "number"
           }
         ]
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Sets a LOD's screen size (and optionally its reduction target) on a static mesh, then rebuilds it. Editor-only, and it modifies the asset — save it afterwards. It REFUSES a mesh with any zero-UV LOD, because the rebuild would hit an engine assert and take the editor down with it; that refusal is a real limit of the asset, not a bug in this command."
+      "notes": "Sets a LOD's screen size (and optionally its reduction target) on a static mesh, then rebuilds it. Returns ok, path, lod_index, screen_size and reduction_percent_triangles readback. Plan Mode gated and transactional. Editor-only, and it modifies the asset — save it afterwards. It REFUSES a mesh with any zero-UV LOD, because the rebuild would hit an engine assert and take the editor down with it; that refusal is a real limit of the asset, not a bug in this command."
     },
     "mesh_list": {
       "aliases": [],
@@ -4774,6 +4820,26 @@
       "has_ts_wrapper": false,
       "notes": "Applies an impulse to a primitive component in the editor world and reports the resulting linear velocity. A component that is not simulating physics discards an impulse silently, so that case is REFUSED with a message naming the fix rather than answering applied:true — the old reply was true of the call and false of the world. Turn simulation on with physics_set_simulate first."
     },
+    "world_inspect": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPWorldPartitionHandler::WorldInspect",
+      "params": [],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          { "name": "world", "type": "object", "description": "type, package (world package), current_level (actual current-level package), coordinate_system, scale (world_units_per_meter), cached source_control_ready, and explicit enumeration/readiness scopes" },
+          { "name": "landscape", "type": "array", "description": "Loaded landscape proxies: name, path, owning package, label, component_count; empty array if none loaded" },
+          { "name": "partition", "type": "object", "description": "enabled, runtime_grids (unique sorted grid names observed on loaded actors), enumeration_scope; not a complete runtime-hash configuration" },
+          { "name": "data_layers", "type": "array", "description": "Unique sorted short names of data-layer instances already known to the world's data-layer manager" },
+          { "name": "hlod", "type": "object", "description": "layers (unique sorted asset paths referenced by loaded actors and the world default), enumeration_scope; no asset loads" },
+          { "name": "capabilities", "type": "object", "description": "Explicit world_partition and hlod compiled-support booleans, web_browser loaded-module boolean and web_browser_scope" },
+          { "name": "save_ready", "type": "boolean", "description": "Whether the actual current level has an existing writable package file; false for unsaved/transient maps. External actor packages and source-control checkout are not checked." }
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": true,
+      "notes": "Read-only in-memory snapshot of the current editor world; errors when no editor world exists. Does not load/save assets, load modules, change streaming, query remote source control, or mutate the world. Empty arrays are always present. The TypeScript world_inspect wrapper normalizes this grouped snake_case wire payload into WorldCapabilityReport."
+    },
     "wp_get_cells": {
       "aliases": [],
       "handler_cpp": "FHaybaMCPWorldPartitionHandler::WpGetCells",
@@ -5004,7 +5070,25 @@
           "name": "function_name",
           "type": "string",
           "required": true,
-          "description": "A name already used by this blueprint is NOT rejected — see the note"
+          "description": "Must be unused on this blueprint (case-insensitive); a taken name is refused before anything is created"
+        },
+        {
+          "name": "inputs",
+          "type": "array",
+          "required": false,
+          "description": "Parameters as [{\"name\", \"type\"}] — type uses the blueprint_add_variable grammar (float, text, object:<class path>, array<...>)"
+        },
+        {
+          "name": "outputs",
+          "type": "array",
+          "required": false,
+          "description": "Return values as [{\"name\", \"type\"}]; creates the function's result node"
+        },
+        {
+          "name": "pure",
+          "type": "boolean",
+          "required": false,
+          "description": "Mark the function pure (no exec pins; called wherever its output is read)"
         }
       ],
       "returns": {
@@ -5023,12 +5107,32 @@
             "name": "compile_errors",
             "type": "array",
             "description": "Present when the compile failed"
+          },
+          {
+            "name": "signature",
+            "type": "object",
+            "description": "{inputs, outputs, pure} read from the COMPILED function, not echoed from the request"
+          },
+          {
+            "name": "entry_node_id",
+            "type": "string",
+            "description": "Wire the parameters from this node (graph_name = the function name)"
+          },
+          {
+            "name": "result_node_id",
+            "type": "string",
+            "description": "Present when outputs were declared; wire return values into it"
+          },
+          {
+            "name": "verified",
+            "type": "boolean",
+            "description": "The compiled function has exactly the requested parameters and purity"
           }
         ]
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Adds an empty function graph to a blueprint and recompiles. Check compiled_clean, not just ok: adding a function whose name is already taken SUCCEEDS and leaves the blueprint broken with 'Found more than one function with the same name' — verified live. The reply reports the compiler's verdict, but the operation is not rolled back, so a duplicate name costs you a manual repair."
+      "notes": "Adds a function graph to a blueprint, with an optional signature (inputs, outputs, pure), and recompiles. Every parameter type is checked before the graph is created, so a bad type refuses the whole function rather than leaving a half-built one. Build the body with blueprint_add_node using graph_name = the function name."
     },
     "blueprint_document": {
       "aliases": [],
@@ -5064,9 +5168,9 @@
     },
     "blueprint_add_node": {
       "aliases": [], "handler_cpp": "FHaybaMCPBlueprintHandler::AddNode",
-      "params": [{"name":"path","type":"string","required":true},{"name":"graph_name","type":"string","required":false},{"name":"node_type","type":"string","required":true,"description":"call_function, branch, select, timer_by_function, variable_get, variable_set, or cast"},{"name":"function_name","type":"string","required":false},{"name":"class_path","type":"string","required":false},{"name":"variable_name","type":"string","required":false},{"name":"option_count","type":"integer","required":false},{"name":"x","type":"number","required":false},{"name":"y","type":"number","required":false}],
-      "returns":{"shape":"object","fields":[{"name":"node_id","type":"string"},{"name":"pins","type":"array"}]}, "agent_callable":true,"has_ts_wrapper":false,
-      "notes":"Stages a standard event-graph node and returns its GUID plus exact pins. timer_by_function creates K2_SetTimer; set its Object, FunctionName, Time and Looping pins before compile."
+      "params": [{"name":"path","type":"string","required":true},{"name":"graph_name","type":"string","required":false,"description":"Graph to place the node in; omit for the main event graph, or pass a function name to build its body"},{"name":"node_type","type":"string","required":true,"description":"call_function, branch, select, timer_by_function, variable_get, variable_set, cast, sequence (option_count = number of then_N outputs), self (a reference to this blueprint), or create_widget (class_path = the widget class, ending _C)"},{"name":"function_name","type":"string","required":false},{"name":"class_path","type":"string","required":false,"description":"The class a call_function belongs to (omit for this blueprint's own functions), the target type of a cast, or the widget class of create_widget"},{"name":"variable_name","type":"string","required":false},{"name":"option_count","type":"integer","required":false,"description":"select: number of options; sequence: number of outputs (2-32)"},{"name":"x","type":"number","required":false},{"name":"y","type":"number","required":false}],
+      "returns":{"shape":"object","fields":[{"name":"node_id","type":"string"},{"name":"pins","type":"array"},{"name":"return_class","type":"string","description":"create_widget only: the widget class the output is typed to"}]}, "agent_callable":true,"has_ts_wrapper":false,
+      "notes":"Stages a standard event-graph node and returns its GUID plus exact pins. timer_by_function creates K2_SetTimer; set its Object, FunctionName, Time and Looping pins before compile. For entry points use blueprint_add_event (BeginPlay, Construct), blueprint_add_custom_event, or ui_bind_event (widget events)."
     },
     "blueprint_connect_nodes": {
       "aliases": [], "handler_cpp":"FHaybaMCPBlueprintHandler::ConnectNodes",
@@ -5079,6 +5183,30 @@
       "params":[{"name":"path","type":"string","required":true},{"name":"graph_name","type":"string","required":false},{"name":"node_id","type":"string","required":true},{"name":"pin_name","type":"string","required":true},{"name":"value","type":"string","required":true}],
       "returns":{"shape":"object","fields":[{"name":"applied","type":"string"}]},"agent_callable":true,"has_ts_wrapper":false,
       "notes":"Sets a literal or object/class reference on an unconnected input pin. Refuses connected pins so values are never silently ignored."
+    },
+    "blueprint_add_event": {
+      "aliases": [], "handler_cpp":"FHaybaMCPBlueprintHandler::AddEvent",
+      "params":[{"name":"path","type":"string","required":true},{"name":"event_name","type":"string","required":true,"description":"An event the parent class lets blueprints implement, as the node shows it (\"BeginPlay\", \"Event Construct\", \"Tick\", \"EndPlay\") or its function name (\"ReceiveBeginPlay\")"},{"name":"graph_name","type":"string","required":false},{"name":"x","type":"number","required":false},{"name":"y","type":"number","required":false}],
+      "returns":{"shape":"object","fields":[{"name":"node_id","type":"string"},{"name":"pins","type":"array"},{"name":"already_existed","type":"boolean"},{"name":"enabled","type":"boolean","description":"false for a default 'ghost' event, which only runs once a pin is wired"}]},"agent_callable":true,"has_ts_wrapper":false,
+      "notes":"Adds (or returns the existing) override event node such as BeginPlay, Tick, EndPlay, or a widget's Construct/PreConstruct — the entry points a Blueprint starts from. Idempotent: a second call returns the node already there."
+    },
+    "blueprint_add_custom_event": {
+      "aliases": [], "handler_cpp":"FHaybaMCPBlueprintHandler::AddCustomEvent",
+      "params":[{"name":"path","type":"string","required":true},{"name":"event_name","type":"string","required":true,"description":"Unused on this blueprint across events, functions and inherited functions"},{"name":"inputs","type":"array","required":false,"description":"Event parameters as [{\"name\", \"type\"}] using the blueprint_add_variable type grammar"},{"name":"graph_name","type":"string","required":false,"description":"An event graph; omit for the main one"},{"name":"x","type":"number","required":false},{"name":"y","type":"number","required":false}],
+      "returns":{"shape":"object","fields":[{"name":"node_id","type":"string"},{"name":"pins","type":"array","description":"Includes 'then', 'OutputDelegate' and one output per input parameter"},{"name":"verified","type":"boolean"}]},"agent_callable":true,"has_ts_wrapper":false,
+      "notes":"Adds a custom event to a blueprint's event graph: a named entry point that timers, other blueprints and the blueprint itself can call. Wire its OutputDelegate pin into a Set Timer by Event node to run it on a timer. Staged until blueprint_compile."
+    },
+    "blueprint_add_bound_event": {
+      "aliases": [], "handler_cpp":"FHaybaMCPBlueprintHandler::AddBoundEvent",
+      "params":[{"name":"path","type":"string","required":true},{"name":"target","type":"string","required":true,"description":"Component variable or widget (marked Is Variable) that owns the event"},{"name":"event_name","type":"string","required":true,"description":"The multicast delegate to bind, e.g. OnClicked, OnHovered, OnComponentBeginOverlap"},{"name":"graph_name","type":"string","required":false},{"name":"x","type":"number","required":false},{"name":"y","type":"number","required":false}],
+      "returns":{"shape":"object","fields":[{"name":"node_id","type":"string"},{"name":"pins","type":"array"},{"name":"already_existed","type":"boolean"},{"name":"verified","type":"boolean"}]},"agent_callable":true,"has_ts_wrapper":true,
+      "notes":"Binds a widget or component event (Button OnClicked, a collision overlap) as an event node — the Details panel's '+' next to an event. Idempotent. Exposed to agents as ui_bind_event; kept agent_callable so hayba_invoke can reach component events too."
+    },
+    "blueprint_remove_node": {
+      "aliases": [], "handler_cpp":"FHaybaMCPBlueprintHandler::RemoveNode",
+      "params":[{"name":"path","type":"string","required":true},{"name":"node_id","type":"string","required":true,"description":"GUID from blueprint_add_node or blueprint_inspect_graph"},{"name":"graph_name","type":"string","required":false,"description":"The graph the node is in; omit for the main event graph"}],
+      "returns":{"shape":"object","fields":[{"name":"removed_node_id","type":"string"},{"name":"title","type":"string"},{"name":"verified","type":"boolean","description":"The node is gone from the graph on readback"}]},"agent_callable":true,"has_ts_wrapper":false,
+      "notes":"Deletes one node (and its links) from a blueprint graph, for taking back a node placed wrong. Refuses a function's entry or result node, which the function cannot exist without. Staged until blueprint_compile."
     },
     "level_get_spatial_index": {
       "aliases": [],

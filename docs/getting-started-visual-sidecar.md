@@ -8,7 +8,7 @@ the "model preset" and per-capability toggles actually work.
 
 One FastAPI process, source at
 [`mcp-tools/hayba-mcp/addons/visual-embeddings`](../mcp-tools/hayba-mcp/addons/visual-embeddings),
-listening on `localhost:7821` by default. It serves CLIP image embeddings
+listening on `localhost:7822` by default. It serves CLIP image embeddings
 (always on), SpatialCLIP depth-aware embeddings (opt-in), OWL-ViT
 open-vocabulary detection (opt-in), and SAM segmentation with world-position
 back-projection for the PLUMB Semantic Studio. Source:
@@ -59,7 +59,7 @@ Environment variables (from the addon's README):
 
 | Var | Default | Purpose |
 |---|---|---|
-| `HAYBA_SIDECAR_PORT` | `7821` | TCP port |
+| `HAYBA_SIDECAR_PORT` | `7822` | TCP port |
 | `HAYBA_ENABLE_SPATIAL_CLIP` | unset | Set `1` to enable the spatial endpoint |
 | `HAYBA_ENABLE_OWL_VIT` | unset | Set `1` to enable the detection endpoint |
 | `HAYBA_SPATIAL_CLIP_CHECKPOINT` | unset | Path to the spatial adapter `.pt` |
@@ -75,7 +75,7 @@ warmed up.
 Verify it's alive:
 
 ```bash
-curl http://localhost:7821/health
+curl http://localhost:7822/health
 # {"ok":true,"models":{"clip":true,"spatial_clip":false,"owl_vit":false,"sam":false},"model_loaded":false}
 ```
 

@@ -44,25 +44,39 @@ import type { Express, Request, Response } from 'express';
 import type { AddressInfo } from 'node:net';
 import { createLLMClient, type LLMMessage } from '../agents/llm-client.js';
 import { getProvider } from '../agents/providers.js';
-import { runAgentLoop, argsHash, type AgentEvent, type ApprovedCall, type DispatchTool } from './agent-loop.js';
+import {
+  runAgentLoop as runAgentLoopStreaming,
+  adaptToLegacy,
+  argsHash,
+  buildToolCatalog,
+  type AgentEvent,
+  type ApprovedCall,
+  type DispatchTool,
+} from './agent-loop.js';
 import type { LLMTool, LLMUsage } from '../agents/llm-client.js';
 import { createChatDispatcher } from './tool-dispatch.js';
+import { buildHandsManifest, isExploreReadOnlyTool, type GuardContext } from '../brain/hands-guard.js';
+import type { BrainConnector } from '../brain/brain-connector.js';
+import type { BrainSession } from '../brain/brain-session.js';
+import { LocalApprovals } from '../brain/local-approvals.js';
+import { runRemoteLoop } from '../brain/remote-loop.js';
+import type { LlmMode, Permissions } from '@hayba/brain-protocol';
 import { getArchetype } from '../agents/agent-registry.js';
 import { installExpressJsonRedaction, redactBoundaryValue } from '../security/secret-redaction.js';
 import { jsonObjectBody, stringQuery } from '../http/express-boundary.js';
+import { isLocalRequest, isLoopback } from '../http/loopback-guard.js';
+import { SessionStore, isValidSessionId, type SavedActivity, type SavedSession } from './session-store.js';
+import type { AgentStreamEvent } from './activity-events.js';
 
 // ---------------------------------------------------------------------------
 // Localhost enforcement
 // ---------------------------------------------------------------------------
 
-/** True for IPv4/IPv6 loopback (incl. IPv4-mapped IPv6). Never network-exposed. */
-export function isLoopback(addr: string | undefined): boolean {
-  if (!addr) return false;
-  return addr === '127.0.0.1' || addr === '::1' || addr === '::ffff:127.0.0.1' || addr.startsWith('127.');
-}
+export { isLoopback };
 
+/** Loopback peer AND loopback Host/Origin: a DNS-rebound browser page is refused too. */
 function requireLoopback(req: Request, res: Response): boolean {
-  if (isLoopback(req.socket.remoteAddress)) return true;
+  if (isLocalRequest(req)) return true;
   res.status(403).json({ error: 'chat routes are localhost-only' });
   return false;
 }
@@ -150,6 +164,18 @@ interface ToolTraceEntry {
   isError?: boolean;
 }
 
+type TurnLoop = 'community' | 'pro';
+
+/** A plan-gated call plus the loop that raised it; an approval never crosses loops. */
+interface OriginatedCall extends ApprovedCall {
+  origin: TurnLoop;
+}
+
+/** The approval a turn on `loop` may use, stripped of its origin tag. */
+function approvalFor(call: OriginatedCall | undefined, loop: TurnLoop): ApprovedCall | undefined {
+  return call?.origin === loop ? { name: call.name, argsHash: call.argsHash } : undefined;
+}
+
 interface ChatSession {
   id: string;
   abortController: AbortController;
@@ -162,18 +188,28 @@ interface ChatSession {
    * Identity of the tool call currently paused at the Plan-Mode gate (set when a
    * plan_request is emitted). `/chat/approve` promotes this to `approvedCall`.
    */
-  pendingPlanCall?: ApprovedCall;
+  pendingPlanCall?: OriginatedCall;
   /**
    * Call-bound approval (C1): the ONE `{name, argsHash}` the next turn may
    * dispatch past the TS-side gate. Consumed (cleared) after the turn runs.
+   * Honoured only by a turn on the same loop that raised it (`origin`).
    */
-  approvedCall?: ApprovedCall;
+  approvedCall?: OriginatedCall;
   assistantText: string;
   toolTrace: ToolTraceEntry[];
   /** Epoch ms of the last activity on this session; drives TTL/LRU eviction. */
   lastActivity: number;
   /** Set once the current/last turn has ended (final done frame emitted). */
   lastDone?: BufferedFrame;
+  /** Hayba Pro: the live remote brain session carrying this chat's Pro turns. */
+  brain?: BrainSession;
+  /**
+   * Hayba Pro: true while the brain holds a turn PARKED at an approval request
+   * (no `done` yet). Resolved either by an approve-resume or by a `cancel`.
+   */
+  brainTurnParked?: boolean;
+  /** Tool calls the LOCAL user approved for the brain; the brain cannot mint these. */
+  approvals: LocalApprovals;
 }
 
 const BUFFER_LIMIT = 500;
@@ -220,7 +256,71 @@ function evictSession(session: ChatSession): void {
   }
   session.clients.clear();
   session.running = false;
+  void dropBrain(session);
   sessions.delete(session.id);
+}
+
+/** Close and forget this chat's remote brain session (if any); resolves once its socket has closed. */
+function dropBrain(session: ChatSession): Promise<void> {
+  const closing = session.brain?.close() ?? Promise.resolve();
+  session.brain = undefined;
+  session.brainTurnParked = false;
+  return closing;
+}
+
+/** Hosted providers Hayba Pro accepts a BYOK key for; anything else (local, custom) stays on Community. */
+const PRO_BYOK_PROVIDERS: ReadonlySet<string> = new Set(['anthropic', 'openai', 'groq', 'openrouter']);
+const CUSTOM_ENDPOINT_MESSAGE = "Custom endpoints aren't supported in Hayba Pro — use Community for local models";
+const NO_BYOK_KEY_MESSAGE = 'No API key configured for Bring-your-own-key. Add one in Settings or switch Hayba Pro to Hayba models.';
+
+/**
+ * The LLM mode a Pro hello carries. Pro never silently switches modes: a BYOK
+ * request is refused locally — before anything leaves the machine — when it
+ * names a local/custom endpoint (the brain would refuse it only after the key
+ * was sent) or has no key to send. Both refusals use `not_entitled`, the reason
+ * the brain itself gives for an LLM mode it won't run; `auth` means the Pro
+ * sign-in, which is fine here.
+ */
+function proLlmMode(
+  requested: unknown, cfg: SessionConfig | undefined,
+): { ok: true; mode: LlmMode } | { ok: false; reason: 'not_entitled'; message: string } {
+  if (requested !== 'byok') return { ok: true, mode: { mode: 'subscription' } };
+  if (cfg && (!PRO_BYOK_PROVIDERS.has(cfg.provider) || cfg.baseURL)) {
+    return { ok: false, reason: 'not_entitled', message: CUSTOM_ENDPOINT_MESSAGE };
+  }
+  if (!cfg?.apiKey) return { ok: false, reason: 'not_entitled', message: NO_BYOK_KEY_MESSAGE };
+  return { ok: true, mode: { mode: 'byok', provider: cfg.provider, ...(cfg.model ? { model: cfg.model } : {}), api_key: cfg.apiKey } };
+}
+
+/**
+ * Pro openers take turns: each one's eviction wait AND open finish before the
+ * next counts open sessions. Awaiting only pending evictions isn't enough — a
+ * second opener would still not see the first one's session until it opened.
+ */
+let proOpenQueue: Promise<unknown> = Promise.resolve();
+function withProOpenSlot<T>(open: () => Promise<T>): Promise<T> {
+  const run = proOpenQueue.then(open);
+  proOpenQueue = run.catch(() => undefined);
+  return run;
+}
+
+/** The brain admits two concurrent Pro sessions per user. */
+const MAX_OPEN_PRO_SESSIONS = 2;
+
+/**
+ * Before opening another Pro session, close the least-recently-used idle ones
+ * so this machine never holds more than the brain's per-user allowance open.
+ * Chats with a running or parked Pro turn are left alone.
+ */
+async function makeRoomForProSession(opening: ChatSession): Promise<void> {
+  const open = [...sessions.values()].filter((s) => s !== opening && s.brain?.isAlive());
+  const idle = open.filter((s) => !s.running && !s.brainTurnParked).sort((a, b) => a.lastActivity - b.lastActivity);
+  const closing: Array<Promise<void>> = [];
+  for (let excess = open.length - (MAX_OPEN_PRO_SESSIONS - 1); excess > 0 && idle.length > 0; excess -= 1) {
+    closing.push(dropBrain(idle.shift()!));
+  }
+  // The brain counts a session until its socket closes; a hello sent sooner can be refused.
+  await Promise.all(closing);
 }
 
 function sweepSessions(now: number = Date.now()): void {
@@ -261,6 +361,7 @@ function getOrCreateSession(id: string): ChatSession {
       assistantText: '',
       toolTrace: [],
       lastActivity: Date.now(),
+      approvals: new LocalApprovals(),
     };
     sessions.set(id, s);
     enforceSessionCap();
@@ -336,11 +437,31 @@ const DEFAULT_SYSTEM =
   'You are the Hayba in-editor copilot. You help build Unreal Engine worlds by ' +
   'calling Hayba tools. Prefer reads before writes; respect Plan Mode.';
 
+export const AGENT_WORK_MODES = ['explore', 'draft', 'production'] as const;
+export type AgentWorkMode = (typeof AGENT_WORK_MODES)[number];
+
+function isAgentWorkMode(value: unknown): value is AgentWorkMode {
+  return typeof value === 'string' && (AGENT_WORK_MODES as readonly string[]).includes(value);
+}
+
+function modeGuidance(mode: AgentWorkMode): string {
+  switch (mode) {
+    case 'explore':
+      return 'Work mode: Explore. Inspect and explain only; do not mutate the Unreal project.';
+    case 'draft':
+      return 'Work mode: Draft. Keep work provisional and reversible; mutations require an approved plan.';
+    case 'production':
+      return 'Work mode: Production. Use approved plans, transactions, save/readback, and verification for mutations.';
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Route wiring
 // ---------------------------------------------------------------------------
 
 export interface ChatRoutesOptions {
+  /** Durable text and activity history. Defaults to Saved/HaybaMCP/sessions. */
+  sessionStore?: SessionStore;
   /** Override the tool dispatcher (test seam). Defaults to full-coverage dispatch. */
   dispatchTool?: DispatchTool;
   /** Inject a client factory (test seam). Defaults to createLLMClient. */
@@ -352,6 +473,26 @@ export interface ChatRoutesOptions {
    * from the live registry (filtered by archetype). Primarily a test seam.
    */
   tools?: LLMTool[];
+  /** Hayba Pro connector. Absent = every `loop: 'pro'` turn reports brain_unavailable. */
+  brain?: BrainConnector;
+}
+
+const LOOPS = ['community', 'pro'] as const;
+const PERMISSION_KEYS = ['tools.execute', 'facts.vision', 'facts.scene', 'python_run'] as const;
+
+/**
+ * Local Pro permissions: safe defaults overlaid with only the known boolean keys
+ * from the request (the brain's hello schema is strict; stray keys would fail it).
+ */
+function resolvePermissions(requested: unknown): Permissions {
+  const permissions: Permissions = { 'tools.execute': true, 'facts.vision': false, 'facts.scene': false, python_run: false };
+  if (requested && typeof requested === 'object') {
+    for (const key of PERMISSION_KEYS) {
+      const value = (requested as Record<string, unknown>)[key];
+      if (typeof value === 'boolean') permissions[key] = value;
+    }
+  }
+  return permissions;
 }
 
 /**
@@ -369,6 +510,52 @@ export function registerChatRoutes(app: Express, options: ChatRoutesOptions = {}
   const dispatchTool = options.dispatchTool ?? createChatDispatcher();
   const makeClient = options.createClient ?? createLLMClient;
   const system = options.system ?? DEFAULT_SYSTEM;
+  const sessionStore = options.sessionStore ?? new SessionStore();
+
+  // Session history is a separate, allowlisted surface from transient SSE
+  // buffers and provider transcripts. Storage errors never expose file paths.
+  app.get('/chat/sessions', (req: Request, res: Response) => {
+    if (!requireLoopback(req, res)) return;
+    try {
+      return res.json({ sessions: sessionStore.list() });
+    } catch {
+      return res.status(500).json({ error: 'Unable to read session history' });
+    }
+  });
+  app.post('/chat/sessions', (req: Request, res: Response) => {
+    if (!requireLoopback(req, res)) return;
+    try {
+      return res.status(201).json(sessionStore.create());
+    } catch {
+      return res.status(500).json({ error: 'Unable to create session' });
+    }
+  });
+  app.get('/chat/sessions/:id', (req: Request, res: Response) => {
+    if (!requireLoopback(req, res)) return;
+    const id = req.params.id;
+    if (!isValidSessionId(id)) return res.status(400).json({ error: 'invalid session id' });
+    try {
+      const saved = sessionStore.load(id);
+      return saved ? res.json(saved) : res.status(404).json({ error: 'unknown session' });
+    } catch {
+      return res.status(500).json({ error: 'Unable to read session history' });
+    }
+  });
+  app.delete('/chat/sessions/:id', (req: Request, res: Response) => {
+    if (!requireLoopback(req, res)) return;
+    const id = req.params.id;
+    if (!isValidSessionId(id)) return res.status(400).json({ error: 'invalid session id' });
+    const active = sessions.get(id);
+    if (active?.running) return res.status(409).json({ error: 'session already has a turn in flight' });
+    try {
+      if (!sessionStore.remove(id)) return res.status(404).json({ error: 'unknown session' });
+      if (active) evictSession(active);
+      configStore.delete(id);
+      return res.status(204).end();
+    } catch {
+      return res.status(500).json({ error: 'Unable to delete session' });
+    }
+  });
 
   // ── POST /chat/config ────────────────────────────────────────────────────
   app.post('/chat/config', (req: Request, res: Response) => {
@@ -466,8 +653,22 @@ export function registerChatRoutes(app: Express, options: ChatRoutesOptions = {}
       model?: string;
       archetype?: string;
       archetype_filter?: string[];
+      mode?: AgentWorkMode;
       last_seq?: number;
+      loop?: 'community' | 'pro';
+      llm?: 'subscription' | 'byok';
+      permissions?: Partial<Permissions>;
     };
+    if (body.session_id !== undefined && !isValidSessionId(body.session_id)) {
+      return res.status(400).json({ error: 'invalid session id' });
+    }
+    if (body.mode !== undefined && !isAgentWorkMode(body.mode)) {
+      return res.status(400).json({ error: 'invalid agent mode' });
+    }
+    if (body.loop !== undefined && !(LOOPS as readonly unknown[]).includes(body.loop)) {
+      return res.status(400).json({ error: 'invalid loop' });
+    }
+    const mode: AgentWorkMode = body.mode ?? 'production';
 
     // ── Branch on resume vs new turn BEFORE any SSE headers are flushed (I3) ──
     // Emitting a 409 after flushHeaders() would append JSON mid-stream (the 200 +
@@ -482,12 +683,23 @@ export function registerChatRoutes(app: Express, options: ChatRoutesOptions = {}
       return res.status(409).json({ error: 'session already has a turn in flight' });
     }
 
+    const sessionId = body.session_id || newSessionId();
+    let saved: SavedSession | undefined;
+    if (!isResume) {
+      try {
+        saved = sessionStore.load(sessionId) ?? sessionStore.create(sessionId);
+      } catch {
+        return res.status(500).json({ error: 'Unable to open session history' });
+      }
+    }
+
     // Committed to streaming — now flush SSE headers.
     res.status(200);
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache, no-transform');
     res.setHeader('Connection', 'keep-alive');
     res.setHeader('X-Accel-Buffering', 'no');
+    res.setHeader('X-Hayba-Session-Id', sessionId);
     res.flushHeaders?.();
 
     const heartbeat = setInterval(() => {
@@ -534,8 +746,8 @@ export function registerChatRoutes(app: Express, options: ChatRoutesOptions = {}
     }
 
     // ── NEW TURN path ────────────────────────────────────────────────────────
-    const sessionId = body.session_id || newSessionId();
     const session = getOrCreateSession(sessionId);
+    if (!session.messages.length && saved) session.messages = saved.messages;
     touch(session);
     // Fresh AbortController per turn (a prior cancel leaves an aborted one).
     session.abortController = new AbortController();
@@ -547,6 +759,9 @@ export function registerChatRoutes(app: Express, options: ChatRoutesOptions = {}
     // Resolve messages: explicit body wins; else reuse stored transcript
     // (post-approval resume) if present.
     let messages = normalizeMessages(body);
+    if (!Array.isArray(body.messages) && messages && session.messages.length) {
+      messages = [...session.messages, ...messages];
+    }
     if (!messages && session.messages.length > 0) messages = session.messages;
     if (!messages) {
       emit(session, 'error', { error: 'messages or prompt is required', kind: 'bad_request' });
@@ -556,6 +771,78 @@ export function registerChatRoutes(app: Express, options: ChatRoutesOptions = {}
       return res.end();
     }
     session.messages = messages;
+    try {
+      // An explicit client transcript is authoritative, including edits and
+      // deletions. Prompt-only callers already include restored history above.
+      // Replace the text snapshot so an older divergent suffix cannot survive.
+      sessionStore.replaceMessages(sessionId, messages);
+    } catch {
+      emit(session, 'error', { error: 'Unable to save session history', kind: 'persistence' });
+      finalize(session, 'error');
+      cleanup();
+      return;
+    }
+
+    // ── Hayba Pro: route the turn through the hosted brain ──────────────────
+    if (body.loop === 'pro') {
+      const permissions = resolvePermissions(body.permissions);
+      const catalog = options.tools ?? buildToolCatalog();
+      // A session that was closed or gave up can never carry another turn.
+      if (session.brain && !session.brain.isAlive()) void dropBrain(session);
+      if (!session.brain) {
+        const llm = proLlmMode(body.llm, resolveSessionConfig(sessionId));
+        const opened = !llm.ok ? llm : await withProOpenSlot(async () => {
+          await makeRoomForProSession(session);
+          const r = options.brain
+            ? await options.brain.openSession(sessionId, llm.mode, buildHandsManifest(catalog), permissions)
+            : { ok: false as const, reason: 'not_configured', message: 'Hayba Pro is not configured on this machine.' };
+          // Counted as open before the next opener takes the slot.
+          if (r.ok) session.brain = r.session;
+          return r;
+        });
+        if (!opened.ok) {
+          emit(session, 'error', { error: opened.message, kind: 'brain_unavailable', reason: opened.reason });
+          finalize(session, 'brain_unavailable');
+          cleanup();
+          return;
+        }
+        session.brain = opened.session; // already set inside the slot; restated for the type narrowing below
+      }
+      // Only a turn the brain actually parked can be resumed by `approve`.
+      const approvedCall = session.brainTurnParked ? approvalFor(session.approvedCall, 'pro') : undefined;
+      if (session.brainTurnParked && !approvedCall) {
+        // The user moved on without approving: close the parked turn out first.
+        // cancelTurn() absorbs its stragglers through its `done`, so the new
+        // turn sent below only ever sees its own frames.
+        session.brain.send({ type: 'cancel' });
+        session.brain.cancelTurn();
+        session.pendingPlanCall = undefined;
+      }
+      session.brainTurnParked = false;
+      res.on('close', () => {
+        session.clients.delete(res);
+        cleanup();
+      });
+      void runTurn(session, {
+        remote: {
+          session: session.brain,
+          approvals: session.approvals,
+          guard: { manifest: new Set(catalog.map((t) => t.name)), permissions },
+          pinnedSpecialistId: body.archetype,
+        },
+        system: '',
+        messages,
+        dispatchTool,
+        signal: session.abortController.signal,
+        approvedCall,
+        sessionStore,
+        mode,
+      }).finally(() => {
+        cleanup();
+        session.approvedCall = undefined;
+      });
+      return undefined;
+    }
 
     // Resolve `archetype` (an id into hayba.agents.json) to its tool_filter +
     // system_prompt. Hand-passed `archetype_filter` keeps working unchanged —
@@ -630,16 +917,29 @@ export function registerChatRoutes(app: Express, options: ChatRoutesOptions = {}
       cleanup();
     });
 
+    // A Pro turn parked at an approval is abandoned once the user runs a
+    // Community turn instead: close it out on the brain (its stragglers are
+    // absorbed through its `done`) and drop its now-unresumable plan request.
+    if (session.brainTurnParked && session.brain) {
+      session.brain.send({ type: 'cancel' });
+      session.brain.cancelTurn();
+      session.brainTurnParked = false;
+      if (session.pendingPlanCall?.origin === 'pro') session.pendingPlanCall = undefined;
+    }
+
     // Drive the loop server-side, independent of the HTTP connection lifetime.
     void runTurn(session, {
       client,
-      system: turnSystem,
+      system: `${turnSystem}\n\n${modeGuidance(mode)}`,
       messages,
       archetypeFilter,
+      pinnedSpecialistId: body.archetype,
       tools: options.tools,
       dispatchTool,
       signal: session.abortController.signal,
-      approvedCall: session.approvedCall,
+      approvedCall: approvalFor(session.approvedCall, 'community'),
+      sessionStore,
+      mode,
     }).finally(() => {
       cleanup();
       // Consume the one-shot call-bound approval so a later turn re-gates.
@@ -655,15 +955,26 @@ export function registerChatRoutes(app: Express, options: ChatRoutesOptions = {}
 // ---------------------------------------------------------------------------
 
 interface RunTurnParams {
-  client: ReturnType<typeof createLLMClient>;
+  sessionStore: SessionStore;
+  /** Local Community loop client; unused when `remote` routes the turn to the brain. */
+  client?: ReturnType<typeof createLLMClient>;
+  /** Hayba Pro: drive this turn through the remote brain session instead of the local loop. */
+  remote?: {
+    session: BrainSession;
+    approvals: LocalApprovals;
+    guard: Omit<GuardContext, 'mode'>;
+    pinnedSpecialistId?: string;
+  };
   system: string;
   messages: LLMMessage[];
   archetypeFilter?: string[];
+  pinnedSpecialistId?: string;
   tools?: LLMTool[];
   dispatchTool: DispatchTool;
   signal: AbortSignal;
   /** Call-bound Plan-Mode approval for this turn (C1); undefined = re-gate. */
   approvedCall?: ApprovedCall;
+  mode: AgentWorkMode;
 }
 
 /** Emit the single consolidated final done frame + mark the turn finished. */
@@ -690,28 +1001,106 @@ function finalize(session: ChatSession, reason: string, extra: Record<string, un
   session.clients.clear();
 }
 
+interface TurnError {
+  error: string;
+  kind?: string;
+}
+
 async function runTurn(session: ChatSession, params: RunTurnParams): Promise<void> {
   let finalReason: string | null = null;
-  let lastError: { error: string; kind?: string } | null = null;
+  let lastError: TurnError | null = null;
+  // Hayba Pro: set when the brain became unavailable mid-turn.
+  let brainLost = false;
+  let unavailableReason: string | undefined;
+  const origin: TurnLoop = params.remote ? 'pro' : 'community';
   // Cache-hit metrics (cache_creation_input_tokens / cache_read_input_tokens
   // among them) travel on the loop's own 'done' event — see agent-loop.ts.
   let usage: LLMUsage | undefined;
+  let activity: SavedActivity | undefined;
+  const steps = new Map<string, SavedActivity['steps'][number]>();
+  const artifacts: SavedSession['artifacts'] = [];
+  const observe = (event: AgentStreamEvent): void => {
+    // The native Agent surface observes these structured frames directly. Keep
+    // legacy frames below for older clients until their migration lands.
+    emit(session, event.type, event);
+    switch (event.type) {
+      case 'activity_started':
+        activity = {
+          activityId: event.activityId,
+          title: event.title,
+          specialistId: event.specialistId,
+          status: 'planning',
+          steps: [],
+        };
+        break;
+      case 'activity_step':
+        steps.set(event.step.id, { name: event.step.name, status: event.step.status });
+        if (activity) activity.status = 'running';
+        break;
+      case 'approval_requested':
+        if (activity) activity.status = 'awaiting_approval';
+        break;
+      case 'artifact_proposed':
+        artifacts.push(event.artifact);
+        break;
+      case 'activity_completed':
+        // The legacy adapter emits an aborted error before its done frame;
+        // capture usage here even when forwarding stops on that error.
+        if (event.usage) usage = event.usage;
+        if (activity) {
+          activity.status = event.outcome;
+          activity.reason = event.reason;
+        }
+        break;
+      case 'error':
+        if (activity) {
+          activity.status = 'failed';
+          activity.reason = event.termination?.reason ?? 'error';
+        }
+        break;
+    }
+  };
 
   try {
-    for await (const ev of runAgentLoop({
-      client: params.client,
-      system: params.system,
-      messages: params.messages,
-      tools: params.tools,
-      archetypeFilter: params.archetypeFilter,
-      dispatchTool: params.dispatchTool,
-      signal: params.signal,
-      planMode: true, // honour Plan Mode; UE side is authoritative, TS side gated
-      approvedCall: params.approvedCall,
-    })) {
+    const source = params.remote
+      ? runRemoteLoop({
+          session: params.remote.session,
+          messages: params.messages,
+          mode: params.mode,
+          pinnedSpecialistId: params.remote.pinnedSpecialistId,
+          approvals: params.remote.approvals,
+          approvedCall: params.approvedCall,
+          dispatchTool: params.dispatchTool,
+          guard: params.remote.guard,
+          signal: params.signal,
+          onUnavailable: (reason) => { unavailableReason = reason; },
+        })
+      : runAgentLoopStreaming({
+          client: params.client!,
+          system: params.system,
+          messages: params.messages,
+          tools:
+            params.mode === 'explore'
+              ? (params.tools ?? buildToolCatalog()).filter((tool) => isExploreReadOnlyTool(tool.name))
+              : params.tools,
+          archetypeFilter: params.archetypeFilter,
+          pinnedSpecialistId: params.pinnedSpecialistId,
+          dispatchTool: params.dispatchTool,
+          signal: params.signal,
+          planMode: true, // honour Plan Mode; UE side is authoritative, TS side gated
+          approvedCall: params.approvedCall,
+        });
+    for await (const legacy of adaptToLegacy(source, observe)) {
+      let ev = legacy;
+      if (ev.type === 'error' && ev.kind === 'brain_unavailable') {
+        brainLost = true;
+        // Same shape as the open-failure path: { error, kind, reason }.
+        if (unavailableReason) ev = { ...ev, reason: unavailableReason };
+      }
       forwardEvent(
         session,
         ev,
+        origin,
         (r) => (finalReason = r),
         (e) => (lastError = e),
         (u) => {
@@ -722,6 +1111,35 @@ async function runTurn(session: ChatSession, params: RunTurnParams): Promise<voi
     }
   } catch (err) {
     lastError = { error: err instanceof Error ? err.message : String(err), kind: 'internal' };
+    if (activity) {
+      activity.status = 'failed';
+      activity.reason = 'error';
+    }
+  }
+
+  try {
+    if (activity) activity.steps = [...steps.values()];
+    const saved = params.sessionStore.append(session.id, {
+      messages: session.assistantText ? [{ role: 'assistant', content: session.assistantText }] : [],
+      activity,
+      artifacts,
+      usage,
+    });
+    session.messages = saved.messages;
+  } catch {
+    lastError = { error: 'Unable to save session history', kind: 'persistence' };
+    emit(session, 'error', lastError);
+    finalReason = null;
+  }
+
+  if (params.remote) {
+    // The brain parks a turn at an approval request (no `done` yet); remember
+    // that so the next Pro turn either resumes it (approve) or cancels it.
+    if (finalReason === 'plan_request') session.brainTurnParked = true;
+    // A brain that became unavailable mid-turn is not reused; the next Pro
+    // turn opens a fresh session (or reports brain_unavailable).
+    if (brainLost && session.brain === params.remote.session) void dropBrain(session);
+    if (brainLost && !finalReason) finalReason = 'brain_unavailable';
   }
 
   // Consolidated terminal frame. `usage` is included whenever the loop
@@ -741,8 +1159,9 @@ async function runTurn(session: ChatSession, params: RunTurnParams): Promise<voi
 function forwardEvent(
   session: ChatSession,
   ev: AgentEvent,
+  origin: TurnLoop,
   setReason: (r: string) => void,
-  setError: (e: { error: string; kind?: string }) => void,
+  setError: (e: TurnError) => void,
   setUsage: (u: LLMUsage | undefined) => void,
 ): void {
   switch (ev.type) {
@@ -776,7 +1195,7 @@ function forwardEvent(
       // C1: record the identity of the paused call so /chat/approve can bind the
       // approval to THIS exact {name, argsHash} rather than the whole turn.
       const hash = ev.argsHash ?? argsHash(ev.call.input);
-      session.pendingPlanCall = { name: ev.call.name, argsHash: hash };
+      session.pendingPlanCall = { name: ev.call.name, argsHash: hash, origin };
       const input = redactBoundaryValue(ev.call.input) as Record<string, unknown>;
       emit(session, 'plan_request', {
         id: ev.call.id,
@@ -796,7 +1215,7 @@ function forwardEvent(
       break;
     case 'error':
       setError({ error: ev.error, kind: ev.kind });
-      emit(session, 'error', { error: ev.error, kind: ev.kind });
+      emit(session, 'error', { error: ev.error, kind: ev.kind, ...(ev.reason ? { reason: ev.reason } : {}) });
       if (ev.kind === 'aborted') setReason('aborted');
       break;
   }
@@ -808,9 +1227,11 @@ function forwardEvent(
 
 /** Clear all in-memory session + config state (tests). */
 export function __resetChatState(): void {
+  for (const session of sessions.values()) void dropBrain(session);
   sessions.clear();
   configStore.clear();
   sessionCounter = 0;
+  proOpenQueue = Promise.resolve();
   chatRoutesRegistered = false;
   if (sweeper) {
     clearInterval(sweeper);

@@ -458,6 +458,10 @@ static bool IsDestructiveCommand(const FString& Cmd)
         TEXT("blueprint_add_node"),
         TEXT("blueprint_connect_nodes"),
         TEXT("blueprint_set_pin_default"),
+        TEXT("blueprint_add_event"),
+        TEXT("blueprint_add_custom_event"),
+        TEXT("blueprint_add_bound_event"),
+        TEXT("blueprint_remove_node"),
         // Material authoring
         TEXT("material_create"),
         TEXT("material_create_instance"),
@@ -478,6 +482,11 @@ static bool IsDestructiveCommand(const FString& Cmd)
         // Landscape (legacy alias + namespaced form)
         TEXT("landscape_import"),
         TEXT("import_landscape"),
+        TEXT("hayba_import_landscape"),
+        TEXT("world_ingest"),
+        TEXT("asset_prepare"),
+        TEXT("world_generate"),
+        TEXT("mesh_set_lod"),
         // ISM
         TEXT("ism_create_actor"),
         TEXT("ism_add_instance"),
@@ -492,6 +501,7 @@ static bool IsDestructiveCommand(const FString& Cmd)
         TEXT("spline_remove_point"),
         // Level / Data authoring
         TEXT("level_create"),
+        TEXT("level_save"),
         TEXT("data_create"),
         TEXT("data_set"),
         // Audio asset/runtime authoring and capture
@@ -591,6 +601,9 @@ bool FHaybaMCPCommandHandler::ShouldCreateEditorTransaction(const FString& Cmd)
     // boundary once the caller has inspected data_set's bounded readback.
     if (Cmd == TEXT("data_set")) return false;
 
+    // Persistence is approval-gated, but writing a map to disk is not undoable.
+    if (Cmd == TEXT("level_save")) return false;
+
     return true;
 }
 
@@ -606,7 +619,7 @@ static void MaybeShowPlanModePrompt()
     S.bShownPlanModePrompt = true;
     S.Save();
     FNotificationInfo Info(NSLOCTEXT("Hayba", "PlanModePrompt",
-        "You've been using Plan Mode for a while — consider disabling it from the toolbar if you trust your workflow."));
+        "You've been using Plan Mode for a while — consider turning it off in Settings > Preferences > External MCP safety if you trust your workflow."));
     Info.ExpireDuration = 10.f;
     FSlateNotificationManager::Get().AddNotification(Info);
 }
@@ -1026,10 +1039,14 @@ static FString HandleProposePlan(const FString& Id, const TSharedPtr<FJsonObject
 
     if (FHaybaMCPModule* M = FModuleManager::GetModulePtr<FHaybaMCPModule>("HaybaMCPToolkit"))
     {
-        if (TSharedPtr<SHaybaMCPPlanPanel> Panel = M->PlanPanel.Pin())
+        TArray<FString> Summary;
+        for (const FHaybaPlanStep& Step : Steps)
         {
-            Panel->LoadPlan(Steps, AwaitSecs);
+            Summary.Add(FString::Printf(TEXT("%d. %s%s%s%s%s"), Step.Index + 1, *Step.Title,
+                Step.Tool.IsEmpty() ? TEXT("") : TEXT(" — "), *Step.Tool,
+                Step.Description.IsEmpty() ? TEXT("") : TEXT("\n"), *Step.Description));
         }
+        M->ProposeExternalPlan(FString::Join(Summary, TEXT("\n\n")));
     }
 
     auto Data = MakeShared<FJsonObject>();
@@ -1281,7 +1298,7 @@ FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
             {
                 auto Data = MakeShared<FJsonObject>();
                 Data->SetStringField(TEXT("status"), TEXT("plan_mode_required"));
-                Data->SetStringField(TEXT("hint"), TEXT("Plan Mode is ON. Call hayba_propose_plan with a steps[] array, then the user must click Approve in the Plan tab before destructive commands run."));
+                Data->SetStringField(TEXT("hint"), TEXT("Plan Mode is ON. Call hayba_propose_plan with a steps[] array, then the user must review and approve the external MCP proposal in Agent before destructive commands run."));
                 // Under strict consume the previous Approve was SPENT by the
                 // last destructive command. Without saying so, the second call
                 // in a sequence looks exactly like Approve never worked, and

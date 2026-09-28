@@ -6,6 +6,7 @@
 #include "Widgets/Input/SMultiLineEditableTextBox.h"
 #include "HaybaMCPWizardState.h"
 #include "HaybaMCPSettings.h"
+#include "HaybaMCPWorldInspectSummary.h"
 
 class FHaybaMCPModule;
 class SHaybaMCPMainPanel;
@@ -22,6 +23,7 @@ struct FHaybaChatToolResult;
 struct FHaybaChatPlanRequest;
 struct FHaybaChatDone;
 struct FHaybaChatError;
+class FJsonObject;
 
 /**
  * Single-purpose chat surface. Conversation, input, footer status — that's it.
@@ -36,6 +38,8 @@ public:
     SLATE_END_ARGS()
 
     void Construct(const FArguments& InArgs, FHaybaMCPModule* InModule);
+    /** Stage a guided request without sending or replacing a user's draft. */
+    void DraftPrompt(const FString& Prompt);
 
     // Unsubscribe delegates + cancel any in-flight stream so a late callback
     // cannot touch freed Slate widgets.
@@ -65,21 +69,42 @@ private:
     TSharedPtr<SMultiLineEditableTextBox>   InputBox;
     TSharedPtr<SVerticalBox>                ChatContainer;
     bool                                    bIsStreaming = false;
+    bool                                    bInspectInFlight = false;
+    FHaybaInspectRequestGeneration         InspectGeneration;
     int32                                   UnseenWhileScrolledUp = 0;
 
-    // In-flight tool-call trace state.
-    FDelegateHandle ToolCallSubscription;   // legacy path (module recorder)
     int32           InProgressMessageIndex = INDEX_NONE;
-    TArray<FString> InProgressTrace;        // tool-step lines for the live bubble
     FString         InProgressAssistantText;// streamed assistant deltas
+    FString         WorkMode = TEXT("explore");
+    TSet<FString>    ExpandedActivityIds;
+    struct FRecentSession
+    {
+        FString Id;
+        FString Title;
+        FString UpdatedAt;
+    };
+    TArray<FRecentSession> RecentSessions;
+    FString PendingSessionId;
+    bool bLoadingSession = false;
 
     // ── Streaming agent client (Task 7/8) ────────────────────────────────────
     // Held via MakeShared (NEVER stack — AsShared asserts). One client per panel
     // = one server session; reused across turns so the transcript continues.
     TSharedPtr<FHaybaMCPAgentClient> AgentClient;
-    FDelegateHandle PlanApprovedSubscription;   // module OnPlanApproved
-    FDelegateHandle PlanRejectedSubscription;   // module OnPlanRejected
     bool            bAwaitingPlanApproval = false;
+    FString         PendingActivityId;
+
+    // ── Hayba Pro loop selection / unavailable fallback ─────────────────────
+    // Last prompt handed to the agent (set in StartAgentTurn). The Community
+    // fallback does NOT re-send it — it re-streams prompt-less over the saved
+    // transcript — so this is kept for reference only.
+    FString         LastPrompt;
+    // Row (Session.Messages index) that carries the inline Community-fallback
+    // button; INDEX_NONE when no fallback is offered.
+    int32           CommunityFallbackMessageIndex = INDEX_NONE;
+    /** True when the next turn routes through Hayba Pro (setting on, not forced to Community). */
+    bool            IsProLoopActive() const;
+    FReply          OnUseCommunityForThisChat();
 
     void            EnsureAgentClient();
     void            StartAgentTurn(const FString& Prompt);
@@ -89,13 +114,13 @@ private:
 
     // Agent-client delegate handlers (all fire on the game thread).
     void            HandleTextDelta(const FString& Text);
-    void            HandleToolCall(const FHaybaChatToolCall& Call);
-    void            HandleToolResult(const FHaybaChatToolResult& Result);
-    void            HandlePlanRequest(const FHaybaChatPlanRequest& Plan);
+    void            HandleActivityEvent(const FJsonObject& Event);
     void            HandleStreamDone(const FHaybaChatDone& Done);
     void            HandleStreamError(const FHaybaChatError& Error);
     void            HandlePlanApproved();
     void            HandlePlanRejected();
+    void            ApproveActivity(const FString& ActivityId);
+    void            RejectActivity(const FString& ActivityId);
 
     // ── Layout ─────────────────────────────────────────────────────────────
     TSharedRef<SWidget> BuildToolbar();
@@ -103,13 +128,14 @@ private:
     TSharedRef<SWidget> BuildFooter();
     TSharedRef<SWidget> BuildInput();
     TSharedRef<SWidget> BuildEmptyState();
-    TSharedRef<SWidget> BuildPromptCard(const FText& Title, const FText& Hint, const FString& Prompt,
-                                        const FString& Glyph, const FLinearColor& AccentColor);
     TSharedRef<SWidget> BuildMessageRow(const FHaybaMCPChatMessage& Message, int32 MessageIndex);
+    TSharedRef<SWidget> BuildActivityCard(const FString& ActivityId);
+    FReply OnSetWorkMode(FString NewMode);
 
     // ── Message management ────────────────────────────────────────────────
     void AddUserMessage(const FString& Text);
     void AddAIMessage(const FString& Text, TSharedPtr<FJsonObject> Graph = nullptr);
+    void AddInspectResult(const FHaybaWorldInspectSummary& Summary);
     void AddSystemError(const FString& Reason, const FString& RetryPrompt);
     void RebuildChat();
     void ScrollToBottomIfPinned();
@@ -123,27 +149,18 @@ private:
 
     // ── Conversation controls ─────────────────────────────────────────────
     FReply OnNewConversation();
+    FReply OnInspectWorld();
     TSharedRef<SWidget> BuildRecentSessionsMenu();
+    void RefreshRecentSessions();
+    void OpenSavedSession(const FString& SessionId);
 
     // ── Per-row affordances ───────────────────────────────────────────────
     FReply OnCopyMessage(int32 MessageIndex);
     TSharedPtr<SWidget> BuildMessageContextMenu(int32 MessageIndex);
 
-    // ── Message-attached step actions (Q6-a) ──────────────────────────────
-    FReply OnApproveStepFromMessage();
-    FReply OnRedoStepFromMessage();
-    FReply OnPreviewGraphFromMessage(int32 MessageIndex);
-    FReply OnCreateInUEFromMessage(int32 MessageIndex);
-    FReply OnTestItFromMessage(int32 MessageIndex);
-
     // ── Footer click handlers (Q17-b) ─────────────────────────────────────
     FReply OnFooterConnectionClick();
     FReply OnFooterModelClick();
-
-    // ── Send helpers (existing wiring) ────────────────────────────────────
-    void InitializeSession(const FString& Goal);
-    void SendToMCP(const FString& UserMessage);
-    void OnClaudeResponse(bool bSuccess, const FString& ResponseText);
 
     // ── Empty-state prompt helpers ────────────────────────────────────────
     FReply OnPromptCardClicked(FString Prompt);

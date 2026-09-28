@@ -12,6 +12,7 @@ import type { AddressInfo } from 'node:net';
 import type { Server } from 'node:http';
 import { registerChatRoutes, __resetChatState } from './chat-server.js';
 import type { LLMClient, LLMResponse, LLMStreamEvent } from '../agents/llm-client.js';
+import { temporarySessionStore } from './session-store.test-helpers.js';
 
 function usageClient(usage: LLMResponse['usage']): LLMClient {
   return {
@@ -72,6 +73,7 @@ describe('chat-server SSE done frame — usage metrics (Issue #30)', () => {
     const app = express();
     app.use(express.json());
     registerChatRoutes(app, {
+      sessionStore: temporarySessionStore(),
       createClient: () =>
         usageClient({
           inputTokens: 50,
@@ -107,6 +109,7 @@ describe('chat-server SSE done frame — usage metrics (Issue #30)', () => {
     const app = express();
     app.use(express.json());
     registerChatRoutes(app, {
+      sessionStore: temporarySessionStore(),
       createClient: () => usageClient(undefined),
       dispatchTool: async () => ({ ok: true }),
       tools: [],

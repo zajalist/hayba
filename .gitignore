@@ -49,3 +49,7 @@ docs/architecture/
 
 # Sidecar chat/session runtime state — machine-local, not source
 .ai-agent/
+
+# Personal maintainer dashboard and task backlog (local only)
+/dashboard.html
+/TASKS.md

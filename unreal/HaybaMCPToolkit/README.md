@@ -28,6 +28,15 @@ The link lets the plugin find the built MCP server. If you copy the plugin inste
 Build artifacts (`Binaries/`, `Intermediate/`, `Saved/`, `DerivedDataCache/`,
 `.vs/`) are intentionally **not** tracked — UBT regenerates them.
 
+The in-editor workspace has Agent, World, and Library destinations, plus a
+Settings gear. Agent owns the conversation and inline tool/approval activity;
+World combines the loaded-actor scene map with findings; Library groups asset
+profiles and recipes. The Agent composer starts in Explore mode, which exposes
+read-only tools. Draft and Production retain exact-call approval for edits.
+
+After updating plugin C++ or SVG resources, close the editor and rebuild the
+plugin before reopening. A running editor keeps the old module DLL loaded.
+
 ## The TCP seam
 
 `FHaybaMCPTcpServer` listens on `:52342` (auto-fallback `:52343-52350`) and

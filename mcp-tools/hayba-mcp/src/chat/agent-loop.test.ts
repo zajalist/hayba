@@ -1,14 +1,17 @@
 import { describe, it, expect, vi } from 'vitest';
 import { z } from 'zod';
 import { recordSchema } from '../tools/schema-registry.js';
+import { registerChatCapturedTools } from './tool-dispatch.js';
 import {
-  runAgentLoop,
+  runLegacyAgentLoop as runAgentLoop,
+  runAgentLoop as runSemanticAgentLoop,
   buildToolCatalog,
   isDestructiveToolName,
   argsHash,
   type AgentEvent,
   type AgentLoopParams,
 } from './agent-loop.js';
+import { ActivityEventSchema, reduceActivity, type ActivityState, type AgentStreamEvent } from './activity-events.js';
 import type {
   LLMClient,
   LLMContentBlock,
@@ -42,6 +45,7 @@ class FakeLLMClient implements LLMClient {
   offeredToolNames: string[][] = [];
   /** Snapshot of the transcript sent to the client on each stream() call. */
   seenMessages: LLMMessage[][] = [];
+  seenSystems: string[] = [];
   private turns: LLMResponse[];
 
   constructor(turns: LLMResponse[]) {
@@ -54,6 +58,7 @@ class FakeLLMClient implements LLMClient {
   }
 
   async *stream(params: LLMCompleteParams): AsyncGenerator<LLMStreamEvent, void, unknown> {
+    this.seenSystems.push(params.system);
     this.offeredToolNames.push((params.tools ?? []).map((t) => t.name));
     this.seenMessages.push(params.messages.map((m) => ({ ...m })));
     const resp = this.turns.shift() ?? textResponse('done');
@@ -63,11 +68,273 @@ class FakeLLMClient implements LLMClient {
   }
 }
 
-async function collect(gen: AsyncGenerator<AgentEvent>): Promise<AgentEvent[]> {
-  const out: AgentEvent[] = [];
+async function collect<T>(gen: AsyncGenerator<T>): Promise<T[]> {
+  const out: T[] = [];
   for await (const ev of gen) out.push(ev);
   return out;
 }
+
+function reduceStream(events: AgentStreamEvent[], initial: ActivityState | null = null): ActivityState {
+  return events.reduce<ActivityState | null>(
+    (state, event) => reduceActivity(state, ActivityEventSchema.parse(event)),
+    initial,
+  )!;
+}
+
+describe('semantic runAgentLoop', () => {
+  it('routes over the enabled catalog and exposes identity only in activity detail frames', async () => {
+    const client = new FakeLLMClient([toolResponse('asset_search'), textResponse('Found assets')]);
+    const events = await collect(
+      runSemanticAgentLoop(
+        baseParams({
+          client,
+          messages: [{ role: 'user', content: 'Find Content Browser assets by path' }],
+          tools: ['asset_search', 'asset_delete', 'actor_list'].map((name) => ({
+            name,
+            description: '',
+            input_schema: { type: 'object', properties: {} },
+          })),
+          disabledTools: ['asset_delete'],
+          dispatchTool: async () => ({ assets: [] }),
+        }),
+      ),
+    );
+    expect(client.offeredToolNames[0]).toEqual(['asset_search']);
+    expect(client.seenSystems[0]).toContain('Content Browser assets');
+    for (const event of events) {
+      expect(ActivityEventSchema.safeParse(event).success).toBe(true);
+      if (event.type === 'activity_started' || event.type === 'activity_step')
+        expect(event).toHaveProperty('specialistId', 'asset-manager');
+      else expect(event).not.toHaveProperty('specialistId');
+    }
+    expect(reduceStream(events).status).toBe('succeeded');
+  });
+
+  it('honors a pin over automatic intent while keeping approval gates', async () => {
+    const client = new FakeLLMClient([toolResponse('actor_spawn')]);
+    const dispatch = vi.fn();
+    const events = await collect(
+      runSemanticAgentLoop(
+        baseParams({
+          client,
+          pinnedSpecialistId: 'blueprint-generator',
+          messages: [{ role: 'user', content: 'Content Browser assets' }],
+          dispatchTool: dispatch,
+          planMode: true,
+        }),
+      ),
+    );
+    expect(events[0]).toHaveProperty('specialistId', 'blueprint-generator');
+    expect(events.at(-1)).toMatchObject({ type: 'approval_requested' });
+    expect(events.at(-1)).not.toHaveProperty('specialistId');
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  it('rejects unknown specialist pins before calling the provider', async () => {
+    const client = new FakeLLMClient([]);
+    await expect(collect(runSemanticAgentLoop(baseParams({ client, pinnedSpecialistId: 'missing' })))).rejects.toThrow(
+      /unknown archetype/,
+    );
+    expect(client.offeredToolNames).toEqual([]);
+  });
+
+  it('keeps coordinator behavior when no specialist matches', async () => {
+    const client = new FakeLLMClient([textResponse('Hello')]);
+    const events = await collect(runSemanticAgentLoop(baseParams({ client })));
+    expect(events[0]).toHaveProperty('specialistId', 'director');
+    expect(client.offeredToolNames[0]).toEqual(['actor_spawn', 'actor_list']);
+  });
+
+  it('routes from the latest human text even when a resumed transcript ends in tool results', async () => {
+    const events = await collect(
+      runSemanticAgentLoop(
+        baseParams({
+          messages: [
+            { role: 'user', content: [{ type: 'text', text: 'Find Content Browser assets by path' }] },
+            { role: 'assistant', content: [{ type: 'tool_use', id: 'c1', name: 'asset_search', input: {} }] },
+            { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'c1', content: 'No assets found' }] },
+          ],
+          tools: [{ name: 'asset_search', description: '', input_schema: { type: 'object', properties: {} } }],
+        }),
+      ),
+    );
+    expect(events[0]).toHaveProperty('specialistId', 'asset-manager');
+  });
+
+  it('refuses calls excluded by a pinned profile or an additional explicit filter', async () => {
+    const dispatch = vi.fn();
+    const client = new FakeLLMClient([toolResponse('actor_list'), toolResponse('asset_delete'), textResponse('Done')]);
+    const events = await collect(
+      runSemanticAgentLoop(
+        baseParams({
+          client,
+          pinnedSpecialistId: 'asset-manager',
+          archetypeFilter: ['*_search'],
+          tools: ['asset_search', 'asset_delete', 'actor_list'].map((name) => ({
+            name,
+            description: '',
+            input_schema: { type: 'object', properties: {} },
+          })),
+          dispatchTool: dispatch,
+        }),
+      ),
+    );
+    expect(client.offeredToolNames[0]).toEqual(['asset_search']);
+    expect(events.filter((event) => event.type === 'activity_step' && event.step.status === 'failed')).toHaveLength(2);
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  it('streams a reducer-valid tool activity and provider-neutral usage', async () => {
+    const events = await collect(
+      runSemanticAgentLoop(
+        baseParams({
+          activityId: 'a1',
+          activityTitle: 'Inspect actors',
+          client: new FakeLLMClient([
+            toolResponse('actor_list', {}, 'c1'),
+            { ...textResponse('Done'), usage: { inputTokens: 12, outputTokens: 3 } },
+          ]),
+          dispatchTool: async () => ({ actors: [] }),
+        }),
+      ),
+    );
+    expect(events.map((event) => event.type)).toEqual([
+      'activity_started',
+      'activity_step',
+      'activity_step',
+      'message_delta',
+      'activity_completed',
+    ]);
+    expect(events[1]).toMatchObject({ step: { status: 'running', id: 'c1', name: 'actor_list', input: {} } });
+    expect(events[2]).toMatchObject({ step: { status: 'succeeded', id: 'c1', result: { actors: [] } } });
+    expect(reduceStream(events)).toMatchObject({
+      activityId: 'a1',
+      title: 'Inspect actors',
+      status: 'succeeded',
+      text: 'Done',
+      completion: { usage: { inputTokens: 12, outputTokens: 3 } },
+    });
+  });
+
+  it.each(['ts', 'ue', 'workflow', 'mcp'] as const)(
+    'pauses semantically for %s approval without completion',
+    async (source) => {
+      const workflow = { ok: false, stages: [{ stage: 'terrain', status: 'pending', code: 'plan_mode_required' }] };
+      const dispatch = vi.fn(async () =>
+        source === 'ue'
+          ? { status: 'plan_mode_required' }
+          : source === 'mcp'
+            ? { content: [{ type: 'text', text: JSON.stringify(workflow) }] }
+            : workflow,
+      );
+      const events = await collect(
+        runSemanticAgentLoop(
+          baseParams({
+            activityId: 'a1',
+            client: new FakeLLMClient([toolResponse('actor_spawn', { label: 'Tree' }, 'c1')]),
+            planMode: source === 'ts',
+            dispatchTool: dispatch,
+          }),
+        ),
+      );
+      expect(events.at(-1)).toMatchObject({
+        type: 'approval_requested',
+        source: source === 'ts' ? 'ts' : 'ue',
+        argsHash: '{"label":"Tree"}',
+      });
+      expect(events.some((event) => event.type === 'activity_completed')).toBe(false);
+      expect(reduceStream(events).status).toBe('awaiting_approval');
+      expect(dispatch).toHaveBeenCalledTimes(source === 'ts' ? 0 : 1);
+    },
+  );
+
+  it.each(['c1', 'new-call-id'])(
+    'resumes the same activity with call ID %s through a one-shot approval',
+    async (id) => {
+      const params = baseParams({
+        activityId: 'a1',
+        planMode: true,
+        client: new FakeLLMClient([toolResponse('actor_spawn', {}, 'c1')]),
+        dispatchTool: async () => ({ ok: true }),
+      });
+      const paused = reduceStream(await collect(runSemanticAgentLoop(params)));
+      const events = await collect(
+        runSemanticAgentLoop({
+          ...params,
+          client: new FakeLLMClient([toolResponse('actor_spawn', {}, id), textResponse('Done')]),
+          resumeApprovalId: paused.approval!.approvalId,
+          approvedCall: { name: 'actor_spawn', argsHash: '{}' },
+        }),
+      );
+      expect(events[0]).toMatchObject({ type: 'activity_started', resumeApprovalId: paused.approval!.approvalId });
+      const completed = reduceStream(events, paused);
+      expect(completed.status).toBe('succeeded');
+      expect(completed.steps).toEqual([{ status: 'succeeded', id, name: 'actor_spawn', result: { ok: true } }]);
+    },
+  );
+
+  it('ends cancellation with exactly one terminal event', async () => {
+    const controller = new AbortController();
+    const events = await collect(
+      runSemanticAgentLoop(
+        baseParams({
+          client: new FakeLLMClient([toolResponse('actor_list')]),
+          signal: controller.signal,
+          dispatchTool: async () => {
+            controller.abort();
+            return {};
+          },
+        }),
+      ),
+    );
+    expect(events.at(-1)).toMatchObject({ type: 'activity_completed', outcome: 'cancelled', reason: 'aborted' });
+    expect(events.filter((event) => event.type === 'error' || event.type === 'activity_completed')).toHaveLength(1);
+    expect(reduceStream(events)).toMatchObject({ status: 'failed', outcome: 'cancelled' });
+  });
+
+  it.each(['refusal', 'model_context_window_exceeded', 'unknown'] as const)(
+    'terminates provider %s errors without a second terminal event',
+    async (stopReason) => {
+      const events = await collect(
+        runSemanticAgentLoop(baseParams({ client: new FakeLLMClient([{ content: null, toolCalls: [], stopReason }]) })),
+      );
+      expect(events.at(-1)).toMatchObject({ type: 'error', termination: { stopReason } });
+      expect(events.filter((event) => event.type === 'error' || event.type === 'activity_completed')).toHaveLength(1);
+      expect(reduceStream(events).status).toBe('failed');
+    },
+  );
+
+  it('terminates a thrown provider failure and retains the legacy error-only contract', async () => {
+    const params = baseParams({
+      client: {
+        ...new FakeLLMClient([]),
+        provider: 'mock',
+        model: 'fake',
+        protocol: 'anthropic',
+        complete: async () => textResponse('unused'),
+        async *stream() {
+          throw new Error('offline');
+        },
+      },
+    });
+    const events = await collect(runSemanticAgentLoop(params));
+    expect(reduceStream(events)).toMatchObject({ status: 'failed', error: { error: 'offline' } });
+    expect(await collect(runAgentLoop(params))).toEqual([{ type: 'error', error: 'offline' }]);
+  });
+
+  it('keeps legacy frame payloads and order compatible', async () => {
+    const params = baseParams({
+      client: new FakeLLMClient([toolResponse('actor_list', { limit: 1 }, 'c1'), textResponse('Done')]),
+      dispatchTool: async () => ({ actors: ['Tree'] }),
+    });
+    expect(await collect(runAgentLoop(params))).toEqual([
+      { type: 'tool_call', call: { id: 'c1', name: 'actor_list', input: { limit: 1 } } },
+      { type: 'tool_result', id: 'c1', name: 'actor_list', result: { actors: ['Tree'] } },
+      { type: 'text_delta', text: 'Done' },
+      { type: 'done', reason: 'end_turn', stopReason: 'end_turn' },
+    ]);
+  });
+});
 
 function baseParams(over: Partial<AgentLoopParams>): AgentLoopParams {
   return {
@@ -93,9 +360,53 @@ describe('isDestructiveToolName', () => {
     expect(isDestructiveToolName('get_tool_signature')).toBe(false);
     expect(isDestructiveToolName('asset_search')).toBe(false);
   });
+
+  it('gates binding an event, whose name carries no mutation verb', () => {
+    // ui_bind_event adds a node to the graph; its wire command is gated in C++,
+    // so the TS mirror must agree even though "bind" matches no verb pattern.
+    expect(isDestructiveToolName('ui_bind_event')).toBe(true);
+    expect(isDestructiveToolName('blueprint_add_bound_event')).toBe(true);
+    expect(isDestructiveToolName('blueprint_remove_node')).toBe(true);
+  });
 });
 
 describe('runAgentLoop', () => {
+  it.each(['world_ingest', 'asset_prepare', 'level_save'])(
+    'requests approval before dispatching %s in Plan Mode',
+    async (name) => {
+      const dispatch = vi.fn();
+      const events = await collect(
+        runAgentLoop(
+          baseParams({
+            client: new FakeLLMClient([toolResponse(name)]),
+            dispatchTool: dispatch,
+            planMode: true,
+            tools: [{ name, description: '', input_schema: { type: 'object', properties: {} } }],
+          }),
+        ),
+      );
+      expect(dispatch).not.toHaveBeenCalled();
+      expect(events.at(-1)).toMatchObject({ type: 'plan_request', source: 'ts' });
+    },
+  );
+
+  it.each([false, true])('treats workflow approval-required stages as a pause, not a failure (MCP=%s)', async (mcp) => {
+    const result = { ok: false, stages: [{ stage: 'terrain', status: 'pending', code: 'plan_mode_required' }] };
+    const dispatch = vi.fn(async () =>
+      mcp ? { content: [{ type: 'text', text: JSON.stringify(result) }], isError: false } : result,
+    );
+    const events = await collect(
+      runAgentLoop(
+        baseParams({
+          client: new FakeLLMClient([toolResponse('world_ingest')]),
+          dispatchTool: dispatch,
+          tools: [{ name: 'world_ingest', description: '', input_schema: { type: 'object', properties: {} } }],
+        }),
+      ),
+    );
+    expect(events.at(-1)).toMatchObject({ type: 'plan_request', source: 'ue' });
+    expect(events.some((e) => e.type === 'tool_result')).toBe(false);
+  });
   it('runs a multi-step tool loop (2 rounds) to end_turn', async () => {
     const client = new FakeLLMClient([
       toolResponse('actor_list', {}, 'c1'),
@@ -406,6 +717,15 @@ describe('runAgentLoop', () => {
 });
 
 describe('buildToolCatalog', () => {
+  it('offers only registered captured names and respects an empty captured catalog', () => {
+    recordSchema('zzz_captured_probe', { shape: {}, cost: 'low', returns: '{ok}' });
+    recordSchema('zzz_uncaptured_probe', { shape: {}, cost: 'low', returns: '{ok}' });
+    registerChatCapturedTools(new Map([['zzz_captured_probe', { handler: async () => ({ ok: true }) }]]));
+    expect(buildToolCatalog().map((tool) => tool.name)).toEqual(['zzz_captured_probe']);
+    registerChatCapturedTools(new Map());
+    expect(buildToolCatalog()).toEqual([]);
+  });
+
   it('filters by archetype tool_filter and disabled list', () => {
     const listCommands = () => ['actor_spawn', 'actor_list', 'pcg_create_graph'];
     const isDisabled = (n: string) => n === 'actor_list';

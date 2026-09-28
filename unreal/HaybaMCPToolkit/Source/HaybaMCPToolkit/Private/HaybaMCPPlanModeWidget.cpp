@@ -8,6 +8,8 @@ void SHaybaMCPPlanModeWidget::Construct(const FArguments& InArgs)
     ChildSlot
     [
         SNew(SButton)
+        .HAlign(HAlign_Center)
+        .VAlign(VAlign_Center)
         .OnClicked(this, &SHaybaMCPPlanModeWidget::OnToggle)
         .ButtonColorAndOpacity(this, &SHaybaMCPPlanModeWidget::GetButtonColor)
         .ToolTipText(NSLOCTEXT("Hayba", "PlanModeTooltip", "Plan Mode: when ON, the AI must propose a plan before any destructive action."))

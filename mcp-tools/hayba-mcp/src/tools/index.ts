@@ -292,6 +292,11 @@ import {
   uiBindPropertyHandler,
 } from './ui/ui-bind-property.js';
 import {
+  meta as uiBindEventMeta,
+  schema as uiBindEventSchema,
+  uiBindEventHandler,
+} from './ui/ui-bind-event.js';
+import {
   meta as uiListWidgetBlueprintsMeta,
   schema as uiListWidgetBlueprintsSchema,
   uiListWidgetBlueprintsHandler,
@@ -339,6 +344,9 @@ import {
   uiReplaceElementHandler,
 } from './ui/ui-replace-element.js';
 import { worldGenerateHandler, meta as worldGenerateMeta } from './world/world-generate.js';
+import { worldInspectDescriptor, worldIngestDescriptor, runWorldIngest, createNativeWorldIngestDependencies } from './world/index.js';
+import { assetPrepareDescriptor, withAssetPreparationInspection } from './asset/index.js';
+import { workflowNeedsApproval } from './workflows/approval.js';
 import {
   providerListHandler,
   providerListMeta,
@@ -1714,10 +1722,10 @@ export const PCG_DESCRIPTORS: ToolDescriptor[] = [
       return { content: result.content, isError: result.isError };
     },
   }),
-  defineTool({
-    name: 'hayba_import_landscape',
+  ...(['hayba_import_landscape', 'import_landscape'] as const).map((name) => defineTool({
+    name,
     description:
-      'Import a heightmap (PNG or R16) as an UE Landscape actor. Wraps the UE-side landscape_import handler. The heightmap is sampled 0..uint16-max -> 0..maxHeightM (m). Spawns one Landscape covering worldSizeKm x worldSizeKm.',
+      'Deprecated for one release; use world_ingest. Import a heightmap (PNG or R16) through the shared staged workflow, preserving partition settings and legacy import-only behavior. Leaves changes unsaved. The heightmap is sampled 0..uint16-max -> 0..maxHeightM (m). Spawns one Landscape covering worldSizeKm x worldSizeKm.',
     meta: {
       cost: 'high',
       effects: ['imports_landscape', 'modifies_level'],
@@ -1736,21 +1744,35 @@ export const PCG_DESCRIPTORS: ToolDescriptor[] = [
       landscapeMaterial: z.string().optional().describe('UE material path; empty = no material'),
     },
     cost: 'high',
-    returns: '{ok, actor, size, components}',
-    handler: async (params) => {
-      try {
-        const data = await executeCommand('landscape_import', params as Record<string, unknown>);
-        return {
-          content: [{ type: 'text', text: JSON.stringify(data ?? { ok: true }, null, 2) }],
-        };
-      } catch (e) {
-        return errorResult(`Error importing landscape: ${(e as Error).message}`);
-      }
+    returns: 'WorkflowResult including operationId, retained resources, and deprecation:{deprecated,replacement,removal}',
+    handler: async (params, session) => {
+      const result = await runWorldIngest({
+        source: { kind: 'heightmap', path: params.heightmapPath },
+        destination: { mode: 'open_world' },
+        partition: { mode: 'preserve' },
+        terrain: {
+          worldSizeKm: params.worldSizeKm,
+          maxHeightM: params.maxHeightM,
+          actorLabel: params.actorLabel,
+          // The legacy empty string means no material, just like omission.
+          ...(params.landscapeMaterial ? { material: params.landscapeMaterial } : {}),
+        },
+      }, createNativeWorldIngestDependencies(session, { persistence: 'legacy_import_only' }));
+      return {
+        content: [{ type: 'text', text: JSON.stringify({
+          ...result,
+          deprecation: { deprecated: true, replacement: 'world_ingest', removal: 'after_one_release' },
+        }) }],
+        isError: !result.ok && !workflowNeedsApproval(result),
+      };
     },
-  }),
+  })),
 ];
 
 const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
+  worldInspectDescriptor,
+  worldIngestDescriptor,
+  assetPrepareDescriptor,
   // ── World generation (always-on flagship) ────────────────────────────────
   {
     name: 'world_generate',
@@ -2734,6 +2756,17 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
     schema: uiBindPropertySchema.shape,
   },
   {
+    name: 'ui_bind_event',
+    description:
+      'Make a widget react to input: bind a widget event (Button OnClicked, OnHovered, OnPressed) to an event node in its Widget Blueprint, then wire the node\'s "then" pin to what should happen. Idempotent - binding again returns the existing node. Expose the widget with ui_set_variable and compile first.',
+    meta: uiBindEventMeta,
+    handler: uiBindEventHandler,
+    cost: 'medium',
+    returns: '{node_id, pins, target, event_name, graph, already_existed, verified}',
+    niche: UI,
+    schema: uiBindEventSchema.shape,
+  },
+  {
     name: 'ui_list_widget_blueprints',
     description:
       'List the Widget Blueprints that exist in the project, with the _C class path needed to use one as a child widget or as a parent class. Reads the asset registry, so no blueprint is loaded.',
@@ -3473,7 +3506,7 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
     returns: '{ok, assets:[{name,path,class}], total, has_more, next_offset}',
     schema: assetRegistryQuerySchema.shape,
   },
-  ...editorPyDescriptors.map((d) => toToolDescriptor(d)),
+  ...editorPyDescriptors.map((d) => d.name === 'asset_inspect' ? withAssetPreparationInspection(toToolDescriptor(d)) : toToolDescriptor(d)),
 
   // ── Asset & mesh P0 tools (Phase 2 Wave 2, Task 2) — factory path ─────────
   // Net-new asset-provenance/save/folder tools and StaticMesh-asset readbacks
@@ -3839,6 +3872,7 @@ export function captureStaticToolCatalogue(session: SessionManagerStub): Map<str
     captured.set(tool.name, {
       description: tool.description,
       schema: tool.schema,
+      inputSchema: descriptor.inputSchema,
       handler: wrapToolHandlerForStream(tool.name, tool.handler) as CapturedTool['handler'],
       dir: inferDir(tool.name),
     });

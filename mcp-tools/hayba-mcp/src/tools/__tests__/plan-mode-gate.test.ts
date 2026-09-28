@@ -25,6 +25,7 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { NON_IDEMPOTENT } from '../tool-executor.js';
+import { isDestructiveToolName } from '../../chat/agent-loop.js';
 
 const CPP_PATH = join(
   process.cwd(),
@@ -47,6 +48,18 @@ describe('Plan Mode gate covers every non-retryable command', () => {
   // Skipped rather than failed when the plugin source isn't checked out beside
   // the server — a missing sibling repo is not a broken contract.
   const available = existsSync(CPP_PATH);
+
+  it.runIf(available)('gates workflow primitives and public mutations in both native and agent dispatch', () => {
+    for (const name of ['mesh_set_lod', 'level_save', 'world_ingest', 'asset_prepare', 'world_generate', 'hayba_import_landscape', 'import_landscape']) {
+      expect(parseGatedCommands().has(name), name).toBe(true);
+      expect(isDestructiveToolName(name), name).toBe(true);
+    }
+    const source = readFileSync(CPP_PATH, 'utf8');
+    const transaction = source.slice(source.indexOf('bool FHaybaMCPCommandHandler::ShouldCreateEditorTransaction'), source.indexOf('static void MaybeShowPlanModePrompt'));
+    expect(transaction).toContain('if (!IsDestructiveCommand(Cmd)) return false;');
+    expect(transaction).not.toContain('TEXT("mesh_set_lod")');
+    expect(transaction).toContain('if (Cmd == TEXT("level_save")) return false;');
+  });
 
   it.runIf(available)('parses a plausible command set out of the C++ gate', () => {
     const gated = parseGatedCommands();

@@ -1,4 +1,5 @@
 #include "HaybaMCPModule.h"
+#include "HaybaMCPActivityModel.h"
 #include "HaybaMCPMainPanel.h"
 #include "Studio/SHaybaSemanticStudio.h"
 #include "HaybaMCPPlanOverlay.h"
@@ -12,7 +13,6 @@
 #include "HaybaMCPValidationPanel.h"
 #include "HaybaMCPMemoryPanel.h"
 #include "HaybaMCPOnboardingWidget.h"
-#include "HaybaMCPPlanModeWidget.h"
 #include "HaybaMCPStyle.h"
 #include "Editor.h"
 #include "TimerManager.h"
@@ -338,10 +338,6 @@ void FHaybaMCPModule::StartupModule()
             FTimerDelegate::CreateRaw(this, &FHaybaMCPModule::OpenOnboardingTab));
     }
 
-    // Add Plan Mode toggle to the level-editor toolbar.
-    PlanModeMenuStartupHandle = UToolMenus::RegisterStartupCallback(
-        FSimpleMulticastDelegate::FDelegate::CreateRaw(
-            this, &FHaybaMCPModule::RegisterPlanModeToolbar));
 
     // Slivers live as a page inside the main toolkit panel (EHaybaPanel::Slivers).
     // Only the param-widget factory registry needs module-level init.
@@ -351,6 +347,9 @@ void FHaybaMCPModule::StartupModule()
 
 void FHaybaMCPModule::ShutdownModule()
 {
+    if (ActivityModel) ActivityModel->OnActivityChanged.Clear();
+    OnActivityChanged.Clear();
+    ActivityModel.Reset();
     FString ActiveRender;
     if (!HaybaRenderSafety::BeginShutdown(ActiveRender))
     {
@@ -382,11 +381,6 @@ void FHaybaMCPModule::ShutdownModule()
         UToolMenus::UnRegisterStartupCallback(StudioMenuStartupHandle);
         StudioMenuStartupHandle.Reset();
     }
-    if (PlanModeMenuStartupHandle.IsValid())
-    {
-        UToolMenus::UnRegisterStartupCallback(PlanModeMenuStartupHandle);
-        PlanModeMenuStartupHandle.Reset();
-    }
 
     // Ticker lambdas execute plugin code. Remove/fail an in-flight test job
     // before module unload so no callback can jump into an unloaded DLL.
@@ -400,6 +394,19 @@ void FHaybaMCPModule::ShutdownModule()
     StopMCPServer();
     FHaybaMCPStyle::Shutdown();
     UE_LOG(LogHaybaMCP, Log, TEXT("HaybaMCPToolkit module shut down."));
+}
+
+FHaybaActivityModel& FHaybaMCPModule::GetActivityModel()
+{
+    if (!ActivityModel)
+    {
+        ActivityModel = MakeShared<FHaybaActivityModel>();
+        ActivityModel->OnActivityChanged.AddLambda([this](const FString& ActivityId)
+        {
+            OnActivityChanged.Broadcast(ActivityId);
+        });
+    }
+    return *ActivityModel;
 }
 
 TSharedPtr<FJsonObject> FHaybaMCPModule::GetTcpTransportLimits() const
@@ -588,6 +595,10 @@ void FHaybaMCPModule::SendTcpCommand(
     Command->SetStringField(TEXT("cmd"), Cmd);
     Command->SetStringField(TEXT("id"), RequestId);
     Command->SetObjectField(TEXT("params"), Params);
+    // Calls originating from the toolkit use the configured native credential.
+    // Keep it in the envelope so it is not included in tool argument history.
+    const FString& Token = FHaybaMCPSettings::Get().CapabilityToken;
+    if (!Token.IsEmpty()) Command->SetStringField(TEXT("auth"), Token);
 
     FString CommandStr;
     TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer =
@@ -602,8 +613,9 @@ void FHaybaMCPModule::SendTcpCommand(
     {
         bool bOk = false;
         ResponseObj->TryGetBoolField(TEXT("ok"), bOk);
-        TSharedPtr<FJsonObject> Data = ResponseObj->GetObjectField(TEXT("data"));
-        Callback(bOk, Data);
+        const TSharedPtr<FJsonObject>* Data = nullptr;
+        ResponseObj->TryGetObjectField(TEXT("data"), Data);
+        Callback(bOk, Data ? *Data : nullptr);
     }
     else { Callback(false, nullptr); }
 }
@@ -726,22 +738,6 @@ void FHaybaMCPModule::RegisterStudioContentMenu()
     );
 }
 
-void FHaybaMCPModule::RegisterPlanModeToolbar()
-{
-    UToolMenus* ToolMenus = UToolMenus::Get();
-    if (!ToolMenus) return;
-
-    FToolMenuOwnerScoped OwnerScoped(this);
-    if (UToolMenu* Menu = ToolMenus->ExtendMenu("LevelEditor.LevelEditorToolBar.PlayToolBar"))
-    {
-        FToolMenuSection& Section = Menu->FindOrAddSection("HaybaMCP");
-        Section.AddEntry(FToolMenuEntry::InitWidget(
-            "HaybaPlanMode",
-            SNew(SHaybaMCPPlanModeWidget),
-            FText::GetEmpty(),
-            true));
-    }
-}
 
 void FHaybaMCPModule::OpenOnboardingTab()
 {

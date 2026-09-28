@@ -75,7 +75,7 @@ void SSliversPanel::Construct(const FArguments& InArgs)
             + SHorizontalBox::Slot().FillWidth(1.0f).VAlign(VAlign_Center).Padding(2)
             [
                 SNew(SSearchBox)
-                .HintText(FText::FromString(TEXT("Search slivers…")))
+                .HintText(FText::FromString(TEXT("Search recipes…")))
                 .OnTextChanged_Lambda([this](const FText& T)
                 {
                     SearchText = T.ToString();
@@ -108,7 +108,7 @@ void SSliversPanel::Construct(const FArguments& InArgs)
             [
                 SNew(SButton)
                 .ContentPadding(FMargin(8, 3))
-                .ToolTipText(FText::FromString(TEXT("Import a .sliver.json file into the installed slivers.")))
+                .ToolTipText(FText::FromString(TEXT("Import a saved recipe.")))
                 .OnClicked(this, &SSliversPanel::OnImportClicked)
                 [ SNew(STextBlock).Text(FText::FromString(TEXT("Import"))) ]
             ]
@@ -116,7 +116,7 @@ void SSliversPanel::Construct(const FArguments& InArgs)
             [
                 SNew(SButton)
                 .ContentPadding(FMargin(8, 3))
-                .ToolTipText(FText::FromString(TEXT("Export the selected sliver to a .sliver.json file.")))
+                .ToolTipText(FText::FromString(TEXT("Export the selected recipe.")))
                 .IsEnabled_Lambda([this]() { return Selected.IsValid(); })
                 .OnClicked(this, &SSliversPanel::OnExportClicked)
                 [ SNew(STextBlock).Text(FText::FromString(TEXT("Export"))) ]
@@ -125,7 +125,7 @@ void SSliversPanel::Construct(const FArguments& InArgs)
             [
                 SNew(SButton)
                 .ContentPadding(FMargin(8, 3))
-                .ToolTipText(FText::FromString(TEXT("Delete the selected sliver from disk.")))
+                .ToolTipText(FText::FromString(TEXT("Delete the selected recipe from disk.")))
                 .IsEnabled_Lambda([this]() { return Selected.IsValid(); })
                 .OnClicked(this, &SSliversPanel::OnDeleteClicked)
                 [ SNew(STextBlock).Text(FText::FromString(TEXT("Delete"))) ]
@@ -147,7 +147,7 @@ void SSliversPanel::Construct(const FArguments& InArgs)
                 .HeaderRow(
                     SNew(SHeaderRow)
                     + SHeaderRow::Column(ColTitle)
-                      .DefaultLabel(FText::FromString(TEXT("Sliver"))).FillWidth(0.5f)
+                      .DefaultLabel(FText::FromString(TEXT("Recipe"))).FillWidth(0.5f)
                     + SHeaderRow::Column(ColCategory)
                       .DefaultLabel(FText::FromString(TEXT("Category"))).FillWidth(0.3f)
                     + SHeaderRow::Column(ColVersion)
@@ -285,10 +285,10 @@ FReply SSliversPanel::OnImportClicked()
     TArray<FString> Picked;
     const bool bOk = DP->OpenFileDialog(
         ParentHandle,
-        TEXT("Import sliver"),
+        TEXT("Import recipe"),
         FPaths::ProjectDir(),
         TEXT(""),
-        TEXT("Sliver spec (*.sliver.json)|*.sliver.json"),
+        TEXT("Recipe file (*.sliver.json)|*.sliver.json"),
         EFileDialogFlags::None,
         Picked);
 
@@ -300,7 +300,7 @@ FReply SSliversPanel::OnImportClicked()
         if (IFileManager::Get().Copy(*Dst, *Src) != COPY_OK)
         {
             FMessageDialog::Open(EAppMsgType::Ok,
-                FText::FromString(TEXT("Failed to copy the selected file into the slivers folder.")));
+                FText::FromString(TEXT("Failed to import the selected recipe.")));
         }
         Refresh();
     }
@@ -317,7 +317,7 @@ FReply SSliversPanel::OnExportClicked()
     if (!IFileManager::Get().FileExists(*Src))
     {
         FMessageDialog::Open(EAppMsgType::Ok,
-            FText::FromString(TEXT("Could not locate the source file for this sliver.")));
+            FText::FromString(TEXT("Could not locate the source file for this recipe.")));
         return FReply::Handled();
     }
 
@@ -327,10 +327,10 @@ FReply SSliversPanel::OnExportClicked()
     TArray<FString> Saved;
     const bool bOk = DP->SaveFileDialog(
         ParentHandle,
-        TEXT("Export sliver"),
+        TEXT("Export recipe"),
         FPaths::ProjectDir(),
         Selected->Id + TEXT(".sliver.json"),
-        TEXT("Sliver spec (*.sliver.json)|*.sliver.json"),
+        TEXT("Recipe file (*.sliver.json)|*.sliver.json"),
         EFileDialogFlags::None,
         Saved);
 
@@ -353,7 +353,7 @@ FReply SSliversPanel::OnDeleteClicked()
     const EAppReturnType::Type Answer = FMessageDialog::Open(
         EAppMsgType::YesNo,
         FText::FromString(FString::Printf(
-            TEXT("Delete sliver \"%s\"?\n\nThis removes %s from disk."),
+            TEXT("Delete recipe \"%s\"?\n\nThis removes %s from disk."),
             *Id, *(Id + TEXT(".sliver.json")))));
 
     if (Answer != EAppReturnType::Yes) return FReply::Handled();
@@ -362,7 +362,7 @@ FReply SSliversPanel::OnDeleteClicked()
     if (!IFileManager::Get().Delete(*Path, /*RequireExists*/false))
     {
         FMessageDialog::Open(EAppMsgType::Ok,
-            FText::FromString(TEXT("Failed to delete the sliver file.")));
+            FText::FromString(TEXT("Failed to delete the recipe file.")));
     }
     Selected.Reset();
     Refresh();

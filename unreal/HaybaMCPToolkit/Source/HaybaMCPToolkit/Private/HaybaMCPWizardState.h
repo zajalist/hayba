@@ -25,8 +25,10 @@ struct FHaybaMCPWizardStep
 /** A single message in the chat */
 struct FHaybaMCPChatMessage
 {
-	bool bFromUser;         // true = user, false = AI
-	FString Text;
+    bool bFromUser;         // true = user, false = AI
+    bool bToolResult = false; // Native inspection result, not model output
+    FString Text;
+    FString ActivityId;     // semantic activity shown inline with this turn
 	TSharedPtr<FJsonObject> AttachedGraph; // Non-null if AI produced a graph
 	bool bShowActions;      // Show Preview/Create/Test buttons
 	FDateTime Timestamp = FDateTime::Now();

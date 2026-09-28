@@ -2,6 +2,8 @@
 #include "CoreMinimal.h"
 #include "Interfaces/IHttpRequest.h"
 
+class FJsonObject;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // FHaybaMCPAgentClient — Server-Sent-Events consumer for the BYOK copilot.
 //
@@ -83,6 +85,7 @@ DECLARE_MULTICAST_DELEGATE_OneParam(FOnHaybaChatToolResult, const FHaybaChatTool
 DECLARE_MULTICAST_DELEGATE_OneParam(FOnHaybaChatPlanRequest, const FHaybaChatPlanRequest&);
 DECLARE_MULTICAST_DELEGATE_OneParam(FOnHaybaChatDone, const FHaybaChatDone&);
 DECLARE_MULTICAST_DELEGATE_OneParam(FOnHaybaChatError, const FHaybaChatError&);
+DECLARE_MULTICAST_DELEGATE_OneParam(FOnHaybaActivityEvent, const FJsonObject&);
 
 class FHaybaMCPAgentClient : public TSharedFromThis<FHaybaMCPAgentClient>
 {
@@ -97,7 +100,7 @@ public:
 	 * a follow-up turn on the same session; the config push is skipped after the
 	 * first success.
 	 */
-	void SendPrompt(const FString& UserPrompt);
+	void SendPrompt(const FString& UserPrompt, const FString& WorkMode = TEXT("production"));
 
 	/**
 	 * Plan-mode resume: after the user Approves a gated action in the Plan tab,
@@ -126,11 +129,36 @@ public:
 	 */
 	void AbortServerTurn();
 
+	/**
+	 * Hayba Pro fallback: when true, this chat's turns use the local Community
+	 * loop even if FHaybaMCPSettings::bUseHaybaPro is on (set by the panel's
+	 * "Use Community for this chat" after a brain_unavailable error). Reset to
+	 * false whenever the client starts or adopts a chat session id.
+	 */
+	bool bForceCommunityThisChat = false;
+
+	/** True when the next turn routes through Hayba Pro (setting on, not forced to Community). */
+	bool IsProLoopActive() const;
+
+	/**
+	 * Switch this chat to the Community loop (sets bForceCommunityThisChat) and
+	 * force /chat/config to be re-posted with the current provider key.
+	 */
+	void ForceCommunityThisChat();
+
 	/** True while a stream request is in flight. */
 	bool IsStreaming() const { return bStreaming; }
+	/** True while a turn is in flight, including its pre-stream round-trips. */
+	bool IsTurnActive() const { return bStreaming || bTurnPending; }
 
 	/** The session id used against the sidecar (stable for this client). */
 	const FString& GetSessionId() const { return SessionId; }
+	/** Continue a saved text session. Provider credentials are always reconfigured. */
+	bool AdoptSavedSession(const FString& InSessionId);
+
+	/** Strict semantic JSON decoder; requires matching SSE and payload event types. */
+	static bool DecodeActivityEvent(const FString& EventType, const FString& Json, TSharedPtr<FJsonObject>& OutEvent);
+	FOnHaybaActivityEvent OnActivityEvent;
 
 	// Delegates — Task 8's panel subscribes to these. All fire on the game thread.
 	FOnHaybaChatTextDelta   OnTextDelta;
@@ -141,8 +169,20 @@ public:
 	FOnHaybaChatError       OnError;
 
 private:
+    friend class FHaybaActivityClientFramesTest;
+    friend class FHaybaActivityResumeDisconnectTest;
 	void PostConfig(const FString& UserPrompt);
+	/** /chat/config when this session has none yet, then /chat/stream. */
+	void ConfigureAndStream(const FString& UserPrompt);
+	/** Hayba Pro: GET /brain/status (store rotation), push the vault token only if not signed in, then stream. */
+	void CheckBrainThenStream(const FString& UserPrompt);
+	/** Hayba Pro: push the DPAPI-stored refresh token (POST /brain/config), then ConfigureAndStream. */
+	void PostBrainConfig(const FString& UserPrompt, const FString& RefreshToken);
+	/** Hayba Pro: at every end of a Pro stream, GET /brain/status and re-store any rotated refresh token. */
+	void StoreRotatedBrainToken();
 	void StartStream(const FString& UserPrompt);
+	/** Prepare callbacks/state separately from sending, so transport outcomes can be tested offline. */
+	TSharedRef<IHttpRequest, ESPMode::ThreadSafe> CreateStreamRequest(const FString& UserPrompt);
 	void PostApprove();
 
 	/** Fire-and-forget POST /chat/cancel with {session_id} (no-op if no session). */
@@ -155,6 +195,7 @@ private:
 
 	/** Emit a synthetic local terminal done frame (used by Cancel / transport error). */
 	void EmitLocalDone(const FString& Reason, bool bCancelled);
+	void MarkActivitiesDisconnected();
 
 	FString MakeSessionId();
 
@@ -164,9 +205,20 @@ private:
 	bool bConfigDone = false;
 	bool bStreaming = false;
 	bool bTerminalEmitted = false;   // guards against double done (local + server)
+	bool bCurrentTurnPro = false;    // the in-flight/last turn asked for loop=pro
+	/** SendPrompt until /chat/stream starts: the /brain/status, /brain/config, /chat/config round-trips. */
+	bool bTurnPending = false;
+	/** Bumped per SendPrompt and on a pending-phase Cancel; captured by every pre-stream continuation. */
+	uint32 TurnGeneration = 0;
+	/** True while the pre-stream phase of turn Generation is still the live one. */
+	bool IsTurnCurrent(uint32 Generation) const;
 
 	/** Index into the decoded stream body up to which frames have been parsed. */
 	int32 ParseCursor = 0;
 	/** Accumulated assistant text (for partial_text on local cancel). */
 	FString AccumulatedText;
+	/** Explicit composer mode, sent on every stream request (including resumes). */
+	FString WorkMode = TEXT("production");
+	/** Unresolved identities owned by this client, retained across approval resume requests. */
+	TSet<FString> StreamActivityIds;
 };

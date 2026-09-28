@@ -22,6 +22,12 @@ private:
     FHaybaHandlerResult SetDefaults(const TSharedPtr<FJsonObject>& P);
     /** Set a literal on an unconnected input pin — the third leg of graph authoring. */
     FHaybaHandlerResult SetPinDefault(const TSharedPtr<FJsonObject>& P);
+    /** A named custom event, optionally with typed inputs — a timer target or a callable entry point. */
+    FHaybaHandlerResult AddCustomEvent(const TSharedPtr<FJsonObject>& P);
+    /** Bind a component's or widget's multicast delegate (Button.OnClicked) as an event node. */
+    FHaybaHandlerResult AddBoundEvent(const TSharedPtr<FJsonObject>& P);
+    /** Delete one node by id; refuses the entry/result nodes a function graph needs. */
+    FHaybaHandlerResult RemoveNode(const TSharedPtr<FJsonObject>& P);
 
     // Initiative #7 — Blueprint compilation safety gates.
     // After every mutation we record the BP's compile state. If the most

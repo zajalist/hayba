@@ -13,6 +13,42 @@
 #include "Widgets/Input/SEditableTextBox.h"
 #include "Widgets/Input/SComboBox.h"
 #include "Styling/AppStyle.h"
+#include "HttpModule.h"
+#include "Interfaces/IHttpRequest.h"
+#include "Interfaces/IHttpResponse.h"
+#include "Json.h"
+#include "HAL/PlatformProcess.h"
+#include "HAL/PlatformTime.h"
+
+namespace
+{
+    // DPAPI vault id for the Hayba Pro refresh token (never shown, never logged).
+    const TCHAR* const BrainVaultId = TEXT("hayba-brain");
+
+    FString BrainJsonToString(const TSharedRef<FJsonObject>& Root)
+    {
+        FString Out;
+        TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&Out);
+        FJsonSerializer::Serialize(Root, Writer);
+        return Out;
+    }
+
+    /** POST a JSON body to a loopback sidecar /brain/* route. Host comes from SidecarURL as-is. */
+    TSharedRef<IHttpRequest, ESPMode::ThreadSafe> MakeBrainPost(const FString& Route, const TSharedRef<FJsonObject>& Body)
+    {
+        TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();
+        Request->SetURL(FHaybaMCPSettings::Get().SidecarURL / Route);
+        Request->SetVerb(TEXT("POST"));
+        Request->SetHeader(TEXT("Content-Type"), TEXT("application/json"));
+        Request->SetContentAsString(BrainJsonToString(Body));
+        return Request;
+    }
+}
+
+SHaybaMCPSettingsPanel::~SHaybaMCPSettingsPanel()
+{
+    StopBrainSignInPoll();
+}
 
 void SHaybaMCPSettingsPanel::Construct(const FArguments& InArgs)
 {
@@ -123,6 +159,40 @@ void SHaybaMCPSettingsPanel::Construct(const FArguments& InArgs)
             })
         ];
 
+    // Hayba Pro model source: "subscription" (Hayba-provided) or "byok".
+    BrainLlmModeOptions = { MakeShared<FString>(TEXT("subscription")), MakeShared<FString>(TEXT("byok")) };
+    SelectedBrainLlmMode = S.BrainLlmMode == TEXT("byok") ? BrainLlmModeOptions[1] : BrainLlmModeOptions[0];
+    auto MakeBrainLlmModeLabel = [](TSharedPtr<FString> Mode) -> FText
+    {
+        return (Mode.IsValid() && *Mode == TEXT("byok"))
+            ? NSLOCTEXT("Hayba", "S.Pro.Llm.Byok", "Your provider key (BYOK)")
+            : NSLOCTEXT("Hayba", "S.Pro.Llm.Subscription", "Hayba models (subscription)");
+    };
+    SAssignNew(BrainLlmModeCombo, SComboBox<TSharedPtr<FString>>)
+        .OptionsSource(&BrainLlmModeOptions)
+        .InitiallySelectedItem(SelectedBrainLlmMode)
+        .OnGenerateWidget_Lambda([MakeBrainLlmModeLabel](TSharedPtr<FString> Mode)
+        {
+            return SNew(STextBlock).Text(MakeBrainLlmModeLabel(Mode));
+        })
+        .OnSelectionChanged_Lambda([this](TSharedPtr<FString> NewMode, ESelectInfo::Type)
+        {
+            if (!NewMode.IsValid()) return;
+            SelectedBrainLlmMode = NewMode;
+            FHaybaMCPSettings::Get().BrainLlmMode = *NewMode;
+            MarkDirty();
+        })
+        [
+            SNew(STextBlock)
+            .Text_Lambda([this, MakeBrainLlmModeLabel]()
+            {
+                return MakeBrainLlmModeLabel(SelectedBrainLlmMode);
+            })
+        ];
+    SAssignNew(BrainStatusText, STextBlock)
+        .TextStyle(&FAppStyle::Get().GetWidgetStyle<FTextBlockStyle>("SmallText"))
+        .AutoWrapText(true);
+
     ChildSlot
     [
         SNew(SBorder)
@@ -204,21 +274,19 @@ void SHaybaMCPSettingsPanel::Construct(const FArguments& InArgs)
                     + SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 8.f)
                     [
                         BuildSection(
-                            NSLOCTEXT("Hayba", "Settings.Sec.PlanMode", "Plan Mode (AI safety)"),
+                            NSLOCTEXT("Hayba", "Settings.Sec.PlanMode", "External MCP safety"),
                             NSLOCTEXT("Hayba", "Settings.Sec.PlanMode.TT",
-                                "Plan Mode is a safety gate. When on, destructive commands "
-                                "(spawn / delete / modify actors, write assets, run unsafe Python) "
-                                "return `plan_mode_required` until the agent has called "
-                                "`hayba_propose_plan` with a step-by-step proposal that you can "
-                                "review in the Plan tab."),
+                                "Require a reviewed plan for external MCP clients before they change the project. "
+                                "Review incoming proposals in Agent. Built-in chat keeps its own action approvals "
+                                "and Explore / Draft / Production modes."),
                             SNew(SVerticalBox)
                             + SVerticalBox::Slot().AutoHeight().Padding(0.f, 2.f)
                             [ BuildToggle(
-                                NSLOCTEXT("Hayba", "S.Plan", "Plan Mode enabled — destructive ops require a plan first"),
+                                NSLOCTEXT("Hayba", "S.Plan", "Require a plan before external MCP changes"),
                                 NSLOCTEXT("Hayba", "S.Plan.TT",
-                                    "Strongly recommended.\n\n"
-                                    "Turning this off lets the agent mutate your level / assets / disk without proposing a plan first. Reserve for trusted prompts and small experiments.\n\n"
-                                    "Default: on. Auto-prompts you to re-enable after 7 days off OR 50 destructive calls."),
+                                    "Applies to the native command gate used by external MCP hosts. "
+                                    "Turning this off allows their write commands without this plan review. "
+                                    "Built-in chat approvals remain enabled. Default: on."),
                                 [](){ return FHaybaMCPSettings::Get().bPlanModeEnabled; },
                                 [](bool b){ FHaybaMCPSettings::Get().bPlanModeEnabled = b; }) ]
                         )
@@ -275,6 +343,62 @@ void SHaybaMCPSettingsPanel::Construct(const FArguments& InArgs)
                                     "Default: on. Turn off only if your agent host has trouble with progressive tool discovery."),
                                 [](){ return FHaybaMCPSettings::Get().bCodeModeEnabled; },
                                 [](bool b){ FHaybaMCPSettings::Get().bCodeModeEnabled = b; }) ]
+                        )
+                    ]
+
+                    + SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 8.f)
+                    [
+                        BuildSection(
+                            NSLOCTEXT("Hayba", "Settings.Sec.Pro", "Hayba Pro"),
+                            NSLOCTEXT("Hayba", "Settings.Sec.Pro.TT",
+                                "Route chats through the hosted Hayba Pro agent instead of the local Community loop.\n\n"
+                                "Tools still run here in your editor, behind your own approvals. If Hayba Pro is unavailable, "
+                                "a chat can switch to Community with one click."),
+                            SNew(SVerticalBox)
+                            + SVerticalBox::Slot().AutoHeight().Padding(0.f, 2.f)
+                            [ BuildToggle(
+                                NSLOCTEXT("Hayba", "S.Pro.Use", "Use Hayba Pro (hosted)"),
+                                NSLOCTEXT("Hayba", "S.Pro.Use.TT",
+                                    "When on, new chat turns use Hayba Pro. When off, chat uses the local Community loop. Default: off."),
+                                [](){ return FHaybaMCPSettings::Get().bUseHaybaPro; },
+                                [](bool b){ FHaybaMCPSettings::Get().bUseHaybaPro = b; }) ]
+                            + SVerticalBox::Slot().AutoHeight().Padding(0.f, 2.f)
+                            [ BuildLabeledRow(
+                                NSLOCTEXT("Hayba", "S.Pro.Llm", "Models"),
+                                NSLOCTEXT("Hayba", "S.Pro.Llm.TT",
+                                    "Subscription uses Hayba-provided models. BYOK uses the provider key configured above."),
+                                BrainLlmModeCombo.ToSharedRef()) ]
+                            + SVerticalBox::Slot().AutoHeight().Padding(0.f, 2.f)
+                            [
+                                SNew(STextBlock)
+                                .TextStyle(&FAppStyle::Get().GetWidgetStyle<FTextBlockStyle>("SmallText"))
+                                .AutoWrapText(true)
+                                .ColorAndOpacity(FSlateColor(FLinearColor(0.65f, 0.65f, 0.7f)))
+                                .Text(NSLOCTEXT("Hayba", "S.Pro.ByokNote",
+                                    "BYOK: your key is sent to Hayba Pro for this session only, held in memory, never stored or logged."))
+                            ]
+                            + SVerticalBox::Slot().AutoHeight().Padding(0.f, 6.f, 0.f, 2.f)
+                            [ BrainStatusText.ToSharedRef() ]
+                            + SVerticalBox::Slot().AutoHeight().Padding(0.f, 4.f, 0.f, 2.f)
+                            [
+                                SNew(SHorizontalBox)
+                                + SHorizontalBox::Slot().AutoWidth()
+                                [
+                                    SNew(SButton)
+                                    .Text(NSLOCTEXT("Hayba", "S.Pro.SignIn", "Sign in to Hayba Pro"))
+                                    .ContentPadding(FMargin(12.f, 4.f))
+                                    .IsEnabled_Lambda([this](){ return !bBrainSignInStarting && !BrainPollTicker.IsValid(); })
+                                    .OnClicked(this, &SHaybaMCPSettingsPanel::OnBrainSignIn)
+                                ]
+                                + SHorizontalBox::Slot().AutoWidth().Padding(8.f, 0.f, 0.f, 0.f)
+                                [
+                                    SNew(SButton)
+                                    .Text(NSLOCTEXT("Hayba", "S.Pro.SignOut", "Sign out"))
+                                    .ContentPadding(FMargin(12.f, 4.f))
+                                    .IsEnabled_Lambda([](){ return FHaybaMCPSettings::HasProviderKey(BrainVaultId); })
+                                    .OnClicked(this, &SHaybaMCPSettingsPanel::OnBrainSignOut)
+                                ]
+                            ]
                         )
                     ]
 
@@ -449,6 +573,7 @@ void SHaybaMCPSettingsPanel::Construct(const FArguments& InArgs)
         SelectedProvider.IsValid() ? FHaybaMCPSettings::FindProvider(*SelectedProvider) : nullptr,
         /*bOverwriteUrlModel=*/false);
     RefreshKeyStatus();
+    RefreshBrainStatus();
 }
 
 TSharedRef<SWidget> SHaybaMCPSettingsPanel::BuildSection(const FText& Heading, const FText& Tooltip, const TSharedRef<SWidget>& Body)
@@ -662,5 +787,189 @@ FReply SHaybaMCPSettingsPanel::OnRedoSetup()
     {
         MainPanel->ShowOnboardingFromSplash();
     }
+    return FReply::Handled();
+}
+
+// ── Hayba Pro sign-in (device code, proxied by the sidecar's /brain/* routes) ──
+
+void SHaybaMCPSettingsPanel::RefreshBrainStatus()
+{
+    if (!BrainStatusText.IsValid()) return;
+    const FString& Email = FHaybaMCPSettings::Get().BrainAccountEmail;
+    if (FHaybaMCPSettings::HasProviderKey(BrainVaultId))
+    {
+        BrainStatusText->SetText(Email.IsEmpty()
+            ? NSLOCTEXT("Hayba", "S.Pro.SignedIn", "Signed in")
+            : FText::Format(NSLOCTEXT("Hayba", "S.Pro.SignedInAs", "Signed in as {0}"), FText::FromString(Email)));
+    }
+    else
+    {
+        BrainStatusText->SetText(NSLOCTEXT("Hayba", "S.Pro.NotSignedIn", "Not signed in"));
+    }
+}
+
+FReply SHaybaMCPSettingsPanel::OnBrainSignIn()
+{
+    if (bBrainSignInStarting || BrainPollTicker.IsValid()) return FReply::Handled();
+    bBrainSignInStarting = true;
+    if (BrainStatusText.IsValid())
+        BrainStatusText->SetText(NSLOCTEXT("Hayba", "S.Pro.Starting", "Starting sign-in…"));
+
+    TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request =
+        MakeBrainPost(TEXT("brain/signin/start"), MakeShared<FJsonObject>());
+    TWeakPtr<SHaybaMCPSettingsPanel> WeakSelf = SharedThis(this);
+    Request->OnProcessRequestComplete().BindLambda(
+        [WeakSelf](FHttpRequestPtr /*Req*/, FHttpResponsePtr Response, bool bConnected)
+        {
+            TSharedPtr<SHaybaMCPSettingsPanel> Self = WeakSelf.Pin();
+            if (!Self.IsValid()) return;
+            Self->bBrainSignInStarting = false;
+            if (!Self->BrainStatusText.IsValid()) return;
+
+            if (!bConnected || !Response.IsValid())
+            {
+                Self->BrainStatusText->SetText(NSLOCTEXT("Hayba", "S.Pro.NoSidecar",
+                    "Could not reach the Hayba sidecar. Is it running?"));
+                return;
+            }
+            const int32 Code = Response->GetResponseCode();
+            if (Code == 503)
+            {
+                Self->BrainStatusText->SetText(NSLOCTEXT("Hayba", "S.Pro.NotConfigured",
+                    "Hayba Pro is not configured on this machine."));
+                return;
+            }
+            if (Code != 200)
+            {
+                Self->BrainStatusText->SetText(FText::Format(
+                    NSLOCTEXT("Hayba", "S.Pro.StartFailed", "Hayba Pro sign-in failed (HTTP {0})."),
+                    FText::AsNumber(Code)));
+                return;
+            }
+
+            TSharedPtr<FJsonObject> Root;
+            FString VerificationUrl, UserCode, DeviceCode;
+            if (!FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Response->GetContentAsString()), Root) ||
+                !Root.IsValid() ||
+                !Root->TryGetStringField(TEXT("verification_url"), VerificationUrl) ||
+                !Root->TryGetStringField(TEXT("device_code"), DeviceCode) ||
+                DeviceCode.IsEmpty() ||
+                // Only ever hand a web page to the OS shell, never another scheme.
+                !(VerificationUrl.StartsWith(TEXT("https://")) || VerificationUrl.StartsWith(TEXT("http://"))))
+            {
+                Self->BrainStatusText->SetText(NSLOCTEXT("Hayba", "S.Pro.BadStart",
+                    "Hayba Pro sent an unexpected sign-in response."));
+                return;
+            }
+            Root->TryGetStringField(TEXT("user_code"), UserCode);
+            double Interval = 5.0;
+            double ExpiresIn = 600.0;
+            Root->TryGetNumberField(TEXT("interval"), Interval);
+            Root->TryGetNumberField(TEXT("expires_in"), ExpiresIn);
+            Interval = FMath::Clamp(Interval, 1.0, 60.0);
+
+            Self->BrainDeviceCode = DeviceCode;
+            Self->BrainSignInDeadline = FPlatformTime::Seconds() + FMath::Max(ExpiresIn, Interval);
+
+            FPlatformProcess::LaunchURL(*VerificationUrl, nullptr, nullptr);
+            Self->BrainStatusText->SetText(UserCode.IsEmpty()
+                ? NSLOCTEXT("Hayba", "S.Pro.CompleteInBrowser", "Complete sign-in in your browser")
+                : FText::Format(
+                    NSLOCTEXT("Hayba", "S.Pro.ConfirmCode", "Confirm code {0} in your browser"),
+                    FText::FromString(UserCode)));
+
+            Self->BrainPollTicker = FTSTicker::GetCoreTicker().AddTicker(
+                FTickerDelegate::CreateSP(Self.ToSharedRef(), &SHaybaMCPSettingsPanel::TickBrainSignInPoll),
+                static_cast<float>(Interval));
+        });
+    Request->ProcessRequest();
+    return FReply::Handled();
+}
+
+bool SHaybaMCPSettingsPanel::TickBrainSignInPoll(float /*DeltaTime*/)
+{
+    if (BrainDeviceCode.IsEmpty())
+    {
+        BrainPollTicker.Reset();
+        return false;
+    }
+    if (FPlatformTime::Seconds() > BrainSignInDeadline)
+    {
+        BrainDeviceCode.Empty();
+        BrainPollTicker.Reset();
+        if (BrainStatusText.IsValid())
+            BrainStatusText->SetText(NSLOCTEXT("Hayba", "S.Pro.Expired", "Code expired — try again"));
+        return false;
+    }
+    if (bBrainPollInFlight) return true;
+    bBrainPollInFlight = true;
+
+    TSharedRef<FJsonObject> Body = MakeShared<FJsonObject>();
+    Body->SetStringField(TEXT("device_code"), BrainDeviceCode);
+    TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request = MakeBrainPost(TEXT("brain/signin/poll"), Body);
+    TWeakPtr<SHaybaMCPSettingsPanel> WeakSelf = SharedThis(this);
+    Request->OnProcessRequestComplete().BindLambda(
+        [WeakSelf](FHttpRequestPtr /*Req*/, FHttpResponsePtr Response, bool bConnected)
+        {
+            TSharedPtr<SHaybaMCPSettingsPanel> Self = WeakSelf.Pin();
+            if (!Self.IsValid()) return;
+            Self->bBrainPollInFlight = false;
+            // Sign-in was stopped (sign out / expiry) while this poll was in flight.
+            if (!Self->BrainPollTicker.IsValid()) return;
+            // Transient failures keep polling until the code expires.
+            if (!bConnected || !Response.IsValid() || Response->GetResponseCode() != 200) return;
+
+            TSharedPtr<FJsonObject> Root;
+            if (!FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Response->GetContentAsString()), Root) ||
+                !Root.IsValid()) return;
+            FString Status;
+            Root->TryGetStringField(TEXT("status"), Status);
+
+            if (Status == TEXT("approved"))
+            {
+                FString RefreshToken, Email;
+                Root->TryGetStringField(TEXT("refresh_token"), RefreshToken);
+                Root->TryGetStringField(TEXT("email"), Email);
+                if (RefreshToken.IsEmpty()) return;
+                // NB: never log the token — it goes straight into the DPAPI vault.
+                FHaybaMCPSettings::SetProviderKey(BrainVaultId, RefreshToken);
+                FHaybaMCPSettings& S = FHaybaMCPSettings::Get();
+                S.BrainAccountEmail = Email;
+                S.Save();
+                Self->StopBrainSignInPoll();
+                Self->RefreshBrainStatus();
+            }
+            else if (Status == TEXT("expired"))
+            {
+                Self->StopBrainSignInPoll();
+                if (Self->BrainStatusText.IsValid())
+                    Self->BrainStatusText->SetText(NSLOCTEXT("Hayba", "S.Pro.Expired", "Code expired — try again"));
+            }
+            // "pending": keep polling.
+        });
+    Request->ProcessRequest();
+    return true;
+}
+
+void SHaybaMCPSettingsPanel::StopBrainSignInPoll()
+{
+    if (BrainPollTicker.IsValid())
+    {
+        FTSTicker::GetCoreTicker().RemoveTicker(BrainPollTicker);
+        BrainPollTicker.Reset();
+    }
+    BrainDeviceCode.Empty();
+}
+
+FReply SHaybaMCPSettingsPanel::OnBrainSignOut()
+{
+    StopBrainSignInPoll();
+    // Fire-and-forget: drop the sidecar's in-memory token too.
+    MakeBrainPost(TEXT("brain/signout"), MakeShared<FJsonObject>())->ProcessRequest();
+    FHaybaMCPSettings::SetProviderKey(BrainVaultId, TEXT(""));
+    FHaybaMCPSettings& S = FHaybaMCPSettings::Get();
+    S.BrainAccountEmail.Empty();
+    S.Save();
+    RefreshBrainStatus();
     return FReply::Handled();
 }

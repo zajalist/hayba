@@ -78,6 +78,13 @@ public:
      */
     bool bPlanApprovalStrictConsume = false;
 
+    /** Route chats through Hayba Pro (hosted brain) instead of the local Community loop. */
+    bool bUseHaybaPro = false;
+    /** "subscription" (Hayba-provided models) or "byok" (your configured provider key). */
+    FString BrainLlmMode = TEXT("subscription");
+    /** Display only; the refresh token itself lives in the DPAPI vault under "hayba-brain". */
+    FString BrainAccountEmail;
+
     // Security
     // Optional. When set, every TCP request must include matching `auth` field.
     FString CapabilityToken;

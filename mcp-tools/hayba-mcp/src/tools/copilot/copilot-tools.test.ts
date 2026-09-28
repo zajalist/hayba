@@ -235,7 +235,7 @@ describe('copilot_health', () => {
   });
 
   it('reports sidecar_ok=true once chat routes are registered', async () => {
-    const fakeApp = { post: vi.fn(), get: vi.fn() };
+    const fakeApp = { post: vi.fn(), get: vi.fn(), delete: vi.fn() };
     registerChatRoutes(fakeApp as never);
     const data = textOf(await healthHandler({}, {})) as { sidecar_ok: boolean };
     expect(data.sidecar_ok).toBe(true);

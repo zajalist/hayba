@@ -28,7 +28,9 @@
  * dispatch that also reaches TS-side captured handlers.
  */
 
+import { randomUUID } from 'node:crypto';
 import { z, type ZodRawShape, type ZodTypeAny } from 'zod';
+import type { AgentStreamEvent } from './activity-events.js';
 import type {
   LLMClient,
   LLMContentBlock,
@@ -45,6 +47,14 @@ import { getToolMeta } from '../tools/tool-meta-registry.js';
 import { describeMeta } from '../tools/hayba-tool-meta.js';
 import { NON_IDEMPOTENT, executeCommand } from '../tools/tool-executor.js';
 import { isToolDisabled } from '../tools/disabled-tools-watcher.js';
+import {
+  createToolFilter,
+  getAgentsManifest,
+  resolveArchetype,
+  type AgentsManifest,
+} from '../agents/agent-registry.js';
+import { selectSpecialist } from '../agents/specialist-router.js';
+import { listChatCapturedToolNames } from './tool-dispatch.js';
 
 // ---------------------------------------------------------------------------
 // Destructive-name predicate — mirrors C++ IsDestructiveCommand semantics.
@@ -74,6 +84,11 @@ const EXTRA_DESTRUCTIVE = new Set<string>([
   'blueprint_add_component',
   'blueprint_add_variable',
   'blueprint_set_defaults',
+  // Returns the existing node on a repeat call, so retry-safe — but it adds to
+  // the graph. The tool name matches no verb pattern; the wire name is listed
+  // for completeness with the C++ set.
+  'ui_bind_event',
+  'blueprint_add_bound_event',
   'ism_add_instance',
   'spline_add_point',
   'spline_set_point',
@@ -85,6 +100,10 @@ const EXTRA_DESTRUCTIVE = new Set<string>([
   'execute_graph',
   'pcg_execute_graph',
   'import_landscape',
+  'world_ingest',
+  'asset_prepare',
+  'world_generate',
+  'level_save',
 ]);
 
 /**
@@ -168,12 +187,6 @@ function shapeToInputSchema(shape: ZodRawShape): LLMTool['input_schema'] {
 // Tool-catalog derivation from the live registry.
 // ---------------------------------------------------------------------------
 
-/** Convert a glob (`actor_*`, `*`) to a RegExp. Only `*` is a wildcard. */
-function globToRegex(glob: string): RegExp {
-  const escaped = glob.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*');
-  return new RegExp(`^${escaped}$`);
-}
-
 export interface ToolCatalogOptions {
   /** Explicit disabled names (in addition to the disabled-tools watcher). */
   disabledTools?: Iterable<string>;
@@ -192,9 +205,8 @@ export interface ToolCatalogOptions {
 export function buildToolCatalog(opts: ToolCatalogOptions = {}): LLMTool[] {
   const isDisabled = opts.isDisabled ?? isToolDisabled;
   const disabledExtra = new Set(opts.disabledTools ?? []);
-  const filters = (opts.archetypeFilter ?? ['*']).map(globToRegex);
-  const allowed = (name: string): boolean => filters.some((re) => re.test(name));
-  const names = (opts.listCommands ?? listRecordedCommands)();
+  const allowed = createToolFilter(opts.archetypeFilter ?? ['*']);
+  const names = opts.listCommands ? opts.listCommands() : (listChatCapturedToolNames() ?? listRecordedCommands());
 
   const tools: LLMTool[] = [];
   for (const name of names) {
@@ -258,7 +270,8 @@ export type AgentDoneReason =
   | 'provider_stop'
   | 'max_steps'
   | 'token_budget'
-  | 'aborted';
+  | 'aborted'
+  | 'wall_clock';
 
 export type AgentEvent =
   | { type: 'text_delta'; text: string }
@@ -266,9 +279,18 @@ export type AgentEvent =
   | { type: 'tool_result'; id: string; name: string; result: unknown; isError?: boolean }
   | { type: 'plan_request'; call: LLMToolCall; hint?: string; source: 'ts' | 'ue'; argsHash?: string }
   | { type: 'done'; reason: AgentDoneReason; stopReason?: LLMStopReason; usage?: LLMUsage }
-  | { type: 'error'; error: string; kind?: string };
+  | { type: 'error'; error: string; kind?: string; reason?: string };
 
 export interface AgentLoopParams {
+  /** Existing manifest profiles, optionally supplied as one turn-scoped snapshot. */
+  manifest?: AgentsManifest;
+  /** Explicit /agent selection overrides intent routing. */
+  pinnedSpecialistId?: string;
+  /** Stable identity supplied again when resuming a paused activity. */
+  activityId?: string;
+  activityTitle?: string;
+  /** Identity of the approval already authorized by the caller. */
+  resumeApprovalId?: string;
   client: LLMClient;
   system: string;
   messages: LLMMessage[];
@@ -321,8 +343,29 @@ function estimateTokens(text: string): number {
 
 /** Is a dispatch result the C++ Plan-Mode pause payload? */
 function isPlanModeRequired(result: unknown): result is { status: string; hint?: string } {
+  if (typeof result !== 'object' || result === null) return false;
+  const payload = result as {
+    status?: unknown;
+    stages?: Array<{ status?: unknown; code?: unknown }>;
+    content?: Array<{ type?: unknown; text?: string }>;
+  };
+  if (payload.status === 'plan_mode_required') return true;
+  if (
+    Array.isArray(payload.stages) &&
+    payload.stages.some((stage) => stage?.status === 'pending' && stage.code === 'plan_mode_required')
+  )
+    return true;
+  // Direct MCP dispatch may retain text blocks instead of unwrapping JSON.
   return (
-    typeof result === 'object' && result !== null && (result as { status?: unknown }).status === 'plan_mode_required'
+    Array.isArray(payload.content) &&
+    payload.content.some((block) => {
+      if (block.type !== 'text' || typeof block.text !== 'string') return false;
+      try {
+        return isPlanModeRequired(JSON.parse(block.text));
+      } catch {
+        return false;
+      }
+    })
   );
 }
 
@@ -330,7 +373,7 @@ function isPlanModeRequired(result: unknown): result is { status: string; hint?:
  * Run the agentic tool-calling loop. Yields normalized events; halts on
  * end_turn, maxSteps, token budget, abort, or a plan_request pause.
  */
-export async function* runAgentLoop(params: AgentLoopParams): AsyncGenerator<AgentEvent, void, unknown> {
+async function* runExecutionLoop(params: AgentLoopParams): AsyncGenerator<AgentEvent, void, unknown> {
   const {
     client,
     system,
@@ -606,4 +649,170 @@ export async function* runAgentLoop(params: AgentLoopParams): AsyncGenerator<Age
     // Feed the batch of tool_result blocks back to the model and continue.
     messages.push({ role: 'user', content: toolResultBlocks });
   }
+}
+
+/** Semantic public stream. Approval pauses stay open; every other ending is terminal once. */
+export async function* runAgentLoop(params: AgentLoopParams): AsyncGenerator<AgentStreamEvent, void, unknown> {
+  const manifest = params.manifest ?? getAgentsManifest();
+  const disabled = new Set(params.disabledTools ?? []);
+  const allowed = createToolFilter(params.archetypeFilter ?? ['*']);
+  const available = (params.tools ?? buildToolCatalog()).filter(
+    (tool) => !disabled.has(tool.name) && !isToolDisabled(tool.name) && allowed(tool.name),
+  );
+  // Tool results also use the user role in provider transcripts; they are not intent.
+  const latestUser = [...params.messages]
+    .reverse()
+    .find(
+      (message) =>
+        message.role === 'user' &&
+        (typeof message.content === 'string' || message.content.some((block) => block.type === 'text')),
+    );
+  const intent =
+    typeof latestUser?.content === 'string'
+      ? latestUser.content
+      : (latestUser?.content ?? [])
+          .filter((block) => block.type === 'text')
+          .map((block) => block.text)
+          .join(' ');
+  const specialist = selectSpecialist(
+    intent,
+    manifest,
+    available.map((tool) => tool.name),
+    params.pinnedSpecialistId,
+  );
+  const selectedNames = new Set(specialist.toolNames);
+  const executionParams = {
+    ...params,
+    tools: available.filter((tool) => selectedNames.has(tool.name)),
+    system: `${params.system}\n\nSpecialist guidance:\n${resolveArchetype(specialist.id, manifest).system_prompt}`,
+  };
+  const activityId = params.activityId ?? randomUUID();
+  yield {
+    type: 'activity_started',
+    activityId,
+    specialistId: specialist.id,
+    title: params.activityTitle ?? 'Agent activity',
+    ...(params.resumeApprovalId ? { resumeApprovalId: params.resumeApprovalId } : {}),
+  };
+  let pendingError: Extract<AgentEvent, { type: 'error' }> | undefined;
+  for await (const event of runExecutionLoop(executionParams)) {
+    switch (event.type) {
+      case 'text_delta':
+        yield { type: 'message_delta', activityId, text: event.text };
+        break;
+      case 'tool_call':
+        yield {
+          type: 'activity_step',
+          activityId,
+          specialistId: specialist.id,
+          step: { status: 'running', ...event.call },
+        };
+        break;
+      case 'tool_result':
+        yield {
+          type: 'activity_step',
+          activityId,
+          specialistId: specialist.id,
+          step: {
+            status: event.isError ? 'failed' : 'succeeded',
+            id: event.id,
+            name: event.name,
+            result: event.result,
+          },
+        };
+        break;
+      case 'plan_request':
+        yield {
+          type: 'approval_requested',
+          activityId,
+          approvalId: randomUUID(),
+          call: event.call,
+          argsHash: event.argsHash ?? argsHash(event.call.input),
+          source: event.source,
+          hint: event.hint,
+        };
+        break;
+      case 'error':
+        // Execution may follow an error with stop/usage metadata. Fold both
+        // frames into one semantic terminal event without discarding that data.
+        pendingError = event;
+        break;
+      case 'done': {
+        const { reason, stopReason, usage } = event;
+        if (pendingError && reason !== 'aborted') {
+          yield { ...pendingError, activityId, termination: { reason, stopReason, usage } };
+        } else {
+          yield {
+            type: 'activity_completed',
+            activityId,
+            outcome: reason === 'aborted' ? 'cancelled' : reason === 'end_turn' ? 'succeeded' : 'failed',
+            reason,
+            stopReason,
+            usage,
+          };
+        }
+        pendingError = undefined;
+        break;
+      }
+    }
+  }
+  if (pendingError) yield { ...pendingError, activityId };
+}
+
+/**
+ * Old-frame adapter for chat-server: translates any semantic event stream (the
+ * local Community loop or a remote Pro brain session) into legacy AgentEvents.
+ */
+export async function* adaptToLegacy(
+  source: AsyncIterable<AgentStreamEvent>,
+  observe?: (event: AgentStreamEvent) => void,
+): AsyncGenerator<AgentEvent, void, unknown> {
+  for await (const event of source) {
+    observe?.(event);
+    switch (event.type) {
+      case 'message_delta':
+        yield { type: 'text_delta', text: event.text };
+        break;
+      case 'activity_step': {
+        const { step } = event;
+        if (step.status === 'running') {
+          yield { type: 'tool_call', call: { id: step.id, name: step.name, input: step.input } };
+        } else {
+          yield {
+            type: 'tool_result',
+            id: step.id,
+            name: step.name,
+            result: step.result,
+            ...(step.status === 'failed' ? { isError: true } : {}),
+          };
+        }
+        break;
+      }
+      case 'approval_requested':
+        yield {
+          type: 'plan_request',
+          call: event.call,
+          source: event.source,
+          hint: event.hint,
+          ...(event.source === 'ts' ? { argsHash: event.argsHash } : {}),
+        };
+        break;
+      case 'activity_completed':
+        if (event.outcome === 'cancelled') yield { type: 'error', error: 'aborted', kind: 'aborted' };
+        yield { type: 'done', reason: event.reason, stopReason: event.stopReason, usage: event.usage };
+        break;
+      case 'error':
+        yield { type: 'error', error: event.error, kind: event.kind };
+        if (event.termination) yield { type: 'done', ...event.termination };
+        break;
+    }
+  }
+}
+
+/** Temporary old-frame adapter for chat-server; all execution goes through the semantic stream. */
+export async function* runLegacyAgentLoop(
+  params: AgentLoopParams,
+  observe?: (event: AgentStreamEvent) => void,
+): AsyncGenerator<AgentEvent, void, unknown> {
+  yield* adaptToLegacy(runAgentLoop(params), observe);
 }

@@ -8,6 +8,7 @@ public:
     virtual TArray<FString> GetCommands() const override;
     virtual FHaybaHandlerResult Handle(const FString& Cmd, const TSharedPtr<FJsonObject>& Params) override;
 private:
+    FHaybaHandlerResult WorldInspect(const TSharedPtr<FJsonObject>& P);
     FHaybaHandlerResult WpGetCells(const TSharedPtr<FJsonObject>& P);
     FHaybaHandlerResult WpLoadCell(const TSharedPtr<FJsonObject>& P);
     FHaybaHandlerResult WpGetStreamingState(const TSharedPtr<FJsonObject>& P);
