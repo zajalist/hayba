@@ -7,7 +7,8 @@ project contains their assets, so they can be checked and planned, but not
 built in an editor as they are.
 
 The tests read the files from this directory (`spec-check.test.ts`,
-`spec-plan.test.ts`) and compare against the counts below.
+`spec-plan.test.ts`, `spec-corpus.test.ts`) and compare against the counts
+below.
 
 ## What each file is for
 
@@ -110,6 +111,53 @@ Do not edit a file without updating what depends on it. After any change:
 
 1. recompute the sha256 list above;
 2. recount the table above, and the same numbers in `spec-check.test.ts`
-   (`COUNTS`) and `spec-plan.test.ts` (`GOLDEN`, the totals and the
-   `cdo_defaults` values);
+   (`COUNTS`), `spec-plan.test.ts` (`GOLDEN`, the totals and the
+   `cdo_defaults` values) and `spec-corpus.test.ts` (the totals);
 3. keep every shape and edge case of the first table, or add a fixture for it.
+
+## Running a corpus of your own
+
+Real projects have specs that cannot be published. To run the same offline
+pipeline over such a set, point `HAYBA_BLUEPRINT_SPEC_CORPUS` at a directory:
+
+```bash
+cd mcp-tools/hayba-mcp
+HAYBA_BLUEPRINT_SPEC_CORPUS="D:/path/to/specs" npx vitest run src/tools/blueprint/spec-builder/spec-corpus.test.ts
+```
+
+```powershell
+cd mcp-tools\hayba-mcp
+$env:HAYBA_BLUEPRINT_SPEC_CORPUS = 'D:/path/to/specs'
+npx vitest run src/tools/blueprint/spec-builder/spec-corpus.test.ts
+```
+
+With the variable unset, the corpus tests are skipped and only the fixtures of
+this directory are run.
+
+The test reads every `*.json` file of the directory (not of its subfolders),
+parses and checks each one, plans the valid ones together under
+`/Game/HaybaMCPAutomation/SpecCorpus`, and builds the `blueprint_apply_graph`
+payload of every graph. Nothing is sent to an editor. It fails when:
+
+- anything throws, other than the parser refusing text that is not JSON;
+- a spec reports an error. A corpus is expected to hold specs that build;
+- a message fits none of the known error classes.
+
+The error classes name the part of the spec a message is about: `json`,
+`duplicate-key`, `shape`, `asset`, `create`, `variables`, `components`,
+`functions`, `graph`, `cdo_defaults`, `duplicate-asset`, `target-root` and
+`protected-path`.
+
+A corpus may hold files that are known not to pass, for example a `*.json`
+file that is not a spec. Declare them in a `corpus-expectations.json` in the
+corpus directory, as file name to expected error classes:
+
+```json
+{ "WBP_Old.tree.json": ["shape", "asset"] }
+```
+
+The file then has to report those classes, and only those. An entry that no
+longer applies fails the test, so the list cannot go stale.
+
+Add `--reporter=verbose` to see the summary the test prints: the node and link
+count of every spec and the totals of the plan.
