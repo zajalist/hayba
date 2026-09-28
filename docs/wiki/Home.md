@@ -33,6 +33,6 @@ Read [`../../CONTEXT.md`](../../CONTEXT.md) first for the domain language.
   Python visual sidecar (CLIP / SpatialCLIP / SAM)
 - [`mcp-tools/pcgex`](../../mcp-tools/pcgex/README.md) — PCGEx debug tooling
   (parked)
-- [`website`](../../website/README.md) — public static site
+- [`website`](../website-README.md) — public static site
 - [`unreal/HaybaMCPToolkit`](../../unreal/HaybaMCPToolkit/README.md) — the UE5
   plugin

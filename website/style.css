@@ -1,6 +1,5 @@
 /* ════════════════════════════════════════════════════════════
-   GAEAMCP — CINEMATIC DARK THEME
-   Inspired by: Rive · Resend · Raycast · Epic Games · n8n
+   HAYBA — CINEMATIC DARK THEME
    ════════════════════════════════════════════════════════════ */
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -609,6 +608,7 @@ nav.subnav {
   border: 1px solid var(--border-mid);
   padding: 1px 6px; border-radius: 3px;
   color: var(--text-primary);
+  overflow-wrap: anywhere;
 }
 .docs-status {
   display: flex; align-items: center; gap: 10px;
@@ -1035,7 +1035,7 @@ nav.subnav {
   .page-toc { display: none; }
 }
 
-/* ══════════════ SUB-NAV (centered, Gaea-style) ══════════════ */
+/* ══════════════ SUB-NAV (centered) ══════════════ */
 .subnav {
   display: flex; justify-content: center; gap: 26px;
   padding: 18px 24px 28px;

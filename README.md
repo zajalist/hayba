@@ -37,7 +37,7 @@ This repo is the UE5 MCP toolkit: the Node MCP server, the UE5 C++ editor plugin
 | [`mcp-tools/hayba-mcp/addons/visual-embeddings`](mcp-tools/hayba-mcp/addons/visual-embeddings) | Python FastAPI visual sidecar (CLIP / SpatialCLIP / OWL-ViT + SAM segmentation) |
 | `mcp-tools/pcgex` | PCGEx node-registry tooling (see its README) |
 | [`unreal/HaybaMCPToolkit`](unreal/HaybaMCPToolkit) | The UE5 C++ editor plugin — command-handler domains, Slate panels, the TCP server half of the protocol |
-| [`website/`](website) | Public website (static HTML/CSS/JS) — landing, waitlist, login, admin |
+| [`website/`](website) | Public website (static HTML/CSS/JS) — see [`docs/website-README.md`](docs/website-README.md) |
 | `infra/`, `supabase/` | Self-host infra (docker-compose, Caddy, Cloudflare tunnel) + Supabase backend (auth, migrations, edge functions) |
 
 ## Quick start

@@ -3,9 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <script src="/config.js"></script>
-  <title>Hayba — A worldbuilding toolset for games, fiction, and animation</title>
-  <meta name="description" content="Tectonics, conlangs, architecture, and a UE5 MCP plugin. Build worlds the way geologists, linguists, and architects would.">
+  <title>Hayba — AI-agent toolkit for Unreal Engine</title>
+  <meta name="description" content="Hayba is an open-source (MIT) toolkit that lets an AI agent work inside a live Unreal Engine 5.8 editor, through a Node/TypeScript MCP server and a C++ editor plugin.">
   <link rel="icon" type="image/svg+xml" href="assets/Logo.svg" />
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -87,21 +86,19 @@
 <nav id="mainNav">
   <canvas id="navStarfield" aria-hidden="true"></canvas>
   <div class="nav-inner">
-    <a class="nav-logo" href="#" aria-label="Hayba home">
+    <a class="nav-logo" href="/" aria-label="Hayba home">
       <img src="assets/Logo-white.svg" alt="Hayba" class="nav-logo-img" />
     </a>
     <div class="nav-sep"></div>
     <div class="nav-links">
-      <a href="#linguistics">Tools</a>
-      <a href="/waitlist/">Waitlist</a>
+      <a href="#pipelines">Toolkit</a>
       <a href="/docs/">Docs</a>
       <a href="/showcase/">Showcase</a>
-      <a href="/forum/">Forum</a>
+      <a href="https://github.com/zajalist/hayba/issues" target="_blank" rel="noopener">Community</a>
       <a href="/about/">About</a>
-      <a href="https://github.com/zajalist/hayba" target="_blank">GitHub</a>
+      <a href="https://github.com/zajalist/hayba" target="_blank" rel="noopener">GitHub</a>
     </div>
   </div>
-  <a href="/login/" class="nav-sign-in">Sign in</a>
 </nav>
 
 <!-- ═══════════════════════════════ HERO ═══════════════════════════════ -->
@@ -117,126 +114,64 @@
   <canvas id="heroRipples" aria-hidden="true"></canvas>
 
   <div class="hero-content">
-    <div class="hayba-hero-badge">A worldbuilding toolset</div>
+    <div class="hayba-hero-badge">AI-agent toolkit for Unreal Engine</div>
     <h1>Build at the speed<br>of thought.</h1>
     <div class="hero-cta">
-      <a href="/waitlist/" class="hero-link">Join the waitlist <span class="hero-link-arrow">→</span></a>
+      <a href="https://github.com/zajalist/hayba" target="_blank" rel="noopener" class="hero-link">View source <span class="hero-link-arrow">→</span></a>
     </div>
   </div>
 
   <div class="hero-status">
-    <div class="hero-version">Hayba 0.5.0</div>
-    <div class="hero-status-line">In Development</div>
+    <div class="hero-version">Hayba v0.1.0</div>
+    <div class="hero-status-line">Early access</div>
   </div>
 </section>
 
 <!-- ═══════════════════════════════ LEFT TOC ═══════════════════════════════ -->
 <aside class="page-toc" id="pageToc" aria-label="Page sections">
   <a href="#top" data-target="top" class="toc-link toc-brand">Hayba</a>
-  <a href="#linguistics" data-target="linguistics" class="toc-link">Linguistics</a>
-  <a href="#tectonics" data-target="tectonics" class="toc-link">Tectonics</a>
-  <a href="#pipelines" data-target="pipelines" class="toc-link">Pipelines</a>
-  <a href="#architecture" data-target="architecture" class="toc-link">Architecture</a>
+  <a href="#pipelines" data-target="pipelines" class="toc-link">Toolkit</a>
   <a href="#workflow" data-target="workflow" class="toc-link">Workflow</a>
   <a href="#opensource" data-target="opensource" class="toc-link">Open Source</a>
+  <a href="#research" data-target="research" class="toc-link">Early research</a>
   <a href="#roadmap" data-target="roadmap" class="toc-link">Roadmap</a>
   <a href="#faq" data-target="faq" class="toc-link">FAQ</a>
-  <a href="/waitlist/" class="toc-link toc-cta">Waitlist</a>
+  <a href="https://github.com/zajalist/hayba" target="_blank" rel="noopener" class="toc-link toc-cta">View source</a>
 </aside>
 
 <!-- ═══════════════════════════════ SUB-NAV ═══════════════════════════════ -->
 <nav class="subnav" aria-label="Jump to">
-  <a href="#linguistics" class="subnav-link is-active">Linguistics</a>
-  <a href="#tectonics" class="subnav-link">Tectonics</a>
-  <a href="#pipelines" class="subnav-link">Pipelines</a>
-  <a href="/waitlist/" class="subnav-link">Waitlist</a>
-  <a href="https://github.com/zajalist/hayba" target="_blank" class="subnav-link">GitHub</a>
+  <a href="#pipelines" class="subnav-link is-active">Toolkit</a>
+  <a href="#workflow" class="subnav-link">Workflow</a>
+  <a href="#research" class="subnav-link">Early research</a>
+  <a href="https://github.com/zajalist/hayba" target="_blank" rel="noopener" class="subnav-link">GitHub</a>
 </nav>
-
-<!-- ═══════════════════════════════ LINGUISTICS ═══════════════════════════════ -->
-<section class="feature-row" id="linguistics">
-  <div class="feature-row-text">
-    <div class="feature-eyebrow">Linguistics</div>
-    <h2>Conlangs that obey<br>real phonotactics.</h2>
-  </div>
-  <div class="feature-row-body">
-    <p>A full conlang workbench — IPA chart, phonotactic legality heatmap, sound changes, paradigms, family trees. Persist languages to your account; share any one of them by read-only link.</p>
-    <p>Built on PHOIBLE co-occurrence data so inventory suggestions reflect what actually appears in human languages.</p>
-    <a href="/lang/demo-conlang" class="feature-cta">Try the public demo →</a>
-  </div>
-</section>
-<div class="feature-screenshot">
-  <span class="screenshot-eyebrow">The workbench</span>
-  <div class="screenshot-frame" data-placeholder="linguistics workbench"></div>
-</div>
-
-<!-- ═══════════════════════════════ TECTONICS ═══════════════════════════════ -->
-<section class="feature-row" id="tectonics">
-  <div class="feature-row-text">
-    <div class="feature-eyebrow">Tectonics</div>
-    <h2>Plate dynamics that<br>age right.</h2>
-  </div>
-  <div class="feature-row-body">
-    <p>Simulate plate motion over geological time. Rifts open, collide, subduct. Results feed terrain, hydrology, and biome generation downstream.</p>
-    <p>Per-tile invariants are visualised, not abstracted — you see plate areas, drift, and divergence regimes as you tune the simulation.</p>
-    <a href="#" class="feature-cta">Coming with the waitlist →</a>
-  </div>
-</section>
-<div class="feature-screenshot">
-  <span class="screenshot-eyebrow">Plate lifecycle</span>
-  <div class="screenshot-frame" data-placeholder="tectonics viewer"></div>
-</div>
 
 <!-- ═══════════════════════════════ PIPELINES ═══════════════════════════════ -->
 <section class="feature-row" id="pipelines">
   <div class="feature-row-text">
-    <div class="feature-eyebrow">Pipelines · UE5</div>
+    <div class="feature-eyebrow">Toolkit · Unreal Engine 5.8</div>
     <h2>An MCP your LLM<br>can author with.</h2>
   </div>
   <div class="feature-row-body">
-    <p>Hayba speaks Model Context Protocol. Any LLM with MCP support can author terrain, place actors, apply conventions, and orchestrate the full toolset directly in Unreal Engine.</p>
-    <p>Tools are organised by domain so you can scope what the agent sees — Scene, Editor, PCGEx, Zone Painter, Conventions.</p>
-    <a href="#" class="feature-cta">Docs →</a>
+    <p>Hayba is an open-source toolkit that lets an AI agent work inside a live Unreal Engine editor. A Node/TypeScript MCP server talks to a C++ editor plugin, so the agent can place actors, build PCG graphs, author materials, Blueprints and UMG widgets, and check its own work.</p>
+    <p>400+ editor tools across 30+ editor domains. The server starts with 7 tools; your agent searches for the rest and calls them on demand. The Capabilities panel turns tools off per tool or per domain.</p>
+    <a href="/docs/" class="feature-cta">Docs →</a>
   </div>
 </section>
-<div class="feature-screenshot">
-  <span class="screenshot-eyebrow">UE5 plugin · 35 tools, 8 domains</span>
-  <div class="screenshot-frame" data-placeholder="ue5 mcp tool panel"></div>
-</div>
-
-<!-- ═══════════════════════════════ ARCHITECTURE ═══════════════════════════════ -->
-<section class="feature-row" id="architecture">
-  <div class="feature-row-text">
-    <div class="feature-eyebrow">Architecture · Cities</div>
-    <h2>Cities that follow<br>their own trade routes.</h2>
-  </div>
-  <div class="feature-row-body">
-    <p>Procedural settlements grow from upstream signals — tectonic uplift, river hydrology, biome viability, language families. Roads aren't drawn; they emerge from where people would actually need to walk.</p>
-    <p>Style guides parameterise vernacular: wall material, roof pitch, courtyard logic, façade rhythm. The same generator produces a North-African medina, an alpine timber village, or a delta market town depending on what the world demands of it.</p>
-    <a href="#" class="feature-cta">Architecture pillar →</a>
-  </div>
-</section>
-<div class="feature-screenshot">
-  <span class="screenshot-eyebrow">Style guide · vernacular parameters</span>
-  <div class="screenshot-frame" data-placeholder="architecture style guide"></div>
-</div>
 
 <!-- ═══════════════════════════════ WORKFLOW ═══════════════════════════════ -->
 <section class="feature-row" id="workflow">
   <div class="feature-row-text">
     <div class="feature-eyebrow">Workflow</div>
-    <h2>One prompt, one world,<br>three editors.</h2>
+    <h2>Nothing destructive runs<br>until you approve.</h2>
   </div>
   <div class="feature-row-body">
-    <p>Drive Hayba from a chat session, a desktop dashboard, or directly inside Unreal Engine 5. The state of your world lives in a single source of truth — every editor reads and writes the same canonical JSON.</p>
-    <p>Diff and version like code. Branch a continent, merge a language family, roll back a culture. The toolset assumes you'll iterate, not commit-and-pray.</p>
-    <a href="#" class="feature-cta">See the pipeline →</a>
+    <p>Drive Hayba from your MCP host, such as Claude Code or Claude Desktop, or chat with the editor directly from the Hayba panel using your own API key.</p>
+    <p>Plan Mode is on by default: the agent proposes a plan, and destructive steps wait until you click Approve in the editor. Editor edits land on Unreal's normal undo stack, so Ctrl+Z works (not during Play-In-Editor).</p>
+    <a href="/docs/#first-run" class="feature-cta">First run →</a>
   </div>
 </section>
-<div class="feature-screenshot">
-  <span class="screenshot-eyebrow">Dashboard · world state</span>
-  <div class="screenshot-frame" data-placeholder="dashboard pipeline"></div>
-</div>
 
 <!-- ═══════════════════════════════ OPEN SOURCE ═══════════════════════════════ -->
 <section class="feature-row" id="opensource">
@@ -245,9 +180,24 @@
     <h2>MIT-licensed.<br>Forkable. Inspectable.</h2>
   </div>
   <div class="feature-row-body">
-    <p>The full toolset is on GitHub. Schema definitions, simulation engines, the MCP server, the linguistics workbench — all of it. No telemetry, no required cloud account to use the local tools.</p>
-    <p>The hosted tier is the waitlist; the local tier is free. Bring your own LLM via MCP — Claude, GPT-4, Llama, anything that speaks the protocol.</p>
-    <a href="https://github.com/zajalist/hayba" target="_blank" class="feature-cta">GitHub →</a>
+    <p>The MCP server and the Unreal editor plugin are MIT-licensed and on GitHub. The toolkit runs locally with your own MCP client or your own API key; no Hayba account is needed.</p>
+    <p>v0.1.0 is early access and runs on Windows. Install from source: clone the repo, build the MCP server, drop the plugin into your project's Plugins folder and compile.</p>
+    <a href="https://github.com/zajalist/hayba" target="_blank" rel="noopener" class="feature-cta">View source →</a>
+    &nbsp;&nbsp;
+    <a href="https://github.com/zajalist/hayba/releases" target="_blank" rel="noopener" class="feature-cta">Watch releases →</a>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════ EARLY RESEARCH ═══════════════════════════════ -->
+<section class="feature-row" id="research">
+  <div class="feature-row-text">
+    <div class="feature-eyebrow">Early research</div>
+    <h2>Worldbuilding<br>research libraries.</h2>
+  </div>
+  <div class="feature-row-body">
+    <p>The repository also holds early research libraries for worldbuilding: a constructed-language toolkit (linguistics), planet plausibility checks, and rule-based architecture styles.</p>
+    <p>They are early-stage and separate from the Unreal toolkit. There is no hosted version.</p>
+    <a href="https://github.com/zajalist/hayba/tree/main/packages" target="_blank" rel="noopener" class="feature-cta">Browse the packages →</a>
   </div>
 </section>
 
@@ -258,39 +208,24 @@
     <h2>The plan.</h2>
   </div>
   <div class="feature-row-body">
-    <p>Hayba is built pillar-by-pillar in public. Each pillar lands as a working toolset before the next begins. You can track progress on the GitHub issues.</p>
+    <p>Hayba is built in public. Follow releases and open issues on GitHub.</p>
   </div>
 </section>
 <div class="roadmap-grid">
   <div class="roadmap-item is-done">
     <div class="roadmap-ver">0.1</div>
-    <div class="roadmap-name">Linguistics workbench</div>
-    <div class="roadmap-status">Shipped · public demo live</div>
+    <div class="roadmap-name">Unreal toolkit</div>
+    <div class="roadmap-status">Released · v0.1.0, August 2026</div>
   </div>
   <div class="roadmap-item is-doing">
-    <div class="roadmap-ver">0.5</div>
-    <div class="roadmap-name">Tectonics M0 → M3</div>
-    <div class="roadmap-status">In progress · dynamic plate lifecycle</div>
-  </div>
-  <div class="roadmap-item is-doing">
-    <div class="roadmap-ver">0.5</div>
-    <div class="roadmap-name">UE5 MCP plugin</div>
-    <div class="roadmap-status">In progress · 35 tools across 8 domains</div>
+    <div class="roadmap-ver">Now</div>
+    <div class="roadmap-name">Toolkit development</div>
+    <div class="roadmap-status">In progress · tracked in GitHub issues</div>
   </div>
   <div class="roadmap-item">
-    <div class="roadmap-ver">0.7</div>
-    <div class="roadmap-name">Architecture pillar</div>
-    <div class="roadmap-status">Q3 · cities, style guides, vernacular</div>
-  </div>
-  <div class="roadmap-item">
-    <div class="roadmap-ver">0.8</div>
-    <div class="roadmap-name">Hydrology & climate</div>
-    <div class="roadmap-status">Q4 · rivers, coasts, biomes</div>
-  </div>
-  <div class="roadmap-item">
-    <div class="roadmap-ver">1.0</div>
-    <div class="roadmap-name">Public release</div>
-    <div class="roadmap-status">Self-hosted + cloud tier</div>
+    <div class="roadmap-ver">R&amp;D</div>
+    <div class="roadmap-name">Worldbuilding libraries</div>
+    <div class="roadmap-status">Early research · linguistics, planet plausibility, architecture</div>
   </div>
 </div>
 
@@ -301,47 +236,37 @@
     <h2>Common questions.</h2>
   </div>
   <div class="feature-row-body">
-    <p>Specific worries about MCP, licensing, the hosted tier, and the open-source pieces.</p>
+    <p>Short answers about cost, models, requirements and licensing.</p>
   </div>
 </section>
 <div class="faq-list">
   <details class="faq-item">
     <summary>Is Hayba free?</summary>
-    <p>The full local toolset is MIT-licensed and free forever. The hosted tier — cloud sync, share-links, the admin queue — is currently waitlist-gated while we shake out the first 50 users.</p>
+    <p>Hayba's source code is MIT-licensed and free to use. A hosted assistant, Hayba Pro, is coming. The open-source toolkit stays MIT and runs with your own model.</p>
   </details>
   <details class="faq-item">
     <summary>Do I need an LLM API key?</summary>
-    <p>Only if you want agentic authoring. Hayba speaks MCP, so any client that speaks MCP works — Claude Desktop, Cursor, Continue, even local Llama runs through Ollama-MCP. The simulation, linguistics, and architecture tools all run without an LLM.</p>
+    <p>Not for Hayba itself. Connect your MCP client, such as Claude Code or Claude Desktop, and it uses the model it already has. The optional in-editor chat panel uses your own API key, for cloud or local models.</p>
   </details>
   <details class="faq-item">
     <summary>Will this run on my machine?</summary>
-    <p>The web tools (linguistics workbench, dashboard) run in any modern browser. The MCP server is a small Rust binary. The UE5 plugin needs UE 5.4+. Tectonics and architecture simulations are CPU-friendly — no GPU required for headless runs.</p>
+    <p>Hayba is built for Unreal Engine 5.8 on Windows; macOS and Linux are not supported yet. The MCP server is Node/TypeScript (Node.js 22.5 or newer) and the editor plugin is C++, compiled with Visual Studio 2022. There is no packaged installer yet: you build from source.</p>
   </details>
   <details class="faq-item">
-    <summary>Can I use Hayba output commercially?</summary>
-    <p>Yes. Worlds you generate are yours. The toolset is MIT — no royalties, no per-seat fees, no commercial use restrictions on the output.</p>
-  </details>
-  <details class="faq-item">
-    <summary>Why a waitlist if it's free?</summary>
-    <p>Because the hosted tier sits on a single self-hosted Supabase. 50 users is what one box comfortably runs. Once we're confident in the sync + share-link flow we'll open it up. Until then, joining the waitlist costs nothing and gets you in early.</p>
-  </details>
-  <details class="faq-item">
-    <summary>How is this different from World Anvil / Worldographer / Inkarnate?</summary>
-    <p>Those are excellent reference tools — they help you write down a world you already know. Hayba is a generation tool — it helps you discover what the world is by simulating its causes. The two genuinely complement each other.</p>
+    <summary>Can I use Hayba commercially?</summary>
+    <p>Hayba's source code is MIT-licensed, which permits commercial use under the terms of the <a href="https://github.com/zajalist/hayba/blob/main/LICENSE" target="_blank" rel="noopener">MIT license</a>. Unreal Engine's own license still applies to your project.</p>
   </details>
 </div>
 
 <!-- ═══════════════════════════════ JUMP-TO ═══════════════════════════════ -->
 <div class="jump-to">
   <span class="jump-to-label">Or jump to:</span>
-  <a href="#linguistics" class="subnav-link">Linguistics</a>
-  <a href="#tectonics" class="subnav-link">Tectonics</a>
-  <a href="#pipelines" class="subnav-link">Pipelines</a>
-  <a href="#architecture" class="subnav-link">Architecture</a>
+  <a href="#pipelines" class="subnav-link">Toolkit</a>
   <a href="#workflow" class="subnav-link">Workflow</a>
+  <a href="#opensource" class="subnav-link">Open source</a>
+  <a href="#research" class="subnav-link">Early research</a>
   <a href="#roadmap" class="subnav-link">Roadmap</a>
   <a href="#faq" class="subnav-link">FAQ</a>
-  <a href="/waitlist/" class="subnav-link">Waitlist</a>
 </div>
 
 <!-- ═══════════════════════════════ FOOTER ═══════════════════════════════ -->
@@ -350,41 +275,36 @@
   <div class="footer-grid">
     <div class="footer-col">
       <h4>Tools</h4>
-      <a href="#linguistics">Linguistics</a>
-      <a href="#tectonics">Tectonics</a>
-      <a href="#pipelines">UE5 plugin</a>
+      <a href="#pipelines">Unreal toolkit</a>
+      <a href="#research">Early research</a>
     </div>
     <div class="footer-col">
       <h4>Learning</h4>
-      <a href="#">Documentation</a>
-      <a href="#">Tutorials</a>
-      <a href="#">Roadmap</a>
+      <a href="/docs/">Documentation</a>
+      <a href="#roadmap">Roadmap</a>
+      <a href="#faq">FAQ</a>
     </div>
     <div class="footer-col">
-      <h4>Account</h4>
-      <a href="/waitlist/">Join waitlist</a>
-      <a href="/login/">Sign in</a>
-      <a href="/admin/">Admin</a>
+      <h4>Community</h4>
+      <a href="https://github.com/zajalist/hayba/issues" target="_blank" rel="noopener">GitHub Issues</a>
+      <a href="https://github.com/zajalist/hayba/releases" target="_blank" rel="noopener">Releases</a>
     </div>
     <div class="footer-col">
       <h4>About</h4>
-      <a href="https://github.com/zajalist/hayba" target="_blank">GitHub</a>
-      <a href="#">Brand</a>
-      <a href="#">Contact</a>
+      <a href="/about/">About Hayba</a>
+      <a href="https://github.com/zajalist/hayba" target="_blank" rel="noopener">GitHub</a>
     </div>
   </div>
   <div class="footer-bottom">
-    <a class="footer-brand-mark" href="#">
+    <a class="footer-brand-mark" href="/" aria-label="Hayba home">
       <img src="assets/Logo.svg" alt="Hayba" />
     </a>
     <div class="footer-copy">
-      <p>© 2026 Hayba. A worldbuilding toolset.</p>
-      <p class="footer-fine">Built by a small team for makers of imaginary places.</p>
+      <p>© 2026 Hayba. An AI-agent toolkit for Unreal Engine.</p>
+      <p class="footer-fine">Built in the open on GitHub.</p>
     </div>
     <div class="footer-legal">
-      <a href="#">Privacy</a>
-      <a href="#">Terms</a>
-      <a href="#">Imprint</a>
+      <a href="https://github.com/zajalist/hayba/blob/main/LICENSE" target="_blank" rel="noopener">MIT License</a>
     </div>
   </div>
 </footer>
