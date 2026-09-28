@@ -20,7 +20,8 @@ style.css         global styles
 about/   docs/   showcase/          ← each an index.html subpage
 assets/   logos (Logo.svg, Logo-white.svg) · fonts/ (Noto Sans woff2 + OFL.txt)
 lib/      gl-quad.js · hero-field.js · ripples.js · starfield.js ·
-          page-toc.js   (vanilla helpers, no bundler)
+          page-toc.js · docs-toc.js · command-blocks.js
+          (vanilla helpers, no bundler)
 ```
 
 The site collects no data: there are no forms, accounts or backend calls.
