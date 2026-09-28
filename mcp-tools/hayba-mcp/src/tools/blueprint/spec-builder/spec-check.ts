@@ -8,17 +8,17 @@
 import { parseSpecText, parseType } from './spec-parse.js';
 import type { BlueprintSpec, NodeKind } from './spec-types.js';
 
-type Obj = Record<string, unknown>;
+export type Obj = Record<string, unknown>;
 
 const IDENT = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const PIN = /^[A-Za-z_](?:[A-Za-z0-9_ /]*[A-Za-z0-9_])?$/; // '/' for template pins such as 'Left / Right'
 const ENDPOINT = /^([A-Za-z_][A-Za-z0-9_]*)\.(.+)$/;
 const RESERVED_PARAMS = new Set(['execute', 'then', 'self']);
 
-const isObj = (v: unknown): v is Obj => v !== null && typeof v === 'object' && !Array.isArray(v);
+export const isObj = (v: unknown): v is Obj => v !== null && typeof v === 'object' && !Array.isArray(v);
 const isScalar = (v: unknown): v is string | number | boolean => typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean';
-const lc = (s: unknown): string => String(s).toLowerCase();
-const loose = (s: unknown): string => String(s).toLowerCase().replace(/\s+/g, '');
+export const lc = (s: unknown): string => String(s).toLowerCase();
+export const loose = (s: unknown): string => String(s).toLowerCase().replace(/\s+/g, '');
 
 /** A class path the plugin can LoadClass: /Script/Module.Class, or /Game/...Name_C. */
 function classPathProblem(path: unknown): string | null {

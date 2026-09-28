@@ -6,8 +6,8 @@ every lantern of the room is lit. The specs were written for these tests. No
 project contains their assets, so they can be checked and planned, but not
 built in an editor as they are.
 
-`spec-check.test.ts` reads the files from this directory and compares against
-the counts below.
+The tests read the files from this directory (`spec-check.test.ts`,
+`spec-plan.test.ts`) and compare against the counts below.
 
 ## What each file is for
 
@@ -100,7 +100,9 @@ the function `entry` and `result`).
 | **all eight** | 32 | 332 | 381 | 106 | 12 | 285 |
 
 Every file passes `check()` with no error and draws no by-reference warning,
-and no two files build the same asset.
+and no two files build the same asset. Planned together under a `target_root`,
+the plan has no error and 3 warnings: the three widgets have no `create`, so
+they are copied from their source asset first.
 
 ## Changing the fixtures
 
@@ -108,5 +110,6 @@ Do not edit a file without updating what depends on it. After any change:
 
 1. recompute the sha256 list above;
 2. recount the table above, and the same numbers in `spec-check.test.ts`
-   (`COUNTS`);
+   (`COUNTS`) and `spec-plan.test.ts` (`GOLDEN`, the totals and the
+   `cdo_defaults` values);
 3. keep every shape and edge case of the first table, or add a fixture for it.
