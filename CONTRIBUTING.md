@@ -15,7 +15,7 @@ git clone https://github.com/zajalist/hayba.git
 cd hayba
 npm install                               # installs all workspaces
 npm --prefix mcp-tools/hayba-mcp test     # tsc --noEmit + vitest (the gate)
-npm --prefix mcp-tools/hayba-mcp run build:server   # TS -> dist (not `run build`, see below)
+npm --prefix mcp-tools/hayba-mcp run build:server   # TS -> dist, server only (`run build` also builds the dashboard)
 ```
 
 The UE plugin lives under `unreal/HaybaMCPToolkit/`. Symlink it into your UE

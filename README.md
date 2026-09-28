@@ -53,7 +53,7 @@ npm --prefix mcp-tools/hayba-mcp run build
 
 ### 2. Install the UE plugin
 
-Link [`unreal/HaybaMCPToolkit/`](unreal/HaybaMCPToolkit) into your UE project's `Plugins/` folder from an administrator prompt (or with Windows Developer Mode on):
+Create `<YourProject>\Plugins` first if it doesn't exist, then link [`unreal/HaybaMCPToolkit/`](unreal/HaybaMCPToolkit) into it from an administrator prompt (or with Windows Developer Mode on):
 
 ```bat
 mklink /D "<YourProject>\Plugins\HaybaMCPToolkit" "<repo>\unreal\HaybaMCPToolkit"
@@ -82,7 +82,7 @@ claude mcp add hayba-toolkit -- node /path/to/hayba/mcp-tools/hayba-mcp/dist/ind
 
 ### 4. Run the editor
 
-On first launch the **Hayba MCP Toolkit** tab opens by itself (later: **Window > Tools > Hayba MCP Toolkit**, or the console command `Hayba.MCP.Open`). Your MCP host drives the agent. To chat inside the editor instead, set a provider (and key, for cloud models) under **Settings > AI / LLM Backend**. Plan Mode is on by default: approve plans in the Plan tab.
+On first launch the **Hayba MCP Toolkit** tab opens by itself (later: **Tools > Hayba MCP Toolkit**, or the console command `Hayba.MCP.Open`). Your MCP host drives the agent. To chat inside the editor instead, set a provider (and key, for cloud models) under **Settings > AI / LLM Backend**. Plan Mode is on by default: approve plans in the Plan tab.
 
 Then ask Claude: *"Search the PCG node catalog for voronoi, propose a 3-step plan to author a Voronoi graph, and execute it after I approve."*
 
@@ -97,7 +97,7 @@ Then ask Claude: *"Search the PCG node catalog for voronoi, propose a 3-step pla
                              └──────────────────┘        └────────────────┘
 ```
 
-Two language boundaries, one protocol. The TCP envelope on `:52342` (auto-fallback `:52343-52350`) carries length-prefixed JSON. Plan Mode + the editor transaction system gate every destructive op. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) and [`CONTEXT.md`](CONTEXT.md).
+Two language boundaries, one protocol. The TCP envelope on `:52342` (auto-fallback `:52343-52350`) carries length-prefixed JSON. With Plan Mode on (the default), destructive steps wait until you approve the plan, and most editor edits run inside editor transactions, so Ctrl+Z works — not during Play-In-Editor, and not for asset deletes, saves to disk or arbitrary Python. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) and [`CONTEXT.md`](CONTEXT.md).
 
 ## Documentation
 

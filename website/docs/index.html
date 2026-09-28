@@ -56,8 +56,8 @@
         <code>npm install</code> and <code>npm --prefix mcp-tools/hayba-mcp run build</code>.
       </p>
       <p>
-        2. Link the plugin into your project from an administrator prompt (or with Windows
-        Developer Mode on):
+        2. Create <code>&lt;YourProject&gt;\Plugins</code> if it doesn't exist, then link the
+        plugin into it from an administrator prompt (or with Windows Developer Mode on):
         <code>mklink /D "&lt;YourProject&gt;\Plugins\HaybaMCPToolkit" "&lt;repo&gt;\unreal\HaybaMCPToolkit"</code>,
         then regenerate Visual Studio project files and compile. The link lets the plugin find
         the MCP server you just built. If you copy the plugin instead, set
@@ -81,7 +81,7 @@
       <h2 id="first-run">First run</h2>
       <p>
         On first launch the Hayba MCP Toolkit tab opens by itself (later:
-        <strong>Window &gt; Tools &gt; Hayba MCP Toolkit</strong>, or the console command
+        <strong>Tools &gt; Hayba MCP Toolkit</strong>, or the console command
         <code>Hayba.MCP.Open</code>). Your MCP host drives the agent. To chat inside the
         editor instead, set a provider (and key, for cloud models) under
         <strong>Settings &gt; AI / LLM Backend</strong>. Plan Mode is on by default: approve

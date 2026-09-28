@@ -28,10 +28,10 @@ npm --prefix mcp-tools/hayba-mcp run build
 
 ## Step 2 — Install the UE plugin
 
-Link [`unreal/HaybaMCPToolkit/`](../unreal/HaybaMCPToolkit) into your UE
-project's `Plugins/` folder from an administrator prompt (or with Windows
-Developer Mode on), then regenerate Visual Studio project files and
-recompile:
+Create `<YourProject>\Plugins` first if it doesn't exist, then link
+[`unreal/HaybaMCPToolkit/`](../unreal/HaybaMCPToolkit) into it from an
+administrator prompt (or with Windows Developer Mode on), then regenerate
+Visual Studio project files and recompile:
 
 ```bat
 mklink /D "<YourProject>\Plugins\HaybaMCPToolkit" "<repo>\unreal\HaybaMCPToolkit"
@@ -47,7 +47,7 @@ See the [plugin README](../unreal/HaybaMCPToolkit/README.md).
 claude mcp add hayba-toolkit -- node /path/to/hayba/mcp-tools/hayba-mcp/dist/index.js
 ```
 
-On first launch the **Hayba MCP Toolkit** tab opens by itself (later: **Window > Tools > Hayba MCP Toolkit**, or the console command `Hayba.MCP.Open`). Your MCP host drives the agent. To chat inside the editor instead, set a provider (and key, for cloud models) under **Settings > AI / LLM Backend**. Plan Mode is on by default: approve plans in the Plan tab.
+On first launch the **Hayba MCP Toolkit** tab opens by itself (later: **Tools > Hayba MCP Toolkit**, or the console command `Hayba.MCP.Open`). Your MCP host drives the agent. To chat inside the editor instead, set a provider (and key, for cloud models) under **Settings > AI / LLM Backend**. Plan Mode is on by default: approve plans in the Plan tab.
 
 ## Add-on tiers
 

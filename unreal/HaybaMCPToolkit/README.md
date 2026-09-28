@@ -13,9 +13,10 @@ and [`CONTEXT.md`](../../CONTEXT.md).
 ## Install
 
 Build the MCP server first (`npm install`, then
-`npm --prefix mcp-tools/hayba-mcp run build` from the repo root). Then link
-this folder into your UE project's `Plugins/` directory from an administrator
-prompt (or with Windows Developer Mode on), regenerate Visual Studio project
+`npm --prefix mcp-tools/hayba-mcp run build` from the repo root). Create
+`<YourProject>\Plugins` if it doesn't exist, then link this folder into it
+from an administrator prompt (or with Windows Developer Mode on), regenerate
+Visual Studio project
 files, and rebuild (Windows; UE 5.7 or 5.8; Visual Studio with the C++ toolchain your Unreal Engine version requires):
 
 ```bat
