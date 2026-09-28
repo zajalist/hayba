@@ -6,7 +6,7 @@
 
 ## Intent and success
 
-Users should be able to ask the in-editor Hayba Agent to profile a scene and receive a small, attributable baseline that distinguishes measurements from hypotheses. This is the first slice of the [UE performance-tooling handoff](../../handoffs/2026-09-23-ue-perf-tooling.md), not a promise that Hayba can diagnose every GPU, streaming, PCG, or World Partition problem yet. No new top-level destination, profiling dashboard, or independent specialist chat room is added.
+Users should be able to ask the in-editor Hayba Agent to profile a scene and receive a small, attributable baseline that distinguishes measurements from hypotheses. This is the first slice of the planned UE performance tooling, not a promise that Hayba can diagnose every GPU, streaming, PCG, or World Partition problem yet. No new top-level destination, profiling dashboard, or independent specialist chat room is added.
 
 Success means that a request such as “profile this scene” routes to a focused profiling specialist, runs read-only native tools, and reports the capture context, sample window, measured numbers, source tools, and unknowns in the existing Agent conversation. A missing CVar must never appear as a real zero. A one-shot editor reading must never be described as packaged-game performance. The user can repeat the same capture after a separately approved change and compare like-for-like contexts.
 
