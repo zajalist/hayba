@@ -109,6 +109,6 @@ Every UI view reads the same records. The backend streams state changes; the nat
 
 The first release is successful when a user can complete one real task from a narrow dock—context, proposal, exact approval, editor change, and evidence—without guessing which tab owns the result. Production readiness requires a checked result, not just a confident agent response.
 
-## Competitive basis
+## Design basis
 
-The companion [research note](./competitive-research.md) compares Aura, Ludus, Coplay, Unity AI, Promethean AI, Epic Unreal MCP, Codex, Claude Code, Cursor, and Replit against this task loop. Product capabilities cited there are vendor-documented claims unless otherwise stated. The recurring interaction pattern is precise context → reviewable plan → scoped action → inspectable result → evidence. Hayba's opportunity is to make **native game-world artifacts** the center of that loop.
+The blueprint follows an interaction loop common to agent-assisted editing tools: precise context → reviewable plan → scoped action → inspectable result → evidence. Its principles are that the user states scope before the agent acts, approvals name the exact operation and targets, changes stay reviewable in the task that produced them, and a result counts as verified only when a real check ran. Hayba's opportunity is to make **native game-world artifacts** the center of that loop.
