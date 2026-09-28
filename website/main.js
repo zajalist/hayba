@@ -47,13 +47,15 @@
   panel.addEventListener('click', (e) => {
     const link = e.target.closest('a');
     if (!link || !isOpen()) return;
-    setOpen(false, !link.getAttribute('href').startsWith('#'));
+    setOpen(false, !(link.getAttribute('href') || '').startsWith('#'));
   });
   // Tabbing out of the header closes the panel so it can't cover the focused element.
   nav.addEventListener('focusout', (e) => {
     if (isOpen() && e.relatedTarget && !nav.contains(e.relatedTarget)) setOpen(false, false);
   });
-  window.matchMedia('(max-width: 720px)').addEventListener('change', (e) => {
-    if (!e.matches && isOpen()) setOpen(false, false);
-  });
+  const phone = window.matchMedia('(max-width: 720px)');
+  const onPhoneChange = (e) => { if (!e.matches && isOpen()) setOpen(false, false); };
+  // Safari 13 and older only have the deprecated addListener.
+  if (phone.addEventListener) phone.addEventListener('change', onPhoneChange);
+  else phone.addListener(onPhoneChange);
 })();

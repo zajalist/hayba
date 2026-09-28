@@ -161,7 +161,11 @@ body {
   outline-offset: -4px; /* drawn inside: #mainNav clips its overflow on desktop */
   border-radius: 3px;
 }
-.nav-menu-btn:focus-visible { outline-offset: 2px; }
+.nav-menu-btn:focus-visible { outline-offset: 2px; outline-color: var(--text-primary); }
+/* Desktop: there is room around the logo, so its ring can sit outside it. */
+@media (min-width: 721px) {
+  #mainNav .nav-logo:focus-visible { outline-offset: 3px; }
+}
 
 /* Menu button: shown only on phones, and only once main.js has wired it up. */
 .nav-menu-btn {
@@ -172,7 +176,7 @@ body {
   font: 500 12.5px var(--font-ui);
   letter-spacing: 0.01em;
   color: var(--text-secondary);
-  background: transparent;
+  background: rgba(20, 22, 27, 0.55); /* keeps text >= 4.5:1 over the moving hero glow */
   border: 1px solid var(--border-soft);
   border-radius: 3px;
   cursor: pointer;
@@ -205,14 +209,14 @@ body {
    (#mainNav has no .has-menu) the links wrap onto extra rows instead. */
 @media (max-width: 720px) {
   #mainNav { padding: 0; overflow: visible; }
-  .nav-inner {
+  #mainNav .nav-inner {
     align-self: stretch;
     width: 100%;
     padding: 0 16px;
     gap: 8px;
   }
-  .nav-sep { display: none; }
-  .nav-logo { flex: none; padding: 10px; margin-left: -10px; }
+  #mainNav .nav-sep { display: none; }
+  #mainNav .nav-logo { flex: none; padding: 10px; margin-left: -10px; }
 
   #mainNav:not(.has-menu) {
     height: auto; min-height: 56px;
@@ -875,7 +879,12 @@ body {
 .hayba-hero-badge {
   display: inline-block;
   font-size: 11px; font-weight: 700; letter-spacing: 0.22em; text-transform: uppercase;
-  color: var(--accent);
+  /* Light text on a dark pill: ochre text alone vanishes when the hero's glow drifts behind it. */
+  color: var(--text-primary);
+  padding: 7px 12px 7px 14px; /* letter-spacing trails the last letter */
+  background: rgba(20, 22, 27, 0.62);
+  border: 1px solid var(--accent-glow);
+  border-radius: 3px;
   margin: 0 0 28px;
 }
 .nav-logo-name { font-weight: 700 !important; }
