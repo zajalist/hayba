@@ -2,7 +2,7 @@
 
 - **Date:** 2026-09-28
 - **Branch:** `fix/p0-safety` (worktree `.worktrees/p0-safety`), based on `feat/multi-agent-leases` at `d5a1a205`.
-- **Status:** design approved for implementation planning. Maintainer decisions D1, D2 and D5 are binding (section 2). D7 is open and must be decided before Deploy B (§2.3). Revised after critic round 1; Appendix B lists what was merged or rejected.
+- **Status:** design approved for implementation planning. Maintainer decisions D1, D2, D5 and D7 are binding (section 2). D7 was approved on 2026-09-28: T10 ships in Deploy B with mode 1 (§2.3). Revised after critic round 1; Appendix B lists what was merged or rejected.
 - **Source:** the first consumer project's postmortem, `docs/postmortems/2026-09-28-consumer.md`. It is currently untracked in the main checkout, and this spec calls it "the postmortem". Its incidents are cited as I-1 … I-10 and its recommendations as P0-1 … P0-5.
 - **Conventions:**
   - `P` = `unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit`.
@@ -105,6 +105,7 @@ The six item designs were written in parallel and disagree in a few places. Thes
 
 - **D7: veto the user's Play button through `IPIEAuthorizer` while another owner holds an asset build lease** (item 06c).
   - The roadmap assumption behind D5, that "PreBeginPIE cannot veto", is correct. However, `IPIEAuthorizer` (a modular feature) can veto, and it runs before the pre-play Blueprint compile.
+  - **Decided 2026-09-28: approved.** T10 ships in Deploy B with mode 1 (veto with a double-press override within 10 s) as the default. The two outcomes below are kept for the record.
   - **D7 must be decided before the Deploy B build window.** Four of the six recorded pre-play compiles under an open build came from the user's Play button (M6b), which nothing else in P0 stops.
   - If D7 is approved, T10 ships in Deploy B with at least mode 1 (veto with a double-press override); it needs only T3 and T2's authorizer.
   - If D7 is declined, M6 stays split (M6a moved by T3, M6b not moved in P0), and T10 ships with mode 0 (notification only) or is dropped.
