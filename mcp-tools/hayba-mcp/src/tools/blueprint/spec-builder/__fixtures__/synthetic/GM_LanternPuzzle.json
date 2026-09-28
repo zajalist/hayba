@@ -1,0 +1,8 @@
+{
+  "asset": "/Game/LanternPuzzle/Core/GM_LanternPuzzle",
+  "create": { "parent": "/Game/PuzzleKit/BP_KitGameMode.BP_KitGameMode_C" },
+  "cdo_defaults": {
+    "PlayerControllerClass": "/Game/LanternPuzzle/Core/PC_Lantern.PC_Lantern_C",
+    "HUDClass": "/Game/LanternPuzzle/Hud/BP_PuzzleHud.BP_PuzzleHud_C"
+  }
+}

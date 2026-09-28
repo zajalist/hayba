@@ -1,0 +1,452 @@
+{
+  "asset": "/Game/LanternPuzzle/Core/BPC_LanternRing",
+  "description": "Keeps count of the lanterns lit in the current room, flickers the lamp it is given, and tells the two on-screen widgets and the player controller when the ring is complete.",
+  "create": { "parent": "/Script/Engine.ActorComponent" },
+  "variables": [
+    { "name": "LitCount", "type": "int", "default": "0" },
+    { "name": "RingSize", "type": "int", "default": "5" },
+    { "name": "FlickerPeriod", "type": "float", "default": "0.35" },
+    { "name": "FlickerDepth", "type": "float", "default": "0.2" },
+    { "name": "BaseBrightness", "type": "float", "default": "5000.0" },
+    { "name": "CelebrateDelay", "type": "float", "default": "1.25" },
+    { "name": "WarmTint", "type": "struct:/Script/CoreUObject.LinearColor", "default": "(R=1.0,G=0.8,B=0.5,A=1.0)" },
+    { "name": "CoolTint", "type": "linear_color" },
+    { "name": "RoomTag", "type": "name", "default": "Cellar" },
+    { "name": "RoomNames", "type": "array<name>" },
+    { "name": "bRingComplete", "type": "bool", "default": "false" },
+    { "name": "DoorOffset", "type": "vector" },
+    { "name": "FlickerTimer", "type": "struct:/Script/Engine.TimerHandle" },
+    { "name": "CelebrateTimer", "type": "struct:/Script/Engine.TimerHandle" },
+    { "name": "Lamp", "type": "object:/Script/Engine.PointLightComponent" },
+    { "name": "GlassMaterial", "type": "object:/Script/Engine.MaterialInstanceDynamic" },
+    { "name": "LitSound", "type": "object:/Script/Engine.SoundBase", "default": "/Game/LanternPuzzle/Core/Sounds/S_Lantern_Lit.S_Lantern_Lit" },
+    { "name": "RingSound", "type": "object:/Script/Engine.SoundBase", "default": "/Game/LanternPuzzle/Core/Sounds/S_Ring_Whole.S_Ring_Whole" },
+    { "name": "NarratorLine", "type": "object:/Script/Engine.SoundBase", "default": "/Game/LanternPuzzle/Voice/VO_Narrator_Ring.VO_Narrator_Ring" },
+    { "name": "ToastWidget", "type": "object:/Game/LanternPuzzle/Core/Widgets/WBP_Lantern_Toast.WBP_Lantern_Toast_C" },
+    { "name": "TallyWidget", "type": "object:/Game/LanternPuzzle/Core/Widgets/WBP_Lantern_Tally.WBP_Lantern_Tally_C" },
+    { "name": "SpareToasts", "type": "array<object:/Game/LanternPuzzle/Core/Widgets/WBP_Lantern_Toast.WBP_Lantern_Toast_C>" },
+    { "name": "FirstText", "type": "text", "default": "A first light." },
+    { "name": "HalfText", "type": "text", "default": "Half the ring burns." },
+    { "name": "WholeText", "type": "text", "default": "The ring is whole." },
+    { "name": "LastWords", "type": "string" }
+  ],
+  "functions": [
+    { "name": "AttachLamp", "inputs": [{ "name": "Host", "type": "object:/Script/Engine.Actor" }], "outputs": [], "pure": false },
+    { "name": "GetTally", "inputs": [], "outputs": [{ "name": "Tally", "type": "object:/Game/LanternPuzzle/Core/Widgets/WBP_Lantern_Tally.WBP_Lantern_Tally_C" }], "pure": true },
+    { "name": "RingFraction", "inputs": [], "outputs": [{ "name": "Fraction", "type": "float" }], "pure": true },
+    { "name": "CreateWidgets", "inputs": [], "outputs": [], "pure": false },
+    { "name": "StartFlicker", "inputs": [], "outputs": [], "pure": false },
+    { "name": "FlickerStep", "inputs": [], "outputs": [], "pure": false },
+    { "name": "LightOne", "inputs": [{ "name": "bQuiet", "type": "bool" }], "outputs": [], "pure": false },
+    { "name": "Announce", "inputs": [{ "name": "Message", "type": "text" }, { "name": "Tone", "type": "name" }], "outputs": [], "pure": false },
+    { "name": "CelebrateRing", "inputs": [], "outputs": [], "pure": false },
+    { "name": "ResetRing", "inputs": [], "outputs": [], "pure": false }
+  ],
+  "graphs": [
+    {
+      "graph": "AttachLamp",
+      "nodes": {
+        "entry": { "entry": true },
+        "find": { "call": "GetComponentByClass", "class": "/Script/Engine.Actor" },
+        "asLamp": { "cast": "/Script/Engine.PointLightComponent" },
+        "keepLamp": { "set": "Lamp" },
+        "bright": { "get": "BaseBrightness" },
+        "shine": { "call": "SetIntensity", "class": "/Script/Engine.LightComponent" },
+        "tint": { "get": "WarmTint" },
+        "colour": { "call": "SetLightColor", "class": "/Script/Engine.LightComponent" }
+      },
+      "links": [
+        ["entry.then", "asLamp.execute"],
+        ["entry.Host", "find.self"],
+        ["find.ReturnValue", "asLamp.Object"],
+        ["asLamp.then", "keepLamp.execute"],
+        ["asLamp.AsPoint Light Component", "keepLamp.Lamp"],
+        ["keepLamp.then", "shine.execute"],
+        ["keepLamp.Lamp", "shine.self"],
+        ["bright.BaseBrightness", "shine.NewIntensity"],
+        ["shine.then", "colour.execute"],
+        ["keepLamp.Lamp", "colour.self"],
+        ["tint.WarmTint", "colour.NewLightColor"]
+      ],
+      "defaults": {
+        "find.ComponentClass": "/Script/Engine.PointLightComponent",
+        "colour.bSRGB": "true"
+      }
+    },
+    {
+      "graph": "GetTally",
+      "nodes": {
+        "entry": { "entry": true },
+        "result": { "result": true },
+        "current": { "get": "TallyWidget" }
+      },
+      "links": [
+        ["entry.then", "result.execute"],
+        ["current.TallyWidget", "result.Tally"]
+      ],
+      "defaults": {}
+    },
+    {
+      "graph": "RingFraction",
+      "nodes": {
+        "entry": { "entry": true },
+        "result": { "result": true },
+        "lit": { "get": "LitCount" },
+        "size": { "get": "RingSize" },
+        "litReal": { "call": "Conv_IntToDouble", "class": "/Script/Engine.KismetMathLibrary" },
+        "sizeReal": { "call": "Conv_IntToDouble", "class": "/Script/Engine.KismetMathLibrary" },
+        "atLeastOne": { "call": "FMax", "class": "/Script/Engine.KismetMathLibrary" },
+        "part": { "call": "Divide_DoubleDouble", "class": "/Script/Engine.KismetMathLibrary" }
+      },
+      "links": [
+        ["entry.then", "result.execute"],
+        ["lit.LitCount", "litReal.InInt"],
+        ["size.RingSize", "sizeReal.InInt"],
+        ["sizeReal.ReturnValue", "atLeastOne.A"],
+        ["litReal.ReturnValue", "part.A"],
+        ["atLeastOne.ReturnValue", "part.B"],
+        ["part.ReturnValue", "result.Fraction"]
+      ],
+      "defaults": {
+        "atLeastOne.B": "1.0"
+      }
+    },
+    {
+      "graph": "CreateWidgets",
+      "nodes": {
+        "entry": { "entry": true },
+        "holder": { "call": "GetOwner", "class": "/Script/Engine.ActorComponent" },
+        "asLantern": { "cast": "/Game/LanternPuzzle/Core/PC_Lantern.PC_Lantern_C" },
+        "complain": { "call": "PrintString", "class": "/Script/Engine.KismetSystemLibrary" },
+        "mkToast": { "create_widget": "/Game/LanternPuzzle/Core/Widgets/WBP_Lantern_Toast.WBP_Lantern_Toast_C" },
+        "keepToast": { "set": "ToastWidget" },
+        "addToast": { "call": "AddToViewport", "class": "/Script/UMG.UserWidget" },
+        "mkTally": { "create_widget": "/Game/LanternPuzzle/Core/Widgets/WBP_Lantern_Tally.WBP_Lantern_Tally_C" },
+        "keepTally": { "set": "TallyWidget" },
+        "addTally": { "call": "AddToViewport", "class": "/Script/UMG.UserWidget" }
+      },
+      "links": [
+        ["entry.then", "asLantern.execute"],
+        ["holder.ReturnValue", "asLantern.Object"],
+        ["asLantern.CastFailed", "complain.execute"],
+        ["asLantern.then", "mkToast.execute"],
+        ["asLantern.AsPC Lantern", "mkToast.OwningPlayer"],
+        ["mkToast.then", "keepToast.execute"],
+        ["mkToast.ReturnValue", "keepToast.ToastWidget"],
+        ["keepToast.then", "addToast.execute"],
+        ["mkToast.ReturnValue", "addToast.self"],
+        ["addToast.then", "mkTally.execute"],
+        ["asLantern.AsPC Lantern", "mkTally.OwningPlayer"],
+        ["mkTally.then", "keepTally.execute"],
+        ["mkTally.ReturnValue", "keepTally.TallyWidget"],
+        ["keepTally.then", "addTally.execute"],
+        ["mkTally.ReturnValue", "addTally.self"]
+      ],
+      "defaults": {
+        "complain.InString": "BPC_LanternRing sits on something that is not a PC_Lantern; no widgets.",
+        "complain.bPrintToScreen": "true",
+        "addToast.ZOrder": "5",
+        "addTally.ZOrder": "4"
+      }
+    },
+    {
+      "graph": "StartFlicker",
+      "nodes": {
+        "entry": { "entry": true },
+        "old": { "get": "FlickerTimer" },
+        "drop": { "call": "K2_ClearAndInvalidateTimerHandle", "class": "/Script/Engine.KismetSystemLibrary" },
+        "me": { "self": true },
+        "pace": { "get": "FlickerPeriod" },
+        "beat": { "timer": true },
+        "keepBeat": { "set": "FlickerTimer" }
+      },
+      "links": [
+        ["entry.then", "drop.execute"],
+        ["old.FlickerTimer", "drop.Handle"],
+        ["drop.then", "beat.execute"],
+        ["me.self", "beat.Object"],
+        ["pace.FlickerPeriod", "beat.Time"],
+        ["beat.then", "keepBeat.execute"],
+        ["beat.ReturnValue", "keepBeat.FlickerTimer"]
+      ],
+      "defaults": {
+        "beat.FunctionName": "FlickerStep",
+        "beat.bLooping": "true"
+      }
+    },
+    {
+      "graph": "FlickerStep",
+      "nodes": {
+        "entry": { "entry": true },
+        "lamp": { "get": "Lamp" },
+        "there": { "call": "IsValid", "class": "/Script/Engine.KismetSystemLibrary" },
+        "gate": { "branch": true },
+        "depth": { "get": "FlickerDepth" },
+        "dip": { "call": "RandomFloatInRange", "class": "/Script/Engine.KismetMathLibrary" },
+        "steady": { "call": "Subtract_DoubleDouble", "class": "/Script/Engine.KismetMathLibrary" },
+        "lit": { "get": "LitCount" },
+        "room": { "get": "RoomTag" },
+        "glow": { "call": "BeamStrength", "class": "/Game/LanternPuzzle/Core/BFL_BeamMath.BFL_BeamMath_C" },
+        "mix": { "call": "Multiply_DoubleDouble", "class": "/Script/Engine.KismetMathLibrary" },
+        "base": { "get": "BaseBrightness" },
+        "level": { "call": "Multiply_DoubleDouble", "class": "/Script/Engine.KismetMathLibrary" },
+        "dimLamp": { "call": "SetIntensity", "class": "/Script/Engine.LightComponent" }
+      },
+      "links": [
+        ["entry.then", "gate.execute"],
+        ["lamp.Lamp", "there.Object"],
+        ["there.ReturnValue", "gate.Condition"],
+        ["depth.FlickerDepth", "dip.Max"],
+        ["dip.ReturnValue", "steady.B"],
+        ["lit.LitCount", "glow.Bounces"],
+        ["room.RoomTag", "glow.Tint"],
+        ["steady.ReturnValue", "mix.A"],
+        ["glow.Strength", "mix.B"],
+        ["mix.ReturnValue", "level.A"],
+        ["base.BaseBrightness", "level.B"],
+        ["gate.then", "dimLamp.execute"],
+        ["lamp.Lamp", "dimLamp.self"],
+        ["level.ReturnValue", "dimLamp.NewIntensity"]
+      ],
+      "defaults": {
+        "dip.Min": "0.0",
+        "steady.A": "1.0",
+        "glow.Length": "120.0",
+        "glow.Reach": "600.0"
+      }
+    },
+    {
+      "graph": "LightOne",
+      "nodes": {
+        "entry": { "entry": true },
+        "lit": { "get": "LitCount" },
+        "more": { "call": "Add_IntInt", "class": "/Script/Engine.KismetMathLibrary" },
+        "size": { "get": "RingSize" },
+        "capped": { "call": "Min", "class": "/Script/Engine.KismetMathLibrary" },
+        "keepLit": { "set": "LitCount" },
+        "hush": { "branch": true },
+        "litSound": { "get": "LitSound" },
+        "chime": { "call": "PlaySound2D", "class": "/Script/Engine.GameplayStatics" },
+        "tally": { "get": "TallyWidget" },
+        "showTally": { "call": "ShowCount", "class": "/Game/LanternPuzzle/Core/Widgets/WBP_Lantern_Tally.WBP_Lantern_Tally_C" },
+        "isWhole": { "call": "GreaterEqual_IntInt", "class": "/Script/Engine.KismetMathLibrary" },
+        "isFirst": { "call": "EqualEqual_IntInt", "class": "/Script/Engine.KismetMathLibrary" },
+        "early": { "call": "SelectInt", "class": "/Script/Engine.KismetMathLibrary" },
+        "which": { "call": "SelectInt", "class": "/Script/Engine.KismetMathLibrary" },
+        "firstLine": { "get": "FirstText" },
+        "halfLine": { "get": "HalfText" },
+        "wholeLine": { "get": "WholeText" },
+        "words": { "select": 3 },
+        "toast": { "get": "ToastWidget" },
+        "showToast": { "call": "SetToast", "class": "/Game/LanternPuzzle/Core/Widgets/WBP_Lantern_Toast.WBP_Lantern_Toast_C" },
+        "room": { "get": "RoomTag" },
+        "say": { "call": "Announce" },
+        "ifWhole": { "branch": true },
+        "keepDone": { "set": "bRingComplete" },
+        "me": { "self": true },
+        "delay": { "get": "CelebrateDelay" },
+        "wait": { "timer": true },
+        "keepWait": { "set": "CelebrateTimer" },
+        "glass": { "get": "GlassMaterial" },
+        "part": { "call": "RingFraction" },
+        "fill": { "call": "SetScalarParameterValue", "class": "/Script/Engine.MaterialInstanceDynamic" },
+        "lamp": { "get": "Lamp" },
+        "cool": { "get": "CoolTint" },
+        "warm": { "get": "WarmTint" },
+        "lerpTint": { "call": "LinearColorLerp", "class": "/Script/Engine.KismetMathLibrary" },
+        "tintLamp": { "call": "SetLightColor", "class": "/Script/Engine.LightComponent" },
+        "numerals": { "call": "Conv_IntToString", "class": "/Script/Engine.KismetStringLibrary" },
+        "traceText": { "call": "Concat_StrStr", "class": "/Script/Engine.KismetStringLibrary" },
+        "logCount": { "call": "PrintString", "class": "/Script/Engine.KismetSystemLibrary" }
+      },
+      "links": [
+        ["entry.then", "keepLit.execute"],
+        ["lit.LitCount", "more.A"],
+        ["more.ReturnValue", "capped.A"],
+        ["size.RingSize", "capped.B"],
+        ["capped.ReturnValue", "keepLit.LitCount"],
+        ["keepLit.then", "hush.execute"],
+        ["entry.bQuiet", "hush.Condition"],
+        ["hush.else", "chime.execute"],
+        ["litSound.LitSound", "chime.Sound"],
+        ["hush.then", "showTally.execute"],
+        ["chime.then", "showTally.execute"],
+        ["tally.TallyWidget", "showTally.self"],
+        ["keepLit.LitCount", "showTally.Count"],
+        ["size.RingSize", "showTally.Total"],
+        ["keepLit.LitCount", "isWhole.A"],
+        ["size.RingSize", "isWhole.B"],
+        ["keepLit.LitCount", "isFirst.A"],
+        ["isFirst.ReturnValue", "early.bPickA"],
+        ["early.ReturnValue", "which.B"],
+        ["isWhole.ReturnValue", "which.bPickA"],
+        ["firstLine.FirstText", "words.Option 0"],
+        ["halfLine.HalfText", "words.Option 1"],
+        ["wholeLine.WholeText", "words.Option 2"],
+        ["which.ReturnValue", "words.Index"],
+        ["showTally.then", "showToast.execute"],
+        ["toast.ToastWidget", "showToast.self"],
+        ["words.ReturnValue", "showToast.Words"],
+        ["isWhole.ReturnValue", "showToast.bUrgent"],
+        ["showToast.then", "say.execute"],
+        ["words.ReturnValue", "say.Message"],
+        ["room.RoomTag", "say.Tone"],
+        ["say.then", "logCount.execute"],
+        ["keepLit.LitCount", "numerals.InInt"],
+        ["numerals.ReturnValue", "traceText.B"],
+        ["traceText.ReturnValue", "logCount.InString"],
+        ["logCount.then", "ifWhole.execute"],
+        ["isWhole.ReturnValue", "ifWhole.Condition"],
+        ["ifWhole.then", "keepDone.execute"],
+        ["keepDone.then", "wait.execute"],
+        ["me.self", "wait.Object"],
+        ["delay.CelebrateDelay", "wait.Time"],
+        ["wait.then", "keepWait.execute"],
+        ["wait.ReturnValue", "keepWait.CelebrateTimer"],
+        ["ifWhole.else", "fill.execute"],
+        ["glass.GlassMaterial", "fill.self"],
+        ["part.Fraction", "fill.Value"],
+        ["fill.then", "tintLamp.execute"],
+        ["cool.CoolTint", "lerpTint.A"],
+        ["warm.WarmTint", "lerpTint.B"],
+        ["part.Fraction", "lerpTint.Alpha"],
+        ["lamp.Lamp", "tintLamp.self"],
+        ["lerpTint.ReturnValue", "tintLamp.NewLightColor"]
+      ],
+      "defaults": {
+        "more.B": "1",
+        "chime.VolumeMultiplier": "0.8",
+        "isFirst.B": "1",
+        "early.A": "0",
+        "early.B": "1",
+        "which.A": "2",
+        "traceText.A": "lanterns lit: ",
+        "logCount.bPrintToScreen": "false",
+        "keepDone.bRingComplete": "true",
+        "wait.FunctionName": "CelebrateRing",
+        "wait.bLooping": "false",
+        "wait.bMaxOncePerFrame": "false",
+        "fill.ParameterName": "Fill",
+        "tintLamp.bSRGB": "true"
+      }
+    },
+    {
+      "graph": "Announce",
+      "nodes": {
+        "entry": { "entry": true },
+        "plain": { "call": "Conv_TextToString", "class": "/Script/Engine.KismetTextLibrary" },
+        "keepWords": { "set": "LastWords" },
+        "shout": { "call": "PrintString", "class": "/Script/Engine.KismetSystemLibrary" },
+        "loud": { "call": "EqualEqual_NameName", "class": "/Script/Engine.KismetMathLibrary" },
+        "speak": { "branch": true },
+        "voice": { "get": "NarratorLine" },
+        "talk": { "call": "PlaySound2D", "class": "/Script/Engine.GameplayStatics" }
+      },
+      "links": [
+        ["entry.then", "keepWords.execute"],
+        ["entry.Message", "plain.InText"],
+        ["plain.ReturnValue", "keepWords.LastWords"],
+        ["keepWords.then", "shout.execute"],
+        ["plain.ReturnValue", "shout.InString"],
+        ["shout.then", "speak.execute"],
+        ["entry.Tone", "loud.A"],
+        ["loud.ReturnValue", "speak.Condition"],
+        ["speak.then", "talk.execute"],
+        ["voice.NarratorLine", "talk.Sound"]
+      ],
+      "defaults": {
+        "shout.Duration": "3.0",
+        "shout.bPrintToLog": "false",
+        "loud.B": "Cellar"
+      }
+    },
+    {
+      "graph": "CelebrateRing",
+      "nodes": {
+        "entry": { "entry": true },
+        "ring": { "get": "RingSound" },
+        "fanfare": { "call": "PlaySound2D", "class": "/Script/Engine.GameplayStatics" },
+        "makeGlass": { "call": "CreateDynamicMaterialInstance", "class": "/Script/Engine.KismetMaterialLibrary" },
+        "keepGlass": { "set": "GlassMaterial" },
+        "lit": { "get": "LitCount" },
+        "shade": { "select": 4 },
+        "paint": { "call": "SetScalarParameterValue", "class": "/Script/Engine.MaterialInstanceDynamic" },
+        "holder": { "call": "GetOwner", "class": "/Script/Engine.ActorComponent" },
+        "asLantern": { "cast": "/Game/LanternPuzzle/Core/PC_Lantern.PC_Lantern_C" },
+        "unlock": { "call": "OpenDoor", "class": "/Game/LanternPuzzle/Core/PC_Lantern.PC_Lantern_C" }
+      },
+      "links": [
+        ["entry.then", "fanfare.execute"],
+        ["ring.RingSound", "fanfare.Sound"],
+        ["fanfare.then", "makeGlass.execute"],
+        ["makeGlass.then", "keepGlass.execute"],
+        ["makeGlass.ReturnValue", "keepGlass.GlassMaterial"],
+        ["keepGlass.then", "paint.execute"],
+        ["keepGlass.GlassMaterial", "paint.self"],
+        ["lit.LitCount", "shade.Index"],
+        ["shade.ReturnValue", "paint.Value"],
+        ["paint.then", "asLantern.execute"],
+        ["holder.ReturnValue", "asLantern.Object"],
+        ["asLantern.then", "unlock.execute"],
+        ["asLantern.AsPC Lantern", "unlock.self"]
+      ],
+      "defaults": {
+        "fanfare.VolumeMultiplier": "1.0",
+        "makeGlass.Parent": "/Game/LanternPuzzle/Core/Glass/M_LanternGlass.M_LanternGlass",
+        "shade.Option 0": "0.0",
+        "shade.Option 1": "0.35",
+        "shade.Option 2": "0.7",
+        "shade.Option 3": "1.0",
+        "paint.ParameterName": "Fill"
+      }
+    },
+    {
+      "graph": "ResetRing",
+      "nodes": {
+        "entry": { "entry": true },
+        "zero": { "set": "LitCount" },
+        "undone": { "set": "bRingComplete" },
+        "oldWait": { "get": "CelebrateTimer" },
+        "dropWait": { "call": "K2_ClearAndInvalidateTimerHandle", "class": "/Script/Engine.KismetSystemLibrary" },
+        "tally": { "get": "TallyWidget" },
+        "size": { "get": "RingSize" },
+        "showTally": { "call": "ShowCount", "class": "/Game/LanternPuzzle/Core/Widgets/WBP_Lantern_Tally.WBP_Lantern_Tally_C" },
+        "restart": { "call": "StartFlicker" }
+      },
+      "links": [
+        ["entry.then", "zero.execute"],
+        ["zero.then", "undone.execute"],
+        ["undone.then", "dropWait.execute"],
+        ["oldWait.CelebrateTimer", "dropWait.Handle"],
+        ["dropWait.then", "showTally.execute"],
+        ["tally.TallyWidget", "showTally.self"],
+        ["zero.LitCount", "showTally.Count"],
+        ["size.RingSize", "showTally.Total"],
+        ["showTally.then", "restart.execute"]
+      ],
+      "defaults": {
+        "zero.LitCount": "0",
+        "undone.bRingComplete": "false"
+      }
+    },
+    {
+      "graph": "EventGraph",
+      "nodes": {
+        "onBegin": { "event": "ReceiveBeginPlay" },
+        "make": { "call": "CreateWidgets" },
+        "start": { "call": "StartFlicker" },
+        "entered": { "custom_event": "OnRoomEntered", "inputs": [{ "name": "RoomName", "type": "name" }] },
+        "keepRoom": { "set": "RoomTag" },
+        "again": { "call": "ResetRing" }
+      },
+      "links": [
+        ["onBegin.then", "make.execute"],
+        ["make.then", "start.execute"],
+        ["entered.then", "keepRoom.execute"],
+        ["entered.RoomName", "keepRoom.RoomTag"],
+        ["keepRoom.then", "again.execute"]
+      ],
+      "defaults": {}
+    }
+  ]
+}

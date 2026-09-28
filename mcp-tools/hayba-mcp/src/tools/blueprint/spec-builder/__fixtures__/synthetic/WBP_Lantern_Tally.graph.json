@@ -1,0 +1,584 @@
+{
+  "asset": "/Game/LanternPuzzle/Core/Widgets/WBP_Lantern_Tally",
+  "description": "Five pips and a caption that show how many lanterns are lit. BPC_LanternRing calls ShowCount; the newest pip pulses on a timer the widget owns. The widget tree must expose CountLabel and Pip0 to Pip4 as variables.",
+  "variables": [
+    {
+      "name": "PipsLit",
+      "type": "int",
+      "default": "0"
+    },
+    {
+      "name": "PipTotal",
+      "type": "int",
+      "default": "5"
+    },
+    {
+      "name": "PulseEvery",
+      "type": "float",
+      "default": "0.4"
+    },
+    {
+      "name": "LitOpacity",
+      "type": "float",
+      "default": "1.0"
+    },
+    {
+      "name": "RestOpacity",
+      "type": "float",
+      "default": "0.3"
+    },
+    {
+      "name": "bPulseUp",
+      "type": "bool",
+      "default": "false"
+    },
+    {
+      "name": "Joiner",
+      "type": "string",
+      "default": " of "
+    },
+    {
+      "name": "Caption",
+      "type": "string"
+    },
+    {
+      "name": "DoneText",
+      "type": "text",
+      "default": "Every lantern is lit"
+    },
+    {
+      "name": "StyleTag",
+      "type": "name",
+      "default": "Plain"
+    },
+    {
+      "name": "PipTimer",
+      "type": "struct:/Script/Engine.TimerHandle"
+    },
+    {
+      "name": "PipSound",
+      "type": "object:/Script/Engine.SoundBase",
+      "default": "/Game/LanternPuzzle/Sounds/Interface/S_Pip.S_Pip"
+    }
+  ],
+  "functions": [
+    {
+      "name": "ShowCount",
+      "inputs": [
+        {
+          "name": "Count",
+          "type": "int"
+        },
+        {
+          "name": "Total",
+          "type": "int"
+        }
+      ],
+      "outputs": [],
+      "pure": false
+    },
+    {
+      "name": "PipAt",
+      "inputs": [
+        {
+          "name": "Slot",
+          "type": "int"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "Pip",
+          "type": "object:/Script/UMG.Image"
+        }
+      ],
+      "pure": true
+    },
+    {
+      "name": "CaptionFor",
+      "inputs": [
+        {
+          "name": "Label",
+          "type": "text"
+        },
+        {
+          "name": "Count",
+          "type": "int"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "Words",
+          "type": "string"
+        }
+      ],
+      "pure": true
+    },
+    {
+      "name": "StartPulse",
+      "inputs": [],
+      "outputs": [],
+      "pure": false
+    },
+    {
+      "name": "PulseStep",
+      "inputs": [],
+      "outputs": [],
+      "pure": false
+    },
+    {
+      "name": "StopPulse",
+      "inputs": [],
+      "outputs": [],
+      "pure": false
+    }
+  ],
+  "graphs": [
+    {
+      "graph": "ShowCount",
+      "nodes": {
+        "entry": {
+          "entry": true
+        },
+        "keepCount": {
+          "set": "PipsLit"
+        },
+        "keepTotal": {
+          "set": "PipTotal"
+        },
+        "doneText": {
+          "get": "DoneText"
+        },
+        "caption": {
+          "call": "CaptionFor"
+        },
+        "keepCaption": {
+          "set": "Caption"
+        },
+        "captionText": {
+          "call": "Conv_StringToText",
+          "class": "/Script/Engine.KismetTextLibrary"
+        },
+        "counter": {
+          "get": "CountLabel"
+        },
+        "write": {
+          "call": "SetText",
+          "class": "/Script/UMG.TextBlock"
+        },
+        "sound": {
+          "get": "PipSound"
+        },
+        "ping": {
+          "call": "PlaySound2D",
+          "class": "/Script/Engine.GameplayStatics"
+        },
+        "isFull": {
+          "call": "GreaterEqual_IntInt",
+          "class": "/Script/Engine.KismetMathLibrary"
+        },
+        "whenFull": {
+          "branch": true
+        },
+        "halt": {
+          "call": "StopPulse"
+        },
+        "pulse": {
+          "call": "StartPulse"
+        }
+      },
+      "links": [
+        [
+          "entry.then",
+          "keepCount.execute"
+        ],
+        [
+          "entry.Count",
+          "keepCount.PipsLit"
+        ],
+        [
+          "keepCount.then",
+          "keepTotal.execute"
+        ],
+        [
+          "entry.Total",
+          "keepTotal.PipTotal"
+        ],
+        [
+          "doneText.DoneText",
+          "caption.Label"
+        ],
+        [
+          "entry.Count",
+          "caption.Count"
+        ],
+        [
+          "keepTotal.then",
+          "keepCaption.execute"
+        ],
+        [
+          "caption.Words",
+          "keepCaption.Caption"
+        ],
+        [
+          "keepCaption.Caption",
+          "captionText.InString"
+        ],
+        [
+          "keepCaption.then",
+          "write.execute"
+        ],
+        [
+          "counter.CountLabel",
+          "write.self"
+        ],
+        [
+          "captionText.ReturnValue",
+          "write.InText"
+        ],
+        [
+          "write.then",
+          "ping.execute"
+        ],
+        [
+          "sound.PipSound",
+          "ping.Sound"
+        ],
+        [
+          "ping.then",
+          "whenFull.execute"
+        ],
+        [
+          "entry.Count",
+          "isFull.A"
+        ],
+        [
+          "entry.Total",
+          "isFull.B"
+        ],
+        [
+          "isFull.ReturnValue",
+          "whenFull.Condition"
+        ],
+        [
+          "whenFull.then",
+          "halt.execute"
+        ],
+        [
+          "whenFull.else",
+          "pulse.execute"
+        ]
+      ],
+      "defaults": {
+        "ping.VolumeMultiplier": "0.6"
+      }
+    },
+    {
+      "graph": "PipAt",
+      "nodes": {
+        "entry": {
+          "entry": true
+        },
+        "result": {
+          "result": true
+        },
+        "p0": {
+          "get": "Pip0"
+        },
+        "p1": {
+          "get": "Pip1"
+        },
+        "p2": {
+          "get": "Pip2"
+        },
+        "p3": {
+          "get": "Pip3"
+        },
+        "p4": {
+          "get": "Pip4"
+        },
+        "choose": {
+          "select": 5
+        }
+      },
+      "links": [
+        [
+          "entry.then",
+          "result.execute"
+        ],
+        [
+          "p0.Pip0",
+          "choose.Option 0"
+        ],
+        [
+          "p1.Pip1",
+          "choose.Option 1"
+        ],
+        [
+          "p2.Pip2",
+          "choose.Option 2"
+        ],
+        [
+          "p3.Pip3",
+          "choose.Option 3"
+        ],
+        [
+          "p4.Pip4",
+          "choose.Option 4"
+        ],
+        [
+          "entry.Slot",
+          "choose.Index"
+        ],
+        [
+          "choose.ReturnValue",
+          "result.Pip"
+        ]
+      ],
+      "defaults": {}
+    },
+    {
+      "graph": "CaptionFor",
+      "nodes": {
+        "entry": {
+          "entry": true
+        },
+        "result": {
+          "result": true
+        },
+        "plain": {
+          "call": "Conv_TextToString",
+          "class": "/Script/Engine.KismetTextLibrary"
+        },
+        "numerals": {
+          "call": "Conv_IntToString",
+          "class": "/Script/Engine.KismetStringLibrary"
+        },
+        "join": {
+          "get": "Joiner"
+        },
+        "left": {
+          "call": "Concat_StrStr",
+          "class": "/Script/Engine.KismetStringLibrary"
+        },
+        "joined": {
+          "call": "Concat_StrStr",
+          "class": "/Script/Engine.KismetStringLibrary"
+        }
+      },
+      "links": [
+        [
+          "entry.then",
+          "result.execute"
+        ],
+        [
+          "entry.Label",
+          "plain.InText"
+        ],
+        [
+          "entry.Count",
+          "numerals.InInt"
+        ],
+        [
+          "numerals.ReturnValue",
+          "left.A"
+        ],
+        [
+          "join.Joiner",
+          "left.B"
+        ],
+        [
+          "left.ReturnValue",
+          "joined.A"
+        ],
+        [
+          "plain.ReturnValue",
+          "joined.B"
+        ],
+        [
+          "joined.ReturnValue",
+          "result.Words"
+        ]
+      ],
+      "defaults": {}
+    },
+    {
+      "graph": "StartPulse",
+      "nodes": {
+        "entry": {
+          "entry": true
+        },
+        "old": {
+          "get": "PipTimer"
+        },
+        "drop": {
+          "call": "K2_ClearAndInvalidateTimerHandle",
+          "class": "/Script/Engine.KismetSystemLibrary"
+        },
+        "me": {
+          "self": true
+        },
+        "pace": {
+          "get": "PulseEvery"
+        },
+        "beat": {
+          "timer": true
+        },
+        "keepBeat": {
+          "set": "PipTimer"
+        }
+      },
+      "links": [
+        [
+          "entry.then",
+          "drop.execute"
+        ],
+        [
+          "old.PipTimer",
+          "drop.Handle"
+        ],
+        [
+          "drop.then",
+          "beat.execute"
+        ],
+        [
+          "me.self",
+          "beat.Object"
+        ],
+        [
+          "pace.PulseEvery",
+          "beat.Time"
+        ],
+        [
+          "beat.then",
+          "keepBeat.execute"
+        ],
+        [
+          "beat.ReturnValue",
+          "keepBeat.PipTimer"
+        ]
+      ],
+      "defaults": {
+        "beat.FunctionName": "PulseStep",
+        "beat.bLooping": "true",
+        "beat.bMaxOncePerFrame": "false"
+      }
+    },
+    {
+      "graph": "PulseStep",
+      "nodes": {
+        "entry": {
+          "entry": true
+        },
+        "up": {
+          "get": "bPulseUp"
+        },
+        "inverse": {
+          "call": "Not_PreBool",
+          "class": "/Script/Engine.KismetMathLibrary"
+        },
+        "keepUp": {
+          "set": "bPulseUp"
+        },
+        "lit": {
+          "get": "PipsLit"
+        },
+        "newest": {
+          "call": "Subtract_IntInt",
+          "class": "/Script/Engine.KismetMathLibrary"
+        },
+        "pip": {
+          "call": "PipAt"
+        },
+        "high": {
+          "get": "LitOpacity"
+        },
+        "low": {
+          "get": "RestOpacity"
+        },
+        "level": {
+          "call": "SelectFloat",
+          "class": "/Script/Engine.KismetMathLibrary"
+        },
+        "fadePip": {
+          "call": "SetRenderOpacity",
+          "class": "/Script/UMG.Widget"
+        }
+      },
+      "links": [
+        [
+          "entry.then",
+          "keepUp.execute"
+        ],
+        [
+          "up.bPulseUp",
+          "inverse.A"
+        ],
+        [
+          "inverse.ReturnValue",
+          "keepUp.bPulseUp"
+        ],
+        [
+          "lit.PipsLit",
+          "newest.A"
+        ],
+        [
+          "newest.ReturnValue",
+          "pip.Slot"
+        ],
+        [
+          "high.LitOpacity",
+          "level.A"
+        ],
+        [
+          "low.RestOpacity",
+          "level.B"
+        ],
+        [
+          "keepUp.bPulseUp",
+          "level.bPickA"
+        ],
+        [
+          "keepUp.then",
+          "fadePip.execute"
+        ],
+        [
+          "pip.Pip",
+          "fadePip.self"
+        ],
+        [
+          "level.ReturnValue",
+          "fadePip.InOpacity"
+        ]
+      ],
+      "defaults": {
+        "newest.B": "1"
+      }
+    },
+    {
+      "graph": "StopPulse",
+      "nodes": {
+        "entry": {
+          "entry": true
+        },
+        "old": {
+          "get": "PipTimer"
+        },
+        "drop": {
+          "call": "K2_ClearAndInvalidateTimerHandle",
+          "class": "/Script/Engine.KismetSystemLibrary"
+        }
+      },
+      "links": [
+        [
+          "entry.then",
+          "drop.execute"
+        ],
+        [
+          "old.PipTimer",
+          "drop.Handle"
+        ]
+      ],
+      "defaults": {}
+    }
+  ]
+}

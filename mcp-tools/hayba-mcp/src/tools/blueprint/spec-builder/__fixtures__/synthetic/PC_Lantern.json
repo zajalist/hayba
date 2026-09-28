@@ -1,0 +1,289 @@
+{
+  "asset": "/Game/LanternPuzzle/Core/PC_Lantern",
+  "create": { "parent": "/Game/PuzzleKit/BP_KitPlayerController.BP_KitPlayerController_C" },
+  "components": [
+    { "name": "LanternRing", "class": "/Game/LanternPuzzle/Core/BPC_LanternRing.BPC_LanternRing_C" },
+    { "name": "DoorChime", "class": "/Script/Engine.AudioComponent" }
+  ],
+  "variables": [
+    { "name": "Phase", "type": "name", "default": "Menu" },
+    { "name": "MirrorsTurned", "type": "int", "default": "0" },
+    { "name": "bDoorOpen", "type": "bool", "default": "false" },
+    { "name": "DoorOpenSeconds", "type": "float", "default": "1.5" },
+    { "name": "MenuWidget", "type": "object:/Game/LanternPuzzle/Core/Widgets/WBP_Lantern_Menu.WBP_Lantern_Menu_C" },
+    { "name": "CreditsWidget", "type": "object:/Game/LanternPuzzle/Core/Widgets/WBP_Lantern_Credits.WBP_Lantern_Credits_C" },
+    { "name": "DoorTimer", "type": "struct:/Script/Engine.TimerHandle" }
+  ],
+  "functions": [
+    { "name": "ShowMenu", "inputs": [], "outputs": [], "pure": false },
+    { "name": "BeginPuzzle", "inputs": [], "outputs": [], "pure": false },
+    { "name": "OpenDoor", "inputs": [], "outputs": [], "pure": false },
+    { "name": "CloseDoor", "inputs": [], "outputs": [], "pure": false },
+    { "name": "TurnMirror", "inputs": [{ "name": "Degrees", "type": "float" }, { "name": "bClockwise", "type": "bool" }], "outputs": [], "pure": false },
+    { "name": "SaveProgress", "inputs": [{ "name": "Room", "type": "name" }], "outputs": [], "pure": false },
+    { "name": "ShowCredits", "inputs": [], "outputs": [], "pure": false },
+    { "name": "ResetRoom", "inputs": [], "outputs": [], "pure": false }
+  ],
+  "graphs": [
+    {
+      "graph": "EventGraph",
+      "nodes": {
+        "possessed": { "event": "ReceivePossess" },
+        "menu": { "call": "ShowMenu" }
+      },
+      "links": [
+        ["possessed.then", "menu.execute"]
+      ],
+      "defaults": {}
+    },
+    {
+      "graph": "ShowMenu",
+      "nodes": {
+        "entry": { "entry": true },
+        "me": { "self": true },
+        "mkMenu": { "create_widget": "/Game/LanternPuzzle/Core/Widgets/WBP_Lantern_Menu.WBP_Lantern_Menu_C" },
+        "keepMenu": { "set": "MenuWidget" },
+        "addMenu": { "call": "AddToViewport", "class": "/Script/UMG.UserWidget" },
+        "toMenu": { "call": "SetInputMode_UIOnlyEx", "class": "/Script/UMG.WidgetBlueprintLibrary" },
+        "pointer": { "set": "bShowMouseCursor" },
+        "keepPhase": { "set": "Phase" }
+      },
+      "links": [
+        ["entry.then", "mkMenu.execute"],
+        ["me.self", "mkMenu.OwningPlayer"],
+        ["mkMenu.then", "keepMenu.execute"],
+        ["mkMenu.ReturnValue", "keepMenu.MenuWidget"],
+        ["keepMenu.then", "addMenu.execute"],
+        ["mkMenu.ReturnValue", "addMenu.self"],
+        ["addMenu.then", "toMenu.execute"],
+        ["me.self", "toMenu.PlayerController"],
+        ["mkMenu.ReturnValue", "toMenu.InWidgetToFocus"],
+        ["toMenu.then", "pointer.execute"],
+        ["pointer.then", "keepPhase.execute"]
+      ],
+      "defaults": {
+        "toMenu.InMouseLockMode": "LockOnCapture",
+        "pointer.bShowMouseCursor": "true",
+        "keepPhase.Phase": "Menu"
+      }
+    },
+    {
+      "graph": "BeginPuzzle",
+      "nodes": {
+        "entry": { "entry": true },
+        "me": { "self": true },
+        "threeSteps": { "sequence": 3 },
+        "menu": { "get": "MenuWidget" },
+        "shut": { "call": "RemoveFromParent", "class": "/Script/UMG.Widget" },
+        "toGame": { "call": "SetInputMode_GameOnly", "class": "/Script/UMG.WidgetBlueprintLibrary" },
+        "pointer": { "set": "bShowMouseCursor" },
+        "ring": { "get": "LanternRing" },
+        "clearRing": { "call": "ResetRing", "class": "/Game/LanternPuzzle/Core/BPC_LanternRing.BPC_LanternRing_C" },
+        "keepPhase": { "set": "Phase" }
+      },
+      "links": [
+        ["entry.then", "threeSteps.execute"],
+        ["threeSteps.then_0", "shut.execute"],
+        ["menu.MenuWidget", "shut.self"],
+        ["threeSteps.then_1", "toGame.execute"],
+        ["me.self", "toGame.PlayerController"],
+        ["toGame.then", "pointer.execute"],
+        ["threeSteps.then_2", "clearRing.execute"],
+        ["ring.LanternRing", "clearRing.self"],
+        ["clearRing.then", "keepPhase.execute"]
+      ],
+      "defaults": {
+        "pointer.bShowMouseCursor": "false",
+        "keepPhase.Phase": "Solving"
+      }
+    },
+    {
+      "graph": "OpenDoor",
+      "nodes": {
+        "entry": { "entry": true },
+        "me": { "self": true },
+        "pair": { "sequence": 2 },
+        "find": { "call": "GetActorOfClass", "class": "/Script/Engine.GameplayStatics" },
+        "asDoor": { "cast": "/Script/Engine.PointLight" },
+        "raise": { "call": "K2_SetActorLocation", "class": "/Script/Engine.Actor" },
+        "chime": { "get": "DoorChime" },
+        "ring": { "call": "Play", "class": "/Script/Engine.AudioComponent" },
+        "keepOpen": { "set": "bDoorOpen" },
+        "seconds": { "get": "DoorOpenSeconds" },
+        "closeLater": { "timer": true },
+        "keepLater": { "set": "DoorTimer" },
+        "phaseNow": { "get": "Phase" },
+        "saveRoom": { "call": "SaveProgress" }
+      },
+      "links": [
+        ["entry.then", "pair.execute"],
+        ["pair.then_0", "asDoor.execute"],
+        ["find.ReturnValue", "asDoor.Object"],
+        ["asDoor.then", "raise.execute"],
+        ["asDoor.AsPoint Light", "raise.self"],
+        ["pair.then_1", "ring.execute"],
+        ["chime.DoorChime", "ring.self"],
+        ["ring.then", "keepOpen.execute"],
+        ["keepOpen.then", "closeLater.execute"],
+        ["me.self", "closeLater.Object"],
+        ["seconds.DoorOpenSeconds", "closeLater.Time"],
+        ["closeLater.then", "keepLater.execute"],
+        ["closeLater.ReturnValue", "keepLater.DoorTimer"],
+        ["keepLater.then", "saveRoom.execute"],
+        ["phaseNow.Phase", "saveRoom.Room"]
+      ],
+      "defaults": {
+        "find.ActorClass": "/Game/LanternPuzzle/Core/BP_DoorLight.BP_DoorLight_C",
+        "raise.NewLocation": "(X=0.0,Y=240.0,Z=90.0)",
+        "raise.bSweep": "false",
+        "raise.bTeleport": "true",
+        "ring.StartTime": "0.0",
+        "keepOpen.bDoorOpen": "true",
+        "closeLater.FunctionName": "CloseDoor",
+        "closeLater.bLooping": "false"
+      }
+    },
+    {
+      "graph": "CloseDoor",
+      "nodes": {
+        "entry": { "entry": true },
+        "old": { "get": "DoorTimer" },
+        "drop": { "call": "K2_ClearAndInvalidateTimerHandle", "class": "/Script/Engine.KismetSystemLibrary" },
+        "keepShut": { "set": "bDoorOpen" }
+      },
+      "links": [
+        ["entry.then", "drop.execute"],
+        ["old.DoorTimer", "drop.Handle"],
+        ["drop.then", "keepShut.execute"]
+      ],
+      "defaults": {
+        "keepShut.bDoorOpen": "false"
+      }
+    },
+    {
+      "graph": "TurnMirror",
+      "nodes": {
+        "entry": { "entry": true },
+        "me": { "self": true },
+        "body": { "call": "K2_GetPawn", "class": "/Script/Engine.Controller" },
+        "asBody": { "cast": "/Script/Engine.Character" },
+        "direction": { "call": "SelectFloat", "class": "/Script/Engine.KismetMathLibrary" },
+        "angle": { "call": "Multiply_DoubleDouble", "class": "/Script/Engine.KismetMathLibrary" },
+        "spin": { "call": "MakeRotator", "class": "/Script/Engine.KismetMathLibrary" },
+        "rotate": { "call": "K2_AddActorWorldRotation", "class": "/Script/Engine.Actor" },
+        "turns": { "get": "MirrorsTurned" },
+        "oneMore": { "call": "Add_IntInt", "class": "/Script/Engine.KismetMathLibrary" },
+        "keepTurns": { "set": "MirrorsTurned" }
+      },
+      "links": [
+        ["entry.then", "asBody.execute"],
+        ["me.self", "body.self"],
+        ["body.ReturnValue", "asBody.Object"],
+        ["entry.bClockwise", "direction.bPickA"],
+        ["entry.Degrees", "angle.A"],
+        ["direction.ReturnValue", "angle.B"],
+        ["angle.ReturnValue", "spin.Yaw"],
+        ["asBody.then", "rotate.execute"],
+        ["asBody.AsCharacter", "rotate.self"],
+        ["spin.ReturnValue", "rotate.DeltaRotation"],
+        ["rotate.then", "keepTurns.execute"],
+        ["asBody.CastFailed", "keepTurns.execute"],
+        ["turns.MirrorsTurned", "oneMore.A"],
+        ["oneMore.ReturnValue", "keepTurns.MirrorsTurned"]
+      ],
+      "defaults": {
+        "direction.A": "1.0",
+        "direction.B": "-1.0",
+        "spin.Roll": "0.0",
+        "spin.Pitch": "0.0",
+        "rotate.bSweep": "false",
+        "rotate.bTeleport": "false",
+        "oneMore.B": "1"
+      }
+    },
+    {
+      "graph": "SaveProgress",
+      "nodes": {
+        "entry": { "entry": true },
+        "me": { "self": true },
+        "vault": { "call": "GetPuzzleSave", "class": "/Script/LanternPuzzleCore.PuzzleSaveSubsystem" },
+        "turns": { "get": "MirrorsTurned" },
+        "roomLabel": { "call": "RoomLabel", "class": "/Game/LanternPuzzle/Core/BFL_RoomNames.BFL_RoomNames_C" },
+        "record": { "call": "RecordRoomSolved", "class": "/Script/LanternPuzzleCore.PuzzleSaveSubsystem" }
+      },
+      "links": [
+        ["entry.then", "record.execute"],
+        ["me.self", "vault.WorldContextObject"],
+        ["vault.ReturnValue", "record.self"],
+        ["entry.Room", "record.RoomName"],
+        ["entry.Room", "roomLabel.Room"],
+        ["roomLabel.ReturnValue", "record.Title"],
+        ["turns.MirrorsTurned", "record.Turns"]
+      ],
+      "defaults": {
+        "record.bOverwrite": "true"
+      }
+    },
+    {
+      "graph": "ShowCredits",
+      "nodes": {
+        "entry": { "entry": true },
+        "me": { "self": true },
+        "mkCredits": { "create_widget": "/Game/LanternPuzzle/Core/Widgets/WBP_Lantern_Credits.WBP_Lantern_Credits_C" },
+        "keepCredits": { "set": "CreditsWidget" },
+        "rollCredits": { "call": "Roll", "class": "/Game/LanternPuzzle/Core/Widgets/WBP_Lantern_Credits.WBP_Lantern_Credits_C" },
+        "addCredits": { "call": "AddToViewport", "class": "/Script/UMG.UserWidget" }
+      },
+      "links": [
+        ["entry.then", "mkCredits.execute"],
+        ["me.self", "mkCredits.OwningPlayer"],
+        ["mkCredits.then", "keepCredits.execute"],
+        ["mkCredits.ReturnValue", "keepCredits.CreditsWidget"],
+        ["keepCredits.then", "rollCredits.execute"],
+        ["keepCredits.CreditsWidget", "rollCredits.self"],
+        ["rollCredits.then", "addCredits.execute"],
+        ["keepCredits.CreditsWidget", "addCredits.self"]
+      ],
+      "defaults": {
+        "rollCredits.Speed": "40.0",
+        "addCredits.ZOrder": "10"
+      }
+    },
+    {
+      "graph": "ResetRoom",
+      "nodes": {
+        "entry": { "entry": true },
+        "four": { "sequence": 4 },
+        "closeUp": { "call": "CloseDoor" },
+        "ring": { "get": "LanternRing" },
+        "clearRing": { "call": "ResetRing", "class": "/Game/LanternPuzzle/Core/BPC_LanternRing.BPC_LanternRing_C" },
+        "keepTurns": { "set": "MirrorsTurned" },
+        "tell": { "call": "PrintString", "class": "/Script/Engine.KismetSystemLibrary" },
+        "findMirror": { "call": "GetActorOfClass", "class": "/Script/Engine.GameplayStatics" },
+        "straighten": { "call": "K2_SetActorRotation", "class": "/Script/Engine.Actor" },
+        "spare": { "get": "Phase" }
+      },
+      "links": [
+        ["entry.then", "four.execute"],
+        ["four.then_0", "closeUp.execute"],
+        ["four.then_1", "clearRing.execute"],
+        ["ring.LanternRing", "clearRing.self"],
+        ["four.then_2", "keepTurns.execute"],
+        ["four.then_3", "tell.execute"],
+        ["tell.then", "straighten.execute"],
+        ["findMirror.ReturnValue", "straighten.self"]
+      ],
+      "defaults": {
+        "keepTurns.MirrorsTurned": "0",
+        "tell.InString": "Room reset",
+        "tell.Duration": "1.0",
+        "findMirror.ActorClass": "/Game/LanternPuzzle/Props/BP_Mirror.BP_Mirror_C",
+        "straighten.NewRotation": "(Pitch=0.0,Yaw=90.0,Roll=0.0)",
+        "straighten.bTeleportPhysics": "true"
+      }
+    }
+  ],
+  "cdo_defaults": {
+    "CheatClass": "/Game/LanternPuzzle/Core/PC_LanternCheats.PC_LanternCheats_C"
+  }
+}

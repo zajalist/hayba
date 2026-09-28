@@ -1,0 +1,155 @@
+{
+  "asset": "/Game/LanternPuzzle/Core/Widgets/WBP_Lantern_Menu",
+  "description": "Start screen: Play, Credits, Exit and a brightness slider. Hovering a button enlarges it and gives it keyboard focus; a hint appears when the pointer rests on Play.",
+  "variables": [
+    { "name": "Brightness", "type": "float", "default": "1.0" },
+    { "name": "HoverScale", "type": "vector2d", "default": "(X=1.08,Y=1.08)" },
+    { "name": "HintTimer", "type": "struct:/Script/Engine.TimerHandle" }
+  ],
+  "functions": [
+    { "name": "Highlight", "inputs": [{ "name": "Target", "type": "object:/Script/UMG.Widget" }, { "name": "bOn", "type": "bool" }], "outputs": [], "pure": false },
+    { "name": "ShowHint", "inputs": [], "outputs": [], "pure": false }
+  ],
+  "graphs": [
+    {
+      "graph": "Highlight",
+      "nodes": {
+        "entry": { "entry": true },
+        "grow": { "get": "HoverScale" },
+        "flat": { "call": "MakeVector2D", "class": "/Script/Engine.KismetMathLibrary" },
+        "size": { "select": 2 },
+        "scale": { "call": "SetRenderScale", "class": "/Script/UMG.Widget" },
+        "ifOn": { "branch": true },
+        "focus": { "call": "SetKeyboardFocus", "class": "/Script/UMG.Widget" }
+      },
+      "links": [
+        ["entry.then", "scale.execute"],
+        ["entry.Target", "scale.self"],
+        ["entry.bOn", "size.Index"],
+        ["flat.ReturnValue", "size.Option 0"],
+        ["grow.HoverScale", "size.Option 1"],
+        ["size.ReturnValue", "scale.Scale"],
+        ["scale.then", "ifOn.execute"],
+        ["entry.bOn", "ifOn.Condition"],
+        ["ifOn.then", "focus.execute"],
+        ["entry.Target", "focus.self"]
+      ],
+      "defaults": {
+        "flat.X": "1.0",
+        "flat.Y": "1.0"
+      }
+    },
+    {
+      "graph": "ShowHint",
+      "nodes": {
+        "entry": { "entry": true },
+        "hint": { "get": "HintLabel" },
+        "appear": { "call": "SetVisibility", "class": "/Script/UMG.Widget" }
+      },
+      "links": [
+        ["entry.then", "appear.execute"],
+        ["hint.HintLabel", "appear.self"]
+      ],
+      "defaults": {
+        "appear.InVisibility": "SelfHitTestInvisible"
+      }
+    },
+    {
+      "graph": "EventGraph",
+      "nodes": {
+        "Built": { "event": "Construct" },
+        "Gone": { "event": "Destruct" },
+        "PlayClicked": { "bound_event": { "target": "PlayButton", "event": "OnClicked" } },
+        "PlayHovered": { "bound_event": { "target": "PlayButton", "event": "OnHovered" } },
+        "PlayLeft": { "bound_event": { "target": "PlayButton", "event": "OnUnhovered" } },
+        "CreditsClicked": { "bound_event": { "target": "CreditsButton", "event": "OnClicked" } },
+        "ExitClicked": { "bound_event": { "target": "ExitButton", "event": "OnClicked" } },
+        "ExitHovered": { "bound_event": { "target": "ExitButton", "event": "OnHovered" } },
+        "SliderMoved": { "bound_event": { "target": "BrightnessSlider", "event": "OnValueChanged" } },
+        "me": { "self": true },
+        "player": { "call": "GetOwningPlayer", "class": "/Script/UMG.Widget" },
+        "playButton1": { "get": "PlayButton" },
+        "firstFocus": { "call": "SetKeyboardFocus", "class": "/Script/UMG.Widget" },
+        "slider": { "get": "BrightnessSlider" },
+        "stored": { "get": "Brightness" },
+        "setSlider": { "call": "SetValue", "class": "/Script/UMG.Slider" },
+        "hideHint2": { "get": "HintLabel" },
+        "tidy": { "call": "SetVisibility", "class": "/Script/UMG.Widget" },
+        "asLantern": { "cast": "/Game/LanternPuzzle/Core/PC_Lantern.PC_Lantern_C" },
+        "startPuzzle": { "call": "BeginPuzzle", "class": "/Game/LanternPuzzle/Core/PC_Lantern.PC_Lantern_C" },
+        "leave": { "call": "RemoveFromParent", "class": "/Script/UMG.Widget" },
+        "playButton3": { "get": "PlayButton" },
+        "glowPlay": { "call": "Highlight" },
+        "rest": { "timer": true },
+        "keepRest": { "set": "HintTimer" },
+        "playButton4": { "get": "PlayButton" },
+        "calmPlay": { "call": "Highlight" },
+        "oldRest": { "get": "HintTimer" },
+        "dropRest": { "call": "K2_ClearAndInvalidateTimerHandle", "class": "/Script/Engine.KismetSystemLibrary" },
+        "mkCredits": { "create_widget": "/Game/LanternPuzzle/Core/Widgets/WBP_Lantern_Credits.WBP_Lantern_Credits_C", "x": 1400, "y": 600 },
+        "rollCredits": { "call": "Roll", "class": "/Game/LanternPuzzle/Core/Widgets/WBP_Lantern_Credits.WBP_Lantern_Credits_C" },
+        "addCredits": { "call": "AddToViewport", "class": "/Script/UMG.UserWidget" },
+        "quit": { "call": "QuitGame", "class": "/Script/Engine.KismetSystemLibrary" },
+        "exitButton5": { "get": "ExitButton" },
+        "glowExit": { "call": "Highlight" },
+        "keepLevel": { "set": "Brightness" }
+      },
+      "links": [
+        ["Built.then", "firstFocus.execute"],
+        ["playButton1.PlayButton", "firstFocus.self"],
+        ["firstFocus.then", "setSlider.execute"],
+        ["slider.BrightnessSlider", "setSlider.self"],
+        ["stored.Brightness", "setSlider.InValue"],
+        ["Gone.then", "tidy.execute"],
+        ["hideHint2.HintLabel", "tidy.self"],
+        ["me.self", "player.self"],
+        ["PlayClicked.then", "asLantern.execute"],
+        ["player.ReturnValue", "asLantern.Object"],
+        ["asLantern.then", "startPuzzle.execute"],
+        ["asLantern.AsPC Lantern", "startPuzzle.self"],
+        ["startPuzzle.then", "leave.execute"],
+        ["me.self", "leave.self"],
+        ["PlayHovered.then", "glowPlay.execute"],
+        ["playButton3.PlayButton", "glowPlay.Target"],
+        ["glowPlay.then", "rest.execute"],
+        ["me.self", "rest.Object"],
+        ["rest.then", "keepRest.execute"],
+        ["rest.ReturnValue", "keepRest.HintTimer"],
+        ["PlayLeft.then", "calmPlay.execute"],
+        ["playButton4.PlayButton", "calmPlay.Target"],
+        ["calmPlay.then", "dropRest.execute"],
+        ["oldRest.HintTimer", "dropRest.Handle"],
+        ["CreditsClicked.then", "mkCredits.execute"],
+        ["player.ReturnValue", "mkCredits.OwningPlayer"],
+        ["mkCredits.then", "rollCredits.execute"],
+        ["mkCredits.ReturnValue", "rollCredits.self"],
+        ["rollCredits.then", "addCredits.execute"],
+        ["mkCredits.ReturnValue", "addCredits.self"],
+        ["ExitClicked.then", "quit.execute"],
+        ["player.ReturnValue", "quit.SpecificPlayer"],
+        ["ExitHovered.then", "glowExit.execute"],
+        ["exitButton5.ExitButton", "glowExit.Target"],
+        ["SliderMoved.then", "keepLevel.execute"],
+        ["SliderMoved.Value", "keepLevel.Brightness"]
+      ],
+      "defaults": {
+        "tidy.InVisibility": "Hidden",
+        "glowPlay.bOn": "true",
+        "rest.FunctionName": "ShowHint",
+        "rest.Time": "2.5",
+        "rest.bLooping": "false",
+        "calmPlay.bOn": "false",
+        "rollCredits.Speed": "40.0",
+        "addCredits.ZOrder": "10",
+        "quit.QuitPreference": "Background",
+        "quit.bIgnorePlatformRestrictions": "false",
+        "glowExit.bOn": "true"
+      }
+    }
+  ],
+  "cdo_defaults": {
+    "bIsFocusable": true,
+    "DesiredFocusWidget": { "WidgetName": "PlayButton" },
+    "Padding": { "Left": 24, "Top": 12, "Right": 24, "Bottom": 12 }
+  }
+}

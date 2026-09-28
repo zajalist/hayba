@@ -1,0 +1,12 @@
+{
+  "asset": "/Game/LanternPuzzle/Core/BP_DoorLight",
+  "create": { "parent": "/Script/Engine.PointLight" },
+  "cdo_defaults": {
+    "bEnabled": true,
+    "NetCullDistanceSquared": 1500.0,
+    "CustomTimeDilation": 1.0,
+    "InitialLifeSpan": 0.25,
+    "SpawnCollisionHandlingMethod": "AlwaysSpawn",
+    "bCanBeDamaged": false
+  }
+}
