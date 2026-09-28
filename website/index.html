@@ -4,80 +4,12 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Hayba — AI-agent toolkit for Unreal Engine</title>
-  <meta name="description" content="Hayba is an open-source (MIT) toolkit that lets an AI agent work inside a live Unreal Engine 5.8 editor, through a Node/TypeScript MCP server and a C++ editor plugin.">
+  <meta name="description" content="Hayba is an open-source (MIT) toolkit that lets an AI agent work inside a live Unreal Engine editor (5.7+), through a Node/TypeScript MCP server and a C++ editor plugin.">
   <link rel="icon" type="image/svg+xml" href="assets/Logo.svg" />
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;500;600;700&family=Charis+SIL:wght@400;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css" />
   <style>
     /* ── Hayba umbrella-only styles ── */
     .hayba-hero-badge { margin-bottom: 2rem; }
-
-    .products-section {
-      padding: 6rem 2rem 7rem;
-      border-bottom: 1px solid var(--border);
-    }
-    .products-inner { max-width: 900px; margin: 0 auto; }
-    .products-heading {
-      text-align: center; margin-bottom: 3.5rem;
-    }
-    .products-heading .section-label { display: flex; justify-content: center; margin-bottom: 1rem; }
-    .products-heading h2 { font-size: clamp(1.8rem, 4vw, 2.8rem); font-weight: 900; letter-spacing: -0.03em; }
-    .products-heading p { color: #666; font-size: 0.85rem; max-width: 480px; margin: 0.8rem auto 0; line-height: 1.7; }
-
-    .product-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1.5rem; }
-    @media (max-width: 900px) { .product-cards { grid-template-columns: 1fr; } }
-
-    .product-card {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      padding: 2.5rem;
-      text-decoration: none; color: var(--text);
-      display: flex; flex-direction: column;
-      position: relative; overflow: hidden;
-      transition: border-color 0.25s, box-shadow 0.25s, transform 0.2s;
-    }
-    .product-card > * { position: relative; z-index: 1; }
-    .product-card::before {
-      content: ''; position: absolute; inset: 0;
-      background: linear-gradient(to top, rgba(0,0,0,0.88) 0%, rgba(0,0,0,0.55) 60%, rgba(0,0,0,0.3) 100%);
-      transition: opacity 0.3s;
-    }
-    .product-card:hover {
-      border-color: rgba(255,107,53,0.4);
-      box-shadow: 0 0 40px rgba(255,107,53,0.08), 0 8px 32px rgba(0,0,0,0.4);
-      transform: translateY(-3px);
-    }
-    .product-card:hover::before { opacity: 1; }
-
-    .product-tag {
-      font-size: 0.58rem; font-weight: 700; letter-spacing: 0.18em; text-transform: uppercase;
-      color: var(--orange); margin-bottom: 1.2rem; display: block;
-    }
-    .product-card h3 { font-size: 1.5rem; font-weight: 900; letter-spacing: -0.02em; margin-bottom: 0.6rem; }
-    .product-card p { color: #fff; font-size: 0.82rem; line-height: 1.7; flex: 1; margin-bottom: 1.8rem; }
-
-    .product-stats {
-      display: flex; gap: 1.8rem; padding-top: 1.5rem;
-      border-top: 1px solid var(--border);
-    }
-    .product-stat-val { display: block; font-size: 1.3rem; font-weight: 900; color: var(--text); line-height: 1; }
-    .product-stat-lbl { display: block; font-size: 0.6rem; color: var(--muted); letter-spacing: 0.08em; text-transform: uppercase; margin-top: 0.3rem; }
-
-    .product-cta {
-      display: inline-flex; align-items: center; gap: 0.5rem;
-      margin-top: 1.5rem; font-size: 0.68rem; font-weight: 800;
-      letter-spacing: 0.1em; text-transform: uppercase;
-      color: var(--orange); transition: gap 0.2s;
-    }
-    .product-card:hover .product-cta { gap: 0.8rem; }
-    .product-cta svg { transition: transform 0.2s; }
-    .product-card:hover .product-cta svg { transform: translateX(3px); }
-
-    /* hero sub-text for umbrella */
-    .hayba-hero-sub { color: #fff; }
-    .hayba-hero-sub strong { color: #fff; }
   </style>
 </head>
 <body>
@@ -122,7 +54,7 @@
   </div>
 
   <div class="hero-status">
-    <div class="hero-version">Hayba v0.1.0</div>
+    <div class="hero-version">Latest release: v0.1.0</div>
     <div class="hero-status-line">Early access</div>
   </div>
 </section>
@@ -150,12 +82,12 @@
 <!-- ═══════════════════════════════ PIPELINES ═══════════════════════════════ -->
 <section class="feature-row" id="pipelines">
   <div class="feature-row-text">
-    <div class="feature-eyebrow">Toolkit · Unreal Engine 5.8</div>
+    <div class="feature-eyebrow">Toolkit · Unreal Engine 5.7+</div>
     <h2>An MCP your LLM<br>can author with.</h2>
   </div>
   <div class="feature-row-body">
     <p>Hayba is an open-source toolkit that lets an AI agent work inside a live Unreal Engine editor. A Node/TypeScript MCP server talks to a C++ editor plugin, so the agent can place actors, build PCG graphs, author materials, Blueprints and UMG widgets, and check its own work.</p>
-    <p>400+ editor tools across 30+ editor domains. The server starts with 7 tools; your agent searches for the rest and calls them on demand. The Capabilities panel turns tools off per tool or per domain.</p>
+    <p>The current source on main has 400+ editor tools across 30+ editor domains. The server starts with 7 tools; your agent searches for the rest and calls them on demand.</p>
     <a href="/docs/" class="feature-cta">Docs →</a>
   </div>
 </section>
@@ -164,11 +96,11 @@
 <section class="feature-row" id="workflow">
   <div class="feature-row-text">
     <div class="feature-eyebrow">Workflow</div>
-    <h2>Nothing destructive runs<br>until you approve.</h2>
+    <h2>Destructive steps wait<br>for your approval.</h2>
   </div>
   <div class="feature-row-body">
-    <p>Drive Hayba from your MCP host, such as Claude Code or Claude Desktop, or chat with the editor directly from the Hayba panel using your own API key.</p>
-    <p>Plan Mode is on by default: the agent proposes a plan, and destructive steps wait until you click Approve in the editor. Editor edits land on Unreal's normal undo stack, so Ctrl+Z works (not during Play-In-Editor).</p>
+    <p>Drive Hayba from your MCP host, such as Claude Code or Claude Desktop, or chat with the editor directly from the Hayba panel, using your own API key for cloud models, or a local model (Ollama, LM Studio) with no key.</p>
+    <p>With Plan Mode on (the default), destructive steps wait until you approve the plan. Most editor edits land on Unreal's normal undo stack, so Ctrl+Z works — not during Play-In-Editor, and not for asset deletes, saves to disk or arbitrary Python.</p>
     <a href="/docs/#first-run" class="feature-cta">First run →</a>
   </div>
 </section>
@@ -181,7 +113,7 @@
   </div>
   <div class="feature-row-body">
     <p>The MCP server and the Unreal editor plugin are MIT-licensed and on GitHub. The toolkit runs locally with your own MCP client or your own API key; no Hayba account is needed.</p>
-    <p>v0.1.0 is early access and runs on Windows. Install from source: clone the repo, build the MCP server, drop the plugin into your project's Plugins folder and compile.</p>
+    <p>The latest tagged release is v0.1.0 (early access), and Hayba runs on Windows. Install from source: clone the repo, build the MCP server, link the plugin into your project's Plugins folder and compile.</p>
     <a href="https://github.com/zajalist/hayba" target="_blank" rel="noopener" class="feature-cta">View source →</a>
     &nbsp;&nbsp;
     <a href="https://github.com/zajalist/hayba/releases" target="_blank" rel="noopener" class="feature-cta">Watch releases →</a>
@@ -242,15 +174,15 @@
 <div class="faq-list">
   <details class="faq-item">
     <summary>Is Hayba free?</summary>
-    <p>Hayba's source code is MIT-licensed and free to use. A hosted assistant, Hayba Pro, is coming. The open-source toolkit stays MIT and runs with your own model.</p>
+    <p>Yes, the toolkit is free to use. A hosted assistant, Hayba Pro, is coming. The open-source toolkit is MIT-licensed and runs with your own model.</p>
   </details>
   <details class="faq-item">
     <summary>Do I need an LLM API key?</summary>
-    <p>Not for Hayba itself. Connect your MCP client, such as Claude Code or Claude Desktop, and it uses the model it already has. The optional in-editor chat panel uses your own API key, for cloud or local models.</p>
+    <p>Not for Hayba itself. Connect your MCP client, such as Claude Code or Claude Desktop, and it uses the model it already has. The optional in-editor chat uses your own API key for cloud models, or a local model (Ollama, LM Studio) with no key.</p>
   </details>
   <details class="faq-item">
     <summary>Will this run on my machine?</summary>
-    <p>Hayba is built for Unreal Engine 5.8 on Windows; macOS and Linux are not supported yet. The MCP server is Node/TypeScript (Node.js 22.5 or newer) and the editor plugin is C++, compiled with Visual Studio 2022. There is no packaged installer yet: you build from source.</p>
+    <p>Hayba supports Unreal Engine 5.7+ on Windows; macOS and Linux are not supported yet. The MCP server is Node/TypeScript (Node.js 22.5 or newer) and the editor plugin is C++; building it needs Visual Studio with the C++ toolchain your Unreal Engine version requires. There is no packaged installer yet: you build from source.</p>
   </details>
   <details class="faq-item">
     <summary>Can I use Hayba commercially?</summary>
@@ -300,8 +232,9 @@
       <img src="assets/Logo.svg" alt="Hayba" />
     </a>
     <div class="footer-copy">
-      <p>© 2026 Hayba. An AI-agent toolkit for Unreal Engine.</p>
+      <p>© 2026 zajalist. Hayba is an AI-agent toolkit for Unreal Engine.</p>
       <p class="footer-fine">Built in the open on GitHub.</p>
+      <p class="footer-fine">Unreal® is a trademark or registered trademark of Epic Games, Inc. Other trademarks belong to their owners.</p>
     </div>
     <div class="footer-legal">
       <a href="https://github.com/zajalist/hayba/blob/main/LICENSE" target="_blank" rel="noopener">MIT License</a>

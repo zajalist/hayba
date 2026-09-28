@@ -4,7 +4,6 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Hayba — Documentation</title>
-<link href="https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;500;600;700&family=Charis+SIL:wght@400;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/style.css">
 <link rel="icon" type="image/svg+xml" href="/assets/Logo.svg">
 </head>
@@ -38,17 +37,18 @@
 
   <main class="docs-main">
     <div class="docs-eyebrow">DOCUMENTATION</div>
-    <h1 id="overview">Hayba v0.1.0</h1>
+    <h1 id="overview">Hayba</h1>
     <p class="docs-lead">
       An AI-agent toolkit for Unreal Engine: a Node/TypeScript MCP server plus a C++
-      editor plugin. v0.1.0 is early access; these notes cover it.
+      editor plugin. These notes cover the current source on main; the latest tagged
+      release is v0.1.0 (August 2026).
     </p>
 
     <section class="docs-section">
       <h2 id="install">Install</h2>
       <p>
-        Hayba builds from source on Windows, with Unreal Engine 5.8, Visual Studio 2022
-        and Node.js 22.5 or newer.
+        Hayba builds from source on Windows. You need UE 5.7 or 5.8, Visual Studio with the
+        C++ toolchain your Unreal Engine version requires, and Node.js 22.5 or newer.
       </p>
       <p>
         1. Clone and build the MCP server:
@@ -56,8 +56,14 @@
         <code>npm install</code> and <code>npm --prefix mcp-tools/hayba-mcp run build</code>.
       </p>
       <p>
-        2. Copy <code>unreal/HaybaMCPToolkit</code> into your project's <code>Plugins/</code>
-        folder, regenerate Visual Studio project files and compile.
+        2. Link the plugin into your project from an administrator prompt (or with Windows
+        Developer Mode on):
+        <code>mklink /D "&lt;YourProject&gt;\Plugins\HaybaMCPToolkit" "&lt;repo&gt;\unreal\HaybaMCPToolkit"</code>,
+        then regenerate Visual Studio project files and compile. The link lets the plugin find
+        the MCP server you just built. If you copy the plugin instead, set
+        <code>SidecarEntryPath</code> under <code>[HaybaMCPToolkit]</code> in your project's
+        <code>Saved/Config/WindowsEditor/EditorPerProjectUserSettings.ini</code> to the full path
+        of <code>mcp-tools/hayba-mcp/dist/index.js</code>.
       </p>
       <p>
         3. Register the server with your agent host. For Claude Code:
@@ -65,20 +71,21 @@
       </p>
       <p class="docs-status">
         <span class="docs-status-tag">WIP</span>
-        Full install guide is being written. In the meantime, see the
+        Full install guide is being written. The
         <a href="https://github.com/zajalist/hayba#readme" target="_blank" rel="noopener">repo README</a>
-        for the canonical setup.
+        has the same steps.
       </p>
     </section>
 
     <section class="docs-section">
       <h2 id="first-run">First run</h2>
       <p>
-        Open your project in Unreal Engine; the Hayba MCP Toolkit panel appears in the
-        toolbar. Pick <strong>Integrated</strong> (your MCP host drives the agent) or
-        <strong>API Key</strong> (chat with the editor directly using your own key).
-        Plan Mode is on by default, so destructive steps wait until you click Approve in
-        the Plan tab.
+        On first launch the Hayba MCP Toolkit tab opens by itself (later:
+        <strong>Window &gt; Tools &gt; Hayba MCP Toolkit</strong>, or the console command
+        <code>Hayba.MCP.Open</code>). Your MCP host drives the agent. To chat inside the
+        editor instead, set a provider (and key, for cloud models) under
+        <strong>Settings &gt; AI / LLM Backend</strong>. Plan Mode is on by default: approve
+        plans in the Plan tab.
       </p>
     </section>
 
@@ -87,13 +94,13 @@
       <p>
         Hayba speaks the Model Context Protocol over stdio. It works with Claude Code,
         Claude Desktop and other MCP clients. The agent places actors, builds PCG graphs,
-        and authors materials, Blueprints and UMG widgets inside a live Unreal Engine 5.8
+        and authors materials, Blueprints and UMG widgets inside a live Unreal Engine 5.7+
         editor.
       </p>
       <p>
-        400+ editor tools across 30+ editor domains. The server starts with 7 tools; the
-        agent searches the catalogue and calls the rest on demand. The Capabilities panel
-        turns tools off per tool or per domain.
+        The current source on main has 400+ editor tools across 30+ editor domains. The
+        server starts with 7 tools; the agent searches the catalogue and calls the rest on
+        demand.
       </p>
       <p class="docs-status"><span class="docs-status-tag">WIP</span> Full tools reference rolls out per-domain.</p>
     </section>

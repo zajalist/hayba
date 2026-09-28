@@ -18,13 +18,15 @@ index.html        landing page          main.js    nav/scroll behaviour
 style.css         global styles
 
 about/   app/   docs/   showcase/          ← each an index.html subpage
-assets/   logos (Logo.svg, Logo-white.svg)
+assets/   logos (Logo.svg, Logo-white.svg) · fonts/ (Noto Sans woff2 + OFL.txt)
 lib/      gl-quad.js · hero-field.js · ripples.js · starfield.js ·
           page-toc.js   (vanilla helpers, no bundler)
 ```
 
 The site collects no data: there are no forms, accounts or backend calls.
-Calls to action point at GitHub (source, releases, issues).
+Calls to action point at GitHub (source, releases, issues). Fonts are
+self-hosted (`assets/fonts`, SIL OFL 1.1), so pages make no third-party
+requests; only the outbound GitHub links leave the site.
 
 ## Routing
 

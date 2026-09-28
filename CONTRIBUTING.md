@@ -5,7 +5,7 @@ Thanks for considering a contribution. This document covers the dev loop, conven
 ## Dev setup
 
 You need:
-- **Unreal Engine 5.7** (Editor with C++ toolchain, Visual Studio 2022 17.10+).
+- **Unreal Engine 5.7+** (Editor with C++ toolchain; Visual Studio with the C++ toolchain your Unreal Engine version requires).
 - **Node ≥ 22.5** (see [`.nvmrc`](.nvmrc) — the codebase uses `node:sqlite`).
 - **Python 3.10+** and [`uv`](https://docs.astral.sh/uv/) if you're touching
   the visual sidecar.
@@ -18,8 +18,9 @@ npm --prefix mcp-tools/hayba-mcp test     # tsc --noEmit + vitest (the gate)
 npm --prefix mcp-tools/hayba-mcp run build:server   # TS -> dist (not `run build`, see below)
 ```
 
-The UE plugin lives under `unreal/HaybaMCPToolkit/`. Copy or symlink it into
-your UE project's `Plugins/` folder, regenerate VS files, recompile.
+The UE plugin lives under `unreal/HaybaMCPToolkit/`. Symlink it into your UE
+project's `Plugins/` folder (or copy it and set `SidecarEntryPath`; see the
+README Quick start), regenerate VS files, recompile.
 
 ## Repo layout
 

@@ -27,7 +27,7 @@ Verify in Studio that `SUPABASE_SERVICE_ROLE_KEY` is set in the function env.
 
 ## Invoking
 
-From the `/admin` page client:
+From an admin client (the static site no longer has an admin page):
 
 ```js
 await supabase.functions.invoke('approve-entry', { body: { id: 42 } });

@@ -5,28 +5,28 @@
 **The agentic engine for spatial and procedural world-building in Unreal Engine 5.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![UE 5.7](https://img.shields.io/badge/Unreal_Engine-5.7-blue.svg)](https://www.unrealengine.com/)
+[![UE 5.7+](https://img.shields.io/badge/Unreal_Engine-5.7+-blue.svg)](https://www.unrealengine.com/)
 [![MCP](https://img.shields.io/badge/Model_Context_Protocol-✓-7A8AB8.svg)](https://modelcontextprotocol.io)
-[![Tools](https://img.shields.io/badge/Tools-100+_across_30+_domains-green.svg)](#features)
+[![Tools](https://img.shields.io/badge/Tools-400+_across_30+_domains-green.svg)](#features)
 [![Node](https://img.shields.io/badge/Node-%E2%89%A522.5-339933.svg)](.nvmrc)
 
 </div>
 
 ---
 
-Hayba lets your AI agent (Claude / GPT / any MCP host) author UE5 scenes directly: spawn actors, build PCG graphs, validate physics, author materials, run sandboxed Python, and more — over a single MCP connection. **Spatial-first**: where every other MCP server treats UE as a 2D code repository, Hayba ships a PCG SQLite registry, a native 2D Slate cognitive map, and a visual grounding sidecar.
+Hayba lets your AI agent (Claude / GPT / any MCP host) author UE5 scenes directly: spawn actors, build PCG graphs, validate physics, author materials, run sandboxed Python, and more — over a single MCP connection. **Spatial-first**: Hayba ships a PCG SQLite registry, a native 2D Slate cognitive map, and a visual grounding sidecar.
 
 This repo is the UE5 MCP toolkit: the Node MCP server, the UE5 C++ editor plugin, the Python visual sidecar, and the public website.
 
 ## Features
 
-- **100+ tools across 30+ domains** — Actor / Level / Scene / Asset / Blueprint / Material / Foliage / Spline / World Partition / ISM / Physics / Python / Editor / Docs / PCG / Sequencer / Animation / Audio / Behavior Tree / Input / UI / Net / Mesh / Texture / Data / Project / Build / Test / Memory / Plan / Conventions, plus GAS and MetaSound as optional [satellite plugins](docs/adr/0008-satellite-plugins-earn-their-place.md)
+- **400+ editor tools across 30+ domains** — Actor / Level / Scene / Asset / Blueprint / Material / Foliage / Spline / World Partition / ISM / Physics / Python / Editor / Docs / PCG / Sequencer / Animation / Audio / Behavior Tree / Input / UI / Net / Mesh / Texture / Data / Project / Build / Test / Memory / Plan / Conventions, plus GAS and MetaSound as optional [satellite plugins](docs/adr/0008-satellite-plugins-earn-their-place.md)
 - **PCG SQLite registry** — 344 PCGEx nodes / 356 pins / 2270 properties scraped from C++ headers, queryable with semantic + structural intent
 - **Cognitive Map** — 2D top-down semantic clustering of every actor in the level, force-directed mindmap renderer
 - **Visual sidecar** — FastAPI + CLIP / SpatialCLIP / OWL-ViT for deep physics validation and spatial grounding, plus SAM segmentation for AI mask generation
 - **PLUMB constraint system** — a closed primitive set + Semantic Studio for authoring physical-asset profiles, masks, and quantified placement constraints, evaluated as a directional Verdict pre-commit
-- **Plan Mode + native transactions** — every destructive AI op wrapped in `GEditor->BeginTransaction` so Ctrl+Z just works
-- **Code Mode meta-tools** — 3 tools (`list_tool_categories` / `get_tool_signature` / `python_run`) reduce initial payload by 92%, full catalog discovered on demand
+- **Plan Mode + native transactions** — with Plan Mode on (the default), destructive steps wait until you approve the plan. Most editor edits land on Unreal's normal undo stack, so Ctrl+Z works — not during Play-In-Editor, and not for asset deletes, saves to disk or arbitrary Python.
+- **Deferred tool discovery** — the server starts with 7 tools; the agent searches the full catalogue and calls the rest on demand, which keeps the initial tool list small
 - **Multi-instance safe** — dynamic port allocation (52342-52350) + heartbeat registry so multiple UE instances coexist
 
 ## Repository layout
@@ -42,11 +42,26 @@ This repo is the UE5 MCP toolkit: the Node MCP server, the UE5 C++ editor plugin
 
 ## Quick start
 
-### 1. Install the UE plugin
+### 1. Build the MCP server
 
-Copy [`unreal/HaybaMCPToolkit/`](unreal/HaybaMCPToolkit) into your UE project's `Plugins/` folder, regenerate Visual Studio project files, recompile (UE 5.7+, VS 2022).
+```bash
+git clone https://github.com/zajalist/hayba.git
+cd hayba
+npm install                                  # all workspaces (Node ≥ 22.5)
+npm --prefix mcp-tools/hayba-mcp run build
+```
 
-### 2. Register the MCP server with your agent host
+### 2. Install the UE plugin
+
+Link [`unreal/HaybaMCPToolkit/`](unreal/HaybaMCPToolkit) into your UE project's `Plugins/` folder from an administrator prompt (or with Windows Developer Mode on):
+
+```bat
+mklink /D "<YourProject>\Plugins\HaybaMCPToolkit" "<repo>\unreal\HaybaMCPToolkit"
+```
+
+Then regenerate Visual Studio project files and recompile (Windows; UE 5.7 or 5.8; Visual Studio with the C++ toolchain your Unreal Engine version requires). The link lets the plugin find the MCP server you just built. If you copy the plugin instead, set `SidecarEntryPath` under `[HaybaMCPToolkit]` in `<YourProject>/Saved/Config/WindowsEditor/EditorPerProjectUserSettings.ini` to the full path of `mcp-tools/hayba-mcp/dist/index.js`.
+
+### 3. Register the MCP server with your agent host
 
 ```bash
 # Claude Code
@@ -65,9 +80,9 @@ claude mcp add hayba-toolkit -- node /path/to/hayba/mcp-tools/hayba-mcp/dist/ind
 }
 ```
 
-### 3. Run the editor
+### 4. Run the editor
 
-Open UE; the **Hayba MCP Toolkit** panel appears in the toolbar. Pick **Integrated** (your MCP host drives the agent) or **API Key** (in-editor chat drives Anthropic/OpenAI directly).
+On first launch the **Hayba MCP Toolkit** tab opens by itself (later: **Window > Tools > Hayba MCP Toolkit**, or the console command `Hayba.MCP.Open`). Your MCP host drives the agent. To chat inside the editor instead, set a provider (and key, for cloud models) under **Settings > AI / LLM Backend**. Plan Mode is on by default: approve plans in the Plan tab.
 
 Then ask Claude: *"Search the PCG node catalog for voronoi, propose a 3-step plan to author a Voronoi graph, and execute it after I approve."*
 

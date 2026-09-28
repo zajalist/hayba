@@ -7,13 +7,23 @@ protocol across two language boundaries — see [`docs/ARCHITECTURE.md`](../../d
 and [`CONTEXT.md`](../../CONTEXT.md).
 
 - **Plugin:** `HaybaMCPToolkit` · Editor module · `LoadingPhase: PostEngineInit`
-- **Engine:** UE 5.7.0 · depends on the `PCG` plugin
+- **Engine:** UE 5.7+ · depends on the `PCG` plugin
 - **Version:** see `HaybaMCPToolkit.uplugin`
 
 ## Install
 
-Copy this folder into your UE project's `Plugins/` directory, regenerate
-Visual Studio project files, and rebuild (UE 5.7+, Visual Studio 2022).
+Build the MCP server first (`npm install`, then
+`npm --prefix mcp-tools/hayba-mcp run build` from the repo root). Then link
+this folder into your UE project's `Plugins/` directory from an administrator
+prompt (or with Windows Developer Mode on), regenerate Visual Studio project
+files, and rebuild (Windows; UE 5.7 or 5.8; Visual Studio with the C++ toolchain your Unreal Engine version requires):
+
+```bat
+mklink /D "<YourProject>\Plugins\HaybaMCPToolkit" "<repo>\unreal\HaybaMCPToolkit"
+```
+
+The link lets the plugin find the built MCP server. If you copy the plugin instead, set `SidecarEntryPath` under `[HaybaMCPToolkit]` in `<YourProject>/Saved/Config/WindowsEditor/EditorPerProjectUserSettings.ini` to the full path of `mcp-tools/hayba-mcp/dist/index.js`.
+
 Build artifacts (`Binaries/`, `Intermediate/`, `Saved/`, `DerivedDataCache/`,
 `.vs/`) are intentionally **not** tracked — UBT regenerates them.
 
@@ -25,10 +35,10 @@ Node side (`mcp-tools/hayba-mcp/src/tcp-client.ts`) is the other adapter on
 this seam; the two must agree on the envelope. Port discovery is published
 to `Saved/HaybaMCP/instances/<pid>.json` for multi-editor setups.
 
-Every destructive command is wrapped in `GEditor->BeginTransaction` (Plan
-Mode) so `Ctrl+Z` works.
+Destructive commands run inside `GEditor->BeginTransaction`, and with Plan Mode
+on (the default) they wait until the user approves the plan. Most editor edits land on Unreal's normal undo stack, so Ctrl+Z works — not during Play-In-Editor, and not for asset deletes, saves to disk or arbitrary Python.
 
-## Command-handler domains (33)
+## Command-handler domains (30+)
 
 Each domain implements `IHaybaMCPHandler` (`GetCommands()` / `Handle()`),
 registered in `HaybaMCPModule`:
