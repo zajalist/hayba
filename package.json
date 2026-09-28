@@ -24,10 +24,10 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "eslint": "^10.8.0",
+    "eslint": "^10.11.0",
     "eslint-config-prettier": "^10.0.0",
-    "prettier": "^3.9.6",
-    "typescript-eslint": "^8.66.0"
+    "prettier": "^3.9.9",
+    "typescript-eslint": "^8.70.1"
   },
   "overrides": {
     "esbuild": "^0.25.0",
