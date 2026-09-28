@@ -25,6 +25,12 @@ PolyHaven / ambientCG / Sketchfab download returns `isError: true`
 does not.** Only **Fab** works end-to-end, because it routes to native
 `fab_download` in C++ and bypasses the TS gate.
 
+*(Correction, 2026-09-28: this was wrong. No C++ handler ever implemented
+`fab_download` or the other `fab_*` commands; the four Fab tools failed with
+"Unknown command" and have been removed. No source lands an asset in `/Game`
+end-to-end today, and the "Fab only" cell in the comparison table further down
+is wrong for the same reason.)*
+
 ### 2. Even ungated, the formats do not line up
 
 Native `asset_import` (`HaybaMCPAssetHandler.cpp:784`) accepts **only**

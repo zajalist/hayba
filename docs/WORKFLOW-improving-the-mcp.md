@@ -274,8 +274,9 @@ if it asserts the wrong contract.*
   `legacy-commands/sidecar.json`, the test is fiction.
 - `wire-command-names.test.ts` now enforces this statically. It also carries a
   `KNOWN_UNIMPLEMENTED` list of tools that dispatch commands the plugin has
-  never had (the four `fab_*`, `plan_mark_step`, `hayba_request_input`,
-  `hayba_get_user_response`). **Shrink that list; never grow it.**
+  never had (`plan_mark_step`, `hayba_request_input`,
+  `hayba_get_user_response`; the four `fab_*` left it when their tools were
+  removed). **Shrink that list; never grow it.**
 
 ### Step 4 — Close the seam bypasses
 ```

@@ -3282,7 +3282,8 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
   // editor-side integration that was never built, so every call answered
   // "unknown command", which reads as a stale plugin rather than a missing
   // feature. Download Fab content through the Epic Games Launcher or the
-  // in-editor Fab plugin, then use asset_import / asset_browse on the result.
+  // in-editor Fab plugin, then find it with hayba_asset_search /
+  // hayba_asset_browse.
 
   // ── Asset-source connectors (Poly Haven / ambientCG / Sketchfab) ────────
   {
