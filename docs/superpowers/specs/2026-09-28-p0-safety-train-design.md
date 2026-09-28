@@ -1397,3 +1397,8 @@ All critical and important findings were applied. These parts were merged into a
 - **Considered and rejected:** classifying `editor_stop_pie` and the drive commands against the `pie` resource. Skipping slot 4 for a PIE command that slot 2 authorized (R13) removes the deadlock without a new lock shape.
 - **Considered and rejected:** excluding only same-connection leases from `AnyBusyCommands`. The stricter rule (count every holder, the caller included) is simpler and fails closed; a tool releases its build leases before it starts PIE.
 - **Not decided here:** shipping T10 in Deploy B depends on D7, a maintainer decision. The spec requires D7 to be decided before the Deploy B window and defines both outcomes (§2.3, M6a/M6b).
+
+## Maintainer decisions added 2026-09-28 (during planning)
+
+- **R-1 (Python tools under T8):** Python-backed tool descriptors declare `read_only` when they only read. Anything undeclared is treated as a write, so it fails closed. Read tools flow freely while leases are held, and Python writes still need the lease.
+- **R-12 (read-like commands):** the 18 read-like commands the plan lists (e.g. `wait_for_idle`, `wait_for_shaders`) are classified as reads. They are allowed during PIE and are not treated as writes under `EnforcedForWrites`.
