@@ -9,6 +9,10 @@
 // The button is added here rather than in the HTML so it only appears when it works.
 
 const RESET_MS = 1800;
+// Macs (and iPads, which report MacIntel) copy with Command-C.
+const COPY_KEYS = /Mac|iPhone|iPad|iPod/i.test(
+  navigator.userAgentData?.platform || navigator.platform || '',
+) ? '⌘C' : 'Ctrl+C';
 
 export function mountCommandBlocks(root = document) {
   const blocks = Array.from(root.querySelectorAll('.docs-cmd'));
@@ -18,6 +22,15 @@ export function mountCommandBlocks(root = document) {
   announcer.className = 'sr-only';
   announcer.setAttribute('role', 'status');
   document.body.append(announcer);
+
+  // A live region speaks only when its text changes. Clearing it and setting the
+  // message a moment later means copying the same block twice is announced twice.
+  let announceTimer = 0;
+  const announce = (message) => {
+    clearTimeout(announceTimer);
+    announcer.textContent = '';
+    announceTimer = setTimeout(() => { announcer.textContent = message; }, 100);
+  };
 
   const observer = 'ResizeObserver' in window
     ? new ResizeObserver((entries) => entries.forEach((e) => syncScrollFocus(e.target)))
@@ -32,23 +45,26 @@ export function mountCommandBlocks(root = document) {
     btn.type = 'button';
     btn.className = 'docs-cmd-copy';
     btn.textContent = 'Copy';
-    btn.setAttribute('aria-label', `Copy ${block.dataset.copyName || 'code'}`);
+    const name = block.dataset.copyName || 'code';
+    btn.setAttribute('aria-label', `Copy ${name}`);
     let resetTimer = 0;
 
     btn.addEventListener('click', async () => {
       const ok = await copyText(pre.textContent.replace(/\n+$/, ''));
       btn.classList.toggle('is-copied', ok);
       btn.classList.toggle('is-failed', !ok);
-      btn.textContent = ok ? 'Copied' : 'Press Ctrl+C';
-      announcer.textContent = ok
-        ? 'Copied to clipboard.'
-        : 'Copy failed. The text is selected; press Ctrl+C to copy it.';
+      btn.textContent = ok ? 'Copied' : `Press ${COPY_KEYS}`;
+      const message = ok
+        ? `Copied ${name}.`
+        : `Couldn't copy the ${name}. The text is selected; press ${COPY_KEYS} to copy it.`;
+      announce(message);
       if (!ok) selectContents(pre);
       clearTimeout(resetTimer);
       resetTimer = setTimeout(() => {
         btn.textContent = 'Copy';
         btn.classList.remove('is-copied', 'is-failed');
-        announcer.textContent = '';
+        // Leave a newer announcement from another block alone.
+        if (announcer.textContent === message) announcer.textContent = '';
       }, RESET_MS);
     });
 
@@ -57,7 +73,7 @@ export function mountCommandBlocks(root = document) {
     observer?.observe(pre);
   }
 
-  return { stop() { observer?.disconnect(); announcer.remove(); } };
+  return { stop() { observer?.disconnect(); clearTimeout(announceTimer); announcer.remove(); } };
 }
 
 // A block that overflows sideways needs a tab stop so keyboard users can scroll it.

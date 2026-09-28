@@ -56,6 +56,7 @@
   --status-green:   #4db38a;
   --status-orange:  #B56A1D;
   --status-red:     #e06464;
+  --status-red-text: #e87474; /* status red lifted to 5:1 on --bg-base, for small text */
   --font-ui:   'Segoe UI', 'Noto Sans', system-ui, sans-serif;
   --font-mono: 'Consolas', 'Noto Sans Mono', monospace;
   /* Marketing-only aliases, mapped to the new theme. */
@@ -78,6 +79,9 @@
 }
 
 html { scroll-behavior: smooth; }
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+}
 body {
   background: var(--bg);
   color: var(--text);
@@ -151,6 +155,103 @@ body {
   transition: transform 0.28s var(--ease-out);
 }
 .nav-links a:hover::after { transform: scaleX(1); }
+#mainNav a:focus-visible,
+.nav-menu-btn:focus-visible {
+  outline: 2px solid var(--accent-text);
+  outline-offset: -4px; /* drawn inside: #mainNav clips its overflow on desktop */
+  border-radius: 3px;
+}
+.nav-menu-btn:focus-visible { outline-offset: 2px; }
+
+/* Menu button: shown only on phones, and only once main.js has wired it up. */
+.nav-menu-btn {
+  display: none;
+  align-items: center; gap: 10px;
+  min-height: 36px;
+  padding: 0 12px 0 14px;
+  font: 500 12.5px var(--font-ui);
+  letter-spacing: 0.01em;
+  color: var(--text-secondary);
+  background: transparent;
+  border: 1px solid var(--border-soft);
+  border-radius: 3px;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+.nav-menu-btn:hover,
+.nav-menu-btn[aria-expanded="true"] {
+  color: var(--text-primary);
+  border-color: var(--accent-glow);
+}
+.nav-menu-icon {
+  position: relative;
+  width: 12px; height: 7px;
+}
+.nav-menu-icon::before,
+.nav-menu-icon::after {
+  content: '';
+  position: absolute; left: 0; right: 0;
+  height: 1px;
+  background: currentColor;
+  transition: transform 0.2s var(--ease-out);
+}
+.nav-menu-icon::before { top: 0; }
+.nav-menu-icon::after { bottom: 0; }
+.nav-menu-btn[aria-expanded="true"] .nav-menu-icon::before { transform: translateY(3px) rotate(45deg); }
+.nav-menu-btn[aria-expanded="true"] .nav-menu-icon::after { transform: translateY(-3px) rotate(-45deg); }
+
+/* Phones: the logo sits at the left. main.js collapses the links behind the
+   Menu button, which opens them as a panel under the bar. Without JavaScript
+   (#mainNav has no .has-menu) the links wrap onto extra rows instead. */
+@media (max-width: 720px) {
+  #mainNav { padding: 0; overflow: visible; }
+  .nav-inner {
+    align-self: stretch;
+    width: 100%;
+    padding: 0 16px;
+    gap: 8px;
+  }
+  .nav-sep { display: none; }
+  .nav-logo { flex: none; padding: 10px; margin-left: -10px; }
+
+  #mainNav:not(.has-menu) {
+    height: auto; min-height: 56px;
+    background: rgba(20, 22, 27, 0.92);
+  }
+  #mainNav:not(.has-menu) .nav-inner { padding: 6px 16px; }
+  #mainNav:not(.has-menu) .nav-links {
+    flex: 1 1 auto; min-width: 0;
+    flex-wrap: wrap; justify-content: flex-end;
+    gap: 0 2px;
+  }
+  #mainNav:not(.has-menu) .nav-links a { white-space: nowrap; padding: 10px 8px; }
+  #mainNav:not(.has-menu) .nav-links a::after { left: 8px; right: 8px; bottom: 6px; }
+
+  #mainNav.has-menu .nav-inner { justify-content: space-between; }
+  #mainNav.has-menu .nav-menu-btn { display: inline-flex; }
+  #mainNav.has-menu .nav-links { display: none; }
+  /* Near-opaque, not opaque: an opaque fixed bar over the hero's WebGL canvas
+     made Chrome's software compositor drop a bar-high strip of the canvas. */
+  #mainNav.menu-open {
+    background: rgba(20, 22, 27, 0.97);
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+  }
+  #mainNav.has-menu.menu-open .nav-links {
+    display: flex;
+    flex-direction: column; align-items: stretch; gap: 0;
+    position: absolute; top: 100%; left: 0; right: 0;
+    overflow: visible;
+    padding: 6px 0 10px;
+    background: #14161b;
+    border-bottom: 1px solid var(--border-mid);
+    box-shadow: 0 18px 36px rgba(0, 0, 0, 0.35);
+  }
+  #mainNav.has-menu .nav-links a {
+    padding: 12px 16px;
+    font-size: 14px;
+  }
+  #mainNav.has-menu .nav-links a::after { display: none; }
+}
 
 /* ══════════════ HERO ══════════════ */
 .hero {
@@ -571,7 +672,7 @@ body {
   position: absolute; left: 0; top: 3px;
   font: 700 11px/1 var(--font-mono);
   letter-spacing: 0.08em;
-  color: var(--accent);
+  color: var(--accent-text);
 }
 .docs-step-title {
   font-size: 15px; font-weight: 600;
@@ -594,6 +695,8 @@ body {
   border-bottom: 1px solid var(--border-mid);
 }
 .docs-cmd-label {
+  min-width: 0;
+  overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
   font-size: 10px; font-weight: 700;
   letter-spacing: 0.16em; text-transform: uppercase;
   color: var(--text-secondary);
@@ -615,6 +718,8 @@ body {
 }
 .docs-cmd pre code { font: inherit; color: inherit; }
 .docs-cmd-copy {
+  flex: none;
+  margin-left: auto;
   min-height: 26px;
   padding: 3px 12px;
   font: 600 11px var(--font-ui);
@@ -635,7 +740,10 @@ body {
   color: var(--accent-text);
   border-color: var(--accent-glow);
 }
-.docs-cmd-copy.is-failed { color: var(--status-red); }
+.docs-cmd-copy.is-failed { color: var(--status-red-text); }
+/* Keep the result states on the bar's own background so their text holds 4.5:1. */
+.docs-cmd-copy.is-copied,
+.docs-cmd-copy.is-failed { background: transparent; }
 
 /* Read by screen readers, not shown (e.g. the copy-button announcements). */
 .sr-only {
