@@ -31,17 +31,17 @@ Path prefixes used in tasks: `P` = `unreal/HaybaMCPToolkit/Source/HaybaMCPToolki
 - **Owners:** trimmed, control chars → `?`, ≤128. `conn:N` only from connection N and `local` only from ConnId 0 (T9). Node reads `HAYBA_AGENT_ID` for the owner and `HAYBA_LEASE_ID` for the lease, never `HAYBA_LEASE` or `HAYBA_LEASE_TOKEN`.
 - **Save refusal:** `package_read_only` is never renamed; the hint is ≤480 chars; Hayba never clears read-only flags; the preflight comes strictly before the first mutation; `python_run` always runs with `EPythonCommandFlags::Unattended`; `level_save` sets `GIsRunningUnattendedScript` around `SaveCurrentLevel`.
 - **Response limits** (router): `MaxStringChars` 512, `MaxTopLevelFields` 20 (32 for `editor_get_state`), `MaxArrayItems` 50; correctness fields go on the never-drop list; `pie_blocked` lists ≤16 assets.
-- **Plan rulings:** new TS tests go in new files (R11); the only `index.ts` hunk is T2.5's `editor_get_state` descriptor; never touch the main checkout's uncommitted files (`P/Public/HaybaMCPAssetGuard.h`, `P/Private/handlers/HaybaMCPAssetHandler.cpp`, `TS/tools/tool-executor.test.ts`, `TS/tools/heavy-ops.ts`, `TS/tools/asset/asset-delete.ts` and its test); one refusal builder (R2); no new field on `FHaybaHandlerResult` and no `Public/IHaybaMCPHandler.h` change (R3); ADR-0011 is editor_unsafe and ADR-0012 is editor-state guards (R8).
+- **Plan rulings:** R11 protects the files that carry someone else's uncommitted work: no task adds a case to `TS/tools/tool-executor.test.ts` or `TS/tools/asset/asset-delete.test.ts` (the item designs' `tool-executor.test.ts` cases live in the new `TS/tools/ue-refusal-codes.test.ts`), and a new suite gets a new file. Every other existing test file may be extended by the task that owns it, as the spec's own task lists do (`python-run.test.ts`, `check-ue-status.test.ts`, `editor-get-state.test.ts`, `lease-keeper.test.ts`, `tcp-client.test.ts`, `batch-tools.test.ts`, `secret-redaction.test.ts`, `access-policy-drift.test.ts`). The only `index.ts` hunk is T2.5's `editor_get_state` descriptor; never touch the main checkout's uncommitted files (`P/Public/HaybaMCPAssetGuard.h`, `P/Private/handlers/HaybaMCPAssetHandler.cpp`, `TS/tools/tool-executor.test.ts`, `TS/tools/heavy-ops.ts`, `TS/tools/asset/asset-delete.ts` and its test); one refusal builder (R2); no new field on `FHaybaHandlerResult` and no `Public/IHaybaMCPHandler.h` change (R3); ADR-0011 is editor_unsafe and ADR-0012 is editor-state guards (R8).
 - **Five layers** for any new command: `GetCommands` + `Handle`, the sidecar or TS descriptor, `returns`, the `agent_callable` / `has_ts_wrapper` flags, and `list-tool-categories.ts`. Raw TCP works after layer 1, so it looks done early. The C++ registration and the Node `executeCommand` land in the same commit (`wire-command-names.test.ts`).
-- **Tests:** filter with `Hayba`, never `Hayba.MCP` (the narrower prefix silently skips whole files). Verify exact names against `SCR/p0-expected-automation-tests.txt` with `SCR/check-automation-report.mjs`; never trust a count or "Result: Succeeded". Router tests use unique owners `hayba-test-<guid8>`, ConnIds ≥900000, assets under `/Game/__HaybaTest__/…`, release and forget in `ON_SCOPE_EXIT`, and assert exact codes. Every test that can mark the editor unsafe runs inside `FScopedOverrideForTests` (R-7). Anything that can fault, save, switch worlds or start real PIE is an owned child, never on the InProcess allowlist. Only `NoErrorSaveSurvivesMissedPreflight` declares `AddExpectedError("as it is read only")`. Latent tests have a hard 10 s cap and must report Success.
+- **Tests:** filter with `Hayba`, never `Hayba.MCP` (the narrower prefix silently skips whole files). Verify exact names against `SCR/p0-expected-automation-tests.txt` with `SCR/check-automation-report.mjs`; never trust a count or "Result: Succeeded". Router tests use unique owners `hayba-test-<guid8>`, ConnIds ≥900000, assets under `/Game/__HaybaTest__/…`, release and forget in `ON_SCOPE_EXIT`, and assert exact codes. From T6.2 on, a test that sends an owner-less write or asserts who `other_owners` names declares `HaybaMCPLeaseTest::FScopedCleanPresence` first: the headless run is one process, and owners named on fake connections stay present. Every test that can mark the editor unsafe runs inside `FScopedOverrideForTests` (R-7). Anything that can fault, save, switch worlds or start real PIE is an owned child, never on the InProcess allowlist. Only `NoErrorSaveSurvivesMissedPreflight` declares `AddExpectedError("as it is read only")`. Latent tests have a hard 10 s cap and must report Success.
 - **Builds:** every deploy is a full editor rebuild with the editor closed; Live Coding cannot change class layout and is only for iterating on handler bodies. A new `.cpp` can be silently omitted from the first build, so build twice or check the names (R-30). C++ builds and automation run only on the throwaway UE 5.8 scratch host `D:/UEScratch/h58` with **copied** plugins (never symlinked; satellites symlinked to main go untested). Never build into or launch the maintainer's editor or any project under `D:/UnrealEngine` (the consumer, geoforge, template, Aphrosia). Never `robocopy /MIR` into the consumer's Plugins. Never connect to 52342–52350 from inside `python_run`. Deploying into the consumer happens only in its closed-editor window, through a handoff document.
 - **TS gate** (local; CI is unreliable and is not mentioned in the repo): in `mcp-tools/hayba-mcp`, `npx tsc --noEmit`, `npx vitest run`, `npm run lint:legacy-wrappers`, and `npm run build:server` before any live check. Baseline on this branch: 211 files, 2356 passed, 1 skipped. Wire tests `vi.mock('../../tcp-client.js')`. Contract tests fail closed (minimum file and match counts). Every router edit runs the whole vitest suite: 14 test files scan `HaybaMCPCommandHandler.cpp` (C14). A grep-based guard that is not taught a new form in the same commit fails open.
 - **Commits:** conventional messages, **no Co-Authored-By trailer**, no competitor product names, no "ported from" framing. Work lands on `fix/p0-safety` (worktree `D:/Hackathons/hayba/.worktrees/p0-safety`); deploy and trunk merges use their own branches and worktrees; push when ready.
 
 ## Review Focus
 
-1. **R-1: the Python factory never declares `read_only`**, so after T8 every python-factory read tool conflicts with any other owner's lease (bpgraph's `asset:` build leases included). Owner: T8.2 Step 1 (maintainer ruling A or B), T8.3; pinned by `Hayba.MCP.Lease.PythonRunClassification`, `Hayba.MCP.Lease.EnforcedForWritesTwoOwners` and, under option A, the `PyToolDescriptor.readOnly` payload tests.
-2. **R-12: read-like commands outside every Read set** get `pie_active` during a user Play from Deploy A and become WriteScoped after T8. Owner: T2.3 (adds `wait_for_idle`, `wait_for_shaders`; `ReadCommands()` 53 → 55); pinned by `Hayba.MCP.State.PieSafeDrift` (prints the refused list for maintainer sign-off) and `Hayba.MCP.Lease.ReadClassDrift` (prints every Read → WriteScoped move).
+1. **R-1 (decided 2026-09-28, spec "Maintainer decisions added 2026-09-28"): Python-backed tool descriptors declare `read_only` when they only read; anything undeclared is a write and fails closed.** Without the declarations every python-factory read tool would conflict with any other owner's lease after T8 (bpgraph's `asset:` build leases included). Owner: T8.3 Step 5 (`PyToolDescriptor.readOnly` on the 47 reviewed read tools; `seq_open` and `niagara_capability_probe` stay undeclared); pinned by `Hayba.MCP.Lease.PythonRunClassification`, `Hayba.MCP.Lease.EnforcedForWritesTwoOwners` and the `python read declarations (R-1)` contract in `lease-enforcement-contract.test.ts`.
+2. **R-12 (decided 2026-09-28, same section of the spec): the 18 read-like commands are reads.** They are allowed during PIE and are not writes under `EnforcedForWrites`: `wait_for_idle`, `wait_for_shaders`, `asset_validate`, `material_validate`, `mesh_audit`, `mesh_list_dynamic`, `mesh_topology_stats`, `metasound_inspect`, `metasound_list`, `pcg_export_graph`, `pcg_read_node_output`, `pcg_validate_graph`, `placement_validate`, `scene_export`, `scene_validate_physics`, `texture_audit`, `ui_measure_text`, `copilot_get_key`. Owner: T2.3 (adds all 18; `ReadCommands()` 53 → 71); pinned by `Hayba.MCP.State.PieSafeDrift` (its expected list names them, and it prints what is still refused) and `Hayba.MCP.Lease.ReadClassDrift` (none of the 18 may appear in its Read → WriteScoped list). They stay refused while the editor is unsafe: the unsafe allowlist is built from `UnsafeReads()`, not from `ReadCommands()`.
 3. **R-7: one leaked real fault poisons the whole single-process headless run.** Owner: T1.2/T1.3; pinned by `FScopedOverrideForTests` swapping in a fresh state, every `Hayba.MCP.Health.*` test asserting `!IsUnsafe()` at exit, and T1.6's grep for stray `editor_unsafe_restart_required` lines.
 4. **R-3: headless and owned-child runs are `-unattended`**, so modal-dialog tests pass even without the fix. Owner: T5.2; pinned by `HaybaMCPUnattendedProbe` inside `Hayba.MCP.Save.ReadOnly.LevelSaveRefusesWithoutModal` and `…PythonMapSaveReturnsWithoutModal`, `save-site-contract.test.ts`, and the GUI ladder steps GB.2 B4/B5 (the only real modal check).
 5. **R-9/R-18: one-connection-per-call raw clients and log storms** (owner churn, orphaned bound leases, lost "repeated N more times" lines undercounting M2). Owner: T4.2 (`FOncePerKey` cap, `bind_connection:false` hint), T6.2 (limiter plus 30 s drain ticker); pinned by `Hayba.MCP.Lease.ProcessingLogOwner` (one Warning plus one drained line for 50 identical conflicts) and ladder step GB.2 B10.
@@ -56,7 +56,7 @@ Path prefixes used in tasks: `P` = `unreal/HaybaMCPToolkit/Source/HaybaMCPToolki
 |---|---|---|
 | `SCR/check-automation-report.mjs` | Exact-name check of a UE `index.json` against the manifest; `--allow-fail`, `--min-total`, `--self-test` | T0.2 |
 | `SCR/p0-expected-automation-tests.txt` | One full test name per line, `# T<n>` sections; `#` lines are comments | T0.2 seeds, each task appends |
-| `SCR/p0-live-ladder.mjs` | Persistent-socket live ladder for the scratch GUI host (`--deploy a\|b\|c`) | GA.2, extended by GB.2, GC.2 |
+| `SCR/p0-live-ladder.mjs` | Persistent-socket live ladder for the scratch GUI host (`--deploy a\|b\|c`; `b-cut` only when GB.0 is taken) | GA.2, extended by GB.2, GC.2 (and GB.0) |
 | `P/Private/HaybaMCPCommandSets.h` | Pure named command sets (R12) | T1.1; T2.3 (+2 reads), T8.2 (`IsReadSetCommand`), T9.2 (`lease_adopt`) |
 | `P/Private/HaybaMCPHealthPolicy.h` | Pure fault classification, causes, codes, unsafe allowlist, pinned texts | T1.1 |
 | `P/Private/HaybaMCPWarningLimiter.h` | Pure `FWarningLimiter` | T1.1 |
@@ -114,11 +114,11 @@ Path prefixes used in tasks: `P` = `unreal/HaybaMCPToolkit/Source/HaybaMCPToolki
 | `TS/tools/editor/editor-get-state.ts`, `TS/tools/index.ts` (one hunk) | T2.5 |
 | `TS/lease-keeper.ts`, `TS/tools/lease/lease-tools.ts`, `TS/tools/batch/batch-tools.ts` | T4.3, T7.3, T8.3, T9.2 |
 | `TS/legacy-commands/sidecar.json`, `TS/tools/ui/ui-save-widget.ts` | T5.3 |
-| `TS/tools/py-tool-factory.ts`, `TS/tools/ue-python.ts` | T8.3 (only under the R-1 option A ruling) |
+| `TS/tools/py-tool-factory.ts`, `TS/tools/ue-python.ts`, the ten `TS/tools/*/*-py-tools.ts` files | T8.3 (R-1: `readOnly` on the 47 reviewed read tools) |
 | `SCR/audit-crash-threat-model.mjs`, `TS/tools/__tests__/seh-postprocessing-gate.test.ts` | T1.3 (same commit that removes the old text, C13) |
 | `SCR/invoke-tcp-command.ps1` | GA.2 (`-Owner`, `-Lease`) |
 | `docs/adr/0010-multi-agent-editor-leases.md`, `CONTEXT.md`, `CHANGELOG.md` | T3.1, T4.4, T7.3, T8.3, T9.3 (CHANGELOG also T1.5, T10.1) |
-| `<host-kit>/*` (the consumer project's host-tools folder, which holds `editor_gate.py` and `bpgraph.mjs`) | T4.4, T8.3, T9.3 |
+| `<host-kit>/*` (the consumer project's host-tools folder, which holds `editor_gate.py` and `bpgraph.mjs`) | GA.0, T4.4, T8.3, T9.3 |
 
 ## Task Order and Deploys
 
@@ -128,26 +128,26 @@ Tasks land on `fix/p0-safety` in the order below; each ends in commits that buil
 |---|---|---|---|
 | 1 | T0.1 scratch host, T0.2 checker + manifest, T0.3 baseline | none | infra (T0.2 commits to `fix/p0-safety`) |
 | 2 | **S0.1 integration step 0**: merge `feat/multi-agent-leases` into the brain-client trunk | T0.1, T0.2; runs in parallel with T1–T3 and never touches `fix/p0-safety` | trunk PR; GA.5, GB.5 and GC.5 wait for it |
-| 3 | T1.1 → T1.2 → T1.3 → {T1.4, T1.5} → T1.6 | T0 | Deploy A |
+| 3 | T1.1 → T1.2 → T1.3 → T1.4 → T1.5 → T1.6 | T0 (T1.4 and T1.5 touch different files and may be developed side by side, but they land in this order: the vitest file counts in both assume it) | Deploy A |
 | 4 | T2.1 → T2.2 → T2.3 → T2.4 → T2.5 (needs T2.3 and T2.4) → T2.6 | T1 (T2.1 needs only T1.1) | Deploy A |
 | 5 | T3.1 → T3.2 → T3.3 | T2.1 (T3.1), T2.3 (T3.2) | Deploy A |
-| 6 | **GA.1** gate → GA.2 live ladder A1–A8 → GA.3 handoff + tag `p0-deploy-a` → GA.4 merge into `<deploy-branch>` → GA.5 trunk merge | T3.3; GA.5 also needs S0.1 merged | **Deploy A** |
+| 6 | GA.0 Deploy A host kit → **GA.1** gate → GA.2 live ladder A1–A8 → GA.3 handoff + tag `p0-deploy-a` → GA.4 merge into `<deploy-branch>` → GA.5 trunk merge | T3.3 (GA.0 needs only T1.3 and T2.3 for the wire fields); GA.5 also needs S0.1 merged | **Deploy A** |
 | 7 | T4.1 → T4.2 → {T4.3, T4.4} → T4.5 | T4.1 needs only T0; T4.2 needs T2.4 (latent helper) | Deploy B |
 | 8 | T5.1 → T5.2 → T5.3 → T5.4 | T1.2 (T5.1), T2.3 (T5.3, `IsWireRefusalCode`) | Deploy B |
 | 9 | T6.1 → T6.2 → T6.3 | T1.1 (T6.1), T4.2 (T6.2) | Deploy B |
 | 10 | T7.1 → T7.2 → T7.3 → T7.4 | T4.1 (T7.1), T6.2 (T7.2), T4.3 (T7.3) | Deploy B |
 | 11 | T8.1 → T8.2 → T8.3 → T8.4 | T6, T7 (D1: never without T4) | Deploy B |
 | 12 | T10.1 | T2.2, T3.2 | Deploy B |
-| 13 | **GB.1** gate → GB.2 ladder B1–B10 → GB.3 handoff + tag `p0-deploy-b` → GB.4 deploy-branch merge (anim save fixups) → GB.5 trunk merge | T4.5, T5.4, T6.3, T7.4, T8.4, T10.1 | **Deploy B** |
+| 13 | (GB.0 only when the cut line is taken) → **GB.1** gate → GB.2 ladder B1–B10 → GB.3 handoff + tag `p0-deploy-b` → GB.4 deploy-branch merge (anim save fixups) → GB.5 trunk merge | T4.5, T5.4, T6.3, T7.4, T8.4, T10.1 | **Deploy B** |
 | 14 | T9.1 → T9.2 → T9.3 | GB.3 (host `HAYBA_AGENT_ID` step, §5.3) | Deploy C |
 | 15 | **GC.1** gate → GC.2 ladder C1–C3 → GC.3 handoff + tag `p0-deploy-c` → GC.4 deploy-branch merge → GC.5 trunk merge | T9.3 | **Deploy C** |
 
 - **Deploy boundaries.** A = T1–T3 (safe with no host change; M6a moves only with the §5.1 bpgraph lease step). B = T4–T8 plus T10 (requires the §5.2 host kit, `HAYBA_AGENT_ID` per lane, no `HAYBA_LEASE` in any MCP server env). C = T9 (requires §5.3). If the consumer takes one window, A and B ship together with the §5.2 prerequisite.
-- **Cut line.** T4–T6 can ship without T7/T8; enforcement then stays Advisory. T8 never ships without T4.
+- **Cut line.** T4–T6 can ship without T7/T8; enforcement then stays Advisory. T8 never ships without T4. GB.0 is the procedure for that variant (which manifest sections and ladder steps apply, and which handoff paragraphs change); T10 ships under the cut as well, because it depends only on T2.2 and T3.2.
 - **Manifest totals** (8 existing names plus new ones): Deploy A 41 (T1 13, T2 15, T3 5), Deploy B 72 (+ T4 5, T5 12, T6 3, T7 7, T8 4; T10 extends `UserPlayDecision` and adds no name), Deploy C 77 (+ T9 5). `Hayba.MCP.State.RealPIE` is optional and runs alone with `-HaybaRealPIETests`.
 - **Integration step 0.** `feat/hayba-brain-client` does not contain this train's base; S0.1 merges `feat/multi-agent-leases` into it first (six known conflicts) and runs its own gate. The trunk worktree moved during planning, so S0.1 and GA.5/GB.5/GC.5 base on `origin/feat/hayba-brain-client`.
 
-Ids such as C4 or R-12, router hunk letters, and references to "the ledger" or "ledger §5.4" point to Appendix A at the end of this plan, a reference copy of the planning ledger's cited sections.
+Ids such as C4 or R-12 and the router hunk letters point to Appendix A at the end of this plan, a reference copy of the planning ledger's cited sections: C ids are in A.0, router hunks in A.1.4, pinned user texts in A.2.10, R- ids in A.4, and the build, command, ladder and handoff rules in A.5.2 to A.5.5. Every citation names an appendix section that exists; a bare `§n` always means the spec.
 
 ### Cross-task resolutions applied in this plan
 
@@ -157,18 +157,23 @@ The task sections were written in parallel against one interface ledger. These p
 2. **The 5.7/5.8 authorizer guard** is T2.2's `#if UE_VERSION_OLDER_THAN(5, 8, 0)` (5.7 branch) / `#else` (5.8 branch); T10.1 edits those branches.
 3. **One gate drain format.** T2.3's `LogPieActiveRefusal` and T3.2's `LogAssetBusy` call T1.3's `LogDrainedGateRefusals()` before `Note` and use `FWarningLimiter::PreviousWindowSuffix`. Known limit: T6.2's 30 s ticker drains lease warnings only, so a gate key's last window prints its "repeated" line on the next gate refusal of any key. M2 counts lease warnings, so the metric is unaffected.
 4. **Slot 3 under `EnforcedForWrites`.** T3.2's `CurrentAssetBusyMode()` maps Off and Advisory explicitly and every stronger mode to Refusing, so T8.1 makes no slot-3 edit; its `EnforcedForWritesTwoOwners` slot-3 case pins the behaviour.
-5. **`ReadCommands()` is 55 names from T2.3 on** (`wait_for_idle`, `wait_for_shaders`). T2.3 updates T1's size pin; T8.2 does not re-add them.
+5. **`ReadCommands()` is 71 names from T2.3 on** (the 53 of T1.1 plus the 18 R-12 reads). T2.3 updates T1's size pin; T8.2 does not re-add them.
 6. **`FBusyAsset`, `EPlayRequestKind`, `PlayVetoOverrideWindowSeconds`, `FPlayDecision`** are defined in T2.1; T3.1 inserts its busy block after `FBusyAsset` and never redefines it.
 7. **The R13 lease-gate skip (`bPieAuthorized`)** is created in T2.3; T8.1 keeps it when it rebuilds slot 4.
 8. **`FScopedOverrideForTests` logs and counts** the fault Error line (`FaultErrorLineCount()`); tests declare the expected Error line.
-9. **Live fault trigger.** GA.2's ladder step A7 uses `unreal.log_error('SystemError: unknown opcode')`, the path T1.3's marker scan reads; a raised `SystemError` is an ordinary script error by design (R-15).
+9. **Live fault trigger.** GA.2's ladder step A7 uses `unreal.log_error('SystemError: unknown opcode')`, one of the two paths T1.3's marker scan reads. The other is the text of an exception whose type is exactly the built-in `SystemError` (spec T1 design 7: "the captured LogPython and exception text"). Stdout, stderr and a subclass of `SystemError` never count (R-15).
 10. **T7 supersedes three T4 wire expectations.** T7.2 updates `Hayba.MCP.Lease.WireRoundTrip` (`lease_renew {}` renews by owner; `lease_release {}` and `{lease_id, ticket}` answer `[bad_request]`), and T7.3 extends T4.3's lease-tool schemas and handlers (it does not replace them) and updates T4.3's `lease-wire.test.ts` cases to match.
-11. **`ProcessBatchStep` gains `BatchOwner` in T9.1**, which also updates the three test call sites written earlier (T1.4 `BatchStepRefusedWhileUnsafe`, T6.2 `ProcessingLogOwner`, T8.2 `EnforcedForWritesTwoOwners`). T9.2 also moves T1's `ControlPlaneCommands()` size pin from 18 to 19.
+11. **`ProcessBatchStep` gains `BatchOwner` in T9.1**, which also updates the three test call sites written earlier (T1.4 `BatchStepRefusedWhileUnsafe`, T6.2 `ProcessingLogOwner`, T8.2 `EnforcedForWritesTwoOwners`). T9.1 Step 14 also gives `ProcessingLogOwner` its post-T9 expectations (`via: envelope … lease: not_bound`, and `Ctx.Caller` on its hand-built contexts), and T9.1 Step 7 moves T6.2's contract from `ResolveOwner(Parsed, …)` to `ResolveCaller(EnvelopeOwner, CallerContext->ConnId, EnvelopeLease)`. T9.2 also moves T1's `ControlPlaneCommands()` size pin from 18 to 19.
 12. **Manifest counts and R0.** `Hayba.MCP.Lease.AssetWrites` (from the `001c0537` cherry-pick) is a manifest name, so the totals are 41/72/77; T10 adds no `# T10` section. Every gate reads R0 from T0.3's report `D:\UEScratch\reports\54c4744c\index.json`.
 13. **T3.2's `building`** replaces T2.3's exact statement `Out->SetArrayField(TEXT("building"), TArray<TSharedPtr<FJsonValue>>());`.
 14. **Scratch paths.** Probe scripts that are not in the repo live under `D:/UEScratch/tools/`, never in a session scratchpad.
+15. **Values handed from one task to the next are files, never text to retype.** Each deploy gate writes its full SHA to `D:/UEScratch/logs/gate-<a|b|c>-sha.txt` (GA.1, GB.1, GC.1 Step 1); each deploy-branch merge writes its commit to `D:/UEScratch/logs/merge-<a|b|c>-sha.txt` (GA.4, GB.4, GC.4); T2.6 Step 6 writes the PIE-safe names to `D:/UEScratch/logs/pie-safe.txt`. The handoff tasks read those files to fill `<SHA_x>`, `<MERGE_x>` and `<PIE_SAFE>`.
+16. **One warning path per limiter.** Every lease warning is logged by T6.2's `NoteLeaseWarning` (T9.1's `lease_not_bound` included), and every gate refusal log site calls `LogDrainedGateRefusals()` on the line before `GateRefusalLimiter().Note(` (T9.1's slot 0 included). T6.2's contract checks every `UE_LOG(LogHaybaMCPLease, Warning` site in the manager, and T1.3's checks every `GateRefusalLimiter().Note(` site in the router, so a new site is covered without naming it.
+17. **An owner-less write is identified by its envelope lease.** Ladder step C3 (GC.2) and any raw client that names no owner send the caller's own lease in the envelope; without it the write is refused with `owner_required` while an identified owner is present. In-process tests reset presence instead (`FScopedCleanPresence`).
 
-Deliberate departures from the planning ledger, kept as written (each task says why): `EHaybaFaultSite` lands in T1.1 (the T1.1 policy header needs it); the `seh-postprocessing-gate.test.ts` and `audit-crash-threat-model.mjs` rewrites land in T1.3, the commit that removes the old text; the R13 skip and the `LiveCoding` Build.cs line land in T2.3; the 32-hex salt lands in T4.1; both redaction modules stay unchanged (spec T4: rename, don't allowlist); the `ui_save_widget` note goes in its `meta.not_when` because its description lives in `index.ts`; `level_save` preflights only what `SaveCurrentLevel` writes; `python_run` gets `resources` and `read_only` in T8.3 and only a real JSON boolean declares `read_only`; the `owner_reserved` TS code lands in T9.1 (slot 0 emits it there); `lease_adopt` needs no `list-tool-categories.ts` edit (the lease domain is derived from the schema registry, pinned by a test in T9.2); T9's Node tests live in a new `lease-adopt.test.ts`.
+Additions this plan makes to the spec's task list, each because a spec requirement could not be met without it: GA.0 ships the §5.1 gate changes as a tested host kit (the spec's §5 says host changes ship as a patch and a kit, and T4.4's patch needs a known base); GB.0 is the cut-line procedure; the host kit keys its `lock.json` mirror per label, because `--label` (§5.2) creates a second lease of one owner. Departures from the spec, each stated where it happens: `level_save` preflights the map package only when `SaveCurrentLevel` would write it (T5.2; spec T5 Task B preflights it unconditionally); `BatchPumpStopsWhileUnsafe` injects a region that counts as loaded instead of loading one through `wp_region_load`, and so runs in the headless process (T1.4); the optional `security/native-redaction-parity-contract.test.ts` (spec T4 Files, §6.4) is not written, because `Hayba.MCP.Lease.IdSurvivesRedaction` runs the real C++ redactor over every shape and T4.3's `secret-redaction.test.ts` case pins the Node side, so a test that re-extracts the secret heads from source would only restate them.
+
+Deliberate departures from the planning ledger, kept as written (each task says why): `EHaybaFaultSite` lands in T1.1 (the T1.1 policy header needs it); the `seh-postprocessing-gate.test.ts` and `audit-crash-threat-model.mjs` rewrites land in T1.3, the commit that removes the old text; the R13 skip and the `LiveCoding` Build.cs line land in T2.3; the 32-hex salt lands in T4.1; both redaction modules stay unchanged (spec T4: rename, don't allowlist); the `ui_save_widget` note goes in its `meta.not_when` because its description lives in `index.ts`; `python_run` gets `resources` and `read_only` in T8.3 and only a real JSON boolean declares `read_only`; the `owner_reserved` TS code lands in T9.1 (slot 0 emits it there); `lease_adopt` needs no `list-tool-categories.ts` edit (the lease domain is derived from the schema registry, pinned by a test in T9.2); T9's Node tests live in a new `lease-adopt.test.ts`.
 
 ---
 
@@ -324,7 +329,7 @@ Every gate verifies exact test names, not counts: a test that never ran must sho
 
 **Interfaces:**
 - Produces:
-  - CLI `node SCR/check-automation-report.mjs <index.json> <manifest> [--allow-fail <name>]... [--min-total <n>]`. Exit 0 when every manifest name is `Success`/`SuccessWithWarnings`, no other test is `Fail` unless allowed, no manifest name is listed twice, and the report holds at least `<n>` tests; exit 1 with one line per problem otherwise; exit 2 on bad usage or unreadable input. It prints `manifest: <n> names (<k> passing)` and `total tests in report: <t>`.
+  - CLI `node SCR/check-automation-report.mjs <index.json> <manifest> [--allow-fail <name>]... [--min-total <n>]`. Exit 0 when every manifest name has the state `Success` (spec §6.2: any other state fails), no other test is `Fail` unless allowed, no manifest name is listed twice, and the report holds at least `<n>` tests; exit 1 with one line per problem otherwise; exit 2 on bad usage or unreadable input. It prints `manifest: <n> names (<k> passing)`, `total tests in report: <t>`, and one informational `WARNINGS: <name> (<n>)` line per manifest test that logged warnings. UE 5.8 writes the per-test `state` from `EAutomationState` (`NotRun`, `InProcess`, `Fail`, `Success`, `Skipped`; `Runtime/AutomationTest/Public/AutomationState.h:14-21`) and counts warnings in the per-test `warnings` field, so a test that warned is still `Success`. `SuccessWithWarnings` exists only as the root counter `succeededWithWarnings` and is never accepted as a state here. Warning lines never fail the check, because several router tests expect a Warning log.
   - `node SCR/check-automation-report.mjs --self-test` (exit 0 when its built-in cases pass).
   - Manifest format: one full test name per line; blank lines and lines starting with `#` are ignored, so `# T<n>` section headers and `# optional: …` notes are comments. Each task appends its own `# T<n>` section in the commit that adds its tests.
 
@@ -354,7 +359,9 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-const PASS_STATES = new Set(['success', 'successwithwarnings']);
+// Spec 6.2: a manifest name passes only in the state Success. UE writes warnings
+// as a per-test count, never as a state, so any other state string is a failure.
+const PASS_STATES = new Set(['success']);
 
 function readManifest(text) {
   const names = [];
@@ -377,22 +384,28 @@ function readReport(text) {
   return tests.map((t) => ({
     name: String(t.fullTestPath ?? t.FullTestPath ?? t.testDisplayName ?? t.TestDisplayName ?? ''),
     state: String(t.state ?? t.State ?? ''),
+    warnings: Number(t.warnings ?? t.Warnings ?? 0) || 0,
   }));
 }
 
 function check(report, manifest, { allowFail = [], minTotal = 0 } = {}) {
   const allowed = new Set(allowFail);
-  const byName = new Map(report.map((t) => [t.name, t.state]));
+  const byName = new Map(report.map((t) => [t.name, t]));
   const problems = manifest.duplicates.map((d) => `DUPLICATE in manifest: ${d}`);
+  const warned = [];
   let passing = 0;
   for (const name of manifest.names) {
     if (!byName.has(name)) {
       problems.push(`MISSING: ${name}`);
       continue;
     }
-    const state = byName.get(name);
-    if (PASS_STATES.has(state.toLowerCase())) passing += 1;
-    else if (!allowed.has(name)) problems.push(`NOT PASSED: ${name} (${state || 'no state'})`);
+    const { state, warnings } = byName.get(name);
+    if (PASS_STATES.has(state.toLowerCase())) {
+      passing += 1;
+      if (warnings > 0) warned.push(`WARNINGS: ${name} (${warnings})`);
+    } else if (!allowed.has(name)) {
+      problems.push(`NOT PASSED: ${name} (${state || 'no state'})`);
+    }
   }
   const listed = new Set(manifest.names);
   for (const t of report) {
@@ -401,7 +414,7 @@ function check(report, manifest, { allowFail = [], minTotal = 0 } = {}) {
     }
   }
   if (report.length < minTotal) problems.push(`TOTAL ${report.length} is below --min-total ${minTotal}`);
-  return { passing, total: report.length, problems };
+  return { passing, total: report.length, problems, warned };
 }
 
 function selfTest() {
@@ -417,22 +430,25 @@ function selfTest() {
         JSON.stringify({
           Tests: [
             { FullTestPath: 'Hayba.MCP.A', State: 'Success' },
-            { fullTestPath: 'Hayba.MCP.B', state: 'SuccessWithWarnings' },
+            { fullTestPath: 'Hayba.MCP.B', state: 'Success', warnings: 2 },
             { fullTestPath: 'Hayba.MCP.C', state: 'Fail' },
             { fullTestPath: 'Hayba.MCP.UI.RenderWidgetToPng', state: 'Fail' },
             { fullTestPath: 'Hayba.MCP.D', state: 'NotRun' },
+            { fullTestPath: 'Hayba.MCP.E', state: 'SuccessWithWarnings' },
           ],
         }),
     );
-    expect('PascalCase keys and a BOM parse', report.length === 5 && report[0].name === 'Hayba.MCP.A');
+    expect('PascalCase keys and a BOM parse', report.length === 6 && report[0].name === 'Hayba.MCP.A');
     const allow = { allowFail: ['Hayba.MCP.UI.RenderWidgetToPng', 'Hayba.MCP.C'] };
     const good = check(report, readManifest('# T0\n\nHayba.MCP.A\n# optional: Hayba.MCP.X\nHayba.MCP.B\n'), allow);
     expect('comments, blanks and optional notes are ignored', good.problems.length === 0 && good.passing === 2);
+    expect('a Success test that warned passes and is listed', good.warned.length === 1 && good.warned[0] === 'WARNINGS: Hayba.MCP.B (2)');
+    expect('only the state Success passes a manifest name', check(report, readManifest('Hayba.MCP.E'), allow).problems.includes('NOT PASSED: Hayba.MCP.E (SuccessWithWarnings)'));
     expect('a missing name is reported', check(report, readManifest('Hayba.MCP.Z'), allow).problems.includes('MISSING: Hayba.MCP.Z'));
     expect('a NotRun manifest name is not green', check(report, readManifest('Hayba.MCP.D'), allow).problems.some((p) => p.startsWith('NOT PASSED: Hayba.MCP.D')));
     expect('a failing manifest name is reported', check(report, readManifest('Hayba.MCP.C'), { allowFail: ['Hayba.MCP.UI.RenderWidgetToPng'] }).problems.some((p) => p.startsWith('NOT PASSED: Hayba.MCP.C')));
     expect('a failure outside the manifest is reported', check(report, readManifest('Hayba.MCP.A'), { allowFail: ['Hayba.MCP.C'] }).problems.includes('FAILED outside the manifest: Hayba.MCP.UI.RenderWidgetToPng'));
-    expect('--min-total guards shrinkage', check(report, readManifest('Hayba.MCP.A'), { ...allow, minTotal: 6 }).problems.includes('TOTAL 5 is below --min-total 6'));
+    expect('--min-total guards shrinkage', check(report, readManifest('Hayba.MCP.A'), { ...allow, minTotal: 7 }).problems.includes('TOTAL 6 is below --min-total 7'));
     expect('a duplicate manifest name is reported', check(report, readManifest('Hayba.MCP.A\nHayba.MCP.A'), allow).problems.includes('DUPLICATE in manifest: Hayba.MCP.A'));
     const file = join(dir, 'index.json');
     writeFileSync(file, JSON.stringify({ tests: [] }));
@@ -475,6 +491,7 @@ function main(argv) {
   console.log(`report: ${positional[0]}`);
   console.log(`manifest: ${manifest.names.length} names (${result.passing} passing)`);
   console.log(`total tests in report: ${result.total}`);
+  for (const w of result.warned) console.log(w);
   for (const p of result.problems) console.log(p);
   console.log(result.problems.length === 0 ? 'OK' : `FAIL (${result.problems.length} problems)`);
   return result.problems.length === 0 ? 0 : 1;
@@ -496,7 +513,7 @@ node scripts/check-automation-report.mjs --self-test; $LASTEXITCODE
 node scripts/check-automation-report.mjs; $LASTEXITCODE
 ```
 
-Expected: nine `ok` lines and exit code `0`; then the usage text and exit code `2`.
+Expected: eleven `ok` lines and exit code `0`; then the usage text and exit code `2`.
 
 - [ ] **Step 4: Seed the manifest with the existing names the train touches**
 
@@ -813,24 +830,84 @@ Expected: the checker exits 0 with all 13 lease and batch names at `Success`. Th
 
 - [ ] **Step 11: Commit the merge**
 
+`git merge --no-commit` already staged every file it merged cleanly, and Step 6's `git rm` staged the two deletions. Only the six resolved files still need staging. Never `git add -A` here: `npm ci`, `npm run build -w packages` and `build:server` have just run in this worktree, and anything they generated that is not gitignored would ride into the merge commit.
+
 ```powershell
 Set-Location D:\Hackathons\hayba\.worktrees\s0-bc-leases
-git add -A
+git status --short | Where-Object { $_ -match '^\?\?' }
+git add -- CHANGELOG.md `
+  unreal/HaybaMCPToolkit/Resources/IconAgent.svg unreal/HaybaMCPToolkit/Resources/IconWorld.svg `
+  unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/HaybaMCPCommandHandler.cpp `
+  unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/HaybaMCPMainPanel.cpp `
+  unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/HaybaMCPStyle.cpp
+git diff --name-only --diff-filter=U
+git diff --name-only
 git commit -m "chore(merge): bring multi-agent leases into the brain-client trunk" -m "Step 0 of the P0 safety train (spec 7.3). Plan approval stays per owner: PlanOwner is recorded before ProposeExternalPlan, and the Agent-panel hint keeps the plan_owner / caller_owner note. The navigation icons keep the trunk's panel set."
+git status --short
+git log -1 --format="%H %P"
 ```
 
-Expected: one merge commit with two parents: `origin/feat/hayba-brain-client` and `feat/multi-agent-leases`.
+Expected: the first command prints nothing (no untracked file; if it prints one, it is generated output: leave it unstaged and find out which script wrote it before committing). Both `git diff` commands print nothing (no unmerged path and no unstaged edit). After the commit `git status --short` prints nothing, and `git log` shows one merge commit with two parents: `origin/feat/hayba-brain-client` and `feat/multi-agent-leases`.
 
-- [ ] **Step 12: Push and open the PR**
+- [ ] **Step 12: Write the PR body, push and open the PR**
+
+Build the body from the evidence files of Steps 3, 8 and 10, so every number in it comes from a file. The template is a single-quoted here-string (PowerShell would read a backtick inside a double-quoted one as an escape); the `{…}` tokens are filled by the `.Replace` calls below it.
 
 ```powershell
-git push -u origin merge/multi-agent-leases-into-bc
-gh pr create --base feat/hayba-brain-client --head merge/multi-agent-leases-into-bc `
+$WT  = "D:\Hackathons\hayba\.worktrees\s0-bc-leases"
+$SHA = git -C $WT rev-parse --short HEAD
+function Get-VitestSummary($Path) {
+  (Get-Content $Path | Select-String -Pattern '^\s*(Test Files|Tests)\s' | ForEach-Object { $_.Line.Trim() }) -join '; '
+}
+$TsBase  = Get-VitestSummary D:\UEScratch\reports\s0-ts-baseline.txt
+$TsMerge = Get-VitestSummary D:\UEScratch\reports\s0-ts-merge.txt
+$Checker = (node D:\Hackathons\hayba\.worktrees\p0-safety\mcp-tools\hayba-mcp\scripts\check-automation-report.mjs `
+  "D:\UEScratch\reports\s0-$SHA\index.json" D:\UEScratch\reports\s0-manifest.txt `
+  --allow-fail Hayba.MCP.UI.RenderWidgetToPng) -join "`n"
+$Body = @'
+## What this merge brings
+
+Step 0 of the P0 safety train: `feat/multi-agent-leases` merged into the trunk ({SHA}).
+It adds the lease manager, the `lease_*` commands, `editor_batch` / `batch_status`, and ADR-0010.
+No P0 deploy tag is merged into the trunk before this PR is merged.
+
+## Conflicts and how each was resolved
+
+| File | Resolution |
+|---|---|
+| `HaybaMCPCommandHandler.cpp`, `HandleProposePlan` | The trunk's Agent-panel summary, with `M->PlanOwner = Proposer;` set before `ProposeExternalPlan`, so approval stays per owner |
+| `HaybaMCPCommandHandler.cpp`, Plan-gate hint | The trunk's hint text plus the `plan_owner` / `caller_owner` / `approval_scope_note` block |
+| `HaybaMCPMainPanel.cpp`, `HaybaMCPStyle.cpp` | The trunk's side (Agent / World / Library / Settings panels) |
+| `IconAgent.svg`, `IconWorld.svg` | The trunk's side; `IconControls.svg` and `IconLibraryHayba.svg` removed because nothing references them |
+| `CHANGELOG.md` | Both sides' bullets under the existing `[Unreleased]` headings |
+
+## Gate evidence
+
+- TS before the merge: {TS_BASE}
+- TS on the merge: {TS_MERGE} (`tsc --noEmit`, `lint:legacy-wrappers` and `build:server` exit 0)
+- Headless `RunTests Hayba` on a throwaway UE 5.8 host, exact-name check of the 13 lease and batch tests:
+
+<pre>
+{CHECKER}
+</pre>
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)
+'@
+$Body.Replace('{SHA}', $SHA).Replace('{TS_BASE}', $TsBase).Replace('{TS_MERGE}', $TsMerge).Replace('{CHECKER}', $Checker) |
+  Set-Content -Encoding utf8 D:\UEScratch\reports\s0-pr-body.md
+Select-String -Path D:\UEScratch\reports\s0-pr-body.md -Pattern '^- TS', '^OK$', '^FAIL', '\{[A-Z_]+\}'
+```
+
+Expected: two `- TS` lines that each hold a `Test Files` and a `Tests` count, the checker's `OK` line, no `FAIL` line and no unfilled `{…}` token. When the executing session's harness gives a session link as a second PR attribution line, append it as the last line of the file.
+
+```powershell
+git -C $WT push -u origin merge/multi-agent-leases-into-bc
+gh pr create --repo zajalist/hayba --base feat/hayba-brain-client --head merge/multi-agent-leases-into-bc `
   --title "Merge multi-agent leases into the brain-client trunk (P0 step 0)" `
   --body-file D:\UEScratch\reports\s0-pr-body.md
 ```
 
-Write `s0-pr-body.md` first. It covers: what the merge brings (lease manager, `lease_*`, `editor_batch`, ADR-0010); how each of the six conflicts was resolved; the gate evidence (the TS numbers from Steps 3 and 8, and the checker output from Step 10); and the rule that no P0 deploy tag merges into the trunk before this PR. End the body with the executing session's PR attribution lines. The maintainer merges the PR.
+Expected: `gh` prints the PR URL. The maintainer merges the PR.
 
 **Done when:** the PR is merged into `feat/hayba-brain-client`, and its gate run is green: TS 0 failed, and headless with all 13 lease and batch names at `Success` and only `RenderWidgetToPng` allowed to fail.
 
@@ -950,15 +1027,18 @@ bool FHaybaHealthClassifyCaughtFaultTest::RunTest(const FString&)
 	TestEqual(TEXT("the native_fault_contained text is pinned"),
 		NativeFaultContainedMessage(TEXT("material_compile"), ECause::NativeFault, AccessViolation),
 		FString(TEXT("native_fault_contained [HCR-NATIVE-003]: 'material_compile' raised native fault 0xC0000005 (native_fault); its outcome is unknown and it may have partly run. Fault contained; restart the editor before further work. Until restart Hayba refuses writes, Python, saves, compiles and PIE.")));
-	TestEqual(TEXT("the native-fault notification text is pinned (spec §2.10)"),
+	TestEqual(TEXT("the native-fault notification text is pinned (plan A.2.10)"),
 		NotificationTextFor(ECause::PythonNativeFault, TEXT("python_run")),
 		FString(TEXT("Hayba contained a native fault in 'python_run'. Save now (File > Save All) and restart the editor. Do not compile, press Play or load a map before restarting.")));
-	TestEqual(TEXT("the engine-fatal notification text is pinned (spec §2.10)"),
+	TestEqual(TEXT("the engine-fatal notification text is pinned (plan A.2.10)"),
 		NotificationTextFor(ECause::StrandedPackageSave, TEXT("level_save")),
 		FString(TEXT("Hayba contained an engine fatal error in 'level_save' during a package save. Do not save; restart the editor now. Saving in this state can crash the editor or write a corrupt package.")));
 
-	// CPython corruption markers. The bounded traceback never carries exception
-	// arguments, so `raise SystemError("unknown opcode")` cannot match through it.
+	// CPython corruption markers. The captured stdout and the bounded stderr
+	// traceback are never scanned (R-15), and the traceback never carries
+	// exception arguments. Exception text reaches this scan only through the
+	// wrapper's exact-type SystemError hand-over (T1.3 Step 17), as
+	// "SystemError: <message>".
 	TestEqual(TEXT("unknown opcode is found in a traceback"),
 		FString(FindPythonCorruptionMarker(TEXT("Traceback (most recent call last):\nSystemError: unknown opcode\n"))),
 		FString(TEXT("SystemError: unknown opcode")));
@@ -1021,7 +1101,7 @@ bool FHaybaHealthUnsafeGatePolicyTest::RunTest(const FString&)
 	TestEqual(TEXT("the broad allowlist is status + 3 control-plane + 27 reads"),
 		CommandsAllowedWhileUnsafe(ECause::NativeFault).Num(), 12 + 3 + 27);
 
-	// The refusal text (spec §1 wire example), both tails, and rule §2.10: never the word "token".
+	// The refusal text (spec T1 wire example), both tails, and the plan A.2.10 rule: never the word "token".
 	const FString Refusal = UnsafeRefusalMessage(TEXT("editor_start_pie"), TEXT("2026-09-28T02:10:01Z"), TEXT("python_run"),
 		ECause::PythonNativeFault, ECause::PythonNativeFault);
 	TestEqual(TEXT("the unsafe refusal text is pinned"), Refusal,
@@ -1529,7 +1609,7 @@ namespace HaybaMCPHealth
 			IsStatusOnlyCause(Cause) ? TEXT("only status commands answer") : TEXT("reads still answer"));
 	}
 
-	/** editor_unsafe_restart_required text (spec §2.10). The record names the first fault; the tail follows the gate cause. */
+	/** editor_unsafe_restart_required text (plan A.2.10). The record names the first fault; the tail follows the gate cause. */
 	inline FString UnsafeRefusalMessage(const FString& Cmd, const FString& FaultedAtUtc, const FString& FaultedCommand,
 		ECause FirstCause, ECause GateCause)
 	{
@@ -1552,7 +1632,7 @@ namespace HaybaMCPHealth
 			FaultCodeFor(Cause), *Cmd, ExceptionCode, LexCause(Cause));
 	}
 
-	/** The persistent editor notification (spec §2.10). */
+	/** The persistent editor notification (plan A.2.10). */
 	inline FString NotificationTextFor(ECause Cause, const FString& Cmd)
 	{
 		return IsStatusOnlyCause(Cause)
@@ -2772,7 +2852,7 @@ Line numbers in this task are at `54c4744c`. Every step also quotes its anchor t
 - Modify: `unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/handlers/HaybaMCPLegacyHandler.cpp:1-10` (include), `:156-157` (`Cmd_Ping` capability + health)
 - Modify: `unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/handlers/HaybaMCPEditorHandler.cpp:1-22` (includes), `:197-217` (`GetState`)
 - Modify: `unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/handlers/HaybaMCPTestHandler.cpp:24-26` (injection namespace), `:1350-1358` (`GetCommands`), `:1366` (`Handle` branch)
-- Modify: `unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/handlers/HaybaMCPPythonHandler.cpp` (after `RunPythonCommandGuarded`: `MakeNativeFaultResult`, `CollectInterpreterErrors`; `:2179-2277` five returns and the marker scan; includes)
+- Modify: `unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/handlers/HaybaMCPPythonHandler.cpp` (after `RunPythonCommandGuarded`: `MakeNativeFaultResult`, `CollectInterpreterErrors`; the wrapper text: trusted `SystemError` after `:2074`, the `_hb_execute_user` signature `:2075-2076`, the `except BaseException` block `:2098-2113`, its `return` `:2135`, the call and the result stash `:2145-2150`; `:2179-2277` five returns, the `_hayba_corruption` readback and the marker scan; includes)
 - Modify (tests): `Private/Tests/HaybaMCPAdvisoryTest.cpp:83` (after the `"fatal editor failure"` case) and `:129`, `Private/Tests/HaybaMCPAdvisoryBoundaryTest.cpp:236-238`, `Private/Tests/HaybaMCPEditorHealthTest.cpp`
 - Modify (TS): `mcp-tools/hayba-mcp/src/tools/__tests__/seh-postprocessing-gate.test.ts` (rewrite, C13), `mcp-tools/hayba-mcp/scripts/audit-crash-threat-model.mjs:60` (both log forms, C13), `mcp-tools/hayba-mcp/src/tools/__tests__/editor-health-contract.test.ts` (append)
 - Modify: `mcp-tools/hayba-mcp/scripts/p0-expected-automation-tests.txt`
@@ -2784,10 +2864,11 @@ The seh-postprocessing and crash-classifier rewrites land here, not in T1.5, bec
 - Produces (T2.3, T3.2, T8.1, T9.1 reuse the router statics; T5.3 extends `IsWireRefusalCode`, which T2.3 creates):
   - `FHaybaMCPAdvisorySignals::bEditorUnsafe` (bool, default false) → `session_health:"restart_required"`, `retryable:false`, mandatory recovery and `next_action` `Fault contained; restart the editor before further work.`
   - Router file-statics, in this order after `JsonToString`: `struct FGateRefusal { FString Code; FString Message; FString DetailKey; TSharedPtr<FJsonObject> Detail; EHaybaMCPFailureKind FailureKind = EHaybaMCPFailureKind::PolicyBlocked; bool bRetryUnchangedSafe = false; bool bEditorUnsafe = false; TArray<FString> MandatoryRecovery; };`, `static FString MakeGateRefusal(const FString& Id, const FString& Cmd, const FGateRefusal& Refusal)`, `static FWarningLimiter& GateRefusalLimiter()`, `static void LogDrainedGateRefusals()` (addition: T2.3/T3.2 call it before each `GateRefusalLimiter().Note`), `static FString RefuseWhileUnsafe(…)`, `static FString MakeNativeFaultContained(const FString& Id, const FString& Cmd, const FString& Message, const TSharedPtr<FJsonObject>& Data)`.
-  - Top-level codes `editor_unsafe_restart_required` (detail key `editor_health`) and `native_fault_contained` (detail `editor_health`, plus `data` when the handler returned).
+  - Top-level codes `editor_unsafe_restart_required` (detail key `editor_health`) and `native_fault_contained` (detail `editor_health`, and always `data`). `data` is a copy of the handler's data when it returned any, and always carries `ok:false`, `policy_code` (`HCR-NATIVE-002` | `HCR-NATIVE-003` | `HCR-NATIVE-004`, from `HaybaMCPHealth::FaultCodeFor(LastCause)`), `mutation_status:"unknown"` and `may_have_executed:true` (spec §4.2: the fault codes appear in the error text and in `data.policy_code`).
   - `ping`: `editor_unsafe`, `python_unhealthy`, `health{}`, `capabilities.editor_health:true`. `editor_get_state`: the same three fields written first; `dirty_packages_skipped:"editor_unsafe"` after an HCR-NATIVE-004 cause.
   - `test_inject_native_fault {kind: "access_violation"|"engine_assert", site: "dispatch"|"python"|"handler_inner"}` under `#if WITH_DEV_AUTOMATION_TESTS && PLATFORM_WINDOWS`; guard `bool HaybaMCPHealth::IsNativeFaultInjectionAllowed(bool bOverrideActive, int32 ConnId, bool bAutomationTesting)`. Not in `sidecar.json`, no TS wrapper, not agent-callable.
   - Python: `static FHaybaHandlerResult MakeNativeFaultResult(const TCHAR* MatchedRule, bool bPostExecution)` with the 5 existing rule names plus `cpython_corruption_marker` (addition) for the marker path.
+  - Python wrapper: the Hayba-owned builtin `_hayba_corruption` (a `str`, empty unless the user script ended in an exception whose type is exactly the built-in `SystemError` and whose first argument is a `str`; then `"SystemError: " + message[:240]`). The handler reads it with a sixth guarded readback, so one `python_run` issues 8 Python commands from T1.3 on (T5.2's probe counts them). The marker scan reads LogPython **Error** entries, the failure text of Hayba's own commands, and this one string: the spec's "captured LogPython and exception text". Stdout and stderr are never scanned (R-15).
 
 - [ ] **Step 1: Write the failing advisory cases**
 
@@ -2991,6 +3072,8 @@ Append to the body of `FHaybaHealthEngineAssertCodeTest::RunTest`, before its `r
 		TestTrue(TEXT("it names HCR-NATIVE-004"), Str(Faulted, TEXT("error")).Contains(TEXT("[HCR-NATIVE-004]")));
 		TestEqual(TEXT("cause engine_fatal_swallowed"), Str(Obj(Faulted, TEXT("editor_health")), TEXT("cause")), FString(TEXT("engine_fatal_swallowed")));
 		TestEqual(TEXT("exception code 0x00004000"), Str(Obj(Faulted, TEXT("editor_health")), TEXT("exception_code")), FString(TEXT("0x00004000")));
+		TestEqual(TEXT("data.policy_code is HCR-NATIVE-004 (spec 4.2)"), Str(Obj(Faulted, TEXT("data")), TEXT("policy_code")), FString(TEXT("HCR-NATIVE-004")));
+		TestTrue(TEXT("the handler's own data survives next to the policy code"), Bool(Obj(Faulted, TEXT("data")), TEXT("inner_guard_caught")));
 		for (const TCHAR* Cmd : { TEXT("blueprint_get_info"), TEXT("asset_get_info"), TEXT("object_get_property"), TEXT("test_list") })
 		{
 			const TSharedPtr<FJsonObject> Reply = Send(*R, Cmd, Owner);
@@ -3034,6 +3117,11 @@ bool FHaybaHealthDispatchFaultIsStickyTest::RunTest(const FString&)
 		TestTrue(TEXT("it names HCR-NATIVE-003"), Str(Faulted, TEXT("error")).Contains(TEXT("[HCR-NATIVE-003]")));
 		TestEqual(TEXT("its advisory requires a restart"), Str(Obj(Faulted, TEXT("advisory")), TEXT("session_health")), FString(TEXT("restart_required")));
 		TestEqual(TEXT("its outcome is unknown"), Str(Obj(Faulted, TEXT("advisory")), TEXT("mutation_status")), FString(TEXT("unknown")));
+		// The handler never returned, so the router builds data itself (spec 4.2).
+		TestEqual(TEXT("data.policy_code is HCR-NATIVE-003"), Str(Obj(Faulted, TEXT("data")), TEXT("policy_code")), FString(TEXT("HCR-NATIVE-003")));
+		TestEqual(TEXT("data.mutation_status is unknown"), Str(Obj(Faulted, TEXT("data")), TEXT("mutation_status")), FString(TEXT("unknown")));
+		TestTrue(TEXT("data.may_have_executed is true"), Bool(Obj(Faulted, TEXT("data")), TEXT("may_have_executed")));
+		TestFalse(TEXT("data.ok is false"), Bool(Obj(Faulted, TEXT("data")), TEXT("ok")));
 		TestTrue(TEXT("the editor is unsafe"), FHaybaEditorHealth::IsUnsafe());
 		TestFalse(TEXT("a dispatch fault is not a python fault"), FHaybaEditorHealth::IsPythonUnhealthy());
 		TestEqual(TEXT("exactly one Error line for the fault"), Override.FaultErrorLineCount(), 1);
@@ -3119,6 +3207,8 @@ bool FHaybaHealthInnerGuardOkResultTest::RunTest(const FString&)
 		TestEqual(TEXT("it is forced to native_fault_contained"), Str(Reply, TEXT("code")), FString(TEXT("native_fault_contained")));
 		const TSharedPtr<FJsonObject> Data = Obj(Reply, TEXT("data"));
 		TestTrue(TEXT("the handler's data survives"), Bool(Data, TEXT("inner_guard_caught")) && Bool(Data, TEXT("handler_returned_ok")));
+		TestFalse(TEXT("but its ok:true is overruled"), Bool(Data, TEXT("ok")));
+		TestEqual(TEXT("data.policy_code is HCR-NATIVE-003"), Str(Data, TEXT("policy_code")), FString(TEXT("HCR-NATIVE-003")));
 		TestEqual(TEXT("site handler_inner"), Str(Obj(Reply, TEXT("editor_health")), TEXT("site")), FString(TEXT("handler_inner")));
 		TestEqual(TEXT("cause native_fault"), Str(Obj(Reply, TEXT("editor_health")), TEXT("cause")), FString(TEXT("native_fault")));
 		TestEqual(TEXT("session_suspect"), Str(Obj(Reply, TEXT("advisory")), TEXT("state")), FString(TEXT("session_suspect")));
@@ -3185,8 +3275,9 @@ bool FHaybaHealthPythonGuardFaultTest::RunTest(const FString&)
 	using namespace HaybaHealthTest;
 	const TSharedPtr<FHaybaMCPCommandHandler> R = Router(*this);
 	if (!R.IsValid()) return false;
-	AddExpectedErrorPlain(TEXT("editor_unsafe: native fault"), EAutomationExpectedErrorFlags::Contains, 2);
-	// The LogPython Error line the script emits on purpose, and our Error line that names the marker.
+	// Three faults: the injected Python-site fault, the raised SystemError and the LogPython marker.
+	AddExpectedErrorPlain(TEXT("editor_unsafe: native fault"), EAutomationExpectedErrorFlags::Contains, 3);
+	// The LogPython Error line the script emits on purpose, and our Error lines that name the marker.
 	AddExpectedErrorPlain(TEXT("SystemError: unknown opcode"), EAutomationExpectedErrorFlags::Contains, 0);
 	// python_run is Plan-gated; the gate is not what this test is about.
 	TGuardValue<bool> PlanOff(FHaybaMCPSettings::Get().bPlanModeEnabled, false);
@@ -3199,17 +3290,44 @@ bool FHaybaHealthPythonGuardFaultTest::RunTest(const FString&)
 		TestEqual(TEXT("cause python_native_fault"), Str(Obj(Reply, TEXT("editor_health")), TEXT("cause")), FString(TEXT("python_native_fault")));
 		TestEqual(TEXT("site python"), Str(Obj(Reply, TEXT("editor_health")), TEXT("site")), FString(TEXT("python")));
 		TestEqual(TEXT("Python was unhooked from pre-GC once"), Override.PreGcUnhookCount(), 1);
+		TestEqual(TEXT("data.policy_code is HCR-NATIVE-002"), Str(Obj(Reply, TEXT("data")), TEXT("policy_code")), FString(TEXT("HCR-NATIVE-002")));
+	}
+	{
+		// R-15: what a script can write or subclass never counts. None of these marks the editor unsafe.
+		FHaybaEditorHealth::FScopedOverrideForTests Override;
+		const FString Owner = TestOwner();
+		const TSharedPtr<FJsonObject> Printed = Send(*R, TEXT("python_run"), Owner, Params(TEXT("script"), TEXT("print('SystemError: unknown opcode')")));
+		TestTrue(TEXT("a marker on stdout is just output"), Bool(Printed, TEXT("ok")));
+		TestFalse(TEXT("stdout never marks the editor unsafe"), FHaybaEditorHealth::IsUnsafe());
+		// A subclass can override attribute access, so its arguments are never read.
+		const TSharedPtr<FJsonObject> Subclass = Send(*R, TEXT("python_run"), Owner, Params(TEXT("script"),
+			TEXT("class Fake(SystemError):\n    pass\nraise Fake('unknown opcode')")));
+		TestNotEqual(TEXT("a subclass of SystemError is an ordinary script error"), Str(Subclass, TEXT("code")), FString(TEXT("native_fault_contained")));
+		TestFalse(TEXT("a subclass never marks the editor unsafe"), FHaybaEditorHealth::IsUnsafe());
+		const TSharedPtr<FJsonObject> OtherType = Send(*R, TEXT("python_run"), Owner, Params(TEXT("script"),
+			TEXT("raise RuntimeError('SystemError: unknown opcode')")));
+		TestNotEqual(TEXT("another exception type that quotes a marker is ordinary"), Str(OtherType, TEXT("code")), FString(TEXT("native_fault_contained")));
+		const TSharedPtr<FJsonObject> Plain = Send(*R, TEXT("python_run"), Owner, Params(TEXT("script"), TEXT("raise SystemError('boom')")));
+		TestNotEqual(TEXT("a SystemError without a marker is ordinary"), Str(Plain, TEXT("code")), FString(TEXT("native_fault_contained")));
+		TestFalse(TEXT("the bounded traceback never marks the editor unsafe"), FHaybaEditorHealth::IsUnsafe());
+		TestEqual(TEXT("no fault was recorded"), FHaybaEditorHealth::Snapshot().FaultCount, 0);
+	}
+	{
+		// The I-6 signature: CPython raises the exact built-in SystemError while the
+		// user script runs, and the wrapper's except block catches it. No SEH catch.
+		FHaybaEditorHealth::FScopedOverrideForTests Override;
+		const TSharedPtr<FJsonObject> Raised = Send(*R, TEXT("python_run"), TestOwner(), Params(TEXT("script"), TEXT("raise SystemError('unknown opcode')")));
+		TestEqual(TEXT("an exact SystemError with a marker answers native_fault_contained"), Str(Raised, TEXT("code")), FString(TEXT("native_fault_contained")));
+		TestTrue(TEXT("it names HCR-NATIVE-002"), Str(Raised, TEXT("error")).Contains(TEXT("[HCR-NATIVE-002]")));
+		TestEqual(TEXT("matched rule"), Str(Obj(Raised, TEXT("data")), TEXT("matched_rule")), FString(TEXT("cpython_corruption_marker")));
+		TestEqual(TEXT("data.policy_code is HCR-NATIVE-002"), Str(Obj(Raised, TEXT("data")), TEXT("policy_code")), FString(TEXT("HCR-NATIVE-002")));
+		TestTrue(TEXT("the exception path sets python_unhealthy"), FHaybaEditorHealth::IsPythonUnhealthy());
+		TestEqual(TEXT("no SEH exception code"), static_cast<int64>(FHaybaEditorHealth::Snapshot().ExceptionCode), static_cast<int64>(0));
+		TestEqual(TEXT("Python was unhooked from pre-GC once"), Override.PreGcUnhookCount(), 1);
 	}
 	{
 		FHaybaEditorHealth::FScopedOverrideForTests Override;
 		const FString Owner = TestOwner();
-		// R-15: user-writable channels never count.
-		const TSharedPtr<FJsonObject> Printed = Send(*R, TEXT("python_run"), Owner, Params(TEXT("script"), TEXT("print('SystemError: unknown opcode')")));
-		TestTrue(TEXT("a marker on stdout is just output"), Bool(Printed, TEXT("ok")));
-		TestFalse(TEXT("stdout never marks the editor unsafe"), FHaybaEditorHealth::IsUnsafe());
-		const TSharedPtr<FJsonObject> Raised = Send(*R, TEXT("python_run"), Owner, Params(TEXT("script"), TEXT("raise SystemError('unknown opcode')")));
-		TestNotEqual(TEXT("a raised SystemError is an ordinary script error"), Str(Raised, TEXT("code")), FString(TEXT("native_fault_contained")));
-		TestFalse(TEXT("the bounded traceback never marks the editor unsafe"), FHaybaEditorHealth::IsUnsafe());
 		// A LogPython Error line with a marker, and no SEH catch.
 		const TSharedPtr<FJsonObject> Corrupt = Send(*R, TEXT("python_run"), Owner,
 			Params(TEXT("script"), TEXT("import unreal\nunreal.log_error('SystemError: unknown opcode')")));
@@ -3309,11 +3427,64 @@ describe('router gate order and fault branch (ADR-0011)', () => {
     expect(body).toContain('JsonToString(');
   });
 
-  it('drains the refusal limiter at every refusal log site (R-18)', () => {
-    const [start, end] = bodyRange(router, 'static FString RefuseWhileUnsafe(');
+  it('drains the refusal limiter before every Note, at every site (R-18)', () => {
+    // Every GateRefusalLimiter().Note( in the router, not only RefuseWhileUnsafe:
+    // a gate added later (pie_active, asset_busy, owner_reserved) is checked by
+    // the same rule without teaching this test its name.
+    const sites = [...router.matchAll(/GateRefusalLimiter\(\)\s*\.\s*Note\(/g)].map((match) => match.index!);
+    expect(sites.length).toBeGreaterThanOrEqual(1);
+    for (const site of sites) {
+      const before = router.slice(0, site);
+      const drain = before.lastIndexOf('LogDrainedGateRefusals();');
+      expect(drain, `the Note at offset ${site} has no drain before it`).toBeGreaterThan(-1);
+      // Same function: no closing brace at column 0 between the drain and the Note.
+      expect(before.slice(drain), `the drain before offset ${site} is in another function`).not.toMatch(/\n\}/);
+      // Same branch: nothing but the Note's own declaration follows the drain.
+      expect(before.slice(drain).split('\n').length, `the drain is not next to the Note at offset ${site}`).toBeLessThanOrEqual(3);
+    }
+  });
+
+  it('writes the fault policy code into data on every native_fault_contained reply (spec 4.2)', () => {
+    const [start, end] = bodyRange(router, 'static FString MakeNativeFaultContained(');
     const body = router.slice(start, end);
-    expect(body.indexOf('LogDrainedGateRefusals()')).toBeGreaterThan(-1);
-    expect(body.indexOf('LogDrainedGateRefusals()')).toBeLessThan(body.indexOf('.Note('));
+    expect(body).toContain('TEXT("policy_code"), HaybaMCPHealth::FaultCodeFor(Health.LastCause)');
+    expect(body).toContain('TEXT("may_have_executed"), true');
+    expect(body).not.toContain('if (Data.IsValid()) Response->SetObjectField(TEXT("data")');
+  });
+});
+
+describe('python_run reads exception text only from an exact SystemError (R-15)', () => {
+  const python = read(toolkitPrivate, 'handlers', 'HaybaMCPPythonHandler.cpp');
+
+  it('reads args once, behind an exact type check, and only a str', () => {
+    const typeCheck = python.indexOf('if type(_hb_exception) is _hb_system_error:');
+    const argsRead = python.indexOf("BaseException.__getattribute__(_hb_exception, 'args')");
+    expect(typeCheck).toBeGreaterThan(-1);
+    expect(argsRead).toBeGreaterThan(typeCheck);
+    expect(python.split("BaseException.__getattribute__(_hb_exception, 'args')").length - 1).toBe(1);
+    expect(python).toContain('type(_hb_args[0]) is str');
+    expect(python).toContain('_hb_args[0][:240]');
+    expect(python).toContain('_hb_trusted_system_error = SystemError');
+    for (const unsafeRead of ["getattr(_hb_exception, 'args'", 'str(_hb_exception)', 'repr(_hb_exception)', '_hb_exception.args']) {
+      expect(python, unsafeRead).not.toContain(unsafeRead);
+    }
+  });
+
+  it('never scans the captured streams for corruption markers', () => {
+    const scanAt = python.indexOf('HaybaMCPHealth::FindPythonCorruptionMarker(');
+    expect(scanAt).toBeGreaterThan(-1);
+    expect(python.split('HaybaMCPHealth::FindPythonCorruptionMarker(').length - 1).toBe(1);
+    const [start, end] = bodyRange(codeOnly(python), 'static void CollectInterpreterErrors(');
+    const collect = codeOnly(python).slice(start, end);
+    expect(collect).toContain('EPythonLogOutputType::Error');
+    for (const stream of ['StdOut', 'StdErr']) {
+      expect(python, `${stream} must never reach the marker scan`).not.toContain(`InterpreterErrors.Add(${stream})`);
+    }
+    expect(python).toContain('InterpreterErrors.Add(CorruptionText)');
+  });
+
+  it('cleans the hand-over builtin up with the others', () => {
+    expect(python).toContain("'_hayba_ok','_hayba_timed_out','_hayba_corruption'");
   });
 });
 
@@ -3423,7 +3594,7 @@ Set-Location "D:\Hackathons\hayba\.worktrees\p0-safety\mcp-tools\hayba-mcp"
 npx vitest run src/tools/__tests__/seh-postprocessing-gate.test.ts src/tools/__tests__/editor-health-contract.test.ts
 ```
 
-Expected: FAIL — `dispatchAt` is -1 (no `RunGuardedAt(EHaybaFaultSite::Dispatch`), the router and python still contain `kept alive` / `disposable editor`, `HaybaMCPHealth::IsCommandAllowedWhileUnsafe(` and `static FString MakeGateRefusal(` are not found, and the injection hits are fewer than 3. The classifier describe passes already for the old form and fails for the new one only if Step 4's regex edit was skipped.
+Expected: FAIL — `dispatchAt` is -1 (no `RunGuardedAt(EHaybaFaultSite::Dispatch`), the router and python still contain `kept alive` / `disposable editor`, `HaybaMCPHealth::IsCommandAllowedWhileUnsafe(`, `static FString MakeGateRefusal(` and `static FString MakeNativeFaultContained(` are not found, no `GateRefusalLimiter().Note(` site exists yet (`sites.length` is 0), the wrapper has no `if type(_hb_exception) is _hb_system_error:`, and the injection hits are fewer than 3. The classifier describe passes already for the old form and fails for the new one only if Step 4's regex edit was skipped.
 
 - [ ] **Step 6: Build and confirm the C++ tests fail to compile**
 
@@ -3634,13 +3805,30 @@ static FString RefuseWhileUnsafe(const FString& Id, const FString& Cmd, const FS
 /** The command that faulted (or whose own guard caught a fault) answers this, and nothing else runs. */
 static FString MakeNativeFaultContained(const FString& Id, const FString& Cmd, const FString& Message, const TSharedPtr<FJsonObject>& Data)
 {
+    const FHaybaEditorHealth::FSnapshot Health = FHaybaEditorHealth::Snapshot();
     TSharedRef<FJsonObject> Response = MakeShared<FJsonObject>();
     Response->SetStringField(TEXT("id"), Id);
     Response->SetBoolField(TEXT("ok"), false);
     Response->SetStringField(TEXT("code"), TEXT("native_fault_contained"));
     Response->SetStringField(TEXT("error"), Message);
     Response->SetObjectField(TEXT("editor_health"), FHaybaEditorHealth::MakeHealthJson());
-    if (Data.IsValid()) Response->SetObjectField(TEXT("data"), Data.ToSharedRef());
+    // data is always present (spec 4.2: the fault code is in the error text and
+    // in data.policy_code). It starts as a copy of what the handler returned, so
+    // the handler's own fields survive; the fault facts are written last, so a
+    // handler that returned ok:true after its own guard caught a fault is overruled.
+    TSharedRef<FJsonObject> FaultData = MakeShared<FJsonObject>();
+    if (Data.IsValid())
+    {
+        for (const auto& Field : Data->Values)
+        {
+            FaultData->SetField(FString(*Field.Key), Field.Value);
+        }
+    }
+    FaultData->SetBoolField(TEXT("ok"), false);
+    FaultData->SetStringField(TEXT("policy_code"), HaybaMCPHealth::FaultCodeFor(Health.LastCause));
+    FaultData->SetStringField(TEXT("mutation_status"), TEXT("unknown"));
+    FaultData->SetBoolField(TEXT("may_have_executed"), true);
+    Response->SetObjectField(TEXT("data"), FaultData);
     FHaybaMCPAdvisorySignals Signals;
     Signals.Operation = Cmd;
     Signals.bOperationSucceeded = false;
@@ -3900,6 +4088,55 @@ In `handlers/HaybaMCPPythonHandler.cpp`, add after `#include "HaybaMCPLeaseManag
 #include "HaybaMCPHealthPolicy.h"
 ```
 
+The wrapper hands one string to the handler: the text of an exception whose type is exactly the built-in `SystemError`. A subclass could override attribute access, so its arguments are never read; an exact `SystemError` cannot, because `BaseException.__getattribute__` is the C slot. Five edits to the wrapper text, each an exact line:
+
+1. After `Wrapper += TEXT("_hb_trusted_gc_collect = _hb_gc.collect\n");` (`:2074`) add:
+
+```cpp
+    // The built-in SystemError, saved before user code runs: the except block
+    // compares types against it, never against a name the script could shadow.
+    Wrapper += TEXT("_hb_trusted_system_error = SystemError\n");
+```
+
+2. Replace the two lines at `:2075-2076` (`def _hb_execute_user(…, _hb_system):` and `_hb_ok = True; _hb_timed_out = False; _hb_trace_events = 0`) with:
+
+```cpp
+    Wrapper += TEXT("def _hb_execute_user(_hb_user_source, _hb_user_globals, _hb_set_trace, _hb_get_trace, _hb_now, _hb_collect, _hb_system, _hb_system_error):\n");
+    Wrapper += TEXT("    _hb_ok = True; _hb_timed_out = False; _hb_trace_events = 0; _hb_corruption = ''\n");
+```
+
+3. After `Wrapper += TEXT("        _hb_err.write('<exception arguments omitted by bounded capture>\\n')\n");` (`:2113`) add:
+
+```cpp
+    // CPython-internal corruption surfaces as the exact built-in SystemError
+    // (I-6: "SystemError: unknown opcode"), and this except block would
+    // otherwise swallow it as an ordinary script error. Only that exact type is
+    // read, only its first argument, only when it is a str, and at most 240
+    // characters of it. The text goes to a Hayba-owned builtin, never to stderr.
+    Wrapper += TEXT("        if type(_hb_exception) is _hb_system_error:\n");
+    Wrapper += TEXT("            _hb_args = BaseException.__getattribute__(_hb_exception, 'args')\n");
+    Wrapper += TEXT("            if type(_hb_args) is tuple and len(_hb_args) > 0 and type(_hb_args[0]) is str:\n");
+    Wrapper += TEXT("                _hb_corruption = 'SystemError: ' + _hb_args[0][:240]\n");
+```
+
+4. Replace `Wrapper += TEXT("    return _hb_ok, _hb_timed_out\n");` (`:2135`) with:
+
+```cpp
+    Wrapper += TEXT("    return _hb_ok, _hb_timed_out, _hb_corruption\n");
+```
+
+5. Replace the call at `:2145` and add one stash line after `Wrapper += TEXT("_hb_b._hayba_timed_out = _hb_timed_out\n");` (`:2150`):
+
+```cpp
+    Wrapper += TEXT("_hb_ok, _hb_timed_out, _hb_corruption = _hb_execute_user(_hb_src, _hb_g, _hb_trusted_settrace, _hb_trusted_gettrace, _hb_trusted_monotonic, _hb_trusted_gc_collect, _hb_sys, _hb_trusted_system_error)\n");
+```
+
+```cpp
+    Wrapper += TEXT("_hb_b._hayba_corruption = _hb_corruption\n");
+```
+
+`python-crash-policy-contract.test.ts` keeps passing: it pins `def _hb_execute_user(` and forbids `getattr(_hb_exception, 'args'`, and neither changes.
+
 Insert right after `RunPythonCommandGuarded` (added in T1.2):
 
 ```cpp
@@ -3930,9 +4167,10 @@ static FHaybaHandlerResult MakeNativeFaultResult(const TCHAR* MatchedRule, bool 
     return FHaybaHandlerResult::Ok(Out);
 }
 
-// CPython-internal failures are visible only as LogPython Error lines or as the
-// failure text of one of Hayba's own commands. The user's stdout/stderr capture
-// is never scanned: a script can print anything (R-15).
+// CPython-internal failures are visible as LogPython Error lines, as the
+// failure text of one of Hayba's own commands, or as the exact-type SystemError
+// text the wrapper hands over in _hayba_corruption. The user's stdout/stderr
+// capture is never scanned: a script can print anything (R-15).
 static void CollectInterpreterErrors(const FPythonCommandEx& Command, bool bCommandFailed, TArray<FString>& Out)
 {
     for (const FPythonLogOutputEntry& Entry : Command.LogOutput)
@@ -3982,13 +4220,17 @@ Replace the block from `const bool bExecOk = RunPythonCommandGuarded(PythonPlugi
     bool bStdOutReadCrashed = false;
     bool bStdErrReadCrashed = false;
     bool bCaptureMetaReadCrashed = false;
+    bool bCorruptionReadCrashed = false;
     const FString StdOut = EvalB64(TEXT("_hayba_out"), bStdOutReadCrashed);
     const FString StdErr = EvalB64(TEXT("_hayba_err"), bStdErrReadCrashed);
     const FString CaptureMeta = EvalB64(TEXT("_hayba_capture_meta"), bCaptureMetaReadCrashed);
-    if (bStdOutReadCrashed || bStdErrReadCrashed || bCaptureMetaReadCrashed)
+    const FString CorruptionText = EvalB64(TEXT("_hayba_corruption"), bCorruptionReadCrashed);
+    if (bStdOutReadCrashed || bStdErrReadCrashed || bCaptureMetaReadCrashed || bCorruptionReadCrashed)
     {
         return MakeNativeFaultResult(TEXT("post_execution_readback_access_violation"), true);
     }
+    // The exact-type SystemError text, when the user script ended in one.
+    if (!CorruptionText.IsEmpty()) InterpreterErrors.Add(CorruptionText);
 
     FPythonCommandEx OkCmd;
     OkCmd.Command = TEXT("repr(getattr(__import__('builtins'),'_hayba_ok',True))");
@@ -4017,7 +4259,7 @@ Replace the block from `const bool bExecOk = RunPythonCommandGuarded(PythonPlugi
     FPythonCommandEx CleanupCmd;
     CleanupCmd.Command = TEXT(
         "import builtins as _hb_cleanup_b\n"
-        "for _hb_cleanup_name in ('_hayba_out','_hayba_err','_hayba_capture_meta','_hayba_ok','_hayba_timed_out'):\n"
+        "for _hb_cleanup_name in ('_hayba_out','_hayba_err','_hayba_capture_meta','_hayba_ok','_hayba_timed_out','_hayba_corruption'):\n"
         "    if hasattr(_hb_cleanup_b, _hb_cleanup_name): delattr(_hb_cleanup_b, _hb_cleanup_name)\n");
     CleanupCmd.ExecutionMode = EPythonCommandExecutionMode::ExecuteFile;
     bool bCleanupCrashed = false;
@@ -4029,7 +4271,9 @@ Replace the block from `const bool bExecOk = RunPythonCommandGuarded(PythonPlugi
     CollectInterpreterErrors(CleanupCmd, !bCleanupOk, InterpreterErrors);
 
     // Corruption without a caught fault (ADR-0011 design 7): the interpreter is
-    // damaged and later scripts fail inside CPython itself.
+    // damaged and later scripts fail inside CPython itself. InterpreterErrors
+    // holds LogPython Error lines, the failure text of Hayba's own commands and
+    // the exact-type SystemError text; never stdout or stderr.
     for (const FString& Line : InterpreterErrors)
     {
         if (const TCHAR* Marker = HaybaMCPHealth::FindPythonCorruptionMarker(Line))
@@ -4117,7 +4361,7 @@ Line numbers in this task are at `54c4744c`. Every step also quotes its anchor t
 - Modify (tests): `Private/Tests/HaybaMCPEditorHealthTest.cpp`, `mcp-tools/hayba-mcp/src/tools/__tests__/editor-health-contract.test.ts`
 - Modify: `mcp-tools/hayba-mcp/scripts/p0-expected-automation-tests.txt`
 
-**Decision (ledger §5.3 "decide in T1.4"):** `BatchPumpStopsWhileUnsafe` loads **no** World Partition region, so the scratch host needs no WP map for T1. The recorder proves the pump never reaches `RunStep`, `UnloadAll`, `ReleaseAll`, `ReleaseEditorLoaderAdapter` or `CollectGarbage` after the fault, which does not depend on a region being loaded; the region steps' own unsafe check is proven through `RunRegionStepForTests`. A real-region variant needs a WP editor map and a map switch inside the test, which T2.4 may still add for `BatchHoldsDuringPIE`.
+**Decision (Appendix A.5.3 "decide in T1.4"):** the scratch host needs no World Partition map for T1, but the batch under test **does hold a region that counts as loaded**. The pure machine emits `EAction::UnloadAll` only when `In.LoadedRegions > 0` (`HaybaMCPBatchPolicy.h:453`), and `CountLoaded` counts a region only while its `Adapter` weak pointer is valid (`HaybaMCPBatchHandler.cpp:221-229`). With no region, "no `UnloadAll`, no `ReleaseEditorLoaderAdapter`" could never fail, even if `FinalizeUnsafe` fell through to cleanup. So the test hook `HaybaMCPBatchTestHooks::InjectFakeLoadedRegion(JobId, Name)` adds one `FRegion` whose adapter is a real transient `UWorldPartitionEditorLoaderAdapter` (created the way `UWorldPartition::CreateEditorLoaderAdapter` creates it, `WorldPartition.h:747`, but registered with no World Partition and given no loader). `CountLoaded` then returns 1, so without the unsafe preamble the next pump would record `UnloadAll` and `ReleaseAll`. If that ever ran, `ReleaseRegion` would find no World Partition and only reset the pointer, so the fake can never unload anything real. This replaces the spec's `wp_region_load` step: the step list is `[ping, fault-injected step (gc fence), wp_region_unload]` with the region injected before the first pump. Because nothing loads a real region or switches worlds, the test runs in the headless process; GA.1 and GB.1 also run it as an owned child through `test_run`. The region steps' own unsafe check is proven through `RunRegionStepForTests`.
 
 **Interfaces:**
 - Consumes: T1.2 `FHaybaEditorHealth::IsUnsafe()`, `FScopedOverrideForTests`; T1.3 slot 1, `test_inject_native_fault`, `native_fault_contained`; existing `HaybaMCPLease::FTable::{Release, EndYield, SetYieldable, Acquire, FindLease}`, `FHaybaMCPJobRegistry::SetDone`.
@@ -4125,7 +4369,7 @@ Line numbers in this task are at `54c4744c`. Every step also quotes its anchor t
   - `static void FinalizeUnsafe(const TSharedRef<FBatchState>& S)` (anonymous namespace). Job output: `status:"failed"`, `code:"editor_unsafe_restart_required"`, `error`, `regions_left_loaded`. Log: `batch <job8>: editor unsafe; N region(s) left loaded, the restart discards them` (Warning).
   - Pump preamble order: bFinalized/bInPump checks → **unsafe stop** → lease keep-alive → (T2.4 PIE hold) → `Machine->Tick`.
   - Region-step error prefix `[editor_unsafe_restart_required] wp_region_load was not run: …` / `… wp_region_unload was not run: …`.
-  - `HaybaMCPBatchHandler.h`, under `#if WITH_DEV_AUTOMATION_TESTS`: `namespace HaybaMCPBatchTestHooks { void BeginRecording(); TArray<FString> EndRecording(); bool PumpOnceForTests(const FString& JobId); FString RunRegionStepForTests(const FString& Cmd, const TSharedPtr<FJsonObject>& Params); }` — the last two are additions to the ledger. Recorded action strings: `"RunStep"`, `"CollectGarbage"`, `"UnloadAll"`, `"ReleaseEditorLoaderAdapter"`, `"ReleaseAll"`.
+  - `HaybaMCPBatchHandler.h`, under `#if WITH_DEV_AUTOMATION_TESTS`: `namespace HaybaMCPBatchTestHooks { void BeginRecording(); TArray<FString> EndRecording(); bool PumpOnceForTests(const FString& JobId); FString RunRegionStepForTests(const FString& Cmd, const TSharedPtr<FJsonObject>& Params); bool InjectFakeLoadedRegion(const FString& JobId, const FString& Name); void ReleaseFakeLoadedRegions(); }` — every hook after `EndRecording` is an addition to the ledger. Recorded action strings: `"RunStep"`, `"CollectGarbage"`, `"UnloadAll"`, `"ReleaseEditorLoaderAdapter"`, `"ReleaseAll"`.
 
 - [ ] **Step 1: Write the failing batch tests (R-7, R-8)**
 
@@ -4217,6 +4461,8 @@ bool FHaybaHealthBatchPumpStopsTest::RunTest(const FString&)
 	const TSharedPtr<FHaybaMCPCommandHandler> R = Router(*this);
 	if (!R.IsValid()) return false;
 	AddExpectedErrorPlain(TEXT("editor_unsafe: native fault"), EAutomationExpectedErrorFlags::Contains, 1);
+	// The Warning FinalizeUnsafe logs. It must count the region the batch still holds.
+	AddExpectedErrorPlain(TEXT("editor unsafe; 1 region(s) left loaded, the restart discards them"), EAutomationExpectedErrorFlags::Contains, 1);
 	TGuardValue<bool> PlanOff(FHaybaMCPSettings::Get().bPlanModeEnabled, false);   // editor_batch is Plan-gated
 	{
 		FHaybaEditorHealth::FScopedOverrideForTests Override;
@@ -4227,19 +4473,26 @@ bool FHaybaHealthBatchPumpStopsTest::RunTest(const FString&)
 		{
 			// Never leave a registered pump behind a failed assertion.
 			for (int32 I = 0; I < 8 && !JobId.IsEmpty() && HaybaMCPBatchTestHooks::PumpOnceForTests(JobId); ++I) {}
+			HaybaMCPBatchTestHooks::ReleaseFakeLoadedRegions();
 			FString Ignored;
 			FHaybaMCPLeaseManager::Get().Table().Release(Token, Owner, Ignored);
 		};
 
+		// The spec's shape, [region load, faulting step, region unload] with a gc fence.
+		// The region is injected instead of loaded (see the Decision above).
+		TSharedPtr<FJsonObject> UnloadParams = MakeShared<FJsonObject>();
+		UnloadParams->SetStringField(TEXT("name"), TEXT("fake_region"));
 		TSharedPtr<FJsonObject> BatchParams = MakeShared<FJsonObject>();
 		BatchParams->SetStringField(TEXT("lease"), Token);
 		BatchParams->SetArrayField(TEXT("steps"), {
 			MakeShared<FJsonValueObject>(Step(TEXT("ping"), TEXT("none"))),
 			MakeShared<FJsonValueObject>(Step(TEXT("test_inject_native_fault"), TEXT("gc"), Fault(TEXT("access_violation"), TEXT("dispatch")))),
-			MakeShared<FJsonValueObject>(Step(TEXT("ping"), TEXT("gc"))) });
+			MakeShared<FJsonValueObject>(Step(TEXT("wp_region_unload"), TEXT("gc"), UnloadParams)) });
 		const TSharedPtr<FJsonObject> Started = Send(*R, TEXT("editor_batch"), Owner, BatchParams);
 		JobId = Str(Obj(Started, TEXT("data")), TEXT("job_id"));
 		if (!TestFalse(TEXT("the batch started"), JobId.IsEmpty())) return false;
+		if (!TestTrue(TEXT("the batch holds one region that counts as loaded"),
+			HaybaMCPBatchTestHooks::InjectFakeLoadedRegion(JobId, TEXT("fake_region")))) return false;
 
 		HaybaMCPBatchTestHooks::BeginRecording();
 		for (int32 I = 0; I < 10 && !FHaybaEditorHealth::IsUnsafe(); ++I)
@@ -4253,8 +4506,11 @@ bool FHaybaHealthBatchPumpStopsTest::RunTest(const FString&)
 		TestFalse(TEXT("the job is no longer active"), HaybaMCPBatchTestHooks::PumpOnceForTests(JobId));
 		const TArray<FString> Actions = HaybaMCPBatchTestHooks::EndRecording();
 
-		TestEqual(TEXT("exactly the two steps before the fault ran"),
+		TestEqual(TEXT("exactly the two steps before the fault ran; wp_region_unload never did"),
 			Actions.FilterByPredicate([](const FString& A) { return A == TEXT("RunStep"); }).Num(), 2);
+		// These can fail: with a loaded region, a pump without the unsafe preamble
+		// goes to cleanup and records UnloadAll and ReleaseAll, and the cleanup
+		// fence that follows an unload records CollectGarbage.
 		for (const TCHAR* Forbidden : { TEXT("CollectGarbage"), TEXT("UnloadAll"), TEXT("ReleaseAll"), TEXT("ReleaseEditorLoaderAdapter") })
 		{
 			TestFalse(*FString::Printf(TEXT("no %s after the fault"), Forbidden), Actions.Contains(Forbidden));
@@ -4265,6 +4521,10 @@ bool FHaybaHealthBatchPumpStopsTest::RunTest(const FString&)
 		const TSharedPtr<FJsonObject> Status = Obj(Send(*R, TEXT("batch_status"), Owner, StatusParams), TEXT("data"));
 		TestEqual(TEXT("the job failed"), Str(Status, TEXT("status")), FString(TEXT("failed")));
 		TestEqual(TEXT("with the unsafe code"), Str(Status, TEXT("code")), FString(TEXT("editor_unsafe_restart_required")));
+		double LeftLoaded = -1.0;
+		Status->TryGetNumberField(TEXT("regions_left_loaded"), LeftLoaded);
+		TestEqual(TEXT("the region was left loaded for the restart to discard"), static_cast<int32>(LeftLoaded), 1);
+		TestTrue(TEXT("the error says so"), Str(Status, TEXT("error")).Contains(TEXT("1 World Partition region(s) stay loaded")));
 		TestNull(TEXT("the batch's lease-table entry was released"), FHaybaMCPLeaseManager::Get().Table().FindLease(Token));
 	}
 	TestFalse(TEXT("the real editor health is untouched (R-7)"), FHaybaEditorHealth::IsUnsafe());
@@ -4343,6 +4603,11 @@ namespace HaybaMCPBatchTestHooks
 	bool PumpOnceForTests(const FString& JobId);
 	/** Run wp_region_load / wp_region_unload against a throwaway batch state; returns the error ("" on success). */
 	FString RunRegionStepForTests(const FString& Cmd, const TSharedPtr<FJsonObject>& Params);
+	/** Give an active job one region that counts as loaded: a transient loader adapter that belongs to no
+	 *  World Partition and has no loader, so releasing it would only reset the pointer. False when the job is not active. */
+	bool InjectFakeLoadedRegion(const FString& JobId, const FString& Name);
+	/** Drop the strong references InjectFakeLoadedRegion holds. Call it in ON_SCOPE_EXIT. */
+	void ReleaseFakeLoadedRegions();
 }
 #endif
 ```
@@ -4496,9 +4761,41 @@ namespace HaybaMCPBatchTestHooks
 			: RunRegionUnload(S, P, Data, Error);
 		return bOk ? FString() : Error;
 	}
+
+	/** Strong references to the fake adapters, so a GC cannot make a fake region look unloaded.
+	 *  Leaked on purpose: the array must outlive static destruction; tests empty it. */
+	static TArray<TStrongObjectPtr<UWorldPartitionEditorLoaderAdapter>>& FakeAdapters()
+	{
+		static TArray<TStrongObjectPtr<UWorldPartitionEditorLoaderAdapter>>* Adapters =
+			new TArray<TStrongObjectPtr<UWorldPartitionEditorLoaderAdapter>>();
+		return *Adapters;
+	}
+
+	bool InjectFakeLoadedRegion(const FString& JobId, const FString& Name)
+	{
+		const TSharedPtr<FBatchState>* Found = ActiveBatches().Find(JobId);
+		if (!Found || !Found->IsValid()) return false;
+		// Created as UWorldPartition::CreateEditorLoaderAdapter creates it, but
+		// registered nowhere and with no loader: CountLoaded sees a valid adapter,
+		// and ReleaseRegion (WorldPartition is null) would only reset the pointer.
+		UWorldPartitionEditorLoaderAdapter* Adapter = NewObject<UWorldPartitionEditorLoaderAdapter>(GetTransientPackage());
+		FakeAdapters().Emplace(Adapter);
+		FRegion Region;
+		Region.Name = Name;
+		Region.Adapter = Adapter;
+		(*Found)->Regions.Add(Region);
+		return true;
+	}
+
+	void ReleaseFakeLoadedRegions()
+	{
+		FakeAdapters().Reset();
+	}
 }
 #endif
 ```
+
+Add `#include "UObject/StrongObjectPtr.h"` after `#include "UObject/UObjectGlobals.h"` (`:31`), inside a `#if WITH_DEV_AUTOMATION_TESTS` / `#endif` pair.
 
 - [ ] **Step 5: Build and run the batch tests**
 
@@ -4520,10 +4817,12 @@ if (-not $proc.WaitForExit(1800*1000)) {
   Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like "*UEScratch\h58\h58.uproject*" } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
 }
 node "$WT\mcp-tools\hayba-mcp\scripts\check-automation-report.mjs" "$R\index.json" "$R\manifest.txt"
-Select-String -Path "$H\Saved\Logs\hayba-t1-4.log" -Pattern "editor unsafe; 0 region\(s\) left loaded"
+Select-String -Path "$H\Saved\Logs\hayba-t1-4.log" -Pattern "editor unsafe; \d+ region\(s\) left loaded"
 ```
 
-Expected: vitest PASS (the whole contract file); build `Result: Succeeded`; checker exit 0 (3/3 `Success`); one `batch <job8>: editor unsafe; 0 region(s) left loaded, the restart discards them` line.
+Expected: vitest PASS (the whole contract file); build `Result: Succeeded`; checker exit 0 (3/3 `Success`); exactly one `batch <job8>: editor unsafe; 1 region(s) left loaded, the restart discards them` line and no `0 region(s)` line.
+
+Prove the test can fail (once, then undo): comment out the four-line `if (FHaybaEditorHealth::IsUnsafe()) { FinalizeUnsafe(S); return false; }` block in `Pump`, rebuild, and run `Hayba.MCP.Health.BatchPumpStopsWhileUnsafe` alone. Expected: `Result={Fail}` with `no UnloadAll after the fault` and `no ReleaseAll after the fault` among the failures. Restore the block, rebuild, and re-run the three tests above to green before Step 6. `git diff --stat` must show no change to `Pump` beyond Step 4's.
 
 - [ ] **Step 6: Manifest, full TS suite, commit**
 
@@ -4542,7 +4841,7 @@ git add unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/handlers/HaybaMCPB
 git commit -m "fix(ue): stop editor_batch without cleanup or GC once the editor is unsafe"
 ```
 
-Expected before the commit: tsc exit 0; vitest 212 files, 0 failed.
+Expected before the commit: tsc exit 0; vitest 212 files, 0 failed (the 211 at the base plus T1.2's `editor-health-contract.test.ts`; this task adds no TS file, and T1.5 lands after it).
 
 ---
 
@@ -4993,7 +5292,7 @@ npx vitest run src/tools/ue-refusal-codes.test.ts src/tools/python/python-run.te
 npx tsc --noEmit; npx vitest run; npm run lint:legacy-wrappers
 ```
 
-Expected: the three files PASS; tsc exit 0; vitest 213 files, 0 failed, 1 skipped; `lint:legacy-wrappers` exit 0.
+Expected: the three files PASS; tsc exit 0; vitest 213 files, 0 failed, 1 skipped (T1.4's 212 plus the new `ue-refusal-codes.test.ts`); `lint:legacy-wrappers` exit 0.
 
 - [ ] **Step 9: ADR-0011, the ADR index and the changelog**
 
@@ -5137,7 +5436,7 @@ Select-String -Path "$H\Saved\Logs\hayba-p0-$SHA.log" -Pattern 'Result=\{Fail\}'
 Select-String -Path "$H\Saved\Logs\hayba-p0-$SHA.log" -Pattern 'editor_unsafe_restart_required' | Select-Object -First 5
 ```
 
-Expected: checker exit 0 — every T0 and T1 manifest name present with `Success`/`SuccessWithWarnings`, total ≥ baseline + 13. The only `Result={Fail}` line is `Hayba.MCP.UI.RenderWidgetToPng`. No `editor_unsafe_restart_required` line outside the `Hayba.MCP.Health.*` tests (a stray one means a test leaked a real fault: R-7).
+Expected: checker exit 0 — every T0 and T1 manifest name present with the state `Success`, total ≥ baseline + 13. The only `Result={Fail}` line is `Hayba.MCP.UI.RenderWidgetToPng`. No `editor_unsafe_restart_required` line outside the `Hayba.MCP.Health.*` tests (a stray one means a test leaked a real fault: R-7).
 
 - [ ] **Step 4: TS gate**
 
@@ -5181,7 +5480,7 @@ Depends on: T1.1 (`HaybaMCPCommandSets.h`). Line numbers are at `54c4744c`; re-l
   - `enum class EPlayRequestKind : uint8 { User, Agent };` `constexpr double PlayVetoOverrideWindowSeconds = 10.0;`
   - `struct FBusyAsset { FString Asset, Owner, Label, Lane, SinceUtc; double HeldSeconds=0, ExpiresInSeconds=0; };` (defined here, not in T3.1, because `DecideUserPlay` takes it)
   - `struct FPlayDecision { bool bDeny=false; bool bOverrideAccepted=false; bool bNotifyOnly=false; FString Reason; };`
-  - `inline const TCHAR* const UnsafePlayVetoText` (the §2.10 unsafe Play veto text)
+  - `inline const TCHAR* const UnsafePlayVetoText` (the Appendix A.2.10 unsafe Play veto text)
   - `FPlayDecision DecideUserPlay(const TArray<FBusyAsset>& Busy, EPlayRequestKind Kind, int32 Mode, bool bUnsafe, double LastVetoAt, double Now);` (T2 implements only the unsafe branch; T10.1 adds the busy branch)
   - Batch (namespace `HaybaMCPBatch`): `FInputs::bHeld` (bool, default false); `FMachine::IsHeld() const`; `FMachine::GetHeldSeconds() const`; `ValidateSteps` rejects `editor_start_pie`, `editor_stop_pie` and `editor_pie_*` with exactly `steps[%d]: PIE cannot run inside a batch; batches pause during PIE`.
 
@@ -6727,6 +7026,8 @@ Four commits, each with its own build and test cycle: (a) slot 2 and the R13 lea
 
 Depends on: T2.2, T1.3.
 
+**Maintainer decision R-12 (2026-09-28, recorded in the spec's last section), which commit (d) implements:** the 18 read-like commands are classified as reads. They are allowed during PIE, and they are not treated as writes under `EnforcedForWrites`. The 18: `wait_for_idle`, `wait_for_shaders`, `asset_validate`, `material_validate`, `mesh_audit`, `mesh_list_dynamic`, `mesh_topology_stats`, `metasound_inspect`, `metasound_list`, `pcg_export_graph`, `pcg_read_node_output`, `pcg_validate_graph`, `placement_validate`, `scene_export`, `scene_validate_physics`, `texture_audit`, `ui_measure_text`, `copilot_get_key`. This task puts all 18 into `ReadCommands()`, the one set both rules read (the PIE rule here, the lease class in T8.2). Tests that pin the decision: `Hayba.MCP.State.PieSafeDrift` (its expected list names all 18, each must rule `Safe`, none may be in the refused-by-default list, and two of them pass slot 2 through the router during a user PIE), `editor-state-policy-drift.test.ts` (T2.5: every one of the 18 is in the parsed read set and is a registered command), and, for the lease half, T8.2's `Hayba.MCP.Lease.ReadClassDrift` and `Hayba.MCP.Lease.EnforcedForWritesTwoOwners`. The decision does not reach the unsafe gate: after a contained fault the 18 are refused like every command outside `UnsafeReads()`.
+
 **Files:**
 - Modify: `unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/HaybaMCPCommandHandler.cpp`: includes `:19-20` (hunk a), `IsWireRefusalCode` + promotion in `ShapeOkResponse` `:1088-1107` (hunk d), a file-static `LogPieActiveRefusal` after T1.3's `LogDrainedGateRefusals()` (hunk c), slot 2 after T1.3's slot 1 (hunk m), `if (!bPieAuthorized)` on the lease gate `:1301-1316` (hunk o), per-command limit `:1704-1737`
 - Modify: `unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/HaybaMCPEditorStatePolicy.h` (modal preflight helpers)
@@ -6747,7 +7048,7 @@ Depends on: T2.2, T1.3.
   - Policy additions (`HaybaMCPState`): `struct FBlueprintPlayFacts { bUpToDate, bForDiffing, bDirty, bDataOnly, bError, bDisplayCompilePIEWarning }`, `enum class EPlayModal : uint8 { None, ErroredDialog, RecompilePrompt }`, `EPlayModal PlayModalFor(const FBlueprintPlayFacts&, bool bPromptForCompile)`, `const TCHAR* LexPlayModal(EPlayModal)` (`"none","errored","dirty"`), `constexpr int32 MaxBlockedAssetsListed = 16`, `FString FormatPieBlockedMessage(int32 Count, const FString& FirstAsset, EPlayModal FirstModal)`.
   - `editor_start_pie` reply: `pie_started:true` (kept), `pie_requested:true`, `pie_owner:"agent:<owner>"`, `hint`. `editor_stop_pie` reply: `pie_stopped:true`, plus `cancelled_queued_request:true` when it cancelled a queued session.
   - `editor_get_state` param `include_dirty` (default true); reply `{ok, map, selection_count, caller_owner, pie, pie_running, pie_phase, pie_since_s, pie_simulating, compiling, shader_jobs, saving, building:[], editor_unsafe, python_unhealthy, health{}, dirty_packages?, dirty_count?, dirty_packages_skipped?}` with `dirty_packages_skipped` = `"editor_unsafe"` | `"include_dirty"`; router `Limits.MaxTopLevelFields = 32` for `editor_get_state` (R-21).
-  - `HaybaMCPCommandSets::ReadCommands()` gains `wait_for_idle`, `wait_for_shaders` (R-12 ledger default): 53 → 55.
+  - `HaybaMCPCommandSets::ReadCommands()` gains the 18 R-12 reads (decided 2026-09-28): 53 → 71. The names: `wait_for_idle`, `wait_for_shaders`, `asset_validate`, `material_validate`, `mesh_audit`, `mesh_list_dynamic`, `mesh_topology_stats`, `metasound_inspect`, `metasound_list`, `pcg_export_graph`, `pcg_read_node_output`, `pcg_validate_graph`, `placement_validate`, `scene_export`, `scene_validate_physics`, `texture_audit`, `ui_measure_text`, `copilot_get_key`.
 
 - [ ] **Step 1: Write the failing slot-2 router tests**
 
@@ -7712,7 +8013,8 @@ bool FHaybaMCPStatePieSafeDriftTest::RunTest(const FString& Parameters)
 	const TSet<FString> Registered(Router->GetAllCommands());
 	TestTrue(TEXT("a plausible command surface is registered"), Registered.Num() > 100);
 
-	// Spec T2 design 1, plus asset_browse and test_cancel (ledger C15) and the R-12 defaults.
+	// Spec T2 design 1, plus asset_browse and test_cancel (ledger C15) and the 18 R-12 reads
+	// (spec, Maintainer decisions 2026-09-28).
 	// lease_* is left out: those are PIE-safe by prefix, whatever set lists them.
 	static const TCHAR* const ExpectedSafe[] = {
 		TEXT("ping"), TEXT("editor_get_state"), TEXT("get_setting"), TEXT("copilot_key_status"), TEXT("batch_status"),
@@ -7733,7 +8035,11 @@ bool FHaybaMCPStatePieSafeDriftTest::RunTest(const FString& Parameters)
 		TEXT("project_get_info"), TEXT("project_get_settings"), TEXT("project_list_plugins"), TEXT("test_list"), TEXT("test_get_log"),
 		TEXT("build_status"), TEXT("foliage_list_types"), TEXT("pcg_list_assets"), TEXT("list_pcg_assets"), TEXT("pcg_list_node_classes"),
 		TEXT("list_node_classes"), TEXT("pcg_get_node_details"), TEXT("get_node_details"),
-		TEXT("wait_for_idle"), TEXT("wait_for_shaders"),
+		TEXT("wait_for_idle"), TEXT("wait_for_shaders"), TEXT("asset_validate"), TEXT("material_validate"),
+		TEXT("mesh_audit"), TEXT("mesh_list_dynamic"), TEXT("mesh_topology_stats"), TEXT("metasound_inspect"),
+		TEXT("metasound_list"), TEXT("pcg_export_graph"), TEXT("pcg_read_node_output"), TEXT("pcg_validate_graph"),
+		TEXT("placement_validate"), TEXT("scene_export"), TEXT("scene_validate_physics"), TEXT("texture_audit"),
+		TEXT("ui_measure_text"), TEXT("copilot_get_key"),
 	};
 	TSet<FString> Expected;
 	for (const TCHAR* Name : ExpectedSafe) Expected.Add(Name);
@@ -7790,9 +8096,37 @@ bool FHaybaMCPStatePieSafeDriftTest::RunTest(const FString& Parameters)
 	{
 		TestEqual(*FString::Printf(TEXT("%s stays refused"), Writer), PieRuleFor(Writer), EPieRule::Refuse);
 	}
-	// R-12: printed for maintainer review of read-like commands still refused during PIE.
+	// Printed so a reviewer sees what is still refused during PIE by default. None of the
+	// 18 R-12 reads may be in it.
+	for (const TCHAR* Read : { TEXT("wait_for_idle"), TEXT("wait_for_shaders"), TEXT("asset_validate"), TEXT("material_validate"), TEXT("mesh_audit"), TEXT("mesh_list_dynamic"),
+		TEXT("mesh_topology_stats"), TEXT("metasound_inspect"), TEXT("metasound_list"), TEXT("pcg_export_graph"), TEXT("pcg_read_node_output"), TEXT("pcg_validate_graph"),
+		TEXT("placement_validate"), TEXT("scene_export"), TEXT("scene_validate_physics"), TEXT("texture_audit"), TEXT("ui_measure_text"), TEXT("copilot_get_key") })
+	{
+		TestEqual(*FString::Printf(TEXT("R-12 read %s is allowed during PIE"), Read), PieRuleFor(Read), EPieRule::Safe);
+		TestFalse(*FString::Printf(TEXT("R-12 read %s is not refused by default"), Read), RefusedByDefault.Contains(Read));
+	}
+	// The same decision through the router: during a user PIE two of the 18 pass
+	// slot 2 and reach their handler. Without parameters the handler answers a
+	// missing-parameter error, which is enough here: pie_active did not refuse.
+	if (NoRealPie(*this))
+	{
+		FHaybaMCPEditorState::FScopedPieOverride Forced(MakePie(HaybaMCPState::EPieKind::User, HaybaMCPState::EPiePhase::Running));
+		const FString ReadOwner = MakeTestOwner();
+		for (const TCHAR* Read : { TEXT("material_validate"), TEXT("ui_measure_text") })
+		{
+			const TSharedPtr<FJsonObject> Reply = Send(*Router, 900190, ReadOwner, Read);
+			TestTrue(*FString::Printf(TEXT("R-12 read %s answers during a user PIE"), Read), Reply.IsValid());
+			TestNotEqual(*FString::Printf(TEXT("R-12 read %s passes slot 2 during a user PIE"), Read),
+				CodeOf(Reply), FString(TEXT("pie_active")));
+		}
+	}
 	RefusedByDefault.Sort();
 	AddInfo(FString::Printf(TEXT("refused during PIE by default (%d): %s"), RefusedByDefault.Num(), *FString::Join(RefusedByDefault, TEXT(", "))));
+	// The complement, for the M5 recipe of the handoffs: a list of names, never a
+	// pattern. lease_* is left out because it is PIE-safe by prefix.
+	TArray<FString> SafeSorted = ActualNonLease.Array();
+	SafeSorted.Sort();
+	AddInfo(FString::Printf(TEXT("PIE-safe (%d): %s"), SafeSorted.Num(), *FString::Join(SafeSorted, TEXT(", "))));
 	return true;
 }
 ```
@@ -7806,20 +8140,26 @@ foreach ($p in "HaybaMCPToolkit","HaybaMCPMetaSound","HaybaMCPGAS") { robocopy "
 $Tag = "t2-3d-red"
 $proc = Start-Process "$UE\Engine\Binaries\Win64\UnrealEditor-Cmd.exe" -PassThru -ArgumentList @("`"$H\h58.uproject`"","-unattended","-nop4","-nullrhi","-nosplash","-nosound","-HaybaAutomationChild=p0scratch","-ExecCmds=`"Automation RunTests Hayba.MCP.State.PieSafeDrift;Quit`"","-TestExit=`"Automation Test Queue Empty`"","-log=hayba-$Tag.log")
 if (-not $proc.WaitForExit(1800000)) { Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like "*UEScratch\h58\h58.uproject*" } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force } }
-Select-String -Path "$H\Saved\Logs\hayba-$Tag.log" -Pattern 'Result=\{(Success|Fail)\}|missing wait_for'
+Select-String -Path "$H\Saved\Logs\hayba-$Tag.log" -Pattern 'Result=\{(Success|Fail)\}'
+(Select-String -Path "$H\Saved\Logs\hayba-$Tag.log" -Pattern 'the PIE-safe sets are missing (\w+)' -AllMatches).Matches | ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique
 ```
 
-Expected: `Result={Fail}` with `the PIE-safe sets are missing wait_for_idle` and `…missing wait_for_shaders`.
+Expected: `Result={Fail}`, and the second command prints the 18 R-12 names, from `asset_validate` to `wait_for_shaders`.
 
-- [ ] **Step 22: Add the two R-12 reads**
+- [ ] **Step 22: Add the 18 R-12 reads**
 
 In `unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/HaybaMCPCommandSets.h`, append to the `ReadCommands()` literal, after its last entry:
 
 ```cpp
-			// R-12 (ledger default): snapshot polls that host scripts call while
-			// the user plays. They block nothing and change nothing.
-			TEXT("wait_for_idle"),
-			TEXT("wait_for_shaders"),
+			// R-12 (decided 2026-09-28): read-like commands. They are allowed
+			// during PIE and are reads for leases. The unsafe allowlist does not
+			// use this set, so they stay refused after a contained fault.
+			TEXT("wait_for_idle"), TEXT("wait_for_shaders"), TEXT("asset_validate"),
+			TEXT("material_validate"), TEXT("mesh_audit"), TEXT("mesh_list_dynamic"),
+			TEXT("mesh_topology_stats"), TEXT("metasound_inspect"), TEXT("metasound_list"),
+			TEXT("pcg_export_graph"), TEXT("pcg_read_node_output"), TEXT("pcg_validate_graph"),
+			TEXT("placement_validate"), TEXT("scene_export"), TEXT("scene_validate_physics"),
+			TEXT("texture_audit"), TEXT("ui_measure_text"), TEXT("copilot_get_key"),
 ```
 
 Then move T1.1's size pin in `unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/Tests/HaybaMCPEditorHealthTest.cpp` (`Hayba.MCP.Health.AllowlistDrift`) from
@@ -7831,7 +8171,7 @@ Then move T1.1's size pin in `unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Priv
 to
 
 ```cpp
-	TestEqual(TEXT("55 read commands"), ReadCommands().Num(), 55);
+	TestEqual(TEXT("71 read commands"), ReadCommands().Num(), 71);
 ```
 
 and confirm nothing else pins the old size:
@@ -7840,7 +8180,7 @@ and confirm nothing else pins the old size:
 Select-String -Path D:\Hackathons\hayba\.worktrees\p0-safety\unreal\HaybaMCPToolkit\Source\HaybaMCPToolkit\Private\Tests\*.cpp, D:\Hackathons\hayba\.worktrees\p0-safety\mcp-tools\hayba-mcp\src\tools\__tests__\*.ts -Pattern '53 read commands|ReadCommands\(\)\.Num\(\), 53'
 ```
 
-Expected: no output. `wait_for_*` stay refused while the editor is unsafe: the unsafe allowlist uses `UnsafeReads()`, not `ReadCommands()`.
+Expected: no output. The 18 stay refused while the editor is unsafe: the unsafe allowlist uses `UnsafeReads()`, not `ReadCommands()`, and T1.1's `Hayba.MCP.Health.UnsafeGatePolicy` still asserts that `wait_for_idle` and `wait_for_shaders` are refused after a fault. `metasound_inspect` and `metasound_list` are registered by the MetaSound satellite, so `PieSafeDrift` needs the satellite in the host, which every scratch host has (T0.1 copies all three plugins).
 
 - [ ] **Step 23: Append the manifest name; build; run State and Health**
 
@@ -7861,17 +8201,17 @@ if (-not $proc.WaitForExit(1800000)) { Get-CimInstance Win32_Process | Where-Obj
 $Log = "$H\Saved\Logs\hayba-$Tag.log"
 (Select-String -Path $Log -Pattern 'Hayba\.MCP\.State\.[A-Za-z]+' -AllMatches).Matches.Value | Sort-Object -Unique
 Select-String -Path $Log -Pattern 'Result=\{Fail\}'
-Select-String -Path $Log -Pattern 'refused during PIE by default'
+Select-String -Path $Log -Pattern 'refused during PIE by default', 'PIE-safe \(\d+\): '
 ```
 
-Expected: 12 unique `Hayba.MCP.State.*` names (delta +1); no `Result={Fail}` (T1's `AllowlistDrift` still green); the `refused during PIE by default` line lists the R-12 commands (it should include `asset_validate`, `material_validate`, `mesh_audit`, `texture_audit`, `ui_measure_text`, and no `wait_for_*`). Copy that line into the T2.6 gate notes for maintainer review.
+Expected: 12 unique `Hayba.MCP.State.*` names (delta +1); no `Result={Fail}` (T1's `AllowlistDrift` still green); the `refused during PIE by default` line holds none of the 18 R-12 names (the test asserts it); and the `PIE-safe (<n>): …` line holds all 18. T2.6 Step 6 saves both lines: handoff A's M5 recipe (GA.3) is built from the PIE-safe list.
 
 - [ ] **Step 24: Run the whole TS suite and commit**
 
 ```powershell
 Set-Location D:\Hackathons\hayba\.worktrees\p0-safety\mcp-tools\hayba-mcp; npx tsc --noEmit; npx vitest run
 git -C D:/Hackathons/hayba/.worktrees/p0-safety add unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/HaybaMCPCommandSets.h unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/Tests/HaybaMCPEditorStateRouterTest.cpp unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/Tests/HaybaMCPEditorHealthTest.cpp mcp-tools/hayba-mcp/scripts/p0-expected-automation-tests.txt
-git -C D:/Hackathons/hayba/.worktrees/p0-safety commit -m "test(ue): pin the PIE-safe command sets; wait_for_idle and wait_for_shaders are reads"
+git -C D:/Hackathons/hayba/.worktrees/p0-safety commit -m "test(ue): pin the PIE-safe command sets; the 18 read-like commands are reads"
 ```
 
 Expected: vitest 0 failed before the commit.
@@ -8512,9 +8852,15 @@ function walk(dir: string, out: string[] = []): string[] {
   return out;
 }
 
+const METASOUND_PRIVATE = join(process.cwd(), '../../unreal/HaybaMCPMetaSound/Source/HaybaMCPMetaSound/Private');
+
 function handlerCommands(): Set<string> {
   const cmds = new Set<string>();
-  const files = walk(join(PRIVATE, 'handlers')).filter((f) => f.endsWith('.cpp'));
+  // The MetaSound satellite registers metasound_inspect and metasound_list, two R-12 reads.
+  expect(existsSync(METASOUND_PRIVATE), 'the MetaSound satellite sources must exist').toBe(true);
+  const files = [...walk(join(PRIVATE, 'handlers')), ...walk(METASOUND_PRIVATE)].filter(
+    (f) => f.endsWith('.cpp') && !f.includes('Tests'),
+  );
   expect(files.length).toBeGreaterThan(20);
   for (const f of files) {
     for (const m of readFileSync(f, 'utf-8').matchAll(/TEXT\("([a-z][a-z0-9_]{2,})"\)/g)) cmds.add(m[1]!);
@@ -8533,7 +8879,11 @@ const pieSafe = [...controlPlane, ...reads, ...observation];
 describe('editor-state policy names real commands', () => {
   it('parses sets of the expected size', () => {
     expect(controlPlane.length).toBeGreaterThanOrEqual(18);
-    expect(reads.length).toBeGreaterThanOrEqual(55);
+    expect(reads.length).toBeGreaterThanOrEqual(71);
+    for (const name of ['wait_for_idle', 'wait_for_shaders', 'asset_validate', 'material_validate', 'mesh_audit', 'mesh_list_dynamic', 'mesh_topology_stats', 'metasound_inspect', 'metasound_list',
+      'pcg_export_graph', 'pcg_read_node_output', 'pcg_validate_graph', 'placement_validate', 'scene_export', 'scene_validate_physics', 'texture_audit', 'ui_measure_text', 'copilot_get_key']) {
+      expect(reads, `R-12 read ${name}`).toContain(name);
+    }
     expect(observation.length).toBe(7);
     expect(pieOwner.length).toBe(8);
   });
@@ -8761,10 +9111,14 @@ unverified, because the toolkit does not build on 5.7 today.
 
 ## Consequences
 
-- Read-like commands that are in no read set are refused during PIE.
-  `Hayba.MCP.State.PieSafeDrift` prints them for review. `wait_for_idle` and
-  `wait_for_shaders` were added to the read set; the rest stay refused until
-  someone classifies them.
+- A command that is in no read set is refused during PIE, whatever its name
+  suggests. Eighteen read-like commands were classified as reads when this
+  was decided (`wait_for_idle`, `wait_for_shaders`, the `*_validate` and
+  `*_audit` commands, `mesh_list_dynamic`, `mesh_topology_stats`,
+  `metasound_inspect`, `metasound_list`, `pcg_export_graph`,
+  `pcg_read_node_output`, `scene_export`, `ui_measure_text` and
+  `copilot_get_key`). A new read command must be added to `ReadCommands()`;
+  `Hayba.MCP.State.PieSafeDrift` prints what is refused by default.
 - A batch holding World Partition regions keeps them loaded through the
   user's Play, which duplicates a heavy world, and its lease keeps renewing
   through a long PIE and keeps blocking conflicting leases.
@@ -8798,7 +9152,7 @@ Depends on: T2.4, T2.5.
 
 **Interfaces:**
 - Consumes: every name above; T0.2's checker (`<index.json> <manifest> --allow-fail <name>`).
-- Produces: gate evidence for the Deploy A gate (GA.1): the report path, the name list, and the R-12 refused-by-default list for maintainer sign-off.
+- Produces: gate evidence for the Deploy A gate (GA.1): the report path, the name list, the `refused during PIE by default` line saved to `D:/UEScratch/logs/pie-refused-by-default.txt`, and the PIE-safe names saved to `D:/UEScratch/logs/pie-safe.txt` (one line, `, `-separated, no prefix), which GA.3 Step 2 writes into handoff A's M5 recipe.
 
 - [ ] **Step 1: Sync and build twice**
 
@@ -8840,7 +9194,7 @@ Expected: 14 unique `Hayba.MCP.State.*` names (13 in the manifest plus `RealPIE`
 node "$WT\mcp-tools\hayba-mcp\scripts\check-automation-report.mjs" "D:\UEScratch\reports\$SHA\index.json" "$WT\mcp-tools\hayba-mcp\scripts\p0-expected-automation-tests.txt" --allow-fail Hayba.MCP.UI.RenderWidgetToPng
 ```
 
-Expected: exit 0; every `# T2` name is present with state `Success` or `SuccessWithWarnings`.
+Expected: exit 0; every `# T2` name is present with the state `Success`.
 
 - [ ] **Step 4: Real PIE, separate invocation**
 
@@ -8860,9 +9214,25 @@ Set-Location "$WT\mcp-tools\hayba-mcp"; npx tsc --noEmit; npx vitest run; npm ru
 
 Expected: all clean; vitest 0 failed; file count = the pre-T2 count + 1 (`editor-state-policy-drift.test.ts`).
 
-- [ ] **Step 6: Hand the R-12 list to the maintainer**
+- [ ] **Step 6: Save the refused-by-default line and the PIE-safe list**
 
-Put the `refused during PIE by default (<n>): …` line from Step 2 in the GA.1 gate notes, asking which read-like commands move into `ReadCommands()`. No commit in this task unless a step above forced a fix, in which case the fix is its own conventional commit.
+```powershell
+(Select-String -Path "$H\Saved\Logs\hayba-p0-$SHA.log" -Pattern 'refused during PIE by default \((\d+)\): (.*)$' | Select-Object -Last 1).Line |
+  Set-Content "D:\UEScratch\logs\pie-refused-by-default.txt"
+$Refused = (Get-Content "D:\UEScratch\logs\pie-refused-by-default.txt") -replace '^.*\): ', '' -split ', '
+$R12 = @('wait_for_idle','wait_for_shaders','asset_validate','material_validate','mesh_audit','mesh_list_dynamic','mesh_topology_stats',
+  'metasound_inspect','metasound_list','pcg_export_graph','pcg_read_node_output','pcg_validate_graph','placement_validate',
+  'scene_export','scene_validate_physics','texture_audit','ui_measure_text','copilot_get_key')
+$R12 | Where-Object { $Refused -contains $_ }
+$SafeLine = (Select-String -Path "$H\Saved\Logs\hayba-p0-$SHA.log" -Pattern 'PIE-safe \((\d+)\): (.*)$' | Select-Object -Last 1)
+$SafeLine.Matches[0].Groups[2].Value.Trim() | Set-Content "D:\UEScratch\logs\pie-safe.txt"
+$Safe = (Get-Content "D:\UEScratch\logs\pie-safe.txt" -TotalCount 1) -split ', '
+"PIE-safe names: $($Safe.Count) (the test printed $($SafeLine.Matches[0].Groups[1].Value))"
+$R12 | Where-Object { $Safe -notcontains $_ }
+$Safe | Where-Object { $_ -notmatch '^[a-z0-9_]+$' -or $Refused -contains $_ }
+```
+
+Expected: `pie-refused-by-default.txt` holds one line, and the first filter prints nothing (R-12 is decided: the 18 read-like commands are reads, so none of them is refused). `pie-safe.txt` holds one line of names; the two counts on the `PIE-safe names:` line are equal; the second filter prints nothing (all 18 R-12 reads are PIE-safe); and the third prints nothing (every entry is a plain command name, and no name is on both lists). No commit in this task unless a step above forced a fix, in which case the fix is its own conventional commit.
 
 **Done when:** `Hayba.MCP.State.RouterRefusesMutationDuringPIE`, `Hayba.MCP.State.HooksBoundAtStartup` and `Hayba.MCP.Batch.HoldExcludedFromFenceTimeout` pass headless on the scratch host, every `# T2` manifest name reports Success, and the TS gate is green.
 
@@ -8913,7 +9283,7 @@ Pure layer only: nothing in the router changes here. Three test cycles, each end
     - `TSharedRef<FJsonObject> BusyAssetToJson(const FBusyAsset&)`, whose keys are exactly `asset, owner, label, lane, held_s, since, expires_in_s`;
     - `TArray<TSharedPtr<FJsonValue>> BusyAssetsToJson(const TArray<FBusyAsset>&)`;
     - `TSharedRef<FJsonObject> MakeBusyDetail(const FString& Cmd, const FString& CallerOwner, const TArray<FBusyAsset>& Assets)`, which returns `{command, caller_owner, assets}`;
-    - `FString MakeBusyMessage(const FString& Cmd, const FBusyAsset& First)`, with the §2.10 text.
+    - `FString MakeBusyMessage(const FString& Cmd, const FBusyAsset& First)`, with the Appendix A.2.10 text.
   - Automation names: `Hayba.MCP.Lease.AssetWrites`, `Hayba.MCP.Lease.AssetHolders`, `Hayba.MCP.State.AssetBusyTargets`. `Hayba.MCP.Lease.ClassificationDrift` is extended.
 
 #### Cycle A: the S1 seam
@@ -10315,8 +10685,10 @@ In `handlers/HaybaMCPEditorHandler.cpp`, replace T2.3's statement `Out->SetArray
 ```cpp
     // Every asset build (P0 T3). Lease-table data only, so it is safe even
     // after an HCR-NATIVE-004 fault, where the dirty walk is skipped.
-    FHaybaMCPEditorState::Get().WriteBuildingJson(Out.ToSharedRef());
+    FHaybaMCPEditorState::Get().WriteBuildingJson(Out);
 ```
+
+`Out` is a `TSharedRef<FJsonObject>` since T2.3 rewrote `GetState`, and a `TSharedRef` has no `ToSharedRef()` member, so it is passed as it is (T2.3's `WritePieJson(Out)` does the same). If this line sits before the statement that writes `dirty_packages_skipped` and returns early, `building` is reported after an HCR-NATIVE-004 fault as well, which is what the comment promises; keep it above that early return.
 
 - [ ] **Step 6: Add the slot 3 helpers to the router**
 
@@ -10755,18 +11127,636 @@ Expected:
 
 ---
 
+### Task GA.0: Deploy A host kit (§5.1): `editor_gate.py` codes, the unsafe exit, PIE from `editor_get_state`
+
+Spec §5 ("Changes ship as a regenerated patch and a test kit") and §5.1. Handoff A must not ask the consumer to edit `editor_gate.py` by hand: Deploy B's kit (T4.4) is a patch on top of whatever `Tools/GameFlow` holds, and the Deploy B precondition is the D1/R1 gate. So the §5.1 gate changes ship here as a tested kit and a patch, before the Deploy A gate, and the tag `p0-deploy-a` contains them. This task changes no plugin or Node code.
+
+Lease handles are still redacted on the Deploy A plugin, so this kit keeps reading `token` exactly as the base kit does; T4.4 moves it to `lease_id`.
+
+**Files:**
+- Modify: `<host-kit>/editor_gate.py` (`:1-363` at `54c4744c`: the docstring `:22-30`, `:39-45`, `:126-168`, `:173-181`, `:237-240`, `:258-263`, `:314-323`, `:353-359`)
+- Modify (test): `<host-kit>/tests/test_editor_gate.py` (`:11-12`, `:32-49`, `:84-90`, `:185-214`, `:288-299`, and 5 tests appended after `:321`)
+- Modify: `<host-kit>/editor_gate.patch` (regenerated against the kit at `54c4744c`)
+- Modify: `<host-kit>/README.md` (`:5-9` table row, `:44-52`)
+- Test: `python -m pytest <host-kit>/tests -q`
+
+**Interfaces:**
+- Consumes (wire, from T1 and T2): `editor_get_state {include_dirty:false}` → `data.{pie, editor_unsafe, python_unhealthy, health{faulted_command, faulted_at_utc}}`; the top-level reply `code` `editor_unsafe_restart_required` / `native_fault_contained` with the detail object `editor_health`; the details `pie`, `busy` and `lease` of the other refusals.
+- Produces (host kit, Python; T4.4 and T9.3 build on these names):
+  - `class HaybaError(Exception)` with `__init__(self, message, code=None, detail=None)`;
+  - `EXIT_UNSAFE = 4`, `UNSAFE_CODES = ("editor_unsafe_restart_required", "native_fault_contained")`;
+  - `editor_capabilities() -> (answered, caps)`, `lease_manager_available(caps)`;
+  - `editor_state()` (the `editor_get_state` data, or `None`), `unsafe_line(health)`, `refuse_if_unsafe()`;
+  - `pie_running(ask_editor=True)`, `acquire_file(owner, timeout_min, ttl_min, ask_editor=False)`;
+  - `status` output gains the key `editor_health` = `{editor_unsafe, python_unhealthy, health}`;
+  - exit codes 0, 1, 2 and 4;
+  - test helper `lease_calls(fake)`; `FakeHayba(lease_manager=True, pie_field=True)` with the attributes `pie`, `pie_field`, `unsafe` and `refuse_unsafe`.
+
+- [ ] **Step 1: Write the failing host-kit tests**
+
+In `<host-kit>/tests/test_editor_gate.py`:
+
+**(1)** The constants at the top (`:11-12`). Replace:
+
+```python
+PIE_LOG = "x\nLogPlayLevel: Creating play world package: /Game/level/UEDPIE_0_X\n"
+```
+
+with:
+
+```python
+PIE_LOG = "x\nLogPlayLevel: Creating play world package: /Game/level/UEDPIE_0_X\n"
+HEALTH = {"faulted_command": "python_run", "faulted_at_utc": "2026-09-28T02:10:01Z", "cause": "python_native_fault"}
+```
+
+**(2)** `FakeHayba`: the docstring and `__init__` (`:37-49`) gain the editor state. Replace:
+
+```python
+    """Just enough of the plugin: ping, and a lease table where every resource
+    conflicts with itself and `global` conflicts with everything."""
+
+    def __init__(self, lease_manager=True):
+        self.lease_manager = lease_manager
+        self.calls = []            # (cmd, params, owner, lease)
+        self.leases = {}           # token -> {"owner", "resources"}
+        self.queue_first = set()   # owners whose first lease_acquire is answered "queued"
+        self.tickets = {}          # ticket -> resources
+        self.counter = 0
+        self.lock = threading.Lock()
+```
+
+with:
+
+```python
+    """Just enough of the plugin: ping, editor_get_state, and a lease table where every
+    resource conflicts with itself and `global` conflicts with everything."""
+
+    def __init__(self, lease_manager=True, pie_field=True):
+        self.lease_manager = lease_manager
+        self.calls = []             # (cmd, params, owner, lease)
+        self.leases = {}            # token -> {"owner", "resources"}
+        self.queue_first = set()    # owners whose first lease_acquire is answered "queued"
+        self.tickets = {}           # ticket -> resources
+        self.counter = 0
+        self.pie = "none"           # editor_get_state.pie: "none" | "user" | "agent:<owner>"
+        self.pie_field = pie_field  # False: a plugin that predates the `pie` field
+        self.unsafe = False         # editor_get_state reports a contained native fault
+        self.refuse_unsafe = False  # lease_acquire / lease_renew answer editor_unsafe_restart_required
+        self.lock = threading.Lock()
+```
+
+**(3)** `FakeHayba.answer` (`:84-90`) answers `editor_get_state` and the unsafe refusal before the lease commands. Replace:
+
+```python
+                return {"ok": True, "data": {"status": "ok", "capabilities": caps}}
+            if cmd == "lease_acquire":
+```
+
+with:
+
+```python
+                return {"ok": True, "data": {"status": "ok", "capabilities": caps}}
+            if cmd == "editor_get_state":
+                data = {"editor_unsafe": self.unsafe, "python_unhealthy": self.unsafe,
+                        "health": dict(HEALTH) if self.unsafe else {}}
+                if self.pie_field:
+                    data["pie"] = self.pie
+                return {"ok": True, "data": data}
+            if self.refuse_unsafe and cmd in ("lease_acquire", "lease_renew"):
+                return {"ok": False, "code": "editor_unsafe_restart_required",
+                        "error": f"editor_unsafe_restart_required: '{cmd}' was not run. A native fault was contained.",
+                        "editor_health": dict(HEALTH)}
+            if cmd == "lease_acquire":
+```
+
+**(4)** `test_plugin_without_lease_manager_keeps_the_file_lock` (`:185-193`): the gate now asks `editor_get_state` too. Replace:
+
+```python
+        assert "mode" not in lock_json(tmp_path)
+        assert fake.cmds() == ["ping"]
+```
+
+with:
+
+```python
+        assert "mode" not in lock_json(tmp_path)
+        assert fake.cmds()[:2] == ["ping", "editor_get_state"]
+        assert set(fake.cmds()) == {"ping", "editor_get_state"}
+```
+
+**(5)** `test_pie_blocks_in_lease_mode_without_queueing` (`:296-299`): the editor says PIE runs; the log is idle. Replace:
+
+```python
+def test_pie_blocks_in_lease_mode_without_queueing(tmp_path, hayba):
+    r = run(tmp_path, "acquire", "--owner", "A", "--timeout-min", "0.02", log=PIE_LOG, port=hayba.port)
+    assert r.returncode == 1 and "PIE" in r.stdout
+    assert "lease_acquire" not in hayba.cmds()
+```
+
+with:
+
+```python
+def test_pie_blocks_in_lease_mode_without_queueing(tmp_path, hayba):
+    hayba.pie = "user"
+    r = run(tmp_path, "acquire", "--owner", "A", "--timeout-min", "0.02", port=hayba.port)
+    assert r.returncode == 1 and "PIE" in r.stdout
+    assert "lease_acquire" not in hayba.cmds()
+```
+
+**(6)** A helper after `lock_json` (`:32-33`): with PIE read from the editor, `editor_get_state` calls follow the lease calls, so tests name the command they mean instead of taking `calls[-1]`. Replace:
+
+```python
+def lock_json(tmp):
+    return json.loads((tmp / "gate" / "lock.json").read_text())
+```
+
+with:
+
+```python
+def lock_json(tmp):
+    return json.loads((tmp / "gate" / "lock.json").read_text())
+
+
+def lease_calls(fake):
+    """The lease_* calls the fake received, in order (editor_get_state and ping polls left out)."""
+    return [c for c in fake.calls if c[0].startswith("lease_")]
+```
+
+**(7)** `test_no_scope_is_a_global_exclusive_lease` (`:198-208`). Replace:
+
+```python
+    assert r.returncode == 0, r.stdout
+    cmd, params, owner, _ = hayba.calls[-1]
+    assert cmd == "lease_acquire" and owner == "A"
+```
+
+with:
+
+```python
+    assert r.returncode == 0, r.stdout
+    cmd, params, owner, _ = lease_calls(hayba)[-1]
+    assert cmd == "lease_acquire" and owner == "A"
+```
+
+**(8)** `test_ttl_is_capped_at_the_editor_maximum` (`:211-214`). Replace:
+
+```python
+    assert hayba.calls[-1][1]["ttl_s"] == 900
+```
+
+with:
+
+```python
+    assert lease_calls(hayba)[-1][1]["ttl_s"] == 900
+```
+
+**(9)** `test_a_lapsed_lease_is_asked_for_again` (`:288-293`). Replace:
+
+```python
+    assert hayba.cmds()[-2:] == ["lease_renew", "lease_acquire"]
+```
+
+with:
+
+```python
+    assert [c[0] for c in lease_calls(hayba)][-2:] == ["lease_renew", "lease_acquire"]
+```
+
+Append at the end of the file:
+
+```python
+# ----------------------------------------------------------------------------- editor state (spec §5.1)
+
+def test_pie_running_prefers_editor_get_state(tmp_path, hayba):
+    # The log says PIE runs, the editor says it does not: the editor wins.
+    r = run(tmp_path, "acquire", "--owner", "A", "--timeout-min", "0.05", log=PIE_LOG, port=hayba.port)
+    assert r.returncode == 0, r.stdout
+    assert "editor_get_state" in hayba.cmds() and "lease_acquire" in hayba.cmds()
+    state_calls = [c for c in hayba.calls if c[0] == "editor_get_state"]
+    assert all(c[1] == {"include_dirty": False} for c in state_calls)
+
+
+def test_pie_running_falls_back_to_the_log_without_the_pie_field(tmp_path):
+    fake = FakeHayba(pie_field=False)  # an older plugin: editor_get_state has no `pie`
+    try:
+        r = run(tmp_path, "acquire", "--owner", "A", "--timeout-min", "0.02", log=PIE_LOG, port=fake.port)
+        assert r.returncode == 1 and "PIE" in r.stdout
+        assert "lease_acquire" not in fake.cmds()
+    finally:
+        fake.close()
+
+
+def test_acquire_refuses_when_editor_unsafe_exit_4(tmp_path, hayba):
+    hayba.unsafe = True
+    r = run(tmp_path, "acquire", "--owner", "A", "--timeout-min", "0.05", port=hayba.port)
+    assert r.returncode == 4
+    assert "unsafe: fault contained at 2026-09-28T02:10:01Z in python_run; restart the editor" in r.stdout
+    assert "lease_acquire" not in hayba.cmds()
+    assert not (tmp_path / "gate" / "lock.json").exists()  # and no file-lock fallback
+
+
+def test_renew_refused_unsafe_does_not_requeue(tmp_path, hayba):
+    assert run(tmp_path, "acquire", "--owner", "A", "--timeout-min", "0.05", port=hayba.port).returncode == 0
+    hayba.refuse_unsafe = True  # the fault lands between editor_get_state and the renew
+    r = run(tmp_path, "acquire", "--owner", "A", "--timeout-min", "0.05", port=hayba.port)
+    assert r.returncode == 4 and "unsafe: fault contained" in r.stdout
+    assert hayba.cmds()[-1] == "lease_renew"
+
+
+def test_status_reports_editor_health(tmp_path, hayba):
+    hayba.unsafe = True
+    out = json.loads(run(tmp_path, "status", port=hayba.port).stdout)
+    assert out["editor_health"]["editor_unsafe"] is True
+    assert out["editor_health"]["health"]["faulted_command"] == "python_run"
+    assert "leases" in out["editor"]
+```
+
+- [ ] **Step 2: Run them and watch them fail**
+
+```powershell
+Set-Location D:\Hackathons\hayba\.worktrees\p0-safety
+python -m pytest <host-kit>/tests -q
+```
+
+Expected: `6 failed, 21 passed`.
+- `test_plugin_without_lease_manager_keeps_the_file_lock` sees `["ping"]`: the gate does not ask `editor_get_state` yet.
+- `test_pie_blocks_in_lease_mode_without_queueing` and `test_pie_running_prefers_editor_get_state` fail because the gate still reads PIE from the log.
+- `test_acquire_refuses_when_editor_unsafe_exit_4` and `test_renew_refused_unsafe_does_not_requeue` get exit 0 where they expect 4.
+- `test_status_reports_editor_health` raises `KeyError: 'editor_health'`.
+
+`test_pie_running_falls_back_to_the_log_without_the_pie_field` passes already: it guards the fallback that Step 3 must keep.
+
+When another agent runs pytest on this machine at the same time, add `--basetemp D:\UEScratch\tmp\pytest-kit`: pytest's default base directory is shared per user, and a concurrent run ends in `PermissionError: … pytest-current`.
+
+- [ ] **Step 3: Implement the §5.1 gate changes**
+
+In `<host-kit>/editor_gate.py`:
+
+**(1)** The module docstring: the two `Environment:` paragraphs at the end (`:27-30`) gain the unsafe exit and the exit codes before them. Replace:
+
+```python
+lock.json is kept as a mirror in both modes so `status` works without an
+editor, and so a file lock taken while the editor was down still blocks a
+lease acquire (and the other way round). The editor is the authority in lease
+mode; the mirror is best effort.
+
+Environment:
+```
+
+with:
+
+```python
+When the editor answers, acquire first asks editor_get_state. If a contained
+native fault left it unsafe, acquire prints `unsafe: ...; restart the editor`
+and exits 4: it never queues and never falls back to the file lock. PIE is
+read from editor_get_state (`pie` other than "none") when the editor answers
+with that field, and from the editor log otherwise.
+
+lock.json is kept as a mirror in both modes so `status` works without an
+editor, and so a file lock taken while the editor was down still blocks a
+lease acquire (and the other way round). The editor is the authority in lease
+mode; the mirror is best effort.
+
+Exit codes: 0 ok, 1 timeout (or a lease that could not be used), 2 refused,
+4 editor unsafe (stop all lanes; the user must restart the editor).
+
+Environment:
+```
+
+**(2)** The constants and `pie_running()` (`:39-45`). Replace:
+
+```python
+MAX_LEASE_TTL_S = 900
+SCOPE_PREFIXES = ("world:", "wp-region:", "actor:", "asset:")
+
+
+def pie_running():
+    text = LOG.read_text(encoding="utf-8", errors="replace") if LOG.exists() else ""
+    return text.rfind("Creating play world package") > text.rfind("Shutting down PIE")
+```
+
+with:
+
+```python
+MAX_LEASE_TTL_S = 900
+SCOPE_PREFIXES = ("world:", "wp-region:", "actor:", "asset:")
+EXIT_UNSAFE = 4
+UNSAFE_CODES = ("editor_unsafe_restart_required", "native_fault_contained")
+
+
+def pie_running(ask_editor=True):
+    """True while a play session runs or is queued. The editor is asked first
+    (editor_get_state.pie other than "none"); the log scan is the fallback for an
+    editor that is down, or a plugin whose reply has no `pie` field."""
+    if ask_editor:
+        state = editor_state()
+        if state is not None and "pie" in state:
+            return state["pie"] != "none"
+    text = LOG.read_text(encoding="utf-8", errors="replace") if LOG.exists() else ""
+    return text.rfind("Creating play world package") > text.rfind("Shutting down PIE")
+```
+
+**(3)** `HaybaError` and the refusal in `hayba()` (`:126-147`). Replace:
+
+```python
+class HaybaError(Exception):
+    """The editor answered, and said no."""
+```
+
+with:
+
+```python
+class HaybaError(Exception):
+    """The editor answered, and said no. `code` is the reply's machine code (for example
+    editor_unsafe_restart_required); `detail` its refusal object (pie, busy, lease or editor_health)."""
+
+    def __init__(self, message, code=None, detail=None):
+        super().__init__(message)
+        self.code = code
+        self.detail = detail
+```
+
+In the same range, also replace:
+
+```python
+    if not msg.get("ok"):
+        raise HaybaError(msg.get("error") or "Hayba refused the request")
+    return msg.get("data") or {}
+```
+
+with:
+
+```python
+    if not msg.get("ok"):
+        raise HaybaError(msg.get("error") or "Hayba refused the request", code=msg.get("code"),
+                         detail=msg.get("pie") or msg.get("busy") or msg.get("lease") or msg.get("editor_health"))
+    return msg.get("data") or {}
+```
+
+**(4)** `lease_manager_available()` (`:160-168`) splits into `editor_capabilities()` and `lease_manager_available(caps)`, followed by the three unsafe helpers. Replace:
+
+```python
+def lease_manager_available():
+    mode = os.environ.get("EDITOR_GATE_MODE", "auto")
+    if mode in ("file", "lease"):
+        return mode == "lease"
+    try:
+        caps = hayba("ping", {}, timeout_s=3.0).get("capabilities") or {}
+    except (OSError, ValueError, HaybaError):
+        return False
+    return bool(caps.get("lease_manager"))
+```
+
+with:
+
+```python
+def editor_capabilities():
+    """(answered, capabilities): whether anything answered `ping` on HB_PORT, and what it reported."""
+    try:
+        return True, hayba("ping", {}, timeout_s=3.0).get("capabilities") or {}
+    except HaybaError:
+        return True, {}
+    except (OSError, ValueError):
+        return False, {}
+
+
+def lease_manager_available(caps):
+    mode = os.environ.get("EDITOR_GATE_MODE", "auto")
+    if mode in ("file", "lease"):
+        return mode == "lease"
+    return bool(caps.get("lease_manager"))
+
+
+def editor_state():
+    """editor_get_state {include_dirty:false}; None when the editor does not answer it."""
+    try:
+        return hayba("editor_get_state", {"include_dirty": False}, timeout_s=5.0)
+    except HaybaError as e:
+        return {"editor_unsafe": True, "health": e.detail or {}} if e.code in UNSAFE_CODES else None
+    except (OSError, ValueError):
+        return None
+
+
+def unsafe_line(health):
+    return (f"unsafe: fault contained at {health.get('faulted_at_utc') or '?'} in "
+            f"{health.get('faulted_command') or '?'}; restart the editor")
+
+
+def refuse_if_unsafe():
+    """EXIT_UNSAFE (after printing why) when the editor reports editor_unsafe, else None."""
+    state = editor_state()
+    if state and state.get("editor_unsafe"):
+        print(unsafe_line(state.get("health") or {}), flush=True)
+        return EXIT_UNSAFE
+    return None
+```
+
+**(5)** `acquire_file` (`:173-204`) learns whether the editor answered, so a closed port is not asked again on every poll. Replace:
+
+```python
+def acquire_file(owner, timeout_min, ttl_min):
+    deadline = time.monotonic() + timeout_min * 60
+    reason = ""
+    while True:
+        lock = read_lock()
+        if lock and lock["expires_at"] < time.time():
+            LOCK.unlink(missing_ok=True)
+            lock = None
+        if pie_running():
+```
+
+with:
+
+```python
+def acquire_file(owner, timeout_min, ttl_min, ask_editor=False):
+    deadline = time.monotonic() + timeout_min * 60
+    reason = ""
+    while True:
+        lock = read_lock()
+        if lock and lock["expires_at"] < time.time():
+            LOCK.unlink(missing_ok=True)
+            lock = None
+        if pie_running(ask_editor):
+```
+
+**(6)** `acquire_lease` (`:226-289`): a renew or an acquire refused with an unsafe code exits 4 and never re-queues. Replace:
+
+```python
+        except HaybaError:
+            mirror_drop(owner)  # lapsed: ask again below
+```
+
+with:
+
+```python
+        except HaybaError as e:
+            if e.code in UNSAFE_CODES:
+                print(unsafe_line(e.detail or {}), flush=True)
+                return EXIT_UNSAFE  # never re-queue against an unsafe editor
+            mirror_drop(owner)  # lapsed: ask again below
+```
+
+In the same range, also replace:
+
+```python
+            except HaybaError as e:
+                if ticket and "ticket" in str(e):
+```
+
+with:
+
+```python
+            except HaybaError as e:
+                if e.code in UNSAFE_CODES:
+                    print(unsafe_line(e.detail or {}), flush=True)
+                    return EXIT_UNSAFE
+                if ticket and "ticket" in str(e):
+```
+
+**(7)** `status()` (`:314-323`) prints the editor health next to `lease_status`. Replace:
+
+```python
+def status():
+    lock = read_lock()
+    if lease_manager_available():
+        try:
+            print(json.dumps({"editor": hayba("lease_status", {}), "mirror": lock}))
+            return 0
+        except (OSError, HaybaError):
+            pass
+```
+
+with:
+
+```python
+def status():
+    lock = read_lock()
+    _, caps = editor_capabilities()
+    if lease_manager_available(caps):
+        try:
+            state = editor_state() or {}
+            print(json.dumps({"editor": hayba("lease_status", {}),
+                              "editor_health": {k: state.get(k) for k in ("editor_unsafe", "python_unhealthy", "health")},
+                              "mirror": lock}))
+            return 0
+        except (OSError, HaybaError):
+            pass
+```
+
+**(8)** `main()` (`:353-359`): ask once whether the editor answers, refuse an unsafe editor before either backend runs, and tell `acquire_file` whether to ask the editor about PIE. Replace:
+
+```python
+    leases = lease_manager_available()
+    if a.cmd == "acquire":
+        if leases:
+            return acquire_lease(a.owner, a.timeout_min, a.ttl_min, a.scope, a.lane)
+        if a.scope:
+            print("note: --scope needs Hayba leases; the file lock covers the whole editor", flush=True)
+        return acquire_file(a.owner, a.timeout_min, a.ttl_min)
+```
+
+with:
+
+```python
+    answered, caps = editor_capabilities()
+    leases = lease_manager_available(caps)
+    if a.cmd == "acquire":
+        if answered:
+            unsafe = refuse_if_unsafe()
+            if unsafe is not None:
+                return unsafe
+        if leases:
+            return acquire_lease(a.owner, a.timeout_min, a.ttl_min, a.scope, a.lane)
+        if a.scope:
+            print("note: --scope needs Hayba leases; the file lock covers the whole editor", flush=True)
+        return acquire_file(a.owner, a.timeout_min, a.ttl_min, ask_editor=answered)
+```
+
+- [ ] **Step 4: Run the host kit**
+
+```powershell
+python -m pytest <host-kit>/tests -q
+```
+
+Expected: `27 passed`.
+
+- [ ] **Step 5: Regenerate the patch against the base kit and check that it applies**
+
+The consumer's `Tools/GameFlow/editor_gate.py` and its test are byte-identical to the kit at `54c4744c` (spec §5). With Git Bash:
+
+```bash
+cd /d/Hackathons/hayba/.worktrees/p0-safety
+K=<host-kit>
+T=/d/UEScratch/tmp/gate-patch-a
+rm -rf "$T" && mkdir -p "$T/old/Tools/GameFlow/tests" "$T/new/Tools/GameFlow/tests"
+git show 54c4744c:$K/editor_gate.py > "$T/old/Tools/GameFlow/editor_gate.py"
+git show 54c4744c:$K/tests/test_editor_gate.py > "$T/old/Tools/GameFlow/tests/test_editor_gate.py"
+cp $K/editor_gate.py "$T/new/Tools/GameFlow/editor_gate.py"
+cp $K/tests/test_editor_gate.py "$T/new/Tools/GameFlow/tests/test_editor_gate.py"
+(cd "$T" && git diff --no-index old new) \
+  | sed -e 's#^diff --git a/old/\(.*\) b/new/\(.*\)$#diff --git a/\1 b/\2#' -e 's#^--- a/old/#--- a/#' -e 's#^+++ b/new/#+++ b/#' \
+  > $K/editor_gate.patch
+(cd "$T/old" && git apply --check /d/Hackathons/hayba/.worktrees/p0-safety/$K/editor_gate.patch) && echo APPLIES
+grep -c '^diff --git a/Tools/GameFlow/' $K/editor_gate.patch
+```
+
+Expected: `APPLIES`, then `2`. Git may warn that LF will be replaced by CRLF in the scratch copies; the patch itself stays LF.
+
+- [ ] **Step 6: Update the kit README**
+
+In `<host-kit>/README.md`:
+1. Change the `editor_gate.patch` table row (`:9`) to `` | `editor_gate.patch` | both of the above, as one `git apply` patch against the files the consumer installed from this kit at `54c4744c` | ``.
+2. Replace the bullet `The PIE log check is unchanged. …` (`:44-46`) with:
+
+```markdown
+- PIE is read from the editor: `editor_get_state {include_dirty:false}`, and a
+  `pie` other than `"none"` means a play session runs or is queued. The log
+  check is the fallback for an editor that is down or a plugin without the
+  `pie` field. While PIE runs, the script does not start queueing. It keeps
+  polling a ticket it already holds, and a lease granted during PIE is used
+  only once PIE stops (or is given back on timeout).
+- When the editor answers, `acquire` first calls `editor_get_state
+  {include_dirty:false}`. An unsafe editor (a contained native fault) prints
+  `unsafe: fault contained at <utc> in <command>; restart the editor` and exits
+  4. So does a renew or acquire refused with `editor_unsafe_restart_required`.
+  It never re-queues and never falls back to the file lock. `status` prints
+  `editor_health` next to `lease_status`.
+- `HaybaError` carries the reply's `code` and its detail object (`pie`, `busy`,
+  `lease` or `editor_health`), so callers branch on the code, not the text.
+- Exit codes: 0 ok, 1 timeout, 2 refused, 4 editor unsafe (stop all lanes; the user restarts the editor).
+```
+
+3. Replace `Tests: python -m pytest tests -q here, and 22 pass.` (`:51`; the command is in backticks in the file) with `` Tests: `python -m pytest tests -q` here, and 27 pass. ``
+
+- [ ] **Step 7: Run the kit once more and commit**
+
+```powershell
+Set-Location D:\Hackathons\hayba\.worktrees\p0-safety
+python -m pytest <host-kit>/tests -q
+git add <host-kit>/editor_gate.py `
+  <host-kit>/tests/test_editor_gate.py `
+  <host-kit>/editor_gate.patch `
+  <host-kit>/README.md
+git commit -m "docs(host): editor_gate reads refusal codes, the unsafe state and PIE from the editor"
+git status --short
+```
+
+Expected: `27 passed` before the commit, and an empty `git status` after it.
+
+**Done when:** the Deploy A kit passes 27 tests, among them `test_acquire_refuses_when_editor_unsafe_exit_4`, `test_renew_refused_unsafe_does_not_requeue`, `test_status_reports_editor_health` and `test_pie_running_prefers_editor_get_state`; `editor_gate.patch` applies to the kit at `54c4744c`; and the commit is on `fix/p0-safety` before GA.1 runs, so the tag `p0-deploy-a` contains the kit.
+
 ### Task GA.1: Deploy A gate: strict build, exact-name headless run, TS gate
 
-Spec §6.3, §7.1 ("each deploy point … passes the full gate before it is tagged") and §7.4 row A. This task changes no code. It proves that the `fix/p0-safety` tip after T3.3 builds standalone, builds in the scratch host twice, and passes every manifest name. Ledger §5.2 "Deploy gates" and §5.3 give the exact commands.
+Spec §6.3, §7.1 ("each deploy point … passes the full gate before it is tagged") and §7.4 row A. This task changes no code. It proves that the `fix/p0-safety` tip after T3.3 builds standalone, builds in the scratch host twice, and passes every manifest name, and that the Deploy A host kit (GA.0) is green. Appendix A.5.2 "Deploy gates" and A.5.3 give the exact commands.
 
 **Files:**
 - Read: `mcp-tools/hayba-mcp/scripts/p0-expected-automation-tests.txt`. It must hold the T0–T3 sections: the 8 existing names plus 33 new ones (T1 13, T2 15, T3 5).
-- Write (outside the repo): `D:/UEScratch/out/p0-<SHA>/`, `D:/UEScratch/reports/<SHA>/`, `D:/UEScratch/reports/<SHA>-realpie/`, `D:/UEScratch/logs/gate-a-<SHA>.txt`
-- Test: all of the above; nothing is committed
+- Write (outside the repo): `D:/UEScratch/out/p0-<SHA>/`, `D:/UEScratch/reports/<SHA>/`, `D:/UEScratch/reports/<SHA>-realpie/`, `D:/UEScratch/logs/gate-a-<SHA>.txt`, `D:/UEScratch/logs/gate-a-sha.txt`
+- Test: all of the above, plus `python -m pytest <host-kit>/tests -q` (spec §7.1: the gate is headless C++ with exact names, the TS gate, and the host kit); nothing is committed
 
 **Interfaces:**
-- Consumes: `SCR/check-automation-report.mjs` (T0.2: `<index.json> <manifest> --allow-fail <name> --min-total <n>`); R0, the registered `Hayba.*` count that T0.3 recorded at `54c4744c`; the scratch host `D:/UEScratch/h58` (T0.1).
-- Produces: the gate evidence file `D:/UEScratch/logs/gate-a-<SHA>.txt`. GA.3 cites it in the handoff.
+- Consumes: `SCR/check-automation-report.mjs` (T0.2: `<index.json> <manifest> --allow-fail <name> --min-total <n>`); R0, the registered `Hayba.*` count that T0.3 recorded at `54c4744c`; the scratch host `D:/UEScratch/h58` (T0.1); the Deploy A host kit (GA.0, 27 tests).
+- Produces: the gate evidence file `D:/UEScratch/logs/gate-a-<SHA>.txt`, which GA.3 cites in the handoff, and `D:/UEScratch/logs/gate-a-sha.txt`, one line holding the full gate SHA, which GA.3 reads to substitute `<SHA_A>` and to place the tag.
 
 - [ ] **Step 1: Pin the commit and check the host has no settings override**
 
@@ -10776,11 +11766,13 @@ $WT  = "D:\Hackathons\hayba\.worktrees\p0-safety"
 $H   = "D:\UEScratch\h58"
 git -C $WT status --short
 $SHA = git -C $WT rev-parse --short HEAD
+git -C $WT rev-parse HEAD | Set-Content "D:\UEScratch\logs\gate-a-sha.txt"
 Test-Path "$H\Config\DefaultHaybaMCP.ini"
 Select-String -Path "$WT\mcp-tools\hayba-mcp\scripts\p0-expected-automation-tests.txt" -Pattern '^# T[0-9]+' | ForEach-Object Line
+git -C $WT log -1 --format=%s -- <host-kit>/editor_gate.py
 ```
 
-Expected: `git status` prints nothing. `Test-Path` prints `False` (R-26). The section list is exactly `# T0`, `# T1`, `# T2`, `# T3` (the `# optional: … RealPIE` line is a comment this pattern does not print). If a later section is already present, this is not the Deploy A tip.
+Expected: `git status` prints nothing. `Test-Path` prints `False` (R-26). The section list is exactly `# T0`, `# T1`, `# T2`, `# T3` (the `# optional: … RealPIE` line is a comment this pattern does not print). If a later section is already present, this is not the Deploy A tip. The last line prints GA.0's subject, `docs(host): editor_gate reads refusal codes, the unsafe state and PIE from the editor`: the gated commit contains the Deploy A kit.
 
 - [ ] **Step 2: Compile the plugin standalone (strict)**
 
@@ -10840,7 +11832,7 @@ $LASTEXITCODE
 Select-String -Path "$H\Saved\Logs\hayba-p0-$SHA.log" -Pattern 'Result=\{Fail\}' | ForEach-Object Line
 ```
 
-Expected: the checker exits `0`, reports all 41 manifest names (8 existing + 33 new) at `Success` or `SuccessWithWarnings`, and reports a total of at least R0 + 33. The only `Result={Fail}` line is `Hayba.MCP.UI.RenderWidgetToPng` (`-NullRHI`). Any other failure blocks the tag. A test that never ran shows as *missing* in the checker output, not as green (R-30).
+Expected: the checker exits `0`, reports all 41 manifest names (8 existing + 33 new) at `Success`, and reports a total of at least R0 + 33. `WARNINGS:` lines are information, not failures. The only `Result={Fail}` line is `Hayba.MCP.UI.RenderWidgetToPng` (`-NullRHI`). Any other failure blocks the tag. A test that never ran shows as *missing* in the checker output, not as green (R-30).
 
 - [ ] **Step 6: Run the opt-in real-PIE test in its own invocation**
 
@@ -10864,18 +11856,28 @@ Expected: one matching line. `-ExecCmds` takes a single leading `Automation`, an
 
 - [ ] **Step 7 (only if Step 4's watchdog fired): Rerun the owned-child-class tests on the GUI host**
 
-Launch the GUI host exactly as in GA.2 Step 6. Then run each test that can fault, save or start PIE through `test_run`, which runs it in an owned child:
+Launch the GUI host with the first nine lines of GA.2 Step 10 (the two guards, the heartbeat cleanup, the launch and the wait for the heartbeat; GA.2's tooling commit is not needed for them). Then run each test that can fault, save or start PIE through `test_run`, which runs it in an owned child, and poll the job it returns:
 
 ```powershell
+$S = "$WT\mcp-tools\hayba-mcp\scripts\invoke-tcp-command.ps1"
 $P = (Get-Content (Get-ChildItem "$H\Saved\HaybaMCP\instances\*.json" | Sort-Object LastWriteTime | Select-Object -Last 1) | ConvertFrom-Json).port
-pwsh "$WT\mcp-tools\hayba-mcp\scripts\invoke-tcp-command.ps1" -Port $P -Cmd test_run -TimeoutMs 60000 `
-  -ParamsJson '{"test_names":["Hayba.MCP.Health.BatchPumpStopsWhileUnsafe","Hayba.MCP.State.BatchHoldsDuringPIE"]}'
-pwsh "$WT\mcp-tools\hayba-mcp\scripts\invoke-tcp-command.ps1" -Port $P -Cmd build_status -ParamsJson '{"job_id":"<job_id from the test_run reply>"}'
+$run = pwsh $S -Port $P -Cmd test_run -TimeoutMs 60000 `
+  -ParamsJson '{"test_names":["Hayba.MCP.Health.BatchPumpStopsWhileUnsafe","Hayba.MCP.State.BatchHoldsDuringPIE"]}' | ConvertFrom-Json
+$job = $run.data.job_id
+if (-not $job) { throw "test_run returned no job_id: $($run | ConvertTo-Json -Compress -Depth 8)" }
+$statusParams = @{ job_id = $job } | ConvertTo-Json -Compress
+$deadline = (Get-Date).AddMinutes(30)
+do {
+  Start-Sleep -Seconds 10
+  $st = pwsh $S -Port $P -Cmd build_status -ParamsJson $statusParams | ConvertFrom-Json
+} until ($st.data.status -eq 'done' -or (Get-Date) -gt $deadline)
+"owned-child rerun: job $job status=$($st.data.status) exit_code=$($st.data.exit_code)" |
+  Tee-Object "D:\UEScratch\logs\gate-a-$SHA.txt" -Append
 ```
 
-Expected: `build_status` eventually reports both tests passed. Record the hanging test's name in `gate-a-<SHA>.txt`. The headless hang itself blocks the tag until it is fixed and Steps 4–5 pass.
+Expected: the last line reads `status=done exit_code=0` (the exit code of a test job is its failure count). Record the hanging test's name in `gate-a-<SHA>.txt`, then close the scratch editor. The headless hang itself blocks the tag until it is fixed and Steps 4–5 pass.
 
-- [ ] **Step 8: Run the TS gate**
+- [ ] **Step 8: Run the TS gate and the host kit**
 
 ```powershell
 Set-Location "$WT\mcp-tools\hayba-mcp"
@@ -10883,24 +11885,28 @@ npx tsc --noEmit
 npx vitest run 2>&1 | Tee-Object "D:\UEScratch\logs\gate-a-$SHA.txt" -Append | Select-Object -Last 6
 npm run lint:legacy-wrappers
 npm run build:server
+Set-Location $WT
+python -m pytest <host-kit>/tests -q 2>&1 | Tee-Object "D:\UEScratch\logs\gate-a-$SHA.txt" -Append | Select-Object -Last 3
 ```
 
-Expected: `tsc` exits 0. vitest shows 0 failed and 1 skipped, with more files than the 211-file baseline (the new files of T1–T3). The lint and `build:server` exit 0.
+Expected: `tsc` exits 0. vitest shows 0 failed and 1 skipped, with more files than the 211-file baseline (the new files of T1–T3). The lint and `build:server` exit 0. pytest reports `27 passed`: the 22 tests at the base plus GA.0's 5.
 
 - [ ] **Step 9: Record the evidence**
 
 ```powershell
-"GA.1 $SHA $(Get-Date -Format o): BuildPlugin ok; host build x2 ok; manifest ok (R0+32); RealPIE ok; TS ok" |
+$NewNames = 33   # the same number Step 5 passed to --min-total
+"GA.1 $SHA $(Get-Date -Format o): BuildPlugin ok; host build x2 ok; manifest ok (R0+$NewNames); RealPIE ok; TS ok; host kit 27 passed" |
   Add-Content "D:\UEScratch\logs\gate-a-$SHA.txt"
+Get-Content "D:\UEScratch\logs\gate-a-sha.txt"
 ```
 
-Expected: the file holds the checker output, the vitest summary and this line. There is nothing to commit.
+Expected: the file holds the checker output, the vitest summary, the pytest summary and this line, and `gate-a-sha.txt` prints the full SHA of the commit that was gated. There is nothing to commit.
 
-**Done when:** at one clean `fix/p0-safety` commit, BuildPlugin succeeds; the host builds twice; all 41 manifest names pass, with only `RenderWidgetToPng` allowed to fail; `RealPIE` passes; and the TS gate is green.
+**Done when:** at one clean `fix/p0-safety` commit, BuildPlugin succeeds; the host builds twice; all 41 manifest names pass, with only `RenderWidgetToPng` allowed to fail; `RealPIE` passes; the TS gate is green; and the host kit shows 27 passed.
 
 ### Task GA.2: Live ladder tooling and the Deploy A ladder on the scratch GUI host
 
-Spec §6.5; ledger §5.4 (A1–A8) and §1.1 (ledger decisions: `-Owner`/`-Lease` on `invoke-tcp-command.ps1`, and a new `p0-live-ladder.mjs`). The ladder is an external client: persistent sockets plus a per-call mode. It finds the scratch GUI host through that host's own heartbeat and refuses anything outside `UEScratch`. Steps that need a person at the editor (pressing Play, reading a notification, restarting) are marked manual. Without `--manual` they are reported as `SKIP-MANUAL` and the run exits 3.
+Spec §6.5; Appendix A.5.4 (A1–A8). Two planning decisions shape the tooling: `SCR/invoke-tcp-command.ps1` gains `-Owner` and `-Lease` (it could not send an envelope owner or lease before), and the ladder itself is a new script, `SCR/p0-live-ladder.mjs`. The ladder is an external client: persistent sockets plus a per-call mode. It finds the scratch GUI host through that host's own heartbeat and refuses anything outside `UEScratch`. Steps that need a person at the editor (pressing Play, reading a notification, restarting) are marked manual. Without `--manual` they are reported as `SKIP-MANUAL` and the run exits 3.
 
 **Files:**
 - Modify: `mcp-tools/hayba-mcp/scripts/invoke-tcp-command.ps1`: the `param()` block (`:13-22`) and the request build (`:84-90`)
@@ -11729,19 +12735,19 @@ Expected: three `PASS` lines and exit 0. A8 re-reads the heartbeat after the rel
 
 ### Task GA.3: Deploy A handoff document and the `p0-deploy-a` tag
 
-Spec §7.1 (tag), §7.2 (window), §5.1 (host changes before A), §7.4; ledger §5.5. The handoff is text for the consumer's session to act on in its own closed-editor window. Hayba never builds into or edits `<project>`.
+Spec §7.1 (tag), §7.2 (window), §5.1 (host changes before A), §7.4; Appendix A.5.5. The handoff is text for the consumer's session to act on in its own closed-editor window. Hayba never builds into or edits `<project>`.
 
 **Files:**
 - Create: `docs/handoffs/HANDOFF-p0-deploy-a-consumer.md`
 - Test: a markdown link and anchor check (Step 2); the tag points at the GA.1 SHA
 
 **Interfaces:**
-- Consumes: the GA.1 SHA and evidence file; the GA.2 ladder results.
-- Produces: the annotated tag `p0-deploy-a`, and the handoff doc with a `<MERGE_A>` line that GA.4 fills.
+- Consumes: `D:/UEScratch/logs/gate-a-sha.txt` (the GA.1 SHA) and the GA.1 evidence file; the GA.2 ladder results; the Deploy A host kit (GA.0); `D:/UEScratch/logs/pie-safe.txt` (T2.6 Step 6: the PIE-safe names `Hayba.MCP.State.PieSafeDrift` printed).
+- Produces: the annotated tag `p0-deploy-a`, and the handoff doc with a `<MERGE_A>` line that GA.4 fills. Its §7 holds the measuring recipes that handoffs B and C refer to: `Count-Occurrences`, `Stamp`, `Test-RefuseRule` (M5) and the M7 crash listing.
 
 - [ ] **Step 1: Write the handoff**
 
-Create `docs/handoffs/HANDOFF-p0-deploy-a-consumer.md` with this content. Substitute `<SHA_A>` (`git rev-parse --short HEAD` at GA.1) before committing. `<MERGE_A>` stays as written until GA.4.
+Create `docs/handoffs/HANDOFF-p0-deploy-a-consumer.md` with this content, tokens included. Step 2 substitutes `<SHA_A>` from the gate's SHA file and `<PIE_SAFE>` from `pie-safe.txt`. `<MERGE_A>` stays as written until GA.4 Step 6 fills it.
 
 ````markdown
 # Hand-off: P0 Deploy A to the consumer (sticky editor_unsafe, PIE and build guards)
@@ -11776,13 +12782,41 @@ There is no runtime switch for the unsafe gate, the `pie_active` guard or the un
    - **Keep the socket busy.** Until Deploy B the editor closes a connection idle for 5 s and deletes its bound leases. While otherwise idle (a PIE wait, a long compile), bpgraph sends `ping` at least every 2 s on the same socket. After any reconnect it re-acquires before the next write.
    - bpgraph never sends `editor_start_pie` while it holds build leases. It releases them first, because its own PIE would get `asset_busy`.
 3. **Rule until Deploy B: no `editor_gate.py acquire --scope asset:…`.** Such a lease cannot be released before Deploy B (the handle is still redacted, and `release` prints "already lapsed"). It would keep refusing `editor_start_pie` with `asset_busy` for up to 900 s.
+4. **Rule until Deploy B: check the map file before a Python map save.** A Python map save on a read-only map (`unreal.EditorLevelLibrary.save_current_level()`, `unreal.EditorLoadingAndSavingUtils.save_map(...)`, the scripted load-save-unload pattern, or `save_packages` on a map) still opens a modal dialog on the game thread, and every lane stalls until a person clicks OK. Deploy B makes those calls return `False` instead. Until then, every host script that saves a map from Python first runs this check, and skips the save (or takes the lock first) when it fails:
+
+   ```python
+   import os, pathlib
+   PROJECT = pathlib.Path(r"<project>")
+
+   def map_is_writable(package_name):  # for example "/Game/Maps/Main"
+       path = PROJECT / "Content" / (package_name.removeprefix("/Game/") + ".umap")
+       return (not path.exists()) or os.access(path, os.W_OK)
+   ```
+
+   The check runs in the host script, outside the editor, before it sends the `python_run` that saves.
+
+   Asset saves (`unreal.EditorAssetLibrary.save_*`) already fail softly and return `False`; keep checking that return value.
 
 ## 3. Host changes (§5.1, recommended; nothing breaks without them)
 
-- `editor_gate.py` `hayba()` (`:130-147`): raise `HaybaError(message, code=msg.get("code"), detail=msg.get("pie") or msg.get("busy") or msg.get("lease") or msg.get("editor_health"))`, so callers branch on the code, not the text.
-- `acquire_lease` (`:226-289`) and `acquire_file` (`:173-204`): when the editor answers, call `editor_get_state {include_dirty:false}` first. If `editor_unsafe` is set, or any reply has code `editor_unsafe_restart_required`, print `unsafe: fault contained at <health.faulted_at_utc> in <health.faulted_command>; restart the editor` and exit 4. Never re-queue, and never fall back to the file lock, in that case.
-- `pie_running()` (`:43-45`): prefer `editor_get_state {include_dirty:false}` and test `pie != "none"`. Fall back to the log scan when the editor is down or the reply has no `pie` key.
-- `status` (`:314`): print the health from `editor_get_state` next to `lease_status`.
+**The gate (`editor_gate.py`) ships as a tested kit. Do not edit it by hand:** Deploy B's gate is a patch on top of this one, and installing it is Deploy B's precondition. Install the gate and its test together, from `<host-kit>/` at `<MERGE_A>`:
+
+```powershell
+Set-Location <project>
+git apply --check <deploy-worktree>\<host-kit>\editor_gate.patch
+git apply <deploy-worktree>\<host-kit>\editor_gate.patch
+python -m pytest Tools/GameFlow/tests -q      # 27 passed
+```
+
+If `git apply --check` fails, `Tools/GameFlow/editor_gate.py` is no longer the file this kit was cut from. Copy `editor_gate.py` to `Tools/GameFlow/editor_gate.py` and `tests/test_editor_gate.py` to `Tools/GameFlow/tests/test_editor_gate.py` instead, and run the same pytest. What the kit changes:
+
+- `hayba()` raises `HaybaError(message, code=…, detail=…)`, where `detail` is the refusal's `pie`, `busy`, `lease` or `editor_health` object, so callers branch on the code, not the text.
+- `acquire`: when the editor answers, it calls `editor_get_state {include_dirty:false}` first. If `editor_unsafe` is set, or a renew or acquire is refused with `editor_unsafe_restart_required`, it prints `unsafe: fault contained at <health.faulted_at_utc> in <health.faulted_command>; restart the editor` and exits 4. It never re-queues and never falls back to the file lock in that case.
+- `pie_running()` asks `editor_get_state {include_dirty:false}` and tests `pie != "none"`. It falls back to the log scan when the editor is down or the reply has no `pie` key.
+- `status` prints the health from `editor_get_state` next to `lease_status`.
+
+The other host tools are the consumer's own files; these are the changes to make in them:
+
 - `bpgraph.mjs`:
   - `send()` (`:770-795`) passes through `code`, `pie`, `busy`, `lease` and `editor_health`;
   - on `editor_unsafe_restart_required` or `native_fault_contained`, stop the build at once, release the gate in `finally`, and exit 4;
@@ -11877,16 +12911,34 @@ if ($faults) {
   "M4 non-allowlisted commands after the fault: $($after.Count); refusals: $refused; accepted: $($after.Count - $refused)"
 }
 
-# M5: PIE windows with accepted mutations (target 0).
-$mut = '_add_|_set_|_create|_delete|_remove|_connect|_compile|_save|_spawn|_import|_apply|_mutate|_build|python_run|editor_batch'
-$open = $null; $windows = 0; $bad = 0
+# M5: PIE windows with accepted commands whose PIE rule is Refuse (target 0).
+# A command's rule is Refuse unless it is PIE-safe, a lease_* command, or a PIE-owner command. $pieSafe is the
+# list Hayba.MCP.State.PieSafeDrift printed at the gate of this build: names, never a pattern.
+$pieSafe  = '<PIE_SAFE>' -split ', '
+$pieOwner = 'editor_pie_press_key','editor_pie_mouse','editor_pie_type_text','editor_pie_axis','editor_pie_click_widget',
+  'editor_pie_set_text','editor_pie_click_actor','editor_stop_pie'
+function Test-RefuseRule($cmd) { -not ($cmd -like 'lease_*' -or $pieSafe -contains $cmd -or $pieOwner -contains $cmd) }
+$windows = @(); $open = $null; $last = $null
 foreach ($l in $lines) {
-  if ($l -match 'Creating play world package') { $open = @{ muts = 0; refused = 0 }; $windows++ }
-  elseif ($l -match 'Shutting down PIE' -and $open) { if ($open.muts -gt $open.refused) { $bad++ }; $open = $null }
-  elseif ($open -and $l -match 'Processing command: (\S+) \(' -and $Matches[1] -match $mut) { $open.muts++ }
-  elseif ($open -and $l -match 'pie_active') { $open.refused += (Count-Occurrences @([pscustomobject]@{ Line = $l })) }
+  if ($l -match 'Creating play world package') {
+    $open = @{ at = $l.Substring(0, [math]::Min(24, $l.Length)); dispatched = @(); refused = 0 }
+    $last = $open; $windows += $open
+  }
+  elseif ($l -match 'Shutting down PIE') { $open = $null }
+  elseif ($open -and $l -match 'Processing command: (\S+) \(') { if (Test-RefuseRule $Matches[1]) { $open.dispatched += $Matches[1] } }
+  elseif ($last -and $l -notmatch 'PIE \(queued\)' -and
+          ($l -match "pie_active: refused '([^']+)' from " -or $l -match "\[pie\] pie_active repeated \d+ more times in 30 s: .*cmd='([^']+)'")) {
+    # A refusal names its command. Only a Refuse-rule command counts here: a PIE-owner command refused for a
+    # non-owner is not part of M5. The drained "repeated" line of a window can print after the window closed,
+    # so a refusal counts for the last window that opened.
+    if (Test-RefuseRule $Matches[1]) { $last.refused += (Count-Occurrences @([pscustomobject]@{ Line = $l })) }
+  }
 }
-"M5 PIE windows: $windows; with accepted mutations: $bad"
+$bad = @($windows | Where-Object { $_.dispatched.Count -gt $_.refused })
+"M5 PIE windows: $($windows.Count); with accepted Refuse-rule commands: $($bad.Count)"
+foreach ($w in $bad) {
+  "M5 candidate at $($w.at): dispatched $($w.dispatched.Count), refused $($w.refused): $(($w.dispatched | Sort-Object -Unique) -join ', ')"
+}
 
 # M6a: pre-play compiles of an asset under an open build, with an editor_start_pie in the previous 5 s (target 0).
 function Stamp($line) { if ($line -match '^\[(\d{4})\.(\d\d)\.(\d\d)-(\d\d)\.(\d\d)\.(\d\d)') { [datetime]::new([int]$Matches[1],[int]$Matches[2],[int]$Matches[3],[int]$Matches[4],[int]$Matches[5],[int]$Matches[6]) } }
@@ -11896,32 +12948,71 @@ $lines | Select-String 'Compiling (\S+) before play' | ForEach-Object {
   $agent = $starts | Where-Object { $t = Stamp $_.Line; $t -and ($at - $t).TotalSeconds -ge 0 -and ($at - $t).TotalSeconds -le 5 }
   if ($agent) { "M6a candidate: $($_.Line)  (compare with editor_get_state.building at that time)" }
 }
+
+# M7: crashes with a Hayba command in the last 10 s, per 10 000 commands (target < 0.05).
+# Every crash folder holds a copy of the crashed session's log; the last stamped line is the crash time.
+# The command count covers every session log of the 7 days, backups included.
+$since   = (Get-Date).AddDays(-7)
+$logDir  = "<project>\Saved\Logs"
+$allCmds = 0
+Get-ChildItem $logDir -Filter "<Project>*.log" | Where-Object { $_.LastWriteTime -ge $since } | ForEach-Object {
+  $allCmds += (Select-String -Path $_.FullName -Pattern 'Processing command: ').Count
+}
+$crashes = @(Get-ChildItem "<project>\Saved\Crashes" -Directory -ErrorAction SilentlyContinue |
+  Where-Object { $_.CreationTime -ge $since } | Sort-Object CreationTime)
+$withCommand = 0; $readOnlyCrashes = 0
+foreach ($c in $crashes) {
+  $crashLog = Get-ChildItem $c.FullName -Filter *.log | Select-Object -First 1
+  if (-not $crashLog) { "M7 $($c.Name) at $($c.CreationTime.ToString('s')): no log in the crash folder; check it by hand"; continue }
+  $cl  = Get-Content $crashLog.FullName
+  $end = Stamp ($cl | Where-Object { Stamp $_ } | Select-Object -Last 1)
+  $recent = @($cl | Select-String 'Processing command: (\S+) \(' |
+    Where-Object { $t = Stamp $_.Line; $t -and $end -and ($end - $t).TotalSeconds -le 10 })
+  $fault = @($cl | Select-String 'editor_unsafe: native fault').Count
+  if ($recent.Count -gt 0) { $withCommand++ }
+  if (@($cl | Select-String 'as it is read only').Count -gt 0) { $readOnlyCrashes++ }
+  "M7 $($c.Name) at $($c.CreationTime.ToString('s')): $($recent.Count) command(s) in the last 10 s; contained faults before it: $fault"
+  $recent | ForEach-Object { "    $($_.Line)" }
+}
+"M7: $withCommand of $($crashes.Count) crash(es) had a Hayba command in the last 10 s; $allCmds commands; " +
+  "rate $([math]::Round(10000 * $withCommand / [math]::Max(1, $allCmds), 3)) per 10 000"
+"read-only save crashes (I-3 class, target 0): $readOnlyCrashes"
 ```
 
-M7: crash dumps under `<project>\Saved\Crashes` in the window, each checked against the log for a Hayba `Processing command` in the preceding 10 s, per 10 000 commands. It needs at least 60 000 commands before it means anything.
+M7 needs at least 60 000 commands before its rate means anything; below that, report the listing and the two counts and no rate. A crash that follows a contained fault still counts, even when the user was warned (M8).
 
 ## 8. Known limits in Deploy A
 
-- **Read-like commands are refused during any PIE (R-12).** These are neither PIE-safe nor in a read set: `wait_for_idle`, `wait_for_shaders`, `asset_validate`, `material_validate`, `mesh_audit`, `mesh_list_dynamic`, `mesh_topology_stats`, `metasound_inspect`, `metasound_list`, `pcg_export_graph`, `pcg_read_node_output`, `pcg_validate_graph`, `placement_validate`, `scene_export`, `scene_validate_physics`, `texture_audit`, `ui_measure_text`, `copilot_get_key`. A host script that waits with `wait_for_idle` while the user plays gets `pie_active`. Poll `editor_get_state` instead.
+- **A command outside the read sets is refused during any PIE**, whatever its name suggests. These read-like commands are reads and keep working while the user plays: `wait_for_idle`, `wait_for_shaders`, `asset_validate`, `material_validate`, `mesh_audit`, `mesh_list_dynamic`, `mesh_topology_stats`, `metasound_inspect`, `metasound_list`, `pcg_export_graph`, `pcg_read_node_output`, `pcg_validate_graph`, `placement_validate`, `scene_export`, `scene_validate_physics`, `texture_audit`, `ui_measure_text`, `copilot_get_key`. They are still refused after a contained fault, like every command outside the unsafe allowlist.
 - **Asset-busy lifetimes (R-23).** Until Deploy B a bound build lease dies 5 s after its socket goes idle, so `asset_busy` protection is lost mid-build unless bpgraph pings every 2 s (§2.2). `editor_start_pie` also counts the caller's own build.
 - `HAYBA_AGENT_ID` must equal the lane's gate owner for every bpgraph run (R-10). Without it, a restarted lane is a new owner.
 ````
 
-- [ ] **Step 2: Check the document's own references**
+- [ ] **Step 2: Substitute the gate SHA and check the document's own references**
 
 ```powershell
 Set-Location D:\Hackathons\hayba\.worktrees\p0-safety
-Select-String -Path docs\handoffs\HANDOFF-p0-deploy-a-consumer.md -Pattern '<SHA_A>' | Measure-Object | ForEach-Object Count
-Select-String -Path docs\handoffs\HANDOFF-p0-deploy-a-consumer.md -Pattern '\btoken\b' | ForEach-Object Line
+$SHA_A = (Get-Content "D:\UEScratch\logs\gate-a-sha.txt" -TotalCount 1).Trim()
+if ($SHA_A -notmatch '^[0-9a-f]{40}$') { throw "gate-a-sha.txt does not hold a commit SHA; run GA.1 first" }
+git merge-base --is-ancestor $SHA_A HEAD; if ($LASTEXITCODE -ne 0) { throw "$SHA_A is not an ancestor of HEAD" }
+$Doc = "docs\handoffs\HANDOFF-p0-deploy-a-consumer.md"
+$PieSafe = (Get-Content "D:\UEScratch\logs\pie-safe.txt" -TotalCount 1).Trim()
+if ($PieSafe -notmatch '^[a-z0-9_]+(, [a-z0-9_]+){80,}$') { throw "pie-safe.txt does not hold the PIE-safe names; run T2.6 Step 6 first" }
+(Get-Content $Doc -Raw).Replace('<SHA_A>', $SHA_A.Substring(0, 8)).Replace('<PIE_SAFE>', $PieSafe) | Set-Content $Doc -NoNewline
+Select-String -Path $Doc -Pattern '<SHA_A>|<PIE_SAFE>' | Measure-Object | ForEach-Object Count
+Select-String -Path $Doc -Pattern '<MERGE_A>' | Measure-Object | ForEach-Object Count
+Select-String -Path $Doc -Pattern '^\$pieSafe  = ''[^'']*\bwait_for_idle\b[^'']*\bcopilot_get_key\b' | Measure-Object | ForEach-Object Count
+Select-String -Path $Doc -Pattern '\btoken\b' | ForEach-Object Line
 git grep -n "HANDOFF-p0-deploy-a-consumer" -- docs
+git show "${SHA_A}:<host-kit>/editor_gate.py" | Select-String -SimpleMatch 'EXIT_UNSAFE = 4' | Measure-Object | ForEach-Object Count
 ```
 
-Expected: `0` placeholders for `<SHA_A>` (`<MERGE_A>` remains for GA.4), and no line says `token`. The `git grep` prints only the new file.
+Expected: `0` tokens left for `<SHA_A>` and `<PIE_SAFE>`; a non-zero count for `<MERGE_A>` (GA.4 fills it); `1` for the `$pieSafe` line (the M5 recipe holds the gate's PIE-safe names, the R-12 reads among them); no line says `token`; the `git grep` prints nothing (the handoff is still untracked, and no tracked doc may name it yet); and the last count is `1`, which proves the commit about to be tagged holds the Deploy A kit the handoff tells the consumer to install.
 
 - [ ] **Step 3: Tag the gate SHA and commit the handoff**
 
 ```powershell
-$SHA_A = "<the GA.1 SHA>"
+$SHA_A = (Get-Content "D:\UEScratch\logs\gate-a-sha.txt" -TotalCount 1).Trim()
 git tag -a p0-deploy-a $SHA_A -m "P0 Deploy A: sticky editor_unsafe, editor state and PIE guards, asset_busy (T1-T3)"
 git add docs/handoffs/HANDOFF-p0-deploy-a-consumer.md
 git commit -m "docs(handoff): P0 Deploy A for the consumer's window"
@@ -11940,7 +13031,9 @@ Spec §7.2 step 1 and §7.3 (the Deploy A fixups): take the union of `AssetWrite
 **Files:**
 - Modify (merge resolution, in the new worktree `D:/Hackathons/hayba/.worktrees/p0a-consumer` on branch `merge/p0-deploy-a-consumer`):
   - `unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/HaybaMCPAccessPolicy.h`: `AssetWriteCommands()` (deploy branch `:104-124`)
-  - any conflict in `mcp-tools/hayba-mcp/src/tools/__tests__/access-policy-drift.test.ts` or `docs/adr/0010-multi-agent-editor-leases.md`: keep both sides' rows and paragraphs
+  - `unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/Tests/HaybaMCPLeasePolicyTest.cpp`: `FHaybaMCPLeaseAssetWriteTest::RunTest` (both sides added it) and the `ExpectedAssetWrites` pin in `FHaybaMCPLeaseClassificationDriftTest::RunTest` (T3.1; it merges without a conflict and is then wrong)
+  - `mcp-tools/hayba-mcp/src/tools/__tests__/access-policy-drift.test.ts`: the `pins the S1 rows` expectation (T3.1; the same: no conflict, wrong rows)
+  - any conflict in `docs/adr/0010-multi-agent-editor-leases.md` or `CHANGELOG.md`: keep both sides' paragraphs
 - Modify after the merge: `docs/handoffs/HANDOFF-p0-deploy-a-consumer.md` on `fix/p0-safety` (fill `<MERGE_A>`)
 - Test: the TS gate and a full headless run on a third scratch host, `D:/UEScratch/h58deploy`
 
@@ -12008,14 +13101,121 @@ Replace the conflicted function body with:
 	}
 ```
 
-If `access-policy-drift.test.ts` pins the row list (T3.1), add the same `blueprint_remove_node` and anim rows to its expectation. Then check:
+Both pins of T3.1 move with the table, in this same merge commit. Neither conflicts, so nothing reminds you: `Hayba.MCP.Lease.ClassificationDrift` compares `AssetWriteCommands().Num()` with the pin's size and fails on 29 against 15.
+
+In `unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/Tests/HaybaMCPLeasePolicyTest.cpp`, inside `FHaybaMCPLeaseClassificationDriftTest::RunTest`, replace the `ExpectedAssetWrites` initializer and the `TestEqual` under it with:
+
+```cpp
+	// S1 rows on the deploy branch: the union of the P0 Blueprint and widget
+	// rows, blueprint_remove_node (registered here), and the animation rows of
+	// 001c0537 (P0 spec 7.3).
+	const TMap<FString, FString> ExpectedAssetWrites = {
+		{ TEXT("blueprint_add_node"), TEXT("path") },
+		{ TEXT("blueprint_connect_nodes"), TEXT("path") },
+		{ TEXT("blueprint_set_pin_default"), TEXT("path") },
+		{ TEXT("blueprint_add_variable"), TEXT("path") },
+		{ TEXT("blueprint_add_function"), TEXT("path") },
+		{ TEXT("blueprint_add_event"), TEXT("path") },
+		{ TEXT("blueprint_compile"), TEXT("path") },
+		{ TEXT("blueprint_remove_node"), TEXT("path") },
+		{ TEXT("ui_build_tree"), TEXT("widget_blueprint_path") },
+		{ TEXT("ui_mutate_tree"), TEXT("widget_blueprint_path") },
+		{ TEXT("ui_set_variable"), TEXT("widget_blueprint_path") },
+		{ TEXT("ui_set_widget_properties"), TEXT("widget_blueprint_path") },
+		{ TEXT("ui_add_element"), TEXT("widget_blueprint_path") },
+		{ TEXT("ui_bind_property"), TEXT("widget_blueprint_path") },
+		{ TEXT("ui_compile_widget"), TEXT("widget_blueprint_path") },
+		{ TEXT("ui_save_widget"), TEXT("widget_blueprint_path") },
+		{ TEXT("anim_bp_create"), TEXT("path") },
+		{ TEXT("anim_graph_add_node"), TEXT("path") },
+		{ TEXT("anim_graph_connect"), TEXT("path") },
+		{ TEXT("anim_graph_set_node"), TEXT("path") },
+		{ TEXT("anim_graph_bind_variable"), TEXT("path") },
+		{ TEXT("anim_blueprint_add_state"), TEXT("path") },
+		{ TEXT("anim_blueprint_add_transition"), TEXT("path") },
+		{ TEXT("anim_blueprint_set_condition"), TEXT("path") },
+		{ TEXT("anim_blueprint_compile"), TEXT("path") },
+		{ TEXT("anim_sequence_set_curve"), TEXT("path") },
+		{ TEXT("anim_sequence_set_additive"), TEXT("path") },
+		{ TEXT("anim_sequence_create_pose"), TEXT("path") },
+		{ TEXT("ui_add_key_override"), TEXT("path") },
+	};
+	TestEqual(TEXT("AssetWrite rows are exactly the Blueprint, widget and animation writers"),
+		AssetWriteCommands().Num(), ExpectedAssetWrites.Num());
+```
+
+In the same file, `FHaybaMCPLeaseAssetWriteTest::RunTest` is an add/add conflict (`001c0537` wrote the animation version, T3.1 the Blueprint and widget version). Take the `p0-deploy-a` side of that function, then insert the animation assertions before its final `return true;`:
+
+```cpp
+	// Animation authoring (001c0537), kept from the deploy branch's version of this test.
+	const FClassification AnimNode = ClassifyCommand(TEXT("anim_graph_add_node"), true);
+	TestEqual(TEXT("anim graph authoring is a scoped write"), AnimNode.Class, EAccessClass::WriteScoped);
+	TestTrue(TEXT("by the asset table, not by default"), AnimNode.bExplicit);
+	TestEqual(TEXT("anim compile-and-save is a scoped write even ungated"),
+		ClassifyCommand(TEXT("anim_blueprint_compile"), false).Class, EAccessClass::WriteScoped);
+	TSharedPtr<FJsonObject> AnimParams = MakeShared<FJsonObject>();
+	AnimParams->SetStringField(TEXT("path"), TEXT("/Game/Pawn/ABP_Pawn.ABP_Pawn"));
+	FClaim AnimClaim;
+	TestTrue(TEXT("an anim writer implies its asset"), ImpliedAssetClaim(TEXT("anim_graph_connect"), AnimParams, AnimClaim));
+	TestEqual(TEXT("as asset:<package>"), AnimClaim.Resource.Key(), FString(TEXT("asset:/game/pawn/abp_pawn")));
+	AnimParams->SetStringField(TEXT("path"), TEXT("/Game/UI/WBP_Menu"));
+	FClaim KeyOverride;
+	TestTrue(TEXT("a widget key override keys on path"), ImpliedAssetClaim(TEXT("ui_add_key_override"), AnimParams, KeyOverride));
+	TestEqual(TEXT("as asset:<package>"), KeyOverride.Resource.Key(), FString(TEXT("asset:/game/ui/wbp_menu")));
+```
+
+In `mcp-tools/hayba-mcp/src/tools/__tests__/access-policy-drift.test.ts`, in the test `pins the S1 rows: Blueprint writers by path, widget writers by widget_blueprint_path`, replace the object passed to `expect(rows).toEqual(…)` with:
+
+```ts
+    expect(rows).toEqual({
+      blueprint_add_node: 'path',
+      blueprint_connect_nodes: 'path',
+      blueprint_set_pin_default: 'path',
+      blueprint_add_variable: 'path',
+      blueprint_add_function: 'path',
+      blueprint_add_event: 'path',
+      blueprint_compile: 'path',
+      blueprint_remove_node: 'path',
+      ui_build_tree: 'widget_blueprint_path',
+      ui_mutate_tree: 'widget_blueprint_path',
+      ui_set_variable: 'widget_blueprint_path',
+      ui_set_widget_properties: 'widget_blueprint_path',
+      ui_add_element: 'widget_blueprint_path',
+      ui_bind_property: 'widget_blueprint_path',
+      ui_compile_widget: 'widget_blueprint_path',
+      ui_save_widget: 'widget_blueprint_path',
+      anim_bp_create: 'path',
+      anim_graph_add_node: 'path',
+      anim_graph_connect: 'path',
+      anim_graph_set_node: 'path',
+      anim_graph_bind_variable: 'path',
+      anim_blueprint_add_state: 'path',
+      anim_blueprint_add_transition: 'path',
+      anim_blueprint_set_condition: 'path',
+      anim_blueprint_compile: 'path',
+      anim_sequence_set_curve: 'path',
+      anim_sequence_set_additive: 'path',
+      anim_sequence_create_pose: 'path',
+      ui_add_key_override: 'path',
+    });
+```
+
+Then check:
 
 ```powershell
 Select-String -Path unreal\HaybaMCPToolkit\Source\HaybaMCPToolkit\Private\HaybaMCPEditorStatePolicy.h -Pattern 'anim_blueprint_compile' | ForEach-Object Line
 git grep -n -e "^<<<<<<< " -e "^>>>>>>> " -- .
+$Policy = Get-Content unreal\HaybaMCPToolkit\Source\HaybaMCPToolkit\Private\HaybaMCPAccessPolicy.h -Raw
+$Table  = $Policy.Substring($Policy.IndexOf('inline const TMap<FString, FString>& AssetWriteCommands()'))
+$Table  = $Table.Substring(0, $Table.IndexOf('};'))
+([regex]::Matches($Table, '\{\s*TEXT\("[^"]+"\),\s*TEXT\("[^"]+"\)\s*\}')).Count
+$Pin = Get-Content unreal\HaybaMCPToolkit\Source\HaybaMCPToolkit\Private\Tests\HaybaMCPLeasePolicyTest.cpp -Raw
+$Pin = $Pin.Substring($Pin.IndexOf('const TMap<FString, FString> ExpectedAssetWrites = {'))
+$Pin = $Pin.Substring(0, $Pin.IndexOf('};'))
+([regex]::Matches($Pin, '\{\s*TEXT\("[^"]+"\),\s*TEXT\("[^"]+"\)\s*\}')).Count
 ```
 
-Expected: `anim_blueprint_compile` appears in `AssetBusyTargets()`, and no conflict markers remain.
+Expected: `anim_blueprint_compile` appears in `AssetBusyTargets()`; no conflict markers remain; and both counts print `29` (the table and its C++ pin hold the same number of rows).
 
 - [ ] **Step 3: TS gate on the merge**
 
@@ -12054,25 +13254,38 @@ node "$WT\mcp-tools\hayba-mcp\scripts\check-automation-report.mjs" "D:\UEScratch
 Select-String -Path "$H\Saved\Logs\hayba-deploy-a-$SHA.log" -Pattern 'Result=\{Fail\}' | ForEach-Object Line
 ```
 
-Expected: both builds `Result: Succeeded`; the checker exits 0 over the merge tree's manifest (T0–T3); the only `Result={Fail}` line is `RenderWidgetToPng`. `Hayba.MCP.Lease.ClassificationDrift` passes, which proves every union row names a registered command.
+Expected: both builds `Result: Succeeded`; the checker exits 0 over the merge tree's manifest (T0–T3); the only `Result={Fail}` line is `RenderWidgetToPng`. `Hayba.MCP.Lease.ClassificationDrift` and `Hayba.MCP.Lease.AssetWrites` pass on the 29-row union, which proves every union row names a registered command and that Step 2 moved the C++ pin with the table.
 
 - [ ] **Step 5: Commit the merge and fast-forward the deploy branch**
 
+The merge staged every file it merged cleanly. Stage only what Steps 1 and 2 resolved or edited; `npm ci` and the builds have run in this worktree, so never `git add -A`.
+
 ```powershell
 Set-Location D:\Hackathons\hayba\.worktrees\p0a-consumer
-git add -A
-git commit -m "chore(merge): P0 Deploy A into the consumer's deploy branch" -m "AssetWriteCommands is the union of the anim rows (001c0537) and the P0 blueprint and UI rows, plus blueprint_remove_node."
+git status --short | Where-Object { $_ -match '^\?\?' }
+$Resolved = @(git diff --name-only --diff-filter=U) + @(
+  "unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/HaybaMCPAccessPolicy.h",
+  "unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/Tests/HaybaMCPLeasePolicyTest.cpp",
+  "mcp-tools/hayba-mcp/src/tools/__tests__/access-policy-drift.test.ts") | Sort-Object -Unique
+$Resolved
+git add -- $Resolved
+git diff --name-only --diff-filter=U
+git diff --name-only
+git commit -m "chore(merge): P0 Deploy A into the consumer's deploy branch" -m "AssetWriteCommands is the union of the anim rows (001c0537) and the P0 blueprint and UI rows, plus blueprint_remove_node. The ClassificationDrift and access-policy-drift pins hold the same 29 rows."
+git status --short
 git -C <deploy-worktree> merge --ff-only merge/p0-deploy-a-consumer
 git -C <deploy-worktree> push origin <deploy-branch>
 $MERGE_A = git -C <deploy-worktree> rev-parse --short HEAD
+$MERGE_A | Set-Content "D:\UEScratch\logs\merge-a-sha.txt"
 ```
 
-Expected: a fast-forward (no new commit on the deploy branch other than the merge), and the push succeeds.
+Expected: the first command prints nothing (an untracked file is generated output: leave it unstaged and find out what wrote it). `$Resolved` lists the three files above plus any file Step 1 reported as conflicted. Both `git diff` commands print nothing, and `git status --short` prints nothing after the commit. Then a fast-forward (no new commit on the deploy branch other than the merge), and the push succeeds.
 
 - [ ] **Step 6: Fill `<MERGE_A>` in the handoff and deliver it**
 
 ```powershell
 Set-Location D:\Hackathons\hayba\.worktrees\p0-safety
+$MERGE_A = (Get-Content "D:\UEScratch\logs\merge-a-sha.txt" -TotalCount 1).Trim()
 (Get-Content docs\handoffs\HANDOFF-p0-deploy-a-consumer.md -Raw).Replace('<MERGE_A>', $MERGE_A) |
   Set-Content docs\handoffs\HANDOFF-p0-deploy-a-consumer.md -NoNewline
 git add docs/handoffs/HANDOFF-p0-deploy-a-consumer.md
@@ -12091,7 +13304,11 @@ Expected: the doc has no `<MERGE_A>` left.
 Spec §7.1 ("merge → feat/hayba-brain-client, after each deploy is verified, and only after step 0") and §7.3 (the `bc` fixups). Start this only after S0.1's PR is merged and the consumer's session has reported Deploy A verified.
 
 **Files:**
-- Modify (merge resolution, in the new worktree `D:/Hackathons/hayba/.worktrees/p0a-bc` on branch `merge/p0-deploy-a-into-bc`): `unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/HaybaMCPAccessPolicy.h` (add the `blueprint_remove_node` row, which is registered on `bc` at `HaybaMCPBlueprintHandler.cpp:102/188/216`), and any conflicted file
+- Modify (merge resolution, in the new worktree `D:/Hackathons/hayba/.worktrees/p0a-bc` on branch `merge/p0-deploy-a-into-bc`):
+  - `unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/HaybaMCPAccessPolicy.h` (add the `blueprint_remove_node` row, which is registered on `bc` at `HaybaMCPBlueprintHandler.cpp:102/188/216`);
+  - `unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/Tests/HaybaMCPLeasePolicyTest.cpp` (the `ExpectedAssetWrites` pin: 15 rows become 16);
+  - `mcp-tools/hayba-mcp/src/tools/__tests__/access-policy-drift.test.ts` (the `pins the S1 rows` expectation: the same 16th row);
+  - any conflicted file.
 - Test: the TS gate plus a headless run on `D:/UEScratch/h58bc`
 
 **Interfaces:**
@@ -12122,14 +13339,27 @@ In `AssetWriteCommands()`, directly after `{ TEXT("blueprint_compile"), TEXT("pa
 			{ TEXT("blueprint_remove_node"), TEXT("path") },
 ```
 
-and add the same name to the row expectation in `access-policy-drift.test.ts` if T3.1 pins the list. Then:
+Both pins of T3.1 take the same row in this merge commit; without it `Hayba.MCP.Lease.ClassificationDrift` fails on 16 rows against 15. In `unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/Tests/HaybaMCPLeasePolicyTest.cpp`, in the `ExpectedAssetWrites` initializer of `FHaybaMCPLeaseClassificationDriftTest::RunTest`, directly after `{ TEXT("blueprint_compile"), TEXT("path") },`, add:
+
+```cpp
+		{ TEXT("blueprint_remove_node"), TEXT("path") },
+```
+
+In `mcp-tools/hayba-mcp/src/tools/__tests__/access-policy-drift.test.ts`, in the object of `pins the S1 rows: Blueprint writers by path, widget writers by widget_blueprint_path`, directly after `blueprint_compile: 'path',`, add:
+
+```ts
+      blueprint_remove_node: 'path',
+```
+
+Then:
 
 ```powershell
 git grep -n -e "^<<<<<<< " -e "^>>>>>>> " -- .
 Select-String -Path unreal\HaybaMCPToolkit\Source\HaybaMCPToolkit\Private\HaybaMCPCommandHandler.cpp -SimpleMatch 'editor_unsafe_restart_required','pie_active','asset_busy','RunGuardedAt(EHaybaFaultSite::Dispatch' | Measure-Object | ForEach-Object Count
+Select-String -Path unreal\HaybaMCPToolkit\Source\HaybaMCPToolkit\Private\HaybaMCPAccessPolicy.h, unreal\HaybaMCPToolkit\Source\HaybaMCPToolkit\Private\Tests\HaybaMCPLeasePolicyTest.cpp, mcp-tools\hayba-mcp\src\tools\__tests__\access-policy-drift.test.ts -SimpleMatch 'blueprint_remove_node' | ForEach-Object { "$($_.Filename): $($_.Line.Trim())" }
 ```
 
-Expected: no markers, and a count of at least 4.
+Expected: no markers; a count of at least 4; and three `blueprint_remove_node` lines, one per file.
 
 - [ ] **Step 3: Run the TS gate and the headless gate on `h58bc`**
 
@@ -12157,19 +13387,72 @@ node "$WT\mcp-tools\hayba-mcp\scripts\check-automation-report.mjs" "D:\UEScratch
   "$WT\mcp-tools\hayba-mcp\scripts\p0-expected-automation-tests.txt" --allow-fail Hayba.MCP.UI.RenderWidgetToPng
 ```
 
-Expected: TS 0 failed; both builds succeed; the checker exits 0.
+Expected: TS 0 failed; both builds succeed; the checker exits 0, with `Hayba.MCP.Lease.ClassificationDrift` among the passing names (16 rows in the table and in its pin).
 
-- [ ] **Step 4: Commit, push, open the PR**
+- [ ] **Step 4: Commit the merge**
+
+The merge staged every file it merged cleanly. Stage only the resolved and edited files; never `git add -A` in a worktree where `npm ci` and the builds have run.
 
 ```powershell
 Set-Location D:\Hackathons\hayba\.worktrees\p0a-bc
-git add -A
-git commit -m "chore(merge): P0 Deploy A into the brain-client trunk"
-git push -u origin merge/p0-deploy-a-into-bc
-gh pr create --base feat/hayba-brain-client --head merge/p0-deploy-a-into-bc --title "Merge P0 Deploy A (T1-T3) into the brain-client trunk" --body-file D:\UEScratch\reports\bc-a-pr-body.md
+git status --short | Where-Object { $_ -match '^\?\?' }
+$Resolved = @(git diff --name-only --diff-filter=U) + @(
+  "unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/HaybaMCPAccessPolicy.h",
+  "unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/Tests/HaybaMCPLeasePolicyTest.cpp",
+  "mcp-tools/hayba-mcp/src/tools/__tests__/access-policy-drift.test.ts") | Sort-Object -Unique
+$Resolved | Set-Content D:\UEScratch\reports\bc-a-resolved.txt
+git add -- $Resolved
+git diff --name-only --diff-filter=U
+git diff --name-only
+git commit -m "chore(merge): P0 Deploy A into the brain-client trunk" -m "Keeps the trunk's Agent-panel plan flow and every P0 gate slot. AssetWriteCommands and both of its pins gain blueprint_remove_node, which the trunk registers."
+git status --short
 ```
 
-Write `bc-a-pr-body.md` first. It covers: the tag, the resolved conflicts, the `blueprint_remove_node` row, and the gate evidence. End it with the executing session's PR attribution lines.
+Expected: the first command and both `git diff` commands print nothing, and `git status --short` prints nothing after the commit.
+
+- [ ] **Step 5: Write the PR body, push and open the PR**
+
+```powershell
+$WT  = "D:\Hackathons\hayba\.worktrees\p0a-bc"
+$SHA = git -C $WT rev-parse --short HEAD
+$Tag = git -C $WT rev-parse --short "p0-deploy-a^{commit}"
+$Files = (Get-Content D:\UEScratch\reports\bc-a-resolved.txt | ForEach-Object { "- ``$_``" }) -join "`n"
+$Checker = (node "$WT\mcp-tools\hayba-mcp\scripts\check-automation-report.mjs" "D:\UEScratch\reports\bc-a-$SHA\index.json" `
+  "$WT\mcp-tools\hayba-mcp\scripts\p0-expected-automation-tests.txt" --allow-fail Hayba.MCP.UI.RenderWidgetToPng) -join "`n"
+$Body = @'
+## What this merge brings
+
+P0 Deploy A, the tag `p0-deploy-a` ({TAG}), merged into the trunk ({SHA}): sticky `editor_unsafe` after a contained native fault (T1), editor state with the `pie_active` and `pie_blocked` guards and the unsafe Play veto (T2), and `asset_busy` with the asset-write seam (T3).
+
+## Conflicts and how each was resolved
+
+Resolved or edited in the merge commit:
+
+{FILES}
+
+- `HaybaMCPCommandHandler.cpp`: the trunk's Agent-panel plan flow is kept, and every P0 gate slot is kept in the spec's order (slot 1 `editor_unsafe_restart_required`, slot 2 `pie_active`, slot 3 `asset_busy`, then the lease gate), with `IsWireRefusalCode` and the guarded dispatch fault branch.
+- `HaybaMCPAccessPolicy.h`: `AssetWriteCommands()` gains `blueprint_remove_node`, keyed on `path`, because the trunk registers that command. `Hayba.MCP.Lease.ClassificationDrift` and `access-policy-drift.test.ts` pin the same 16 rows.
+- Every other conflicted file keeps both sides.
+
+## Gate evidence
+
+- TS gate on the merge: `tsc --noEmit`, `vitest run` (0 failed), `lint:legacy-wrappers` and `build:server` all pass.
+- Headless `RunTests Hayba` on a throwaway UE 5.8 host, built twice, exact-name check:
+
+<pre>
+{CHECKER}
+</pre>
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)
+'@
+$Body.Replace('{TAG}', $Tag).Replace('{SHA}', $SHA).Replace('{FILES}', $Files).Replace('{CHECKER}', $Checker) |
+  Set-Content -Encoding utf8 D:\UEScratch\reports\bc-a-pr-body.md
+Select-String -Path D:\UEScratch\reports\bc-a-pr-body.md -Pattern '^OK$', '^FAIL', '\{[A-Z_]+\}'
+git -C $WT push -u origin merge/p0-deploy-a-into-bc
+gh pr create --repo zajalist/hayba --base feat/hayba-brain-client --head merge/p0-deploy-a-into-bc --title "Merge P0 Deploy A (T1-T3) into the brain-client trunk" --body-file D:\UEScratch\reports\bc-a-pr-body.md
+```
+
+Expected: the `Select-String` prints the checker's `OK` line and nothing else (no `FAIL`, no unfilled `{…}` token), and `gh` prints the PR URL. When the executing session's harness gives a session link as a second PR attribution line, append it as the last line of the body file before `gh pr create`.
 
 **Done when:** the PR is open with a green gate, and the maintainer has merged it.
 
@@ -12918,6 +14201,31 @@ bool FHaybaMCPLeaseWireRoundTripTest::RunTest(const FString& Parameters)
 		}
 	}
 	TestTrue(TEXT("status: the caller's lease is listed by lease_id"), bListed);
+
+	// status as another owner: it sees that the leases exist, never their ids.
+	// Until T9 an envelope that names a lease_id acts as that lease's owner, so
+	// a leaked id would let one agent act as another.
+	const FString Other = W::UniqueOwner();
+	FString OtherRaw;
+	int32 SeenOfOwner = 0;
+	const TArray<TSharedPtr<FJsonValue>>* OtherLeases = nullptr;
+	if (W::Field(W::Send(*R, Other, TEXT("lease_status"), TEXT("{}"), FString(), &OtherRaw), TEXT("data"))
+			->TryGetArrayField(TEXT("leases"), OtherLeases) && OtherLeases)
+	{
+		for (const TSharedPtr<FJsonValue>& Value : *OtherLeases)
+		{
+			const TSharedPtr<FJsonObject> Entry = Value->AsObject();
+			if (W::Str(Entry, TEXT("owner")) != Owner) continue;
+			++SeenOfOwner;
+			TestFalse(TEXT("status as another owner: mine is false"), W::Bool(Entry, TEXT("mine")));
+			TestFalse(TEXT("status as another owner: no lease_id field"), Entry->HasField(TEXT("lease_id")));
+			TestFalse(TEXT("status as another owner: no token field"), Entry->HasField(TEXT("token")));
+		}
+	}
+	TestEqual(TEXT("status as another owner: both of the holder's leases are listed"), SeenOfOwner, 2);
+	TestFalse(TEXT("status as another owner: the reply holds neither id anywhere"),
+		OtherRaw.Contains(LeaseId) || OtherRaw.Contains(BoundId));
+	RawReplies.Add(OtherRaw);
 
 	// The gate: a marker, and an unknown id, in the envelope.
 	TestEqual(TEXT("gate: an envelope marker gives lease_id_error redaction_marker"),
@@ -14747,18 +16055,16 @@ git -C D:\Hackathons\hayba\.worktrees\p0-safety commit -m "feat(mcp): seed the e
 
 ### Task T4.4: Host kit (`editor_gate.py`) on `lease_id`, and the lease-id docs
 
-This task implements §5.2 items 1–12 in `<host-kit>/`, with the 8 tests §5.2 item 12 names. It also implements the §5.1 gate behaviour those tests need:
-- `HaybaError` carries `code` and `detail`;
-- acquire asks `editor_get_state {include_dirty:false}` first and exits 4 on `editor_unsafe`;
-- a refused renew with an unsafe code never re-queues;
-- `status` prints the editor health.
+This task implements §5.2 items 1–12 in `<host-kit>/`, with the 8 tests §5.2 item 12 names, and the `--label` flag of §5.2 "Helpers". It builds on the Deploy A kit (GA.0), which already has the §5.1 gate behaviour: `HaybaError` with `code` and `detail`, the unsafe exit 4, PIE read from `editor_get_state`, and the health in `status`. Three of the 8 named tests (`test_acquire_refuses_when_editor_unsafe_exit_4`, `test_renew_refused_unsafe_does_not_requeue`, `test_status_reports_editor_health`) therefore exist since GA.0; this task keeps them and moves their fake to `lease_id`.
 
-`pie_running()` via `editor_get_state` and the bpgraph/apply_look changes of §5.1 are not in this task; they live in the consumer handoffs. Hayba never edits `<project>`.
+Why `--label` is a safety change and not a convenience: T7's marker shim releases every lease of an owner that is labelled `editor_gate:<owner>` when an old helper sends a redaction marker under `token`. Before this task the gate hard-codes that label (`editor_gate.py:254`), so a build's asset lease taken through the gate would carry it, and an old helper's marker release would drop the build lease in the middle of a build (I-6). With `--label build:<id>` the build lease keeps its own label. A labelled lease is a second lease of the same owner, so it also gets its own `lock.json` entry (`<owner>#<label>`): without that, `acquire --label` would find the owner's gate lease in the mirror and renew it instead of acquiring the build lease.
+
+The bpgraph and apply_look changes of §5.1 and §5.2 live in the consumer handoffs. Hayba never edits `<project>`.
 
 **Files:**
-- Modify: `<host-kit>/editor_gate.py` (whole file, `:1-363`)
-- Modify (test): `<host-kit>/tests/test_editor_gate.py` (whole file, `:1-321`)
-- Modify: `<host-kit>/editor_gate.patch` (regenerated)
+- Modify: `<host-kit>/editor_gate.py` (whole file; 433 lines after GA.0)
+- Modify (test): `<host-kit>/tests/test_editor_gate.py` (whole file; 389 lines after GA.0)
+- Modify: `<host-kit>/editor_gate.patch` (regenerated against the Deploy A kit, tag `p0-deploy-a`)
 - Modify: `<host-kit>/README.md`
   - `:32-49` ("What changes")
   - `:51-52` (test count)
@@ -14774,15 +16080,15 @@ This task implements §5.2 items 1–12 in `<host-kit>/`, with the 8 tests §5.2
 - Consumes:
   - the T4.2 wire: `caps.lease_id`, `lease_id`, `ticket`, and the `[lease_id_*]` codes;
   - `belongs to`, kept verbatim;
-  - T1's `editor_get_state` fields `editor_unsafe`, `python_unhealthy`, `health{faulted_command, faulted_at_utc}`, and the reply `code` `editor_unsafe_restart_required` / `native_fault_contained` with detail `editor_health`.
+  - GA.0's kit: `HaybaError(message, code=None, detail=None)`, `editor_capabilities() -> (answered, caps)`, `editor_state()`, `unsafe_line(health)`, `refuse_if_unsafe()`, `EXIT_UNSAFE = 4`, `UNSAFE_CODES`, `pie_running(ask_editor=True)`, `acquire_file(owner, timeout_min, ttl_min, ask_editor=False)`, and the test helper `lease_calls(fake)`.
 - Produces (host kit, Python):
-  - `LEASE_ID_RE = re.compile(r"^ls_[a-z0-9_]+$")`, `usable_lease_id(value)`, `mirrored_lease_id(owner)`;
-  - `HaybaError(message, code=None, detail=None)`;
-  - `editor_capabilities() -> (answered, caps)`, `lease_manager_available(caps)`, which needs `lease_manager and lease_id`;
-  - `editor_state()`, `unsafe_line(health)`, `refuse_if_unsafe()`, `EXIT_UNSAFE = 4`;
-  - the `lease-id` subcommand (alias `token`) and the `--lease-id` flag (alias `--token`);
+  - `LEASE_ID_RE = re.compile(r"^ls_[a-z0-9_]+$")`, `usable_lease_id(value)`;
+  - `lease_manager_available(caps)`, which now needs `lease_manager and lease_id`;
+  - `holder_key(owner, label=None)`, `mirror_grant(owner, lease_id, resources, expires_in_s, label=None)`, `mirror_drop(owner, label=None)`, `mirrored_lease_id(owner, label=None)`;
+  - `acquire_lease(owner, timeout_min, ttl_min, scopes, lane, label=None)`, `release_lease(owner, lease_id_arg, label=None)`;
+  - the `lease-id` subcommand (alias `token`), the `--lease-id` flag (alias `--token`), and the `--label` flag (default `editor_gate:<owner>`; at most 128 characters, no control characters; accepted by `acquire`, `release` and `lease-id`);
   - `announce` prints `HAYBA_AGENT_ID=<owner>` and `HAYBA_LEASE=<lease_id>  # helpers only; never put this in an MCP server's environment`.
-  - The exit codes are 0, 1, 2 and 4. Handoff B (GB.3) quotes these names and the 8 test names.
+  - The exit codes are 0, 1, 2 and 4. Handoff B (GB.3) quotes these names, the 8 test names and `test_label_flag_sets_lease_label`. T9.3 edits this file again.
 
 - [ ] **Step 1: Write the failing host-kit tests**
 
@@ -14824,6 +16130,11 @@ def lock_json(tmp):
     return json.loads((tmp / "gate" / "lock.json").read_text())
 
 
+def lease_calls(fake):
+    """The lease_* calls the fake received, in order (editor_get_state and ping polls left out)."""
+    return [c for c in fake.calls if c[0].startswith("lease_")]
+
+
 # ----------------------------------------------------------------------------- fake Hayba
 
 class FakeHayba:
@@ -14831,14 +16142,16 @@ class FakeHayba:
     resource conflicts with itself and `global` conflicts with everything. Handles are
     lease_ids (ls_<n>_<hex>) and tickets (lq_<n>_<hex>), as the plugin issues them."""
 
-    def __init__(self, lease_manager=True, lease_id=True):
+    def __init__(self, lease_manager=True, lease_id=True, pie_field=True):
         self.lease_manager = lease_manager
         self.lease_id_cap = lease_id
         self.calls = []             # (cmd, params, owner, lease)
-        self.leases = {}            # lease_id -> {"owner", "resources"}
+        self.leases = {}            # lease_id -> {"owner", "resources", "label"}
         self.queue_first = set()    # owners whose first lease_acquire is answered "queued"
         self.tickets = {}           # ticket -> resources
         self.counter = 0
+        self.pie = "none"           # editor_get_state.pie: "none" | "user" | "agent:<owner>"
+        self.pie_field = pie_field  # False: a plugin that predates the `pie` field
         self.unsafe = False         # editor_get_state reports a contained native fault
         self.refuse_unsafe = False  # lease_acquire / lease_renew answer editor_unsafe_restart_required
         self.grant_marker = False   # a grant comes back under a redacted `token` (a pre-lease_id plugin)
@@ -14889,10 +16202,11 @@ class FakeHayba:
                         caps["lease_id"] = True
                 return {"ok": True, "data": {"status": "ok", "capabilities": caps}}
             if cmd == "editor_get_state":
-                if self.unsafe:
-                    return {"ok": True, "data": {"pie": "none", "editor_unsafe": True, "python_unhealthy": True,
-                                                 "health": dict(HEALTH)}}
-                return {"ok": True, "data": {"pie": "none", "editor_unsafe": False, "python_unhealthy": False, "health": {}}}
+                data = {"editor_unsafe": self.unsafe, "python_unhealthy": self.unsafe,
+                        "health": dict(HEALTH) if self.unsafe else {}}
+                if self.pie_field:
+                    data["pie"] = self.pie
+                return {"ok": True, "data": data}
             if self.refuse_unsafe and cmd in ("lease_acquire", "lease_renew"):
                 return {"ok": False, "code": "editor_unsafe_restart_required",
                         "error": f"editor_unsafe_restart_required: '{cmd}' was not run. A native fault was contained.",
@@ -14912,7 +16226,7 @@ class FakeHayba:
                     return self._queued(owner, resources, holder)
                 self.counter += 1
                 lease_id = f"ls_{self.counter}_{self.counter:012x}"
-                self.leases[lease_id] = {"owner": owner, "resources": resources}
+                self.leases[lease_id] = {"owner": owner, "resources": resources, "label": p.get("label", "")}
                 if self.grant_marker:
                     return {"ok": True, "data": {"status": "granted", "token": "[REDACTED:token]",
                                                  "expires_in_s": p.get("ttl_s", 120)}}
@@ -15013,7 +16327,8 @@ def test_plugin_without_lease_manager_keeps_the_file_lock(tmp_path):
     try:
         assert run(tmp_path, "acquire", "--owner", "A", "--timeout-min", "0.02", port=fake.port).returncode == 0
         assert "mode" not in lock_json(tmp_path)
-        assert fake.cmds() == ["ping", "editor_get_state"]
+        assert fake.cmds()[:2] == ["ping", "editor_get_state"]
+        assert set(fake.cmds()) == {"ping", "editor_get_state"}
     finally:
         fake.close()
 
@@ -15034,9 +16349,10 @@ def test_plugin_without_lease_id_capability_keeps_the_file_lock(tmp_path):
 def test_no_scope_is_a_global_exclusive_lease(tmp_path, hayba):
     r = run(tmp_path, "acquire", "--owner", "A", "--timeout-min", "0.05", port=hayba.port)
     assert r.returncode == 0, r.stdout
-    cmd, params, owner, _ = hayba.calls[-1]
+    cmd, params, owner, _ = lease_calls(hayba)[-1]
     assert cmd == "lease_acquire" and owner == "A"
     assert params["resources"] == ["global"] and params["mode"] == "exclusive"
+    assert params["label"] == "editor_gate:A"
     assert params["bind_connection"] is False  # this connection closes as soon as the script exits
     lease_id = next(iter(hayba.leases))
     assert f"HAYBA_LEASE={lease_id}" in r.stdout and "HAYBA_AGENT_ID=A" in r.stdout
@@ -15046,7 +16362,7 @@ def test_no_scope_is_a_global_exclusive_lease(tmp_path, hayba):
 
 def test_ttl_is_capped_at_the_editor_maximum(tmp_path, hayba):
     r = run(tmp_path, "acquire", "--owner", "A", "--ttl-min", "30", "--timeout-min", "0.05", port=hayba.port)
-    assert hayba.calls[-1][1]["ttl_s"] == 900
+    assert lease_calls(hayba)[-1][1]["ttl_s"] == 900
     assert "re-run acquire to renew" in r.stdout
 
 
@@ -15117,11 +16433,12 @@ def test_a_lapsed_lease_is_asked_for_again(tmp_path, hayba):
     hayba.leases.clear()  # the editor restarted
     r = run(tmp_path, "acquire", "--owner", "A", "--timeout-min", "0.05", port=hayba.port)
     assert r.returncode == 0
-    assert hayba.cmds()[-2:] == ["lease_renew", "lease_acquire"]
+    assert [c[0] for c in lease_calls(hayba)][-2:] == ["lease_renew", "lease_acquire"]
 
 
 def test_pie_blocks_in_lease_mode_without_queueing(tmp_path, hayba):
-    r = run(tmp_path, "acquire", "--owner", "A", "--timeout-min", "0.02", log=PIE_LOG, port=hayba.port)
+    hayba.pie = "user"
+    r = run(tmp_path, "acquire", "--owner", "A", "--timeout-min", "0.02", port=hayba.port)
     assert r.returncode == 1 and "PIE" in r.stdout
     assert "lease_acquire" not in hayba.cmds()
 
@@ -15189,6 +16506,51 @@ def test_grant_without_usable_lease_id_exits_2(tmp_path, hayba):
     assert not (tmp_path / "gate" / "lock.json").exists()
 
 
+def test_label_flag_sets_lease_label(tmp_path, hayba):
+    # A lane holds its gate lease, then its build takes an asset lease under its own label.
+    assert run(tmp_path, "acquire", "--owner", "A", "--timeout-min", "0.05", port=hayba.port).returncode == 0
+    gate_id = next(iter(hayba.leases))
+    r = run(tmp_path, "acquire", "--owner", "A", "--scope", "asset:/Game/BP_X", "--lane", "long",
+            "--label", "build:bp1", "--timeout-min", "0.05", port=hayba.port)
+    assert r.returncode == 0, r.stdout
+    cmd, params, owner, _ = lease_calls(hayba)[-1]
+    assert cmd == "lease_acquire" and owner == "A"  # a second lease, never a renew of the gate lease
+    assert params["label"] == "build:bp1" and params["resources"] == ["asset:/Game/BP_X"] and params["lane"] == "long"
+    build_id = [i for i in hayba.leases if i != gate_id][0]
+    assert hayba.leases[build_id]["label"] == "build:bp1" and hayba.leases[gate_id]["label"] == "editor_gate:A"
+    holders = lock_json(tmp_path)["holders"]
+    assert holders["A"]["lease_id"] == gate_id and holders["A#build:bp1"]["lease_id"] == build_id
+    assert lock_json(tmp_path)["owner"] == "A"
+    assert run(tmp_path, "lease-id", "--owner", "A", "--label", "build:bp1").stdout.strip() == build_id
+    assert run(tmp_path, "lease-id", "--owner", "A").stdout.strip() == gate_id
+    # A labelled release gives back the build lease only, even with the gate lease in HAYBA_LEASE.
+    r = run(tmp_path, "release", "--owner", "A", "--label", "build:bp1", port=hayba.port,
+            env_extra={"HAYBA_LEASE": gate_id})
+    assert r.returncode == 0 and "released" in r.stdout
+    assert hayba.calls[-1][:3] == ("lease_release", {"lease_id": build_id}, "A")
+    assert list(hayba.leases) == [gate_id] and list(lock_json(tmp_path)["holders"]) == ["A"]
+    assert run(tmp_path, "acquire", "--owner", "A", "--label", "x" * 129, port=hayba.port).returncode == 2
+
+
+def test_pie_running_prefers_editor_get_state(tmp_path, hayba):
+    # The log says PIE runs, the editor says it does not: the editor wins.
+    r = run(tmp_path, "acquire", "--owner", "A", "--timeout-min", "0.05", log=PIE_LOG, port=hayba.port)
+    assert r.returncode == 0, r.stdout
+    assert "editor_get_state" in hayba.cmds() and "lease_acquire" in hayba.cmds()
+    state_calls = [c for c in hayba.calls if c[0] == "editor_get_state"]
+    assert all(c[1] == {"include_dirty": False} for c in state_calls)
+
+
+def test_pie_running_falls_back_to_the_log_without_the_pie_field(tmp_path):
+    fake = FakeHayba(pie_field=False)  # an older plugin: editor_get_state has no `pie`
+    try:
+        r = run(tmp_path, "acquire", "--owner", "A", "--timeout-min", "0.02", log=PIE_LOG, port=fake.port)
+        assert r.returncode == 1 and "PIE" in r.stdout
+        assert "lease_acquire" not in fake.cmds()
+    finally:
+        fake.close()
+
+
 def test_acquire_refuses_when_editor_unsafe_exit_4(tmp_path, hayba):
     hayba.unsafe = True
     r = run(tmp_path, "acquire", "--owner", "A", "--timeout-min", "0.05", port=hayba.port)
@@ -15221,11 +16583,10 @@ Set-Location D:\Hackathons\hayba\.worktrees\p0-safety
 python -m pytest <host-kit>/tests -q
 ```
 
-Expected: FAIL. The 8 file-lock tests that never reach a lease still pass.
-- Every lease test that gets a grant fails: the old gate reads `held["token"]` and exits 1 with `KeyError: 'token'` on stderr.
-- `test_plugin_without_lease_manager_keeps_the_file_lock` fails because it expects `["ping", "editor_get_state"]` and sees `["ping"]`.
-- `test_plugin_without_lease_id_capability_keeps_the_file_lock` fails because the old gate uses leases on `lease_manager` alone and calls `lease_acquire`.
-- The three unsafe/health tests fail on their exit codes (they expect 4) or on the missing `editor_health` key.
+Expected: FAIL with `19 failed, 14 passed`. The file-lock tests, the two PIE-blocking tests and the two unsafe tests that never reach a grant still pass.
+- Every lease test that gets a grant fails: the Deploy A gate reads `held["token"]` and exits 1 with `KeyError: 'token'` on stderr. That includes `test_label_flag_sets_lease_label`, `test_pie_running_prefers_editor_get_state` and `test_renew_refused_unsafe_does_not_requeue`, whose first acquire is a grant.
+- `test_plugin_without_lease_id_capability_keeps_the_file_lock` fails because the Deploy A gate uses leases on `lease_manager` alone and calls `lease_acquire`.
+- `test_token_prints_the_mirrored_token` fails because `lease-id` is not a valid choice yet.
 
 - [ ] **Step 2: Rewrite `editor_gate.py`**
 
@@ -15236,8 +16597,9 @@ Replace `<host-kit>/editor_gate.py` with:
 
     python Tools/GameFlow/editor_gate.py acquire  --owner V1 [--scope world:/Game/Maps/L1 ...]
                                           [--timeout-min 60] [--ttl-min 30] [--lane interactive|long]
-    python Tools/GameFlow/editor_gate.py release  --owner V1 [--lease-id ls_...]
-    python Tools/GameFlow/editor_gate.py lease-id --owner V1     # prints the lease_id only (alias: token)
+                                          [--label build:<id>]
+    python Tools/GameFlow/editor_gate.py release  --owner V1 [--lease-id ls_...] [--label build:<id>]
+    python Tools/GameFlow/editor_gate.py lease-id --owner V1 [--label build:<id>]   # prints the lease_id only (alias: token)
     python Tools/GameFlow/editor_gate.py status
 
 Two backends, chosen per call:
@@ -15260,7 +16622,16 @@ Two backends, chosen per call:
 
 When the editor answers, acquire first asks editor_get_state. If a contained
 native fault left it unsafe, acquire prints `unsafe: ...; restart the editor`
-and exits 4: it never queues and never falls back to the file lock.
+and exits 4: it never queues and never falls back to the file lock. PIE is
+read from editor_get_state (`pie` other than "none") when the editor answers
+with that field, and from the editor log otherwise.
+
+A lease is labelled editor_gate:<owner> unless --label names another label
+(a build takes its asset leases with --label build:<id>). A labelled lease is
+a second lease of the same owner: it has its own mirror entry, and acquire,
+release and lease-id with the same --label act on it and never on the owner's
+gate lease. A release that reaches the editor as a redaction marker drops only
+leases labelled editor_gate:<owner>, so a build lease must carry its own label.
 
 lock.json is kept as a mirror in both modes so `status` works without an
 editor, and so a file lock taken while the editor was down still blocks a
@@ -15296,7 +16667,14 @@ def usable_lease_id(value):
     return value if isinstance(value, str) and LEASE_ID_RE.match(value) else None
 
 
-def pie_running():
+def pie_running(ask_editor=True):
+    """True while a play session runs or is queued. The editor is asked first
+    (editor_get_state.pie other than "none"); the log scan is the fallback for an
+    editor that is down, or a plugin whose reply has no `pie` field."""
+    if ask_editor:
+        state = editor_state()
+        if state is not None and "pie" in state:
+            return state["pie"] != "none"
     text = LOG.read_text(encoding="utf-8", errors="replace") if LOG.exists() else ""
     return text.rfind("Creating play world package") > text.rfind("Shutting down PIE")
 
@@ -15340,39 +16718,50 @@ def live_file_lock_of_other(owner):
     return None
 
 
-def mirror_grant(owner, lease_id, resources, expires_in_s):
+def holder_key(owner, label=None):
+    """The lock.json key of one of an owner's leases: the owner itself for its gate
+    lease (label editor_gate:<owner>), and <owner>#<label> for a labelled one."""
+    return owner if not label or label == f"editor_gate:{owner}" else f"{owner}#{label}"
+
+
+def mirror_grant(owner, lease_id, resources, expires_in_s, label=None):
     lock = read_lock() or {}
     if lock.get("mode") != "lease":
         lock = {"mode": "lease", "holders": {}}
     now = time.time()
-    holders = {o: h for o, h in lock.get("holders", {}).items() if h["expires_at"] >= now}
-    prior = holders.get(owner, {})
-    holders[owner] = {"lease_id": lease_id, "resources": resources,
-                      "acquired_at": prior.get("acquired_at", now), "expires_at": now + expires_in_s}
-    first = min(holders, key=lambda o: holders[o]["acquired_at"])
-    write_lock({"mode": "lease", "owner": first, "acquired_at": holders[first]["acquired_at"],
+    holders = {k: h for k, h in lock.get("holders", {}).items() if h["expires_at"] >= now}
+    key = holder_key(owner, label)
+    prior = holders.get(key, {})
+    holders[key] = {"owner": owner, "lease_id": lease_id, "resources": resources,
+                    "acquired_at": prior.get("acquired_at", now), "expires_at": now + expires_in_s}
+    if key != owner:
+        holders[key]["label"] = label
+    first = min(holders, key=lambda k: holders[k]["acquired_at"])
+    write_lock({"mode": "lease", "owner": holders[first].get("owner", first), "acquired_at": holders[first]["acquired_at"],
                 "expires_at": max(h["expires_at"] for h in holders.values()), "port": PORT, "holders": holders})
 
 
-def mirror_drop(owner):
+def mirror_drop(owner, label=None):
     lock = read_lock()
     if not lock or lock.get("mode") != "lease":
         return
-    holders = {o: h for o, h in lock.get("holders", {}).items() if o != owner and h["expires_at"] >= time.time()}
+    key = holder_key(owner, label)
+    holders = {k: h for k, h in lock.get("holders", {}).items() if k != key and h["expires_at"] >= time.time()}
     if not holders:
         LOCK.unlink(missing_ok=True)
         return
-    first = min(holders, key=lambda o: holders[o]["acquired_at"])
-    lock.update(owner=first, acquired_at=holders[first]["acquired_at"],
+    first = min(holders, key=lambda k: holders[k]["acquired_at"])
+    lock.update(owner=holders[first].get("owner", first), acquired_at=holders[first]["acquired_at"],
                 expires_at=max(h["expires_at"] for h in holders.values()), holders=holders)
     write_lock(lock)
 
 
-def mirrored_lease_id(owner):
-    """The owner's mirrored lease_id. A legacy {"token": "[REDACTED:token]"} entry counts as absent."""
+def mirrored_lease_id(owner, label=None):
+    """The mirrored lease_id of the owner's gate lease, or of its lease labelled `label`.
+    A legacy {"token": "[REDACTED:token]"} entry counts as absent."""
     lock = read_lock()
     if lock and lock.get("mode") == "lease":
-        held = lock.get("holders", {}).get(owner)
+        held = lock.get("holders", {}).get(holder_key(owner, label))
         if held:
             return usable_lease_id(held.get("lease_id"))
     return None
@@ -15467,7 +16856,7 @@ def refuse_if_unsafe():
 
 # ----------------------------------------------------------------------------- file backend (unchanged)
 
-def acquire_file(owner, timeout_min, ttl_min):
+def acquire_file(owner, timeout_min, ttl_min, ask_editor=False):
     deadline = time.monotonic() + timeout_min * 60
     reason = ""
     while True:
@@ -15475,7 +16864,7 @@ def acquire_file(owner, timeout_min, ttl_min):
         if lock and lock["expires_at"] < time.time():
             LOCK.unlink(missing_ok=True)
             lock = None
-        if pie_running():
+        if pie_running(ask_editor):
             reason = "PIE is running"
         elif lock and lock["owner"] != owner:
             reason = f"held by {lock['owner']}"
@@ -15521,24 +16910,25 @@ def announce(owner, lease_id, resources, expires_in_s, capped):
     print(f"HAYBA_LEASE={lease_id}  # helpers only; never put this in an MCP server's environment", flush=True)
 
 
-def acquire_lease(owner, timeout_min, ttl_min, scopes, lane):
+def acquire_lease(owner, timeout_min, ttl_min, scopes, lane, label=None):
     resources = scopes or ["global"]
     ttl_s = max(5, min(MAX_LEASE_TTL_S, int(ttl_min * 60)))
     capped = ttl_min * 60 > MAX_LEASE_TTL_S
+    label = label or f"editor_gate:{owner}"
 
-    # The same owner re-acquiring renews in place, as the file lock did.
-    lease_id = mirrored_lease_id(owner)
+    # The same owner re-acquiring under the same label renews in place, as the file lock did.
+    lease_id = mirrored_lease_id(owner, label)
     if lease_id:
         try:
             data = hayba("lease_renew", {"lease_id": lease_id, "ttl_s": ttl_s}, owner=owner)
             announce(owner, lease_id, resources, data.get("expires_in_s", ttl_s), capped)
-            mirror_grant(owner, lease_id, resources, data.get("expires_in_s", ttl_s))
+            mirror_grant(owner, lease_id, resources, data.get("expires_in_s", ttl_s), label)
             return 0
         except HaybaError as e:
             if e.code in UNSAFE_CODES:
                 print(unsafe_line(e.detail or {}), flush=True)
                 return EXIT_UNSAFE  # never re-queue against an unsafe editor
-            mirror_drop(owner)  # lapsed: ask again below
+            mirror_drop(owner, label)  # lapsed: ask again below
 
     deadline = time.monotonic() + timeout_min * 60
     ticket, held, poll_after, reason = None, None, 2.0, ""
@@ -15552,7 +16942,7 @@ def acquire_lease(owner, timeout_min, ttl_min, scopes, lane):
             # our place in the queue, but we do not start queueing.
             params = {"ticket": ticket} if ticket else {
                 "resources": resources, "mode": "exclusive", "ttl_s": ttl_s, "lane": lane,
-                "label": f"editor_gate:{owner}", "bind_connection": False}
+                "label": label, "bind_connection": False}
             try:
                 data = hayba("lease_acquire", params, owner=owner)
             except HaybaError as e:
@@ -15578,7 +16968,7 @@ def acquire_lease(owner, timeout_min, ttl_min, scopes, lane):
         if held is not None and not pie_running():
             expires_in_s = held.get("expires_in_s", ttl_s)
             announce(owner, held["lease_id"], resources, expires_in_s, capped)
-            mirror_grant(owner, held["lease_id"], resources, expires_in_s)
+            mirror_grant(owner, held["lease_id"], resources, expires_in_s, label)
             return 0
         if pie and not other:
             reason = "PIE is running"
@@ -15596,11 +16986,17 @@ def acquire_lease(owner, timeout_min, ttl_min, scopes, lane):
         time.sleep(max(0.05, min(wait, 10.0, max(0.0, deadline - time.monotonic()))))
 
 
-def release_lease(owner, lease_id_arg):
+def release_lease(owner, lease_id_arg, label=None):
     if lease_id_arg and not usable_lease_id(lease_id_arg):
         print(f"note: ignoring --lease-id {lease_id_arg!r}: not a lease_id (ls_...)", flush=True)
-    # A stale shell variable can hold a redaction marker: validate before sending.
-    lease_id = usable_lease_id(lease_id_arg) or usable_lease_id(os.environ.get("HAYBA_LEASE")) or mirrored_lease_id(owner)
+    if label:
+        # A labelled release names one lease. It never falls back to HAYBA_LEASE or to
+        # the owner's gate lease: that would release the lane's gate instead of its build.
+        lease_id = usable_lease_id(lease_id_arg) or mirrored_lease_id(owner, label)
+    else:
+        # A stale shell variable can hold a redaction marker: validate before sending.
+        lease_id = (usable_lease_id(lease_id_arg) or usable_lease_id(os.environ.get("HAYBA_LEASE"))
+                    or mirrored_lease_id(owner))
     if not lease_id:
         lock = read_lock()
         if lock and lock.get("mode") != "lease":
@@ -15614,9 +17010,9 @@ def release_lease(owner, lease_id_arg):
             print(f"refused: {e}")
             return 1
         print(f"released (the lease had already lapsed: {e})")
-        mirror_drop(owner)
+        mirror_drop(owner, label)
         return 0
-    mirror_drop(owner)
+    mirror_drop(owner, label)
     print("released")
     return 0
 
@@ -15650,7 +17046,13 @@ def main():
     p.add_argument("--lane", choices=["interactive", "long"], default="interactive")
     p.add_argument("--lease-id", "--token", dest="lease_id", default="",
                    help="release: the lease_id (default: HAYBA_LEASE, then the mirror); --token is the old spelling")
+    p.add_argument("--label", default="",
+                   help="the lease label (default: editor_gate:<owner>); a build uses build:<id>, "
+                        "and passes the same --label to release and lease-id")
     a = p.parse_args()
+    if len(a.label) > 128 or any(ord(ch) < 32 for ch in a.label):
+        print("bad --label: at most 128 characters, no control characters")
+        return 2
     bad = [s for s in a.scope if not s.startswith(SCOPE_PREFIXES)]
     if bad:
         print(f"bad --scope {bad[0]!r}: expected one of {', '.join(p + '...' for p in SCOPE_PREFIXES)}")
@@ -15661,7 +17063,7 @@ def main():
     if a.cmd == "status":
         return status()
     if a.cmd in ("lease-id", "token"):
-        lease_id = mirrored_lease_id(a.owner)
+        lease_id = mirrored_lease_id(a.owner, a.label)
         print(lease_id or "")
         return 0 if lease_id else 1
     answered, caps = editor_capabilities()
@@ -15672,11 +17074,13 @@ def main():
             if unsafe is not None:
                 return unsafe
         if leases:
-            return acquire_lease(a.owner, a.timeout_min, a.ttl_min, a.scope, a.lane)
+            return acquire_lease(a.owner, a.timeout_min, a.ttl_min, a.scope, a.lane, a.label)
         if a.scope:
             print("note: --scope needs Hayba leases; the file lock covers the whole editor", flush=True)
-        return acquire_file(a.owner, a.timeout_min, a.ttl_min)
-    return release_lease(a.owner, a.lease_id) if leases else release_file(a.owner)
+        if a.label:
+            print("note: --label needs Hayba leases; the file lock has one holder", flush=True)
+        return acquire_file(a.owner, a.timeout_min, a.ttl_min, ask_editor=answered)
+    return release_lease(a.owner, a.lease_id, a.label) if leases else release_file(a.owner)
 
 
 if __name__ == "__main__":
@@ -15689,25 +17093,30 @@ Run:
 python -m pytest <host-kit>/tests -q
 ```
 
-Expected: `30 passed`.
+Expected: `33 passed`: GA.0's 27, the 5 remaining tests of §5.2 item 12, and `test_label_flag_sets_lease_label`.
 
-- [ ] **Step 3: Regenerate the patch against the consumer's current files and check that it applies**
+- [ ] **Step 3: Regenerate the patch against the Deploy A kit and check that it applies**
 
-The consumer's `Tools/GameFlow/editor_gate.py` and its test are byte-identical to the kit at `54c4744c` (spec §5). Regenerate with Git Bash:
+Handoff A installs the Deploy A kit (GA.0) with `git apply`, so that kit is what `Tools/GameFlow` holds when Deploy B's precondition is checked. The patch is therefore the difference between the kit at the tag `p0-deploy-a` and this commit. A the consumer checkout that skipped the Deploy A kit, or edited the gate by hand, fails `git apply --check`; handoff B then has it copy the two files instead (GB.3 §2). Regenerate with Git Bash:
 
 ```bash
-cd D:/Hackathons/hayba/.worktrees/p0-safety
-git diff --no-color 54c4744c -- <host-kit>/editor_gate.py \
-    <host-kit>/tests/test_editor_gate.py \
-  | sed 's#<host-kit>/#Tools/GameFlow/#g' \
-  > <host-kit>/editor_gate.patch
-CHK=D:/UEScratch/tmp/gate-patch-check; rm -rf "$CHK"; mkdir -p "$CHK/Tools/GameFlow/tests"
-git show 54c4744c:<host-kit>/editor_gate.py > "$CHK/Tools/GameFlow/editor_gate.py"
-git show 54c4744c:<host-kit>/tests/test_editor_gate.py > "$CHK/Tools/GameFlow/tests/test_editor_gate.py"
-git -C "$CHK" init -q && git -C "$CHK" apply --check "$PWD/<host-kit>/editor_gate.patch" && echo PATCH_OK
+cd /d/Hackathons/hayba/.worktrees/p0-safety
+git rev-parse --verify -q "p0-deploy-a^{commit}" || { echo "the tag p0-deploy-a does not exist yet: finish GA.3 first"; exit 1; }
+K=<host-kit>
+T=/d/UEScratch/tmp/gate-patch-b
+rm -rf "$T" && mkdir -p "$T/old/Tools/GameFlow/tests" "$T/new/Tools/GameFlow/tests"
+git show p0-deploy-a:$K/editor_gate.py > "$T/old/Tools/GameFlow/editor_gate.py"
+git show p0-deploy-a:$K/tests/test_editor_gate.py > "$T/old/Tools/GameFlow/tests/test_editor_gate.py"
+cp $K/editor_gate.py "$T/new/Tools/GameFlow/editor_gate.py"
+cp $K/tests/test_editor_gate.py "$T/new/Tools/GameFlow/tests/test_editor_gate.py"
+(cd "$T" && git diff --no-index old new) \
+  | sed -e 's#^diff --git a/old/\(.*\) b/new/\(.*\)$#diff --git a/\1 b/\2#' -e 's#^--- a/old/#--- a/#' -e 's#^+++ b/new/#+++ b/#' \
+  > $K/editor_gate.patch
+(cd "$T/old" && git apply --check /d/Hackathons/hayba/.worktrees/p0-safety/$K/editor_gate.patch) && echo APPLIES
+grep -c '^diff --git a/Tools/GameFlow/' $K/editor_gate.patch
 ```
 
-Expected: `PATCH_OK`.
+Expected: `APPLIES`, then `2` (one header for the gate and one for its test). Git may warn that LF will be replaced by CRLF in the scratch copies; the patch itself stays LF (`.gitattributes` in the kit).
 
 - [ ] **Step 4: Update the kit README**
 
@@ -15728,18 +17137,22 @@ In `<host-kit>/README.md`, make these edits.
 - Renew sends `lease_renew {lease_id, ttl_s}`. Release sends `{lease_id}`; a
   queued request is withdrawn with `{ticket}`. A grant without a usable
   `lease_id` prints `refused: Hayba returned no usable lease_id` and exits 2.
-- When the editor answers, `acquire` first calls `editor_get_state
-  {include_dirty:false}`. An unsafe editor (a contained native fault) prints
-  `unsafe: fault contained at <utc> in <command>; restart the editor` and exits
-  4. So does a renew or acquire refused with `editor_unsafe_restart_required`.
-  It never re-queues and never falls back to the file lock. `status` prints
-  `editor_health` next to `lease_status`.
+- `--label <text>` names the lease label (default `editor_gate:<owner>`). A
+  build takes its asset leases with `--label build:<id>` and passes the same
+  `--label` to `release` and `lease-id`. A labelled lease is a second lease of
+  the same owner with its own `lock.json` entry (`<owner>#<label>`); a labelled
+  release never falls back to `HAYBA_LEASE` or to the owner's gate lease. A
+  release that reaches the editor as a redaction marker drops only leases
+  labelled `editor_gate:<owner>`, so a build lease must carry its own label.
 - Exit codes: 0 ok, 1 timeout, 2 refused, 4 editor unsafe (stop all lanes; the user restarts the editor).
 ```
 
-2. Replace `Tests: python -m pytest tests -q here, and 22 pass.` (`:51`) with `` Tests: `python -m pytest tests -q` here, and 30 pass. ``
-3. In the session example (`:94-100`), replace `export HAYBA_LEASE=$(python Tools/GameFlow/editor_gate.py token --owner L3)` with `export HAYBA_LEASE=$(python Tools/GameFlow/editor_gate.py lease-id --owner L3)   # helpers only`, and add the line `export HAYBA_AGENT_ID=L3` above it.
-4. Replace the paragraph at `:103-104` (`Hayba's own Node MCP server reads HAYBA_LEASE_TOKEN …`) with:
+   GA.0 already added the unsafe and PIE bullets to this list; keep them, and replace GA.0's exit-code bullet with the one above so the list has one.
+
+2. Replace GA.0's `` Tests: `python -m pytest tests -q` here, and 27 pass. `` with `` Tests: `python -m pytest tests -q` here, and 33 pass. ``
+3. Change the `editor_gate.patch` table row to `` | `editor_gate.patch` | both of the above, as one `git apply` patch against the Deploy A kit (tag `p0-deploy-a`). If `git apply --check` fails, copy the two files instead. | ``
+4. In the session example (`:94-100`), replace `export HAYBA_LEASE=$(python Tools/GameFlow/editor_gate.py token --owner L3)` with `export HAYBA_LEASE=$(python Tools/GameFlow/editor_gate.py lease-id --owner L3)   # helpers only`, and add the line `export HAYBA_AGENT_ID=L3` above it.
+5. Replace the paragraph at `:103-104` (`Hayba's own Node MCP server reads HAYBA_LEASE_TOKEN …`) with:
 
 ```markdown
 Hayba's own Node MCP server never reads `HAYBA_LEASE` or `HAYBA_LEASE_TOKEN`
@@ -15841,10 +17254,10 @@ git -C D:\Hackathons\hayba\.worktrees\p0-safety add `
   <host-kit>/editor_gate.patch `
   <host-kit>/README.md `
   docs/adr/0010-multi-agent-editor-leases.md CONTEXT.md CHANGELOG.md
-git -C D:\Hackathons\hayba\.worktrees\p0-safety commit -m "docs(host): editor_gate on lease_id with the unsafe exit, and lease-id docs"
+git -C D:\Hackathons\hayba\.worktrees\p0-safety commit -m "docs(host): editor_gate on lease_id with a lease label, and lease-id docs"
 ```
 
-Expected: `30 passed` before the commit.
+Expected: `33 passed` before the commit.
 
 ---
 
@@ -15888,7 +17301,7 @@ Select-String -Path "$H\Saved\Logs\hayba-p0-$SHA.log" -Pattern 'Result=\{Fail\}'
 ```
 
 Expected:
-- The checker exits 0. Every `# T4` name (`Hayba.MCP.Lease.IdFormat`, `…IdParam`, `…IdSurvivesRedaction`, `…WireRoundTrip`, `Hayba.MCP.Batch.WireRoundTrip`) is `Success` or `SuccessWithWarnings`, and so is every earlier section.
+- The checker exits 0. Every `# T4` name (`Hayba.MCP.Lease.IdFormat`, `…IdParam`, `…IdSurvivesRedaction`, `…WireRoundTrip`, `Hayba.MCP.Batch.WireRoundTrip`) has the state `Success`, and so has every name of the earlier sections.
 - The success count is 5 higher than at the previous task tip.
 - The only `Result={Fail}` is `Hayba.MCP.UI.RenderWidgetToPng`.
 
@@ -15900,7 +17313,7 @@ npx tsc --noEmit; npx vitest run; npm run lint:legacy-wrappers; npm run build:se
 Set-Location $WT; python -m pytest <host-kit>/tests -q
 ```
 
-Expected: all green, and `30 passed`.
+Expected: all green, and `33 passed`.
 
 **Done when:** `Hayba.MCP.Batch.WireRoundTrip` passes headless, and the host kit's tests pass against a fake that returns only `lease_id` (spec T4).
 
@@ -17162,7 +18575,7 @@ The two positive saves in the tests are real checks even headless. `FEditorFileU
   - `ULevel::GetLoadedExternalObjectPackages()` and `UPackage::IsEmptyPackage`.
 - Produces:
   - `HaybaMCPUnattendedProbe.h`: under `WITH_DEV_AUTOMATION_TESTS`, `namespace HaybaMCPUnattendedProbe { struct FRecord { FString Site; bool bUnattended = false; }; void Note(const TCHAR* Site, bool bUnattended); class FScopedRecorder { public: TArray<FRecord> Records; }; }` and `#define HAYBA_UNATTENDED_PROBE(Site, bUnattended)`, which expands to nothing otherwise.
-  - The preflight rule for `level_save`. It refuses the map package only when `SaveCurrentLevel` would write it (dirty or `PKG_NewlyCreated`), and each external package under the engine's own condition (`FileHelpers.cpp:4441-4452`: valid long name and dirty, newly created or empty). A clean read-only `.umap` does not block saving dirty one-file-per-actor packages. This is a spec correction: see the return notes.
+  - The preflight rule for `level_save`. It refuses the map package only when `SaveCurrentLevel` would write it (dirty or `PKG_NewlyCreated`), and each external package under the engine's own condition (`FileHelpers.cpp:4441-4452`: valid long name and dirty, newly created or empty). A clean read-only `.umap` does not block saving dirty one-file-per-actor packages. This departs from spec T5 Task B, which preflights "the map package plus every dirty external package" unconditionally: a project that keeps its maps read-only until someone takes the lock would then refuse every one-file-per-actor save, although `SaveCurrentLevel` would never write the clean map. The departure is listed under "Deliberate departures" in Task Order and Deploys, and `Hayba.MCP.Save.ReadOnly.LevelSaveRefusesWithoutModal` pins both halves: case (a), a dirty read-only map refuses; case (d), a clean read-only map with a dirty writable external package saves.
   - Test-local: `HaybaSaveReadOnlyTest::SendCommand`, `FScopedPlanModeOff`, `FScopedTestMap`, and `Str`. T5.3 reuses `SendCommand`, `FScopedPlanModeOff` and `Str`.
 
 - [ ] **Step 1: Add the probe header**
@@ -17542,6 +18955,24 @@ bool FHaybaMCPSaveReadOnlyLevelTest::RunTest(const FString& Parameters)
 			Probe.Records.Num() == 1 && Probe.Records[0].Site == TEXT("level_save") && Probe.Records[0].bUnattended);
 		TestFalse(TEXT("(c) the external actor package was saved"), Map.GetActor()->GetExternalPackage()->IsDirty());
 	}
+
+	// (d) The deliberate departure from spec T5 Task B: a clean map whose .umap is
+	// read-only does not block a dirty, writable external actor package, because
+	// SaveCurrentLevel only writes a dirty or newly created level package
+	// (FileHelpers.cpp:4438).
+	Map.MarkMapClean();
+	Map.GetActor()->MarkPackageDirty();
+	RO::SetReadOnly(Map.MapFile(), true);
+	{
+		HaybaMCPUnattendedProbe::FScopedRecorder Probe;
+		const FDateTime MapStamp = IFileManager::Get().GetTimeStamp(*Map.MapFile());
+		const FHaybaHandlerResult R = Handler.Handle(TEXT("level_save"), NoParams);
+		TestTrue(FString::Printf(TEXT("(d) a clean read-only map does not refuse the save (%s)"), *R.ErrorMessage), R.bOk);
+		TestEqual(TEXT("(d) SaveCurrentLevel ran once"), Probe.Records.Num(), 1);
+		TestFalse(TEXT("(d) the external actor package was saved"), Map.GetActor()->GetExternalPackage()->IsDirty());
+		TestTrue(TEXT("(d) the read-only .umap was not rewritten"), IFileManager::Get().GetTimeStamp(*Map.MapFile()) == MapStamp);
+	}
+	RO::SetReadOnly(Map.MapFile(), false);
 	return true;
 }
 
@@ -17570,7 +19001,8 @@ bool FHaybaMCPSaveReadOnlyPythonTest::RunTest(const FString& Parameters)
 		const TSharedPtr<FJsonObject>* Data = nullptr;
 		const FString StdOut = Reply->TryGetObjectField(TEXT("data"), Data) && Data ? RO::Str(*Data, TEXT("stdout")) : FString();
 		TestTrue(FString::Printf(TEXT("%s: the script printed %s (stdout: %s)"), What, Expected, *StdOut), StdOut.Contains(Expected));
-		TestEqual(FString::Printf(TEXT("%s: the 7 Python commands of one python_run were all probed"), What), Probe.Records.Num(), 7);
+		// RunCmd, four EvalB64 readbacks (out, err, capture meta, corruption), OkCmd, TimeoutCmd, CleanupCmd.
+		TestEqual(FString::Printf(TEXT("%s: the 8 Python commands of one python_run were all probed"), What), Probe.Records.Num(), 8);
 		bool bAllUnattended = Probe.Records.Num() > 0;
 		for (const HaybaMCPUnattendedProbe::FRecord& Record : Probe.Records)
 		{
@@ -18387,7 +19819,7 @@ Get-ChildItem "$H\Content" -Recurse -File -ErrorAction SilentlyContinue | Where-
 
 Expected:
 - The run exits on its own; a watchdog kill means a modal or hang, and the gate fails.
-- The checker exits 0, and all 12 `# T5` names are `Success` or `SuccessWithWarnings`, including `Hayba.MCP.MetaSound.Compile.ReadOnlyRefusesBeforeConform`. So is every earlier section.
+- The checker exits 0, and all 12 `# T5` names have the state `Success`, including `Hayba.MCP.MetaSound.Compile.ReadOnlyRefusesBeforeConform`. So has every name of the earlier sections.
 - The success count is 12 higher than at T4.5.
 - The only `Result={Fail}` is `Hayba.MCP.UI.RenderWidgetToPng`.
 - No read-only file remains under `$H\Content`.
@@ -18425,7 +19857,7 @@ Expected: all green. `build:server` refreshes `dist/`. Any live check (GB.2 B3�
   - `struct FDecision { EVerdict Verdict = EVerdict::Allow; EReason Reason = EReason::None; FString Code; };` where `Code` is `"lease_conflict"` or `"owner_required"`, empty on Allow.
   - `bool IsIdentified(const FFacts&)`, `FDecision Decide(const FFacts&)`.
   - `constexpr int32 MaxOwnerChars = 128;` and `FString SanitizeOwner(const FString&)`.
-  - `class FOwnerPresence { explicit FOwnerPresence(TFunction<double()> Clock, double SeenWindowSeconds = 60.0, int32 MaxOwners = 256); void Note(const FString& Owner, int32 ConnId); void OnConnectionClosed(int32 ConnId); TArray<FString> ActiveOwners(const FString& Except = FString()) const; void Forget(const FString& Owner); int32 NumTracked() const; }`. `Forget` and `NumTracked` are additions to the ledger's API (tests and `ForgetOwnerForTests` need them).
+  - `class FOwnerPresence { explicit FOwnerPresence(TFunction<double()> Clock, double SeenWindowSeconds = 60.0, int32 MaxOwners = 256); void Note(const FString& Owner, int32 ConnId); void OnConnectionClosed(int32 ConnId); TArray<FString> ActiveOwners(const FString& Except = FString()) const; void Forget(const FString& Owner); int32 NumTracked() const; }`. `Forget`, `Reset` and `NumTracked` are additions to the ledger's API (tests, `ForgetOwnerForTests` and `ResetPresenceForTests` need them); the class also has `void Reset();`.
 
 - [ ] **Step 1: Write the failing pure tests**
 
@@ -18612,6 +20044,10 @@ bool FHaybaMCPLeaseOwnerPresenceTest::RunTest(const FString& Parameters)
 	Presence.Forget(TEXT("lane-c"));
 	TestEqual(TEXT("Forget removes an owner at once"),
 		Presence.ActiveOwners(), TArray<FString>{ TEXT("lane-d") });
+
+	Presence.Reset();
+	TestEqual(TEXT("Reset forgets everyone"), Presence.NumTracked(), 0);
+	TestEqual(TEXT("and nobody is active"), Presence.ActiveOwners().Num(), 0);
 	return true;
 }
 
@@ -18886,6 +20322,12 @@ namespace HaybaMCPEnforcement
 			Owners.Remove(Owner);
 		}
 
+		/** Forget everyone (tests: FHaybaMCPLeaseManager::ResetPresenceForTests). */
+		void Reset()
+		{
+			Owners.Reset();
+		}
+
 		int32 NumTracked() const
 		{
 			return Owners.Num();
@@ -18966,6 +20408,9 @@ git -C D:/Hackathons/hayba/.worktrees/p0-safety commit -m "feat(lease): pure enf
 - Modify: `unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/HaybaMCPLeaseManager.cpp` (`MaxOwnerChars` `:16`; constructor `:34-37`; `ResolveOwner` `:39-52`; `OnConnectionClosed` `:156-164`; the Advisory branch of `CheckCommand` `:263-267`)
 - Modify: `unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/HaybaMCPCommandHandler.cpp` (hunk g, owner resolve `:1283-1290`; hunk h, the log line `:1292`; hunk k, presence, inserted after the auth gate `:1294-1299`)
 - Modify: `unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/HaybaMCPModule.cpp` (include block `:22-25`; after the batch-handler registration `:211` and T2.2's `FHaybaMCPEditorState::Get().Startup();`; the callback-revoke block after `AutoOpenTimerHandle.Invalidate();` `:370`)
+- Modify: `unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/HaybaMCPEditorState.cpp` (T3.2's `BuildingAssets` and `BusyAssetsFor`: the clock they pass to `MakeBusyAssets`)
+- Modify: `unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/handlers/HaybaMCPBatchHandler.cpp` (the keep-alive comparison in `Pump`, `:590-596`)
+- Modify: `unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/handlers/HaybaMCPLeaseHandler.cpp` (the three clock reads, `:130`, `:175`, `:201`)
 - Create (test helper): `unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/Tests/HaybaMCPLeaseTestUtil.h`
 - Test: `unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/Tests/HaybaMCPLeaseEnforcementTest.cpp` (add `ProcessingLogOwner`)
 - Test: `unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/Tests/HaybaMCPLeasePolicyTest.cpp` (extend `Hayba.MCP.Lease.Envelope`, `:413-456`)
@@ -18980,14 +20425,14 @@ git -C D:/Hackathons/hayba/.worktrees/p0-safety commit -m "feat(lease): pure enf
   - `enum class EEnvelopeLease : uint8 { None, Valid, Unknown, Redacted };`, `EEnvelopeLease ClassifyEnvelopeLease(const FString& LeaseValue);`, `static const TCHAR* LexEnvelopeLease(EEnvelopeLease)` returning `"none"`, `"valid"`, `"unknown"`, `"redacted"`. These are **new** (not in the ledger); T7.2 and T8.1 consume them.
   - `void NoteAuthenticatedCaller(const FString& Owner, int32 ConnId, bool bIdentified);`
   - `void DrainLeaseWarnings();`, `void StartWarningDrain();`, `void StopWarningDrain();` (the R-18 30 s core-ticker drain, started and stopped by the module). It drains `LeaseWarningLimiter` only. The router's file-static `GateRefusalLimiter()` (slots 1–3) is drained by `LogDrainedGateRefusals()` on the next gate refusal of any key; that is a known limit, and M2 counts lease warnings, which this ticker covers.
-  - `double Now() const;`: the one manager clock for the table, the limiter and presence. `#if WITH_DEV_AUTOMATION_TESTS void AdvanceClockForTests(double Seconds); void ForgetOwnerForTests(const FString& Owner); #endif`.
+  - `double Now() const;`: the one manager clock for the table, the limiter and presence. **Every reader of a lease time (`GrantedAt`, `ExpiresAt`, `OrphanedAt`) subtracts `FHaybaMCPLeaseManager::Get().Now()`, never `FPlatformTime::Seconds()`**: the two differ by `ClockOffsetSeconds` in every test that advances the clock, and `held_s` / `expires_in_s` would then be wrong by that offset. This task switches the readers that exist (`CheckCommand`, `BuildingAssets`, `BusyAssetsFor`, the batch keep-alive); T7.2 switches the lease handler, and T9.2's `lease_adopt` is written with it. `#if WITH_DEV_AUTOMATION_TESTS void AdvanceClockForTests(double Seconds); void ForgetOwnerForTests(const FString& Owner); void ResetPresenceForTests(); #endif`. `ResetPresenceForTests` is an addition: router tests written before presence existed (T1 to T4) name owners on fake connections that never close, so without it those owners stay active for the whole single-process headless run.
   - Members, in order: `LeaseTable`, `CurrentContext`, `FWarningLimiter LeaseWarningLimiter`, `HaybaMCPEnforcement::FOwnerPresence Presence`, `TMap<FString, FLeaseWarningText> LeaseWarningText`, `FTSTicker::FDelegateHandle WarningDrainHandle`, `double ClockOffsetSeconds`.
   - `FHaybaMCPRequestContext::bOwnerFromEnvelope` (bool, default false). This is **new**; T8.1 reads it in `CheckCommand`.
   - Private `FWarningLimiter::FHit NoteLeaseWarning(ModeName, Code, Reason, Owner, Cmd, HolderOwner, Conflict, Message)`.
   - Log line: `Processing command: <cmd> (id: <id>, owner: <owner>, via: envelope|lease|conn|local, conn: <n>, lease: none|valid|unknown|redacted[, batch: <job8>])`.
   - Lease warning lines: `[<mode>] <message>`, then `[<mode>] <message> (+N identical in the previous 30 s)`, and the drain `[<mode>] <code>/<reason> repeated N more times in 30 s: owner='conn:*' cmd='…' holder='…' conflict='…'`.
   - `lease_warning.repeats_in_window` (number).
-  - Test helper `HaybaMCPLeaseTest::{FLogCapture, Router, UniqueOwner, Json, Envelope, Send, CodeOf, DataOf, AcquireId}` (new header, inline functions in a named namespace).
+  - Test helper `HaybaMCPLeaseTest::{FLogCapture, FScopedCleanPresence, Router, UniqueOwner, Json, Envelope, Send, CodeOf, DataOf, AcquireId}` (new header, inline functions in a named namespace). `FScopedCleanPresence` calls `ResetPresenceForTests()` when it is constructed and again when it is destroyed; every test that sends an owner-less write, or that asserts who `other_owners` names, declares one first (T8.1, T9.1).
 
 - [ ] **Step 1: Write the test helper header**
 
@@ -19012,11 +20457,23 @@ Create `Private/Tests/HaybaMCPLeaseTestUtil.h`. It is header-only, with `inline`
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
 #include "HaybaMCPCommandHandler.h"
+#include "HaybaMCPLeaseManager.h"
 #include "HaybaMCPModule.h"
 
 /** Shared helpers for the router-level lease tests (T6-T9). */
 namespace HaybaMCPLeaseTest
 {
+	/** Starts a test with nobody present and leaves nobody present behind it.
+	 *  Earlier router tests name owners on fake connections that never close, so
+	 *  in a single-process run those owners would stay "connected" for good. A
+	 *  test that sends an owner-less write (owner_required needs other owners to
+	 *  be present), or that asserts who other_owners names, declares one first. */
+	struct FScopedCleanPresence
+	{
+		FScopedCleanPresence() { FHaybaMCPLeaseManager::Get().ResetPresenceForTests(); }
+		~FScopedCleanPresence() { FHaybaMCPLeaseManager::Get().ResetPresenceForTests(); }
+	};
+
 	/** Captures one log category while alive. */
 	class FLogCapture : public FOutputDevice
 	{
@@ -19397,6 +20854,24 @@ describe('lease enforcement contract (T6)', () => {
     expect(module).toContain('FHaybaMCPLeaseManager::Get().StartWarningDrain();');
     expect(module).toContain('FHaybaMCPLeaseManager::Get().StopWarningDrain();');
   });
+
+  it.runIf(available)('lease times are read on the manager clock, never on the raw platform clock', () => {
+    // The table runs on FHaybaMCPLeaseManager::Now(). A reader that subtracts
+    // FPlatformTime::Seconds() is off by the test clock offset.
+    expect(readFileSync(MANAGER, 'utf-8')).not.toContain('FPlatformTime::Seconds()');
+    const state = readFileSync(join(PRIVATE, 'HaybaMCPEditorState.cpp'), 'utf-8');
+    for (const signature of ['FHaybaMCPEditorState::BuildingAssets() const', 'FHaybaMCPEditorState::BusyAssetsFor(']) {
+      const start = state.indexOf(signature);
+      expect(start, signature).toBeGreaterThan(-1);
+      const body = state.slice(start, state.indexOf('\n}', start));
+      expect(body, signature).toContain('FHaybaMCPLeaseManager::Get().Now()');
+      expect(body, signature).not.toContain('FPlatformTime::Seconds()');
+    }
+    expect(readFileSync(join(PRIVATE, 'handlers/HaybaMCPLeaseHandler.cpp'), 'utf-8')).not.toContain('FPlatformTime::Seconds()');
+    expect(readFileSync(join(PRIVATE, 'handlers/HaybaMCPBatchHandler.cpp'), 'utf-8')).not.toMatch(
+      /(ExpiresAt|GrantedAt|OrphanedAt)\s*-\s*(In\.Now|FPlatformTime::Seconds\(\))/,
+    );
+  });
 });
 ```
 
@@ -19412,7 +20887,7 @@ Hayba.MCP.Lease.ProcessingLogOwner
 cd D:/Hackathons/hayba/.worktrees/p0-safety/mcp-tools/hayba-mcp && npx vitest run src/tools/__tests__/lease-enforcement-contract.test.ts
 ```
 
-Expected: FAIL in 5 tests. The first fails on `expect(call).toContain('Processing command: %s (id: %s, owner: …')` against today's `(id: %s)`, and the rest fail on the missing `ResolveOwner(…, &Context->bOwnerFromEnvelope)`, `NoteAuthenticatedCaller(`, `NoteLeaseWarning` and `StartWarningDrain`. The Warning-site check reports `['CheckCommand']`.
+Expected: FAIL in 6 tests. The first fails on `expect(call).toContain('Processing command: %s (id: %s, owner: …')` against today's `(id: %s)`, and the next four fail on the missing `ResolveOwner(…, &Context->bOwnerFromEnvelope)`, `NoteAuthenticatedCaller(`, `NoteLeaseWarning` and `StartWarningDrain`. The Warning-site check reports `['CheckCommand']`. The clock test fails on `FPlatformTime::Seconds()` in `HaybaMCPLeaseManager.cpp` (`:35`, `:243`); `HaybaMCPEditorState.cpp` and `HaybaMCPLeaseHandler.cpp` would fail it next.
 
 - [ ] **Step 4: Implement the manager header changes**
 
@@ -19470,6 +20945,8 @@ Replace the `ResolveOwner` declaration (`:42-43`) with:
 	void AdvanceClockForTests(double Seconds) { ClockOffsetSeconds += Seconds; }
 	/** Release every lease and ticket of Owner and drop its presence. */
 	void ForgetOwnerForTests(const FString& Owner);
+	/** Forget every owner's presence. Leases are not touched. */
+	void ResetPresenceForTests() { Presence.Reset(); }
 #endif
 ```
 
@@ -19503,6 +20980,22 @@ private:
 ```
 
 - [ ] **Step 5: Implement the manager source changes**
+
+Lease times move to the manager clock in this step, in every file that reads one:
+- In `HaybaMCPLeaseManager.cpp`, in `CheckCommand`, replace `FMath::Max(0.0, Holder->ExpiresAt - FPlatformTime::Seconds())` (`:243`) with `FMath::Max(0.0, Holder->ExpiresAt - Now())`.
+- In `HaybaMCPEditorState.cpp` (T3.2), in `BuildingAssets` and in `BusyAssetsFor`, replace the argument `FPlatformTime::Seconds()` of `MakeBusyAssets` with `FHaybaMCPLeaseManager::Get().Now()`.
+- In `handlers/HaybaMCPBatchHandler.cpp`, in `Pump`, replace `if (Lease->ExpiresAt - In.Now < LeaseKeepAliveBelowSeconds)` (`:590`) with `if (Lease->ExpiresAt - FHaybaMCPLeaseManager::Get().Now() < LeaseKeepAliveBelowSeconds)`. `In.Now` stays `FPlatformTime::Seconds()`: the machine's fence and yield timers are its own, not the table's.
+- In `handlers/HaybaMCPLeaseHandler.cpp`, replace all three `FPlatformTime::Seconds()` (the `expires_in_s` lines of `Acquire` and `Renew`, `:130` and `:175` at the base, and `const double Now = FPlatformTime::Seconds();` in `Status`, `:201`) with `FHaybaMCPLeaseManager::Get().Now()`.
+
+Then check that no lease time is read against the raw clock:
+
+```powershell
+$P = "D:\Hackathons\hayba\.worktrees\p0-safety\unreal\HaybaMCPToolkit\Source\HaybaMCPToolkit\Private"
+Select-String -Path "$P\HaybaMCPLeaseManager.cpp","$P\HaybaMCPEditorState.cpp","$P\handlers\HaybaMCPLeaseHandler.cpp" -SimpleMatch 'FPlatformTime::Seconds()' | ForEach-Object { "$($_.Filename):$($_.LineNumber)" }
+Select-String -Path "$P\handlers\HaybaMCPBatchHandler.cpp" -Pattern '(ExpiresAt|GrantedAt|OrphanedAt)\s*-\s*(In\.Now|FPlatformTime)' | ForEach-Object Line
+```
+
+Expected: both print nothing. (`HaybaMCPLeaseManager.h` keeps its one `FPlatformTime::Seconds()`, inside `Now()`.)
 
 In `HaybaMCPLeaseManager.cpp`, delete `constexpr int32 MaxOwnerChars = 128;` (`:16`). Replace the constructor (`:34-37`) and `ResolveOwner` (`:39-52`) with:
 
@@ -19803,6 +21296,9 @@ git -C D:/Hackathons/hayba/.worktrees/p0-safety add \
   unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/HaybaMCPLeaseManager.cpp \
   unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/HaybaMCPCommandHandler.cpp \
   unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/HaybaMCPModule.cpp \
+  unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/HaybaMCPEditorState.cpp \
+  unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/handlers/HaybaMCPBatchHandler.cpp \
+  unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/handlers/HaybaMCPLeaseHandler.cpp \
   unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/Tests/HaybaMCPLeaseTestUtil.h \
   unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/Tests/HaybaMCPLeaseEnforcementTest.cpp \
   unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/Tests/HaybaMCPLeasePolicyTest.cpp \
@@ -20506,8 +22002,9 @@ git -C D:/Hackathons/hayba/.worktrees/p0-safety commit -m "feat(lease): orphan g
     - `lease_renew {}` and `lease_renew {token:"[REDACTED:…]"}` renew by owner and return `{owner, renewed:N, expires_in_s:<min>, leases:[{lease_id, resources, expires_in_s, orphaned}]}`. N = 0 answers `[no_leases]`.
     - `lease_renew {lease_id}` passes the caller's ConnId, so it re-binds an orphan.
     - `lease_release {all:true}` returns `{owner, released:N, tickets_withdrawn:M}`. Anything other than exactly one of `lease_id`/`token`, `ticket` or `all:true` answers `[bad_request]`.
-    - `lease_release {token:"[REDACTED:…]"}` returns `{owner, released:N, legacy_gate_leases:true, deprecation}`. With no gate lease to release it answers `[lease_id_redacted] a redacted marker cannot name a lease; send lease_id, or all:true to release every lease you hold`.
-    - A table owner mismatch answers `[lease_owner_mismatch] lease belongs to '<o>'` (or `ticket belongs to`). An unknown id answers `[lease_id_unknown] unknown or expired lease`.
+    - `lease_release {token:"[REDACTED:…]"}` returns `{owner, released:N, legacy_gate_leases:true, deprecation}`. It releases only leases labelled `editor_gate:<owner>` that are not yieldable: a batch lease, an unlabelled asset lease and an asset lease labelled `build:<id>` all stay. With no gate lease to release it answers `lease_release: [lease_id_redacted] a redacted marker cannot name a lease; send lease_id, or all:true to release every lease you hold`.
+    - A table owner mismatch answers `<cmd>: [lease_owner_mismatch] lease belongs to '<o>'` (or `ticket belongs to`).
+    - The T4 codes keep T4.2's texts and form, built by T4.2's helpers: `<cmd> [lease_id_ambiguous]: …`, `<cmd> [lease_id_redacted]: …` (a marker under the canonical `lease_id`), `<cmd> [lease_id_unknown]: unknown or expired lease`. The `deprecation` string stays T4.2's `TokenDeprecation` (`'token' was renamed to lease_id; send lease_id`), the same text as Node's `TOKEN_DEPRECATION`.
     - `lease_status` adds `orphaned`, `bind_connection` and `ttl_s` to each lease, and `max_ttl_s` and `orphan_grace_s` at top level.
     - `lease_warning.reason` gains `lease_handle_redacted`, sent with `lease_id_error: "redaction_marker"`. An envelope marker is never a refusal (R5).
 
@@ -20879,6 +22376,10 @@ bool FHaybaMCPLeaseRedactedMarkerShimTest::RunTest(const FString& Parameters)
 		TEXT("{\"resources\":[\"world:/Game/__HaybaTest__/ShimBatch\"],\"bind_connection\":false,\"label\":\"%s\"}"), *GateLabel));
 	const FString AssetLease = AcquireId(*R, Conn, G,
 		TEXT("{\"resources\":[\"asset:/Game/__HaybaTest__/ShimAsset\"],\"bind_connection\":false}"));
+	// A build's asset lease taken through the gate with --label build:<id> (spec 5.2 Helpers).
+	const FString BuildLease = AcquireId(*R, Conn, G,
+		TEXT("{\"resources\":[\"asset:/Game/__HaybaTest__/ShimBuild\"],\"bind_connection\":false,\"label\":\"build:bp1\"}"));
+	TestFalse(TEXT("the build lease is granted"), BuildLease.IsEmpty());
 	TestTrue(TEXT("the batch lease is a running batch's"), Leases.Table().SetYieldable(BatchLease, true));
 
 	FLogCapture LeaseLog(TEXT("LogHaybaMCPLease"));
@@ -20891,6 +22392,8 @@ bool FHaybaMCPLeaseRedactedMarkerShimTest::RunTest(const FString& Parameters)
 	TestNull(TEXT("the gate lease is gone"), Leases.Table().FindLease(GateLease));
 	TestNotNull(TEXT("the batch lease stays"), Leases.Table().FindLease(BatchLease));
 	TestNotNull(TEXT("the asset lease stays"), Leases.Table().FindLease(AssetLease));
+	TestNotNull(TEXT("an asset lease labelled build:bp1 stays (it would be dropped mid-build under the gate's label)"),
+		Leases.Table().FindLease(BuildLease));
 
 	FString NoGate;
 	Send(*R, Conn, G, TEXT("lease_release"), Json(FString::Printf(TEXT("{\"token\":\"%s\"}"), *Marker)))
@@ -20907,7 +22410,9 @@ bool FHaybaMCPLeaseRedactedMarkerShimTest::RunTest(const FString& Parameters)
 	// A marker under the alias on lease_renew renews by owner.
 	const TSharedPtr<FJsonObject> Renewed = DataOf(Send(*R, Conn, G, TEXT("lease_renew"),
 		Json(FString::Printf(TEXT("{\"token\":\"%s\"}"), *Marker))));
-	TestEqual(TEXT("renews the owner's two remaining leases"), Renewed->GetNumberField(TEXT("renewed")), 2.0);
+	TestEqual(TEXT("renews the owner's three remaining leases"), Renewed->GetNumberField(TEXT("renewed")), 3.0);
+	TestEqual(TEXT("the alias is deprecated in T4's words"), Renewed->GetStringField(TEXT("deprecation")),
+		FString(TEXT("'token' was renamed to lease_id; send lease_id")));
 
 	// An envelope marker counts as absent: never a refusal, even under Enforced.
 	Dev->LeaseEnforcement = EHaybaMCPLeaseEnforcement::Enforced;
@@ -21125,27 +22630,28 @@ void FHaybaMCPLeaseManager::NoteMarkerShim(const FString& Cmd, const FString& Ow
 
 - [ ] **Step 4: Handler: acquire fields, renew by owner, release all, status fields and the marker shim**
 
-In `HaybaMCPLeaseHandler.cpp`, replace every `FPlatformTime::Seconds()` with `FHaybaMCPLeaseManager::Get().Now()`, so tests that advance the manager clock see consistent `expires_in_s` values. Then add to the anonymous namespace, after `CallerOwner()`:
+`HaybaMCPLeaseHandler.cpp` already reads the manager clock (T6.2 Step 5 switched its three `FPlatformTime::Seconds()` reads); `rg -n "FPlatformTime::Seconds" unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/handlers/HaybaMCPLeaseHandler.cpp` must print nothing before and after this step.
+
+**This task builds on T4.2's helpers and never restates a T4 text.** T4.2's anonymous-namespace helpers stay and keep their texts, because three things pin them byte for byte: `Hayba.MCP.Lease.WireRoundTrip` (`TestEqual` on the `deprecation` string), Node's `TOKEN_DEPRECATION` and `LEASE_ID_MESSAGES` (T4.3: "the same text as the editor"), and `lease-wire.test.ts`.
+- `TokenDeprecation` is the only deprecation text. There is no second one.
+- `IdAmbiguous(Cmd)`, `IdRedacted(Cmd)` (a marker under the canonical `lease_id`) and `IdUnknown(Cmd)` answer the T4 codes, in T4's form `<cmd> [code]: <text>`.
+- `ReadLeaseId(P)` reads `lease_id` and the `token` alias; `IsWaitingTicket` still maps a ticket sent under `token`.
+- `IdRequired` has no caller left after this step (`lease_renew {}` renews by owner, `lease_release {}` answers `[bad_request]`): **delete it**, so the strict BuildPlugin compile does not meet an unreferenced function with internal linkage (C4505).
+- T7's own codes (`[bad_request]`, `[no_leases]`, `[lease_owner_mismatch]`, and `[lease_id_redacted]` for a marker release that matches no gate lease) use the form `<cmd>: [code] <text>`, where the text after the code is the spec's wording (Appendix A.2.10). T7.3 mirrors them in Node.
+
+Add to the anonymous namespace, after `CallerOwner()`:
 
 ```cpp
-	/** The table's refusal text with its bracket code (R3 channel). The
-	 *  substrings "belongs to" and "ticket" stay verbatim (editor_gate.py). */
+	/** The table's owner-mismatch text with its bracket code (R3 channel). The
+	 *  substrings "belongs to" and "ticket" stay verbatim (editor_gate.py). An
+	 *  unknown lease never reaches the table: the handler answers IdUnknown first. */
 	FString CodedTableError(const FString& TableError)
 	{
 		if (TableError.StartsWith(TEXT("lease belongs to")) || TableError.StartsWith(TEXT("ticket belongs to")))
 		{
 			return TEXT("[lease_owner_mismatch] ") + TableError;
 		}
-		if (TableError.StartsWith(TEXT("unknown or expired")))
-		{
-			return TEXT("[lease_id_unknown] ") + TableError;
-		}
 		return TableError;
-	}
-
-	const TCHAR* DeprecatedAliasNote()
-	{
-		return TEXT("param 'token' is deprecated and will be removed; send lease_id");
 	}
 
 	const TCHAR* RedactedReleaseError()
@@ -21181,12 +22687,12 @@ In `HaybaMCPLeaseHandler.cpp`, replace every `FPlatformTime::Seconds()` with `FH
 		Out->SetNumberField(TEXT("renewed"), Renewed.Renewed);
 		Out->SetNumberField(TEXT("expires_in_s"), FMath::Max(0.0, Renewed.MinExpiresAt - Now));
 		Out->SetArrayField(TEXT("leases"), LeasesJson);
-		if (bDeprecated) Out->SetStringField(TEXT("deprecation"), DeprecatedAliasNote());
+		if (bDeprecated) Out->SetStringField(TEXT("deprecation"), TokenDeprecation);
 		return FHaybaHandlerResult::Ok(Out);
 	}
 ```
 
-If T4.2 already defines its own deprecation-text helper, delete it and use `DeprecatedAliasNote()` instead. T4's `WireRoundTrip` only asserts that `deprecation` is present.
+Delete T4.2's `IdRequired` helper from the anonymous namespace in this step (see the list above).
 
 In `Acquire`'s granted branch, directly after the `bound_to_connection` line, add:
 
@@ -21219,11 +22725,7 @@ FHaybaHandlerResult FHaybaMCPLeaseHandler::Renew(const TSharedPtr<FJsonObject>& 
 	FHaybaMCPLeaseManager& Manager = FHaybaMCPLeaseManager::Get();
 	const FString Owner = CallerOwner();
 	const int32 ConnId = Manager.Current() ? Manager.Current()->ConnId : 0;
-	FString Canonical;
-	FString Alias;
-	P->TryGetStringField(TEXT("lease_id"), Canonical);
-	P->TryGetStringField(TEXT("token"), Alias);
-	const FIdParam Id = ResolveIdParam(Canonical, Alias);
+	const FIdParam Id = ReadLeaseId(P);
 	double Ttl = 0.0;
 	P->TryGetNumberField(TEXT("ttl_s"), Ttl);
 	if (Id.bFromAlias)
@@ -21242,16 +22744,19 @@ FHaybaHandlerResult FHaybaMCPLeaseHandler::Renew(const TSharedPtr<FJsonObject>& 
 		}
 		return Result;
 	}
+	// The T4 codes keep T4.2's texts: the helpers build them.
 	if (Id.Kind == EIdParam::Ambiguous)
 	{
-		return FHaybaHandlerResult::Err(TEXT(
-			"lease_renew: [lease_id_ambiguous] lease_id and its deprecated alias name different leases; send lease_id only"));
+		return FHaybaHandlerResult::Err(IdAmbiguous(TEXT("lease_renew")));
 	}
 	if (Id.Kind == EIdParam::RedactionMarker)
 	{
-		return FHaybaHandlerResult::Err(TEXT(
-			"lease_renew: [lease_id_redacted] lease_id holds a redaction marker, not a lease_id; send the lease_id from "
-			"lease_acquire, or omit it to renew every lease you hold"));
+		// A marker under the canonical lease_id is an error (R5); only the alias is shimmed.
+		return FHaybaHandlerResult::Err(IdRedacted(TEXT("lease_renew")));
+	}
+	if (!Manager.Table().FindLease(Id.Value))
+	{
+		return FHaybaHandlerResult::Err(IdUnknown(TEXT("lease_renew")));
 	}
 
 	double ExpiresAt = 0.0;
@@ -21264,7 +22769,7 @@ FHaybaHandlerResult FHaybaMCPLeaseHandler::Renew(const TSharedPtr<FJsonObject>& 
 	Out->SetStringField(TEXT("lease_id"), Id.Value);
 	Out->SetBoolField(TEXT("renewed"), true);
 	Out->SetNumberField(TEXT("expires_in_s"), FMath::Max(0.0, ExpiresAt - Manager.Now()));
-	if (Id.bFromAlias) Out->SetStringField(TEXT("deprecation"), DeprecatedAliasNote());
+	if (Id.bFromAlias) Out->SetStringField(TEXT("deprecation"), TokenDeprecation);
 	return FHaybaHandlerResult::Ok(Out);
 }
 
@@ -21273,16 +22778,13 @@ FHaybaHandlerResult FHaybaMCPLeaseHandler::Release(const TSharedPtr<FJsonObject>
 	FHaybaMCPLeaseManager& Manager = FHaybaMCPLeaseManager::Get();
 	FTable& Table = Manager.Table();
 	const FString Owner = CallerOwner();
-	FString Canonical;
-	FString Alias;
 	FString Ticket;
-	P->TryGetStringField(TEXT("lease_id"), Canonical);
-	P->TryGetStringField(TEXT("token"), Alias);
 	P->TryGetStringField(TEXT("ticket"), Ticket);
+	Ticket.TrimStartAndEndInline();
 	const bool bHasAll = P->HasField(TEXT("all"));
 	bool bAll = false;
 	P->TryGetBoolField(TEXT("all"), bAll);
-	const FIdParam Id = ResolveIdParam(Canonical, Alias);
+	const FIdParam Id = ReadLeaseId(P);
 
 	const int32 Options = (Id.Kind != EIdParam::None ? 1 : 0) + (Ticket.IsEmpty() ? 0 : 1) + (bHasAll ? 1 : 0);
 	if (Options != 1 || (bHasAll && !bAll))
@@ -21303,8 +22805,19 @@ FHaybaHandlerResult FHaybaMCPLeaseHandler::Release(const TSharedPtr<FJsonObject>
 		Out->SetNumberField(TEXT("tickets_withdrawn"), Released.TicketsWithdrawn);
 		return FHaybaHandlerResult::Ok(Out);
 	}
+	// Old clients withdrew a queued ticket under `token` (T4.2's mapping, kept).
+	const bool bTicketUnderAlias = Ticket.IsEmpty() && Id.Kind == EIdParam::Value && Id.bFromAlias
+		&& IsWaitingTicket(Table, Id.Value);
+	if (bTicketUnderAlias)
+	{
+		Ticket = Id.Value;
+	}
 	if (!Ticket.IsEmpty())
 	{
+		if (!IsWaitingTicket(Table, Ticket))
+		{
+			return FHaybaHandlerResult::Err(TEXT("lease_release: unknown or expired ticket"));
+		}
 		FString Error;
 		if (!Table.Release(Ticket, Owner, Error))
 		{
@@ -21312,6 +22825,7 @@ FHaybaHandlerResult FHaybaMCPLeaseHandler::Release(const TSharedPtr<FJsonObject>
 		}
 		Out->SetStringField(TEXT("ticket"), Ticket);
 		Out->SetBoolField(TEXT("released"), true);
+		if (bTicketUnderAlias) Out->SetStringField(TEXT("deprecation"), TokenDeprecation);
 		return FHaybaHandlerResult::Ok(Out);
 	}
 	if (Id.Kind == EIdParam::RedactionMarker && Id.bFromAlias)
@@ -21328,17 +22842,22 @@ FHaybaHandlerResult FHaybaMCPLeaseHandler::Release(const TSharedPtr<FJsonObject>
 		Out->SetStringField(TEXT("owner"), Owner);
 		Out->SetNumberField(TEXT("released"), Released);
 		Out->SetBoolField(TEXT("legacy_gate_leases"), true);
-		Out->SetStringField(TEXT("deprecation"), DeprecatedAliasNote());
+		Out->SetStringField(TEXT("deprecation"), TokenDeprecation);
 		return FHaybaHandlerResult::Ok(Out);
 	}
+	// The T4 codes keep T4.2's texts: the helpers build them.
 	if (Id.Kind == EIdParam::Ambiguous)
 	{
-		return FHaybaHandlerResult::Err(TEXT(
-			"lease_release: [lease_id_ambiguous] lease_id and its deprecated alias name different leases; send lease_id only"));
+		return FHaybaHandlerResult::Err(IdAmbiguous(TEXT("lease_release")));
 	}
 	if (Id.Kind == EIdParam::RedactionMarker)
 	{
-		return FHaybaHandlerResult::Err(RedactedReleaseError());
+		// A marker under the canonical lease_id names no lease and releases nothing (R5).
+		return FHaybaHandlerResult::Err(IdRedacted(TEXT("lease_release")));
+	}
+	if (!Table.FindLease(Id.Value))
+	{
+		return FHaybaHandlerResult::Err(IdUnknown(TEXT("lease_release")));
 	}
 	FString Error;
 	if (!Table.Release(Id.Value, Owner, Error))
@@ -21347,12 +22866,25 @@ FHaybaHandlerResult FHaybaMCPLeaseHandler::Release(const TSharedPtr<FJsonObject>
 	}
 	Out->SetStringField(TEXT("lease_id"), Id.Value);
 	Out->SetBoolField(TEXT("released"), true);
-	if (Id.bFromAlias) Out->SetStringField(TEXT("deprecation"), DeprecatedAliasNote());
+	if (Id.bFromAlias) Out->SetStringField(TEXT("deprecation"), TokenDeprecation);
 	return FHaybaHandlerResult::Ok(Out);
 }
 ```
 
-The old gate sends `lease_release {token:"lq_…"}` today to withdraw a ticket. That still works, because `FTable::Release` accepts either a lease id or a ticket.
+The old gate sends `lease_release {token:"lq_…"}` today to withdraw a ticket. That still works and still answers under `ticket`: T4.2's `IsWaitingTicket` mapping is kept above.
+
+Check that the handler restates no T4 text and keeps no dead helper:
+
+```powershell
+$LH = "D:\Hackathons\hayba\.worktrees\p0-safety\unreal\HaybaMCPToolkit\Source\HaybaMCPToolkit\Private\handlers\HaybaMCPLeaseHandler.cpp"
+Select-String -Path $LH -Pattern 'DeprecatedAliasNote|FString IdRequired\(|will be removed' | ForEach-Object Line
+(Select-String -Path $LH -SimpleMatch "'token' was renamed to lease_id; send lease_id").Count
+foreach ($h in 'IdAmbiguous(','IdRedacted(','IdUnknown(','ReadLeaseId(','IsWaitingTicket(','TokenDeprecation') {
+  "{0} {1}" -f (Select-String -Path $LH -SimpleMatch $h).Count, $h
+}
+```
+
+Expected: the first command prints nothing; the second prints `1` (the text exists once, in the `TokenDeprecation` constant); every helper in the loop has a count of at least 2 (its definition and at least one call).
 
 In `Status`, after the per-lease `bound_to_connection` line, add:
 
@@ -21927,14 +23459,28 @@ Expected: PASS, and `dist/tcp-client.js` exists.
 
 - [ ] **Step 3: Launch the scratch GUI host (only when nothing else drives it)**
 
+The same two guards as GA.2 Step 10 (R-5): one driver at a time, and never while 52342 is free, because the scratch GUI host would then take 52342 and every lane MCP server that falls back to 52342 would drive it.
+
 ```powershell
 $UE = "C:\Program Files\Epic Games\UE_5.8"; $H = "D:\UEScratch\h58"
-if (Get-CimInstance Win32_Process | Where-Object { $_.Name -like "UnrealEditor*" -and $_.CommandLine -like "*UEScratch\h58*" }) { throw "the scratch host is already running" }
+$mine = Get-CimInstance Win32_Process | Where-Object { $_.Name -like 'UnrealEditor*' -and $_.CommandLine -like '*UEScratch\h58\h58.uproject*' }
+if ($mine) { throw "a scratch editor already runs (pid $($mine.ProcessId -join ',')); one driver at a time" }
+$first = Get-NetTCPConnection -LocalPort 52342 -State Listen -ErrorAction SilentlyContinue
+if (-not $first) { throw "nothing listens on 52342: the scratch GUI host would take it, and lane MCP servers fall back to 52342 (R-5). Launch only while another editor holds 52342." }
 Get-NetTCPConnection -LocalPort 52342-52350 -State Listen -ErrorAction SilentlyContinue | Select-Object LocalPort, OwningProcess
-Start-Process "$UE\Engine\Binaries\Win64\UnrealEditor.exe" -ArgumentList "`"$H\h58.uproject`""
+Remove-Item "$H\Saved\HaybaMCP\instances\*.json" -ErrorAction SilentlyContinue
+$gui = Start-Process "$UE\Engine\Binaries\Win64\UnrealEditor.exe" -ArgumentList "`"$H\h58.uproject`"" -PassThru
+$deadline = (Get-Date).AddMinutes(10)
+while (-not (Test-Path "$H\Saved\HaybaMCP\instances\$($gui.Id).json")) {
+  if ((Get-Date) -gt $deadline) { throw "no heartbeat after 10 min" }
+  Start-Sleep -Seconds 5
+}
+$Port = (Get-Content "$H\Saved\HaybaMCP\instances\$($gui.Id).json" | ConvertFrom-Json).port
+$Port | Set-Content "D:\UEScratch\logs\t7-4-port.txt"
+"scratch GUI host pid $($gui.Id) on port $Port"
 ```
 
-Note every port that a consumer or dev editor already owns. Wait until `D:\UEScratch\h58\Saved\HaybaMCP\instances\<pid>.json` exists for the new editor's pid, then read its `port`. Never point this check at another editor's port.
+Expected: no throw, and a last line naming a port in 52343–52350 (never 52342, which another editor holds). The port comes from the scratch host's own heartbeat file, so this check can never be pointed at another editor.
 
 - [ ] **Step 4: Run the idle-drop probe from outside the editor**
 
@@ -21970,11 +23516,14 @@ await client.send('lease_release', { all: true });
 client.disconnect();
 ```
 
-Run it with the port from Step 3:
+Run it with the port Step 3 read from the heartbeat:
 
 ```powershell
-$env:UE_TCP_PORT = "<port from Step 3>"; $env:HAYBA_AGENT_ID = "p0-t7-probe"
-node "D:\UEScratch\tools\p0-t7-idle-drop.mjs"
+$Port = [int](Get-Content "D:\UEScratch\logs\t7-4-port.txt" -TotalCount 1)
+if ($Port -lt 52343 -or $Port -gt 52350) { throw "t7-4-port.txt holds $Port; run Step 3 first" }
+$env:UE_TCP_PORT = "$Port"; $env:HAYBA_AGENT_ID = "p0-t7-probe"
+node "D:\UEScratch\tools\p0-t7-idle-drop.mjs" | Tee-Object "D:\UEScratch\logs\t7-4-idle-drop.txt"
+Remove-Item Env:UE_TCP_PORT, Env:HAYBA_AGENT_ID
 ```
 
 The spec reads `HaybaMCPFrameReadPolicy.h:35-57` as dropping an idle connection after 5 s. If that reading is right, the output is:
@@ -22005,6 +23554,7 @@ T8 ships only in the same deploy as T4 (D1), never alone.
 - Modify: `unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/handlers/HaybaMCPLeaseHandler.cpp` (delete `LexEnforcement` `:36-45`; `Status` reports `enforcement` and `active_owners`)
 - Modify: `unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/handlers/HaybaMCPLegacyHandler.cpp` (`Cmd_Ping` capabilities `:152-157`; include block `:1-10`)
 - Test: `unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/Tests/HaybaMCPLeaseEnforcementTest.cpp` (new `EnforcedForWritesTwoOwners`)
+- Test: `unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/Tests/HaybaMCPEditorStateRouterTest.cpp` (T2.3's `Hayba.MCP.State.RouterStopAgentPieFromAnyCaller`: one include and one `FScopedCleanPresence`, Step 8)
 - Test: `mcp-tools/hayba-mcp/src/tools/__tests__/lease-enforcement-contract.test.ts` (T8 C++ contracts)
 - Modify: `mcp-tools/hayba-mcp/scripts/p0-expected-automation-tests.txt` (`# T8`)
 
@@ -22060,7 +23610,11 @@ bool FHaybaMCPLeaseEnforcedForWritesTwoOwnersTest::RunTest(const FString& Parame
 	UHaybaMCPDeveloperSettings* Dev = GetMutableDefault<UHaybaMCPDeveloperSettings>();
 	const EHaybaMCPLeaseEnforcement ModeWas = Dev->LeaseEnforcement;
 	const bool bPlanWas = Settings.bPlanModeEnabled;
-	// "a" sorts first among hayba-test-* owners, so it is inside the 8 named in owner_required.
+	// Nobody is present when this test starts, so A and B are the only other owners
+	// the owner-less write can meet, and owner_required names both. Without it the
+	// owners of earlier tests (fake connections that never close) would fill the 8
+	// names the refusal shows, in sorted order, and A might not be one of them.
+	FScopedCleanPresence CleanPresence;
 	const FString A = UniqueOwner(TEXT("a"));
 	const FString B = UniqueOwner(TEXT("b"));
 	constexpr int32 ConnA = 900701;
@@ -22134,7 +23688,21 @@ bool FHaybaMCPLeaseEnforcedForWritesTwoOwnersTest::RunTest(const FString& Parame
 	const TSharedPtr<FJsonObject> Anon = Send(*R, ConnC, FString(), TEXT("blueprint_add_node"), WriteParams(TEXT("BP_TwoOwnersA")));
 	TestEqual(TEXT("an owner-less write is owner_required"), CodeOf(Anon), FString(TEXT("owner_required")));
 	TestTrue(TEXT("it names A"), StringOf(Anon, TEXT("error")).Contains(A));
+	TestTrue(TEXT("it counts exactly the two owners that are present"),
+		StringOf(Anon, TEXT("error")).Contains(TEXT("while 2 other agents are connected")));
 	TestEqual(TEXT("reason owner_missing"), StringOf(ObjectOf(Anon, TEXT("lease")), TEXT("reason")), FString(TEXT("owner_missing")));
+	{
+		// Membership, not position: other_owners is sorted, and nothing promises A is first.
+		TSet<FString> Named;
+		const TArray<TSharedPtr<FJsonValue>>* OthersJson = nullptr;
+		if (ObjectOf(Anon, TEXT("lease"))->TryGetArrayField(TEXT("other_owners"), OthersJson) && OthersJson)
+		{
+			for (const TSharedPtr<FJsonValue>& Value : *OthersJson) Named.Add(Value->AsString());
+		}
+		TestTrue(TEXT("other_owners holds A"), Named.Contains(A));
+		TestTrue(TEXT("other_owners holds B"), Named.Contains(B));
+		TestEqual(TEXT("other_owners holds nobody else"), Named.Num(), 2);
+	}
 	TestEqual(TEXT("input_rejected"), StringOf(ObjectOf(Anon, TEXT("advisory")), TEXT("state")), FString(TEXT("input_rejected")));
 
 	const TSharedPtr<FJsonObject> AWrite = Send(*R, ConnA, A, TEXT("blueprint_add_node"), WriteParams(TEXT("BP_TwoOwnersA")));
@@ -22525,7 +24093,28 @@ cd D:/Hackathons/hayba/.worktrees/p0-safety/mcp-tools/hayba-mcp && npx tsc --noE
 
 Expected: PASS, including the four T8 C++ contracts and the 14 router-scanning files (C14).
 
-- [ ] **Step 8: Full rebuild (UENUM and layout change) and run every lease and state test**
+- [ ] **Step 8: Keep the one owner-less router test valid, then full rebuild (UENUM and layout change) and run every lease and state test**
+
+Exactly one earlier router test sends writes with no owner from a TCP connection: T2.3's `Hayba.MCP.State.RouterStopAgentPieFromAnyCaller` (`editor_start_pie` from connection 900001, then `editor_pie_press_key` and `editor_stop_pie` from 900002, all with an empty owner). It asserts `agent:conn:900001` and the Warning `'conn:900002' stopped an agent PIE owned by 'conn:900001'`, so it cannot be given an envelope owner. Under the new default those writes are refused with `owner_required` whenever any identified owner is present, and the router tests that ran before it (`RouterRefusesMutationDuringPIE`, `RouterPieOwnerDrive`, `RouterAssetBusyStartPie`, `RouterAssetBusyCompile`) leave their owners present on fake connections that never close. The test keeps running under `EnforcedForWrites` (that is the mode the consumer runs), with nobody present.
+
+In `Private/Tests/HaybaMCPEditorStateRouterTest.cpp`, add `#include "Tests/HaybaMCPLeaseTestUtil.h"` to the include block, and in `FHaybaMCPStateRouterStopAgentPieFromAnyCallerTest::RunTest` insert after `ON_SCOPE_EXIT { CancelQueuedPie(); };`:
+
+```cpp
+	// T8: an owner-less write is refused with owner_required while an identified
+	// owner is present. This test is about owner-less raw clients, so it starts
+	// with nobody present; the owners earlier tests left behind do not count.
+	HaybaMCPLeaseTest::FScopedCleanPresence CleanPresence;
+```
+
+Every other router test of T1 to T7 sends an envelope owner or runs in-process (connection 0), which counts as identified. Check that no other owner-less TCP write exists:
+
+```powershell
+$T = "D:\Hackathons\hayba\.worktrees\p0-safety\unreal\HaybaMCPToolkit\Source\HaybaMCPToolkit\Private\Tests"
+Select-String -Path "$T\*.cpp" -Pattern 'Send\(\*\w+, (9\d{5}|Conn\w*), FString\(\), TEXT\("(?!ping|lease_|editor_get_state|batch_status)' |
+  ForEach-Object { "$($_.Filename):$($_.LineNumber): $($_.Line.Trim())" }
+```
+
+Expected: the four sends of `HaybaMCPEditorStateRouterTest.cpp` inside `RouterStopAgentPieFromAnyCaller`, and the owner-less write of `EnforcedForWritesTwoOwners` (which expects `owner_required`). Any other hit is a test that needs `FScopedCleanPresence` too; add it in this commit.
 
 ```powershell
 $UE = "C:\Program Files\Epic Games\UE_5.8"; $WT = "D:\Hackathons\hayba\.worktrees\p0-safety"; $H = "D:\UEScratch\h58"
@@ -22540,7 +24129,7 @@ Select-String -Path "$H\Saved\Logs\t8-1.log" -Pattern 'Result=\{(Success|Fail)\}
 
 This is not the gate. The prefixes are used on purpose to cover the lease, PIE-state and batch router tests that run under the new default.
 
-Expected: PASS, with `Hayba.MCP.Lease.EnforcedForWritesTwoOwners` among the successes. A router test from T2 or T3 may now get `owner_required`: under the new default, an owner-less write from a fake ConnId is refused while other identified owners are present. Fix that test by sending an envelope owner (`hayba-test-<guid8>`), which the ledger's test rules already require, and include the fix in this commit.
+Expected: PASS, with `Hayba.MCP.Lease.EnforcedForWritesTwoOwners` and `Hayba.MCP.State.RouterStopAgentPieFromAnyCaller` among the successes. If a router test answers `owner_required` where it expected something else, it sends an owner-less write that the check above missed: give it a `FScopedCleanPresence` when its point is the owner-less caller, or an envelope owner (`hayba-test-<guid8>`) when it is not, in this commit.
 
 - [ ] **Step 9: Commit**
 
@@ -22552,13 +24141,19 @@ git -C D:/Hackathons/hayba/.worktrees/p0-safety add \
   unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/HaybaMCPCommandHandler.cpp \
   unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/handlers/HaybaMCPLeaseHandler.cpp \
   unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/handlers/HaybaMCPLegacyHandler.cpp \
-  unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/Tests \
+  unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/Tests/HaybaMCPLeaseEnforcementTest.cpp \
+  unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/Tests/HaybaMCPEditorStateRouterTest.cpp \
   mcp-tools/hayba-mcp/src/tools/__tests__/lease-enforcement-contract.test.ts \
   mcp-tools/hayba-mcp/scripts/p0-expected-automation-tests.txt
 git -C D:/Hackathons/hayba/.worktrees/p0-safety commit -m "feat(lease): EnforcedForWrites by default with owner_required, refused through the gate builder"
+git -C D:/Hackathons/hayba/.worktrees/p0-safety status --short
 ```
 
 ### Task T8.2: Fail-closed write detection, `python_run` declarations, PIE reclassification
+
+**Maintainer decisions (2026-09-28, recorded in the spec's last section) that this task implements:**
+- **R-1 (Python tools under T8):** Python-backed tool descriptors declare `read_only` when they only read. Anything undeclared is treated as a write, so it fails closed. Read tools flow freely while leases are held, and Python writes still need the lease. The editor half is here: `python_run` is a read only when its `read_only` param is the JSON boolean `true`; with `resources` it is a scoped write; with neither it is an undeclared write that takes X on `global`. The Node half is T8.3 Step 5 (`PyToolDescriptor.readOnly` on the 47 reviewed read tools). Pinned by `Hayba.MCP.Lease.PythonRunClassification` (the class of every declaration, and a non-boolean `read_only` never declares), `Hayba.MCP.Lease.EnforcedForWritesTwoOwners` (while another owner holds only an `asset:` lease, an undeclared `python_run` gets `lease_conflict` and a `read_only:true` one passes), and T8.3's `python read declarations (R-1)` contract in `lease-enforcement-contract.test.ts`.
+- **R-12 (read-like commands):** the 18 read-like commands are classified as reads. They are allowed during PIE, and they are not treated as writes under `EnforcedForWrites`. The 18: `wait_for_idle`, `wait_for_shaders`, `asset_validate`, `material_validate`, `mesh_audit`, `mesh_list_dynamic`, `mesh_topology_stats`, `metasound_inspect`, `metasound_list`, `pcg_export_graph`, `pcg_read_node_output`, `pcg_validate_graph`, `placement_validate`, `scene_export`, `scene_validate_physics`, `texture_audit`, `ui_measure_text`, `copilot_get_key`. T2.3 put them into `ReadCommands()`; this task makes `ReadCommands()` part of the one read table the lease class uses (`IsReadSetCommand`), so nothing is added here. Pinned by `Hayba.MCP.Lease.ReadClassDrift` (each of the 18 classifies `Read`, and none is in the Read → WriteScoped list), `Hayba.MCP.Lease.EnforcedForWritesTwoOwners` (while another owner holds `global` X, two of them pass the lease gate, with an owner and without one), and T2.3's `Hayba.MCP.State.PieSafeDrift` for the PIE half.
 
 **Files:**
 - Modify: `unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/HaybaMCPCommandSets.h` (add `IsReadSetCommand`)
@@ -22576,6 +24171,7 @@ git -C D:/Hackathons/hayba/.worktrees/p0-safety commit -m "feat(lease): Enforced
 - Test: `unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/Tests/HaybaMCPLeaseEnforcementTest.cpp` (new `PieCommandsClassify`, `ReadClassDrift`, `PythonRunClassification`; extend `EnforcedForWritesTwoOwners`)
 - Test: `unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/Tests/HaybaMCPLeasePolicyTest.cpp` (`Hayba.MCP.Lease.Classification` `:65-66`, `:73-74`, `:82-83`)
 - Modify: `mcp-tools/hayba-mcp/scripts/p0-expected-automation-tests.txt` (`# T8`)
+- Modify: `docs/adr/0010-multi-agent-editor-leases.md`: the class table `:52-58` and the `python_run` paragraph `:60-63`. Spec T8 design 6: the ADR text that calls PIE commands global "is amended in the same commit" as the `Classification` `:65-66` assertion, so these two edits land in this task's commit, not in T8.3's docs commit.
 
 **Interfaces:**
 - Consumes:
@@ -22595,15 +24191,23 @@ git -C D:/Hackathons/hayba/.worktrees/p0-safety commit -m "feat(lease): Enforced
   - In the lease check, `python_run` declares `read_only` only when the JSON value is a real boolean.
   - Python handler: `HCR-INPUT-003` for a non-boolean `read_only`, and `data.read_only_declared` in the reply.
 
-- [ ] **Step 1: Get the maintainer's R-1 and R-12 rulings before writing code**
+- [ ] **Step 1: Check that both recorded rulings are in the tree**
 
-R-1: after this task, every `python_run` from the TS Python factory (`py-tool-factory.ts` → `ue-python.ts:46`) is undeclared. It then conflicts with **any** other owner's lease, including bpgraph's `asset:` build leases, so read tools such as `actor_find` and `object_inspect` get `lease_conflict` whenever another lane holds anything. Ask the maintainer to choose one:
-- **Option A:** T8.3 Step 6 gives `PyToolDescriptor` a `readOnly` flag and marks seven reviewed read tools.
-- **Option B:** accept the regression and record it in the Deploy B handoff (GB.3) under known limits.
+Nothing here waits for a person. The maintainer recorded both rulings in the spec on 2026-09-28 ("Maintainer decisions added 2026-09-28 (during planning)"), and this plan applies them:
+- **R-1:** Python-backed tool descriptors declare `read_only` when they only read, and anything undeclared is a write. After this task every `python_run` from the TS Python factory (`py-tool-factory.ts` → `ue-python.ts:46`) that declares nothing conflicts with **any** other owner's lease, so T8.3 Step 5 gives `PyToolDescriptor` a `readOnly` flag and sets it on the 47 reviewed read tools. T8.3 lands in the same deploy; T8.4 checks both.
+- **R-12:** the 18 read-like commands are reads. T2.3 put them into `ReadCommands()` (71 names), so `ReadClassDrift` below must not list any of them as moved.
 
-R-12: `ReadClassDrift` below prints every command that moves from Read to WriteScoped. It covers the ledger's R-12 list: `wait_for_idle`, `wait_for_shaders`, `asset_validate`, and the rest. T2.3 already moved `wait_for_idle` and `wait_for_shaders` into `ReadCommands()` (55 names), so they must not appear in the moved list. Any further command the maintainer signs off on goes into `ReadCommands()` in this task's Step 4, together with `PieSafeDrift`'s expected list and T1's `ReadCommands().Num()` pin, in the same commit.
+```powershell
+$WT = "D:\Hackathons\hayba\.worktrees\p0-safety"
+Select-String -Path "$WT\docs\superpowers\specs\2026-09-28-p0-safety-train-design.md" -Pattern '^- \*\*R-1 ', '^- \*\*R-12 ' | ForEach-Object { $_.Line.Substring(0, 60) }
+$Sets = Get-Content "$WT\unreal\HaybaMCPToolkit\Source\HaybaMCPToolkit\Private\HaybaMCPCommandSets.h" -Raw
+@('wait_for_idle','wait_for_shaders','asset_validate','material_validate','mesh_audit','mesh_list_dynamic','mesh_topology_stats',
+  'metasound_inspect','metasound_list','pcg_export_graph','pcg_read_node_output','pcg_validate_graph','placement_validate',
+  'scene_export','scene_validate_physics','texture_audit','ui_measure_text','copilot_get_key') |
+  Where-Object { -not $Sets.Contains("TEXT(`"$_`")") }
+```
 
-Record both rulings in the T8 PR description.
+Expected: two lines, one starting `- **R-1 (Python tools under T8):**` and one starting `- **R-12 (read-like commands):**`; the last command prints nothing (all 18 names are in `HaybaMCPCommandSets.h`). If it prints a name, T2.3 Step 22 is incomplete: finish it there, with its two pins, before going on.
 
 - [ ] **Step 2: Write the failing classification tests**
 
@@ -22728,6 +24332,15 @@ bool FHaybaMCPLeaseReadClassDriftTest::RunTest(const FString& Parameters)
 	Moved.Sort();
 	AddInfo(FString::Printf(TEXT("Read -> WriteScoped in T8 (%d): %s"), Moved.Num(), *FString::Join(Moved, TEXT(", "))));
 	TestTrue(TEXT("the fail-closed move includes material_set_param"), Moved.Contains(TEXT("material_set_param")));
+	// R-12 (decided 2026-09-28): the 18 read-like commands are reads, so none of them moved.
+	for (const TCHAR* Read : { TEXT("wait_for_idle"), TEXT("wait_for_shaders"), TEXT("asset_validate"), TEXT("material_validate"), TEXT("mesh_audit"), TEXT("mesh_list_dynamic"),
+		TEXT("mesh_topology_stats"), TEXT("metasound_inspect"), TEXT("metasound_list"), TEXT("pcg_export_graph"), TEXT("pcg_read_node_output"), TEXT("pcg_validate_graph"),
+		TEXT("placement_validate"), TEXT("scene_export"), TEXT("scene_validate_physics"), TEXT("texture_audit"), TEXT("ui_measure_text"), TEXT("copilot_get_key") })
+	{
+		TestFalse(*FString::Printf(TEXT("R-12 read %s did not move to a write class"), Read), Moved.Contains(Read));
+		TestEqual(*FString::Printf(TEXT("R-12 read %s classifies Read"), Read),
+			HaybaMCPAccess::ClassifyCommand(Read, false).Class, EAccessClass::Read);
+	}
 	return true;
 }
 
@@ -22805,6 +24418,17 @@ In `FHaybaMCPLeaseEnforcedForWritesTwoOwnersTest::RunTest`, insert before its fi
 			CodeOf(Send(*R, ConnB, B, TEXT("material_set_param"),
 				Json(TEXT("{\"instance_path\":\"/Game/__HaybaTest__/MI_TwoOwners\",\"param_name\":\"Tint\",\"value\":1}")))),
 			FString(TEXT("lease_conflict")));
+		// R-12 (decided 2026-09-28): the read-like commands are reads under
+		// EnforcedForWrites. While A holds global X they pass the lease gate and
+		// reach their handler, which answers a missing-parameter error for {}.
+		// A read needs no owner either.
+		for (const TCHAR* Read : { TEXT("material_validate"), TEXT("ui_measure_text") })
+		{
+			TestFalse(*FString::Printf(TEXT("R-12: B's %s is not refused while A holds global X"), Read),
+				IsLeaseRefusal(CodeOf(Send(*R, ConnB, B, Read, Json(TEXT("{}"))))));
+			TestFalse(*FString::Printf(TEXT("R-12: an owner-less %s is not refused"), Read),
+				IsLeaseRefusal(CodeOf(Send(*R, ConnC, FString(), Read, Json(TEXT("{}"))))));
+		}
 		Send(*R, ConnA, A, TEXT("lease_release"), Json(TEXT("{\"all\":true}")));
 
 		const FString AAsset = AcquireId(*R, ConnA, A,
@@ -23008,9 +24632,7 @@ After `Out->SetNumberField(TEXT("deadline_s"), MaxPythonExecutionSeconds);` (`:2
     Out->SetBoolField(TEXT("read_only_declared"), bDeclaredReadOnly);
 ```
 
-If the R-12 ruling from Step 1 moves further commands into `ReadCommands()` (`wait_for_idle` and `wait_for_shaders` are already there since T2.3):
-- add them to the `ReadCommands()` set literal in `HaybaMCPCommandSets.h`;
-- add them to the expected list in T2's `Hayba.MCP.State.PieSafeDrift`, and raise T1's `TestEqual(TEXT("55 read commands"), ReadCommands().Num(), 55);` pin by the same number.
+`ReadCommands()` is not edited here: the 18 R-12 reads are in it since T2.3 (71 names), and Step 1 checked them.
 
 - [ ] **Step 5: Build and run the lease tests**
 
@@ -23027,9 +24649,39 @@ Select-String -Path "$H\Saved\Logs\t8-2.log" -Pattern 'Read -> WriteScoped in T8
 
 This targeted run uses prefixes to cover the lease, PIE-state, batch (`ClassOf` now fails closed) and Python policy tests.
 
-Expected: PASS. The `ReadClassDrift` info line lists the moved commands, including `material_set_param` and the R-12 set. Paste that list into the PR description for the maintainer.
+Expected: PASS. The `ReadClassDrift` info line lists the moved commands, including `material_set_param` and none of the 18 R-12 reads. Save it for the T8 PR description: `(Select-String -Path "$H\Saved\Logs\t8-2.log" -Pattern 'Read -> WriteScoped in T8' | Select-Object -Last 1).Line | Set-Content D:\UEScratch\logs\t8-read-to-write.txt`.
 
-- [ ] **Step 6: TS gate**
+- [ ] **Step 6: Amend ADR-0010's class table in the same change (spec T8 design 6)**
+
+In `docs/adr/0010-multi-agent-editor-leases.md`, replace the four class-table rows (`:55-58`) with:
+
+```
+| Read        | reads state; only commands in the R12 read sets (`HaybaMCPCommandSets.h`: control plane, reads, PIE observation, `lease_*`) | none                                               |
+| WriteScoped | changes something inside one world; every command outside the read sets (fail closed); PIE drive commands   | X on declared resources, else only IX on the world |
+| WriteWorld  | `level_save`, `editor_save*`, `wp_load_cell`, a World Partition python script, an undeclared python mutation | X on `world:<current>`; an undeclared non-WP `python_run`: X on `global` |
+| Global      | `level_load`, `level_create`, PIE start/stop, save-and-quit, console commands, Live Coding                    | X on `global`                                      |
+```
+
+Replace the `python_run` paragraph (`:60-63`) with:
+
+```
+`python_run` is classified per request: a World Partition script is
+WriteWorld whatever it declares; declared `resources` make it WriteScoped on
+those claims; `read_only: true` makes it Read; anything else is an undeclared
+mutation and takes X on `global` for conflicts, so it meets any other owner's
+lock, including an `asset:` build lease. The lexical tier classifier no
+longer decides the class: it misses real writers.
+```
+
+T4.4 edited this file first, so find both anchors by their text. Then check that no sentence still calls every PIE command global:
+
+```powershell
+Select-String -Path D:\Hackathons\hayba\.worktrees\p0-safety\docs\adr\0010-multi-agent-editor-leases.md -Pattern 'editor_pie_\*|every PIE command|PIE commands? (is|are) global' | ForEach-Object Line
+```
+
+Expected: no output.
+
+- [ ] **Step 7: TS gate**
 
 ```bash
 cd D:/Hackathons/hayba/.worktrees/p0-safety/mcp-tools/hayba-mcp && npx tsc --noEmit && npx vitest run
@@ -23037,7 +24689,7 @@ cd D:/Hackathons/hayba/.worktrees/p0-safety/mcp-tools/hayba-mcp && npx tsc --noE
 
 Expected: PASS. `access-policy-drift.test.ts` still finds `WriteWorldCommands` and `GlobalCommands`.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
 git -C D:/Hackathons/hayba/.worktrees/p0-safety add \
@@ -23045,10 +24697,15 @@ git -C D:/Hackathons/hayba/.worktrees/p0-safety add \
   unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/HaybaMCPAccessPolicy.h \
   unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/HaybaMCPLeaseManager.cpp \
   unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/handlers/HaybaMCPPythonHandler.cpp \
-  unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/Tests \
+  unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/Tests/HaybaMCPLeaseEnforcementTest.cpp \
+  unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/Tests/HaybaMCPLeasePolicyTest.cpp \
+  docs/adr/0010-multi-agent-editor-leases.md \
   mcp-tools/hayba-mcp/scripts/p0-expected-automation-tests.txt
 git -C D:/Hackathons/hayba/.worktrees/p0-safety commit -m "feat(lease): fail-closed write detection, python_run read_only and global-X undeclared scripts, PIE probes read"
+git -C D:/Hackathons/hayba/.worktrees/p0-safety status --short
 ```
+
+Expected: `git status --short` prints nothing. If T8.1 Step 8 had to change `HaybaMCPEditorStateRouterTest.cpp`, that change is in T8.1's commit, not here.
 
 ### Task T8.3: Node codes, `python_run` declarations (R-1), and docs
 
@@ -23057,19 +24714,16 @@ git -C D:/Hackathons/hayba/.worktrees/p0-safety commit -m "feat(lease): fail-clo
 - Modify: `mcp-tools/hayba-mcp/src/tools/python/python-run.ts` (`executionFields` `:143-162`)
 - Modify: `mcp-tools/hayba-mcp/src/tools/lease/lease-tools.ts` (the `lease_status` descriptor)
 - Modify: `mcp-tools/hayba-mcp/src/tcp-client.ts` (comments only: `TcpCommand.lease` `:16-17`, `TcpResponse.lease_warning`/`lease` `:28-31`)
-- Modify (R-1 option A only):
+- Modify (R-1, decided):
   - `mcp-tools/hayba-mcp/src/tools/ue-python.ts` (`runUePythonJson` `:44-46`)
   - `mcp-tools/hayba-mcp/src/tools/py-tool-factory.ts` (`PyToolDescriptor` `:48-80`, `makePyToolHandler` `:118-121`)
-  - `mcp-tools/hayba-mcp/src/tools/actor/actor-py-tools.ts` (`actorInspectDescriptor` `:128`, `actorFindDescriptor` `:187`, `actorGetSelectionDescriptor` `:215`)
-  - `mcp-tools/hayba-mcp/src/tools/editor/editor-py-tools.ts` (`editorGetCameraDescriptor` `:142`, `selectionGetDescriptor` `:308`, `objectInspectDescriptor` `:485`, `objectExistsDescriptor` `:530`)
+  - the ten python-tool files, one `readOnly: true,` line after each `meta: readMeta,` (49 descriptors carry `readMeta`; 47 get the line): `src/tools/actor/actor-py-tools.ts` (3), `asset/asset-py-tools.ts` (1), `editor/editor-py-tools.ts` (9), `foliage/foliage-py-tools.ts` (4), `landscape/landscape-py-tools.ts` (5), `lighting/lighting-py-tools.ts` (5), `mesh/mesh-py-tools.ts` (4), `niagara/niagara-py-tools.ts` (6 of 7: not `niagaraCapabilityProbeDescriptor` `:271`), `sequencer/sequencer-py-tools.ts` (4 of 5: not `seqOpenDescriptor` `:647`), `water/water-py-tools.ts` (6)
 - Test: `mcp-tools/hayba-mcp/src/tools/ue-refusal-codes.test.ts` (created by T1.5; append a `T8` describe block)
 - Test: `mcp-tools/hayba-mcp/src/lease-keeper.test.ts` (T8 cases)
 - Test: `mcp-tools/hayba-mcp/src/tcp-client.test.ts` (every envelope carries an owner)
 - Test: `mcp-tools/hayba-mcp/src/tools/__tests__/lease-enforcement-contract.test.ts` (T8 wire and R-1 describe blocks)
 - Test: `mcp-tools/hayba-mcp/src/tools/__tests__/access-policy-drift.test.ts` (T8 describe block)
-- Modify: `docs/adr/0010-multi-agent-editor-leases.md`:
-  - the class table `:52-58`
-  - the `python_run` paragraph `:60-63`
+- Modify: `docs/adr/0010-multi-agent-editor-leases.md` (the class table and the `python_run` paragraph were amended in T8.2's commit):
   - the section `### Enforcement is a setting, advisory by default` (`:105-118`)
   - the consequence at `:147-148`
 - Modify: `CHANGELOG.md` (`[Unreleased]` → `### Changed`, `:35`)
@@ -23080,10 +24734,12 @@ git -C D:/Hackathons/hayba/.worktrees/p0-safety commit -m "feat(lease): fail-clo
 - Produces:
   - `UeToolErrorCode` gains `'owner_required'`, and `KNOWN_UE_CODES` mirrors it.
   - `python_run` tool `executionFields` gains `read_only?: boolean` and `resources?: (string | {resource, mode?})[]`. `resources` is a plan addition: without it, a Node lane cannot narrow an undeclared script the way the §5.2 handoff says it should.
-  - R-1 option A:
+  - R-1 (decided 2026-09-28):
     - `PyToolDescriptor.readOnly?: boolean`, which defaults to false (fail closed).
     - `runUePythonJson(script, timeout?, opts?: RunUePythonOptions)` with `interface RunUePythonOptions { readOnly?: boolean }`.
-    - The reviewed read list: `actor_find`, `actor_get_selection`, `actor_inspect`, `editor_get_camera`, `object_exists`, `object_inspect`, `selection_get`.
+    - The reviewed read list, 47 names: `actor_find`, `actor_get_selection`, `actor_inspect`, `asset_get_source_path`, `asset_inspect`, `editor_cvar_get`, `editor_get_camera`, `foliage_capability_probe`, `foliage_get_instance_count`, `foliage_scan_types`, `foliage_type_inspect`, `landscape_get_material`, `landscape_inspect`, `landscape_layer_list`, `landscape_list`, `landscape_list_splines`, `light_get`, `light_list`, `lighting_capability_probe`, `mesh_get_bounds`, `mesh_get_lods`, `mesh_get_materials`, `mesh_get_sockets`, `niagara_component_inspect`, `niagara_list_components`, `niagara_param_list`, `niagara_system_inspect`, `niagara_systems`, `niagara_validate`, `object_exists`, `object_inspect`, `outliner_tree`, `postprocess_get`, `postprocess_list_volumes`, `reflect_class`, `reflect_search_types`, `selection_get`, `seq_inspect`, `seq_list`, `seq_list_bindings`, `seq_validate`, `water_body_inspect`, `water_body_list`, `water_check_plugin`, `water_validate`, `water_waves_inspect`, `water_zone_inspect`.
+    - Two descriptors carry `readMeta` and stay undeclared, so they fail closed: `seq_open` (it opens the Sequencer editor on an asset: `open_editor_for_assets` / `open_level_sequence`) and `niagara_capability_probe` (its script names `spawn_system_at_location` in `hasattr` probes; the contract's token check cannot tell a probe from a call, and a capability probe is not worth an exception to the rule).
+    - How the list was reviewed at `54c4744c`: each `readMeta` descriptor's script function was read for calls to the Unreal API and to its file's shared helper block. None of the 47 calls a setter, a spawn, a save, a delete, a compile, a transaction or an editor-opening function, and none calls a helper that does (`_set` and `_pp_write` in the lighting and foliage helpers, `_apply_var` in Niagara, `_add_possessable` in Sequencer, `_mark_dirty` in Water). They use getters, `load_asset` / `load_object` lookups, registry and selection queries. The contract test repeats the check on every run.
 
 - [ ] **Step 1: Write the failing TS tests**
 
@@ -23251,34 +24907,102 @@ describe('lease enforcement contract (T8, wire)', () => {
   });
 });
 
-// R-1 option A. With option B, delete this describe block and record the regression in the Deploy B handoff.
+// R-1 (decided 2026-09-28): Python-backed descriptors declare read_only when they only
+// read; anything undeclared is a write. A declared read is trusted by the editor, so the
+// list is pinned and every entry is checked on each run.
 describe('python read declarations (R-1)', () => {
   const REVIEWED_READS = [
-    'actor_find',
-    'actor_get_selection',
-    'actor_inspect',
-    'editor_get_camera',
-    'object_exists',
-    'object_inspect',
-    'selection_get',
+    'actor_find', 'actor_get_selection', 'actor_inspect', 'asset_get_source_path',
+    'asset_inspect', 'editor_cvar_get', 'editor_get_camera', 'foliage_capability_probe',
+    'foliage_get_instance_count', 'foliage_scan_types', 'foliage_type_inspect', 'landscape_get_material',
+    'landscape_inspect', 'landscape_layer_list', 'landscape_list', 'landscape_list_splines',
+    'light_get', 'light_list', 'lighting_capability_probe', 'mesh_get_bounds',
+    'mesh_get_lods', 'mesh_get_materials', 'mesh_get_sockets', 'niagara_component_inspect',
+    'niagara_list_components', 'niagara_param_list', 'niagara_system_inspect', 'niagara_systems',
+    'niagara_validate', 'object_exists', 'object_inspect', 'outliner_tree',
+    'postprocess_get', 'postprocess_list_volumes', 'reflect_class', 'reflect_search_types',
+    'selection_get', 'seq_inspect', 'seq_list', 'seq_list_bindings',
+    'seq_validate', 'water_body_inspect', 'water_body_list', 'water_check_plugin',
+    'water_validate', 'water_waves_inspect', 'water_zone_inspect',
   ];
+  // Read-like by their meta, undeclared on purpose: seq_open opens the Sequencer editor,
+  // and niagara_capability_probe names a spawn function in its hasattr probes.
+  const UNDECLARED_ON_PURPOSE = ['niagara_capability_probe', 'seq_open'];
   const WRITE_TOKENS =
-    /set_editor_property|spawn_actor|spawn_system|\bsave_(?:asset|package|loaded|map|current|directory)|destroy_actor|delete_(?:asset|directory)|compile_blueprint|\.modify\(|mark_package_dirty|execute_console_command|set_actor_selection_state|set_actor_label|select_nothing|add_possessable|duplicate_(?:asset|actor)|create_asset|rename_asset/;
-  const all: PyToolDescriptor[] = [
-    ...actorPyDescriptors, ...assetPyDescriptors, ...editorPyDescriptors, ...foliagePyDescriptors,
-    ...landscapePyDescriptors, ...lightingPyDescriptors, ...meshPyDescriptors, ...niagaraPyDescriptors,
-    ...sequencerPyDescriptors, ...waterPyDescriptors,
+    /set_editor_property|spawn_actor|spawn_system|\bsave_(?:asset|package|loaded|map|current|directory)|destroy_actor|delete_(?:asset|directory)|compile_blueprint|\.modify\(|mark_package_dirty|execute_console_command|set_actor_selection_state|set_actor_label|select_nothing|add_possessable|duplicate_(?:asset|actor)|create_asset|rename_asset|set_(?:niagara_)?variable_|open_editor_for_assets|open_level_sequence/;
+  const byFile: Array<[string, PyToolDescriptor[]]> = [
+    ['actor/actor-py-tools.ts', actorPyDescriptors],
+    ['asset/asset-py-tools.ts', assetPyDescriptors],
+    ['editor/editor-py-tools.ts', editorPyDescriptors],
+    ['foliage/foliage-py-tools.ts', foliagePyDescriptors],
+    ['landscape/landscape-py-tools.ts', landscapePyDescriptors],
+    ['lighting/lighting-py-tools.ts', lightingPyDescriptors],
+    ['mesh/mesh-py-tools.ts', meshPyDescriptors],
+    ['niagara/niagara-py-tools.ts', niagaraPyDescriptors],
+    ['sequencer/sequencer-py-tools.ts', sequencerPyDescriptors],
+    ['water/water-py-tools.ts', waterPyDescriptors],
   ];
+  const all: PyToolDescriptor[] = byFile.flatMap(([, descriptors]) => descriptors);
+
+  /** The helper functions of a file's shared Python blocks (const PY_… = [ … ].join) that write. */
+  function writerHelpers(file: string): string[] {
+    const src = readFileSync(join(process.cwd(), 'src', 'tools', file), 'utf-8').replace(/\r\n/g, '\n');
+    const writers = new Set<string>();
+    for (const block of src.matchAll(/const PY_[A-Z_]+\s*=\s*\[([\s\S]*?)\]\.join\(/g)) {
+      let current: string | null = null;
+      for (const raw of block[1]!.split('\n')) {
+        const line = raw.trim().replace(/^['"`]/, '').replace(/['"`],?$/, '');
+        const def = /^def (\w+)\(/.exec(line);
+        if (def) {
+          current = def[1]!;
+          continue;
+        }
+        if (current && line.length > 0 && !/^\s/.test(line)) current = null;
+        if (current && WRITE_TOKENS.test(line)) writers.add(current);
+      }
+    }
+    return [...writers].sort();
+  }
 
   it('only the reviewed read tools declare read_only (a new one needs a reviewed entry here)', () => {
-    expect(all.length).toBeGreaterThan(50);
+    expect(all.length).toBeGreaterThan(90);
+    expect(REVIEWED_READS).toHaveLength(47);
     expect(all.filter((d) => d.readOnly === true).map((d) => d.name).sort()).toEqual(REVIEWED_READS);
+  });
+
+  it('a tool that declares an effect never declares read_only, and every effect-free read is accounted for', () => {
+    for (const d of all.filter((x) => x.readOnly === true)) {
+      expect(d.meta?.effects ?? ['no meta'], d.name).toEqual([]);
+    }
+    for (const name of UNDECLARED_ON_PURPOSE) {
+      expect(all.find((d) => d.name === name)?.readOnly, name).not.toBe(true);
+    }
   });
 
   it("a read_only tool's script calls no editor writer", () => {
     for (const d of all.filter((x) => x.readOnly === true)) {
       expect(d.buildScript.toString(), d.name).not.toMatch(WRITE_TOKENS);
     }
+  });
+
+  it("a read_only tool's script calls no shared helper that writes", () => {
+    const found: Record<string, string[]> = {};
+    for (const [file, descriptors] of byFile) {
+      const writers = writerHelpers(file);
+      found[file] = writers;
+      for (const d of descriptors.filter((x) => x.readOnly === true)) {
+        const script = d.buildScript.toString();
+        for (const helper of writers) {
+          expect(new RegExp(`(?<![\\w.])${helper}\\(`).test(script), `${d.name} calls ${helper}`).toBe(false);
+        }
+      }
+    }
+    // Fail closed: if the helper blocks stop parsing, this test must not pass on an empty list.
+    expect(found['lighting/lighting-py-tools.ts']).toEqual(['_pp_write', '_set']);
+    expect(found['sequencer/sequencer-py-tools.ts']).toEqual(['_add_possessable']);
+    expect(found['water/water-py-tools.ts']).toEqual(['_mark_dirty']);
+    expect(found['niagara/niagara-py-tools.ts']).toEqual(['_apply_var']);
+    expect(found['foliage/foliage-py-tools.ts']).toEqual(['_set']);
   });
 
   it('the factory declares read_only only for a read tool', async () => {
@@ -23333,7 +25057,7 @@ Expected: FAIL.
 - `owner_required` maps to `ue_error`.
 - `python_run` drops `read_only` and `resources`, because they are not in `executionFields`.
 - The `lease_status` description has no `enforced_for_writes`.
-- No descriptor declares `readOnly`.
+- No descriptor declares `readOnly`, so the pinned list of 47 meets an empty one. The two source checks (`calls no editor writer`, `calls no shared helper that writes`) pass already: they have nothing to check yet, and the helper-parse assertions at the end of the second one pass against the unchanged sources.
 
 The `tcp-client` owner test, the lease_unknown and repeats cases, and the access-policy-drift T8 cases already PASS. T8.1 and T8.2 made those true, and these tests pin them.
 
@@ -23384,7 +25108,7 @@ In `src/tcp-client.ts`, change these comments:
 - `TcpResponse.lease_warning` becomes `/** The command ran but collided with another owner's lease, or named a dead or redacted lease (Advisory, or a read under EnforcedForWrites). */`.
 - `TcpResponse.lease` becomes `/** The lease-gate refusal detail (code lease_conflict or owner_required): reason, holder, other_owners, hint. Never a handle. */`.
 
-- [ ] **Step 5: R-1 option A, where the factory declares reviewed reads (skip if the maintainer chose option B)**
+- [ ] **Step 5: R-1: the factory declares the reviewed reads**
 
 In `src/tools/ue-python.ts`, replace the `runUePythonJson` signature and its first two lines:
 
@@ -23425,9 +25149,47 @@ In `src/tools/py-tool-factory.ts`, add to `PyToolDescriptor` after `timeoutMs?: 
 
 In `makePyToolHandler`, replace `const result = await runUePythonJson(script, d.timeoutMs);` with `const result = await runUePythonJson(script, d.timeoutMs, { readOnly: d.readOnly === true });`.
 
-Add `readOnly: true,` after `meta: readMeta,` in these seven descriptors. Each one's script was reviewed: it uses only getters, `load_object`/`load_asset` lookups and selection queries.
-- `actorInspectDescriptor`, `actorFindDescriptor`, `actorGetSelectionDescriptor` in `src/tools/actor/actor-py-tools.ts`
-- `editorGetCameraDescriptor`, `selectionGetDescriptor`, `objectInspectDescriptor`, `objectExistsDescriptor` in `src/tools/editor/editor-py-tools.ts`
+Add `readOnly: true,` on its own line after `meta: readMeta,` in every descriptor of the ten python-tool files, except `niagaraCapabilityProbeDescriptor` and `seqOpenDescriptor`. The edit is the same line 47 times, so make it with this one-off script and review the diff. Create `D:/UEScratch/tools/p0-t8-mark-read-tools.mjs`:
+
+```js
+// One-off for P0 T8.3 (R-1): add `readOnly: true,` after `meta: readMeta,` in every
+// python-tool descriptor except the two that stay undeclared on purpose.
+import { readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+
+const TOOLS = 'D:/Hackathons/hayba/.worktrees/p0-safety/mcp-tools/hayba-mcp/src/tools';
+const FILES = ['actor/actor', 'asset/asset', 'editor/editor', 'foliage/foliage', 'landscape/landscape',
+  'lighting/lighting', 'mesh/mesh', 'niagara/niagara', 'sequencer/sequencer', 'water/water'].map((f) => `${f}-py-tools.ts`);
+const SKIP = new Set(['niagaraCapabilityProbeDescriptor', 'seqOpenDescriptor']);
+let marked = 0;
+for (const file of FILES) {
+  const path = join(TOOLS, file);
+  const text = readFileSync(path, 'utf8');
+  const eol = text.includes('\r\n') ? '\r\n' : '\n';
+  let descriptor = '';
+  const out = [];
+  for (const line of text.split(eol)) {
+    const start = /^export const (\w+): PyToolDescriptor/.exec(line);
+    if (start) descriptor = start[1];
+    out.push(line);
+    if (/^\s*meta: readMeta,\s*$/.test(line) && !SKIP.has(descriptor)) {
+      out.push(line.replace('meta: readMeta,', 'readOnly: true,'));
+      marked += 1;
+    }
+  }
+  writeFileSync(path, out.join(eol));
+}
+console.log(`marked ${marked} read tools`);
+process.exitCode = marked === 47 ? 0 : 1;
+```
+
+```powershell
+node D:\UEScratch\tools\p0-t8-mark-read-tools.mjs; $LASTEXITCODE
+git -C D:\Hackathons\hayba\.worktrees\p0-safety diff --stat -- mcp-tools/hayba-mcp/src/tools
+git -C D:\Hackathons\hayba\.worktrees\p0-safety diff -- mcp-tools/hayba-mcp/src/tools | Select-String -Pattern '^\+(?!\+\+)' | Group-Object Line | Select-Object Count, Name
+```
+
+Expected: `marked 47 read tools` and exit code `0`; the stat lists the ten `*-py-tools.ts` files next to `ue-python.ts` and `py-tool-factory.ts`; and among the added lines, `+  readOnly: true,` has the count 47. Run the script once only: a second run would add the line again, and the first command would then print `marked 47` while the diff shows 94.
 
 - [ ] **Step 6: Run the TS gate**
 
@@ -23435,7 +25197,7 @@ Add `readOnly: true,` after `meta: readMeta,` in these seven descriptors. Each o
 cd D:/Hackathons/hayba/.worktrees/p0-safety/mcp-tools/hayba-mcp && npx tsc --noEmit && npx vitest run && npm run lint:legacy-wrappers
 ```
 
-Expected: PASS. Existing tests may assert the exact `python_run` payload `{ script: full }` of a factory tool. Such an assertion now fails for the seven read tools only. Update it to include `read_only: true`, in the same commit.
+Expected: PASS. No existing test pins a factory tool's exact `python_run` payload (checked at `54c4744c`: the py-tool tests read `paramsFor('python_run').script`, and the two exact-payload assertions, `python-run.test.ts:118` and `validator/__tests__/ue-probe.test.ts:21`, call `python_run` directly and not through the factory), so no other test changes.
 
 - [ ] **Step 7: Commit (TS)**
 
@@ -23446,36 +25208,23 @@ git -C D:/Hackathons/hayba/.worktrees/p0-safety add \
   mcp-tools/hayba-mcp/src/tools/lease/lease-tools.ts \
   mcp-tools/hayba-mcp/src/tcp-client.ts mcp-tools/hayba-mcp/src/tcp-client.test.ts \
   mcp-tools/hayba-mcp/src/tools/ue-python.ts mcp-tools/hayba-mcp/src/tools/py-tool-factory.ts \
-  mcp-tools/hayba-mcp/src/tools/actor/actor-py-tools.ts mcp-tools/hayba-mcp/src/tools/editor/editor-py-tools.ts \
+  mcp-tools/hayba-mcp/src/tools/actor/actor-py-tools.ts mcp-tools/hayba-mcp/src/tools/asset/asset-py-tools.ts \
+  mcp-tools/hayba-mcp/src/tools/editor/editor-py-tools.ts mcp-tools/hayba-mcp/src/tools/foliage/foliage-py-tools.ts \
+  mcp-tools/hayba-mcp/src/tools/landscape/landscape-py-tools.ts mcp-tools/hayba-mcp/src/tools/lighting/lighting-py-tools.ts \
+  mcp-tools/hayba-mcp/src/tools/mesh/mesh-py-tools.ts mcp-tools/hayba-mcp/src/tools/niagara/niagara-py-tools.ts \
+  mcp-tools/hayba-mcp/src/tools/sequencer/sequencer-py-tools.ts mcp-tools/hayba-mcp/src/tools/water/water-py-tools.ts \
   mcp-tools/hayba-mcp/src/tools/ue-refusal-codes.test.ts mcp-tools/hayba-mcp/src/lease-keeper.test.ts \
   mcp-tools/hayba-mcp/src/tools/__tests__/lease-enforcement-contract.test.ts \
   mcp-tools/hayba-mcp/src/tools/__tests__/access-policy-drift.test.ts
 git -C D:/Hackathons/hayba/.worktrees/p0-safety commit -m "feat(mcp): owner_required code, python_run read_only and resources, reviewed read tools declare read_only"
+git -C D:/Hackathons/hayba/.worktrees/p0-safety status --short
 ```
 
-If Step 6 had to update existing py-tool payload tests, add those files to this commit too.
+Expected: `git status --short` prints nothing.
 
 - [ ] **Step 8: Docs (ADR-0010, CHANGELOG, migration README)**
 
-In `docs/adr/0010-multi-agent-editor-leases.md`, replace the four class-table rows (`:55-58`) with:
-
-```
-| Read        | reads state; only commands in the R12 read sets (`HaybaMCPCommandSets.h`: control plane, reads, PIE observation, `lease_*`) | none                                               |
-| WriteScoped | changes something inside one world; every command outside the read sets (fail closed); PIE drive commands   | X on declared resources, else only IX on the world |
-| WriteWorld  | `level_save`, `editor_save*`, `wp_load_cell`, a World Partition python script, an undeclared python mutation | X on `world:<current>`; an undeclared non-WP `python_run`: X on `global` |
-| Global      | `level_load`, `level_create`, PIE start/stop, save-and-quit, console commands, Live Coding                    | X on `global`                                      |
-```
-
-Replace the `python_run` paragraph (`:60-63`) with:
-
-```
-`python_run` is classified per request: a World Partition script is
-WriteWorld whatever it declares; declared `resources` make it WriteScoped on
-those claims; `read_only: true` makes it Read; anything else is an undeclared
-mutation and takes X on `global` for conflicts, so it meets any other owner's
-lock, including an `asset:` build lease. The lexical tier classifier no
-longer decides the class: it misses real writers.
-```
+The class table and the `python_run` paragraph of `docs/adr/0010-multi-agent-editor-leases.md` were amended in T8.2's commit (spec T8 design 6). In the same file, add one sentence to that `python_run` paragraph, after `it misses real writers.`: `The Node server's Python-backed read tools declare \`read_only\` themselves (\`PyToolDescriptor.readOnly\`, a reviewed list), so they keep working while another owner holds a lease; a tool that does not declare it is a write.`
 
 Replace the section from `### Enforcement is a setting, advisory by default` through `agent that never acquires a lease are unaffected until someone else holds one.` with:
 
@@ -23602,7 +25351,7 @@ Expected:
 - The only `Result={Fail}` is `Hayba.MCP.UI.RenderWidgetToPng`.
 - The moved-commands line is present.
 
-Every earlier router test still passes under the new default. That is the check that no test relies on an owner-less write.
+Every earlier router test still passes under the new default. One of them does rely on owner-less writes, `Hayba.MCP.State.RouterStopAgentPieFromAnyCaller`, and passes because T8.1 Step 8 starts it with nobody present; its name must be among the `Success` lines of this run.
 
 - [ ] **Step 3: TS gate and host kit**
 
@@ -23835,7 +25584,7 @@ In `HaybaMCPEditorStatePolicy.h`, insert right before `DecideUserPlay`:
 	}
 ```
 
-Replace the body of `DecideUserPlay` with the code below. Keep T2.1's `if (bUnsafe)` branch exactly as T2.1 wrote it, as the first statement. If T2.1 spelled the text through a named constant, keep T2.1's lines; the literal shown here is the same §2.10 text. Everything after that branch is new:
+Replace the body of `DecideUserPlay` with the code below. Keep T2.1's `if (bUnsafe)` branch exactly as T2.1 wrote it, as the first statement. If T2.1 spelled the text through a named constant, keep T2.1's lines; the literal shown here is the same Appendix A.2.10 text. Everything after that branch is new:
 
 ```cpp
 	inline FPlayDecision DecideUserPlay(const TArray<FBusyAsset>& Busy, EPlayRequestKind Kind, int32 Mode, bool bUnsafe, double LastVetoAt, double Now)
@@ -24296,18 +26045,396 @@ git -C D:\Hackathons\hayba\.worktrees\p0-safety commit -m "docs: the Play veto f
 
 ---
 
+### Task GB.0: Cut-line variant of Deploy B (only when T7 and T8 are not ready)
+
+Spec §3, notes on the order: "if time runs short, T4 to T6 can ship without T7/T8, and enforcement then stays Advisory. T8 must never ship without T4." **Skip this task when T7.4 and T8.4 have passed**: Deploy B is then GB.1 to GB.5 as written. Take it only when the maintainer decides to ship Deploy B without T7 and T8.
+
+- **What the cut ships:** T4 (`lease_id`), T5 (save sites), T6 (the owner in the log, rate-limited lease warnings) and T10 (the Play veto for builds). T10.1 depends only on T2.2 and T3.2, so under the cut it lands directly on top of T6.3.
+- **What it leaves for a second Deploy B round:** T7 (lease lifetime) and T8 (`EnforcedForWrites`, `owner_required`, fail-closed write detection, the `read_only` declarations).
+- **D1 holds.** T8 is not in the tree, so `EnforcedForWrites` does not ship and the default stays `Advisory`.
+- **The cut is a state of `fix/p0-safety`, not a revert.** It is available only while no T7 or T8 commit is on the branch. If one has landed, finish T7 and T8 and ship the full Deploy B: a cut taken from a side branch would put the tag `p0-deploy-b` outside the history that GC.1 checks.
+
+The numbers under the cut: the manifest holds sections `# T0` to `# T6`, 61 names (the 8 existing ones, Deploy A's 33, T4 5, T5 12, T6 3; T10 adds none), so the gate's `--min-total` is `R0 + 53`. The host kit is T4.4's: 33 tests.
+
+**Files:**
+- Modify: `mcp-tools/hayba-mcp/scripts/p0-live-ladder.mjs`: the usage comment (`:12` of the file), `parseArgs`, new `B_CUT_STEPS` after `B_STEPS`, and `STEPS`
+- Test: `mcp-tools/hayba-mcp/tests/p0-live-ladder.test.ts` (one new case)
+- Create (outside the repo): `D:/UEScratch/tools/p0-cut-handoff.mjs`
+- Modify: `docs/handoffs/HANDOFF-p0-deploy-b-consumer.md`, through that script, between GB.3 Step 1 and GB.3 Step 2
+
+**Interfaces:**
+- Consumes:
+  - GB.2's `B_STEPS` (GB.2 Steps 1 to 5 only add the steps to the script and commit; they run before this task's Step 2);
+  - T4.2's refusal `lease_renew [lease_id_required]: lease_id is required; send the lease_id lease_acquire returned`;
+  - T6.2's log lines `[advisory] lease_conflict: '<cmd>' (<class>) conflicts with a lease held by '<owner>' (…)` and `[advisory] lease_conflict/held repeated N more times in 30 s: owner='conn:*' cmd='<cmd>' holder='<owner>' …`;
+  - `lease_status` → `data.enforcement`; the reply field `lease_warning {enforcement, holder_owner, repeats_in_window}`;
+  - the handoff text of GB.3 Step 1.
+- Produces:
+  - `STEPS['b-cut']`: B1, B2, B3, B4, B5, B8, B10 (B8 manual), run with `--deploy b-cut`. B3, B4, B5 and B8 are the Deploy B steps themselves. B1, B2 and B10 are the cut's own, because the Deploy B ones assert T7 and T8 behaviour (`enforced_for_writes`, renew by owner, `owner_required`). B6, B7 and B9 have no cut form: they test only T7 and T8.
+  - The cut handoff, and the substitutions for GB.1, GB.3, GB.4 and GB.5 listed in Steps 5 to 8.
+
+- [ ] **Step 1: Check that the tree is the cut tree**
+
+```powershell
+$WT = "D:\Hackathons\hayba\.worktrees\p0-safety"
+git -C $WT status --short
+Select-String -Path "$WT\mcp-tools\hayba-mcp\scripts\p0-expected-automation-tests.txt" -Pattern '^# T[0-9]+' | ForEach-Object Line
+(Get-Content "$WT\mcp-tools\hayba-mcp\scripts\p0-expected-automation-tests.txt" | Where-Object { $_ -match '^Hayba\.' }).Count
+Select-String -Path "$WT\unreal\HaybaMCPToolkit\Source\HaybaMCPToolkit\Private\HaybaMCPDeveloperSettings.h" -Pattern 'LeaseEnforcement\s*=\s*EHaybaMCPLeaseEnforcement::\w+;' | ForEach-Object { $_.Line.Trim() }
+(Select-String -Path "$WT\unreal\HaybaMCPToolkit\Source\HaybaMCPToolkit\Private\HaybaMCPEditorState.cpp" -SimpleMatch 'hayba.PIEBuildVeto').Count
+Test-Path "$WT\unreal\HaybaMCPToolkit\Source\HaybaMCPToolkit\Private\Tests\HaybaMCPLeaseBindingTest.cpp"
+(Select-String -Path "$WT\unreal\HaybaMCPToolkit\Source\HaybaMCPToolkit\Private\HaybaMCPDeveloperSettings.h" -SimpleMatch 'EnforcedForWrites').Count
+```
+
+Expected, in order: nothing (a clean tree); the sections `# T0` to `# T6` and no other; `61`; the default line `EHaybaMCPLeaseEnforcement LeaseEnforcement = EHaybaMCPLeaseEnforcement::Advisory;`; a count of at least `1` (T10.1 has landed); `False` (T7.2's test file does not exist, so no T7 code is in the tree); and `0` (T8.1's enum value does not exist). If any of the last three differs, this is not the cut tree: stop, and either land T10.1 or finish T7 and T8.
+
+- [ ] **Step 2: Write the failing ladder test**
+
+GB.2 Steps 1 to 5 must be done first (they add `B_STEPS` and commit). Append inside `describe('p0-live-ladder runner', …)` in `tests/p0-live-ladder.test.ts`:
+
+```ts
+  it('the cut-line Deploy B ladder has no renew by owner and no owner_required step', () => {
+    const cut = STEPS['b-cut'] as Array<{ id: string; manual?: boolean }>;
+    const full = STEPS.b as Array<{ id: string }>;
+    expect(cut.map((s) => s.id)).toEqual(['B1', 'B2', 'B3', 'B4', 'B5', 'B8', 'B10']);
+    expect(cut.filter((s) => s.manual).map((s) => s.id)).toEqual(['B8']);
+    // B3, B4, B5 and B8 are the Deploy B steps themselves; B1, B2 and B10 are the cut's own.
+    for (const id of ['B3', 'B4', 'B5', 'B8']) {
+      expect(cut.find((s) => s.id === id), id).toBe(full.find((s) => s.id === id));
+    }
+    for (const id of ['B1', 'B2', 'B10']) {
+      expect(cut.find((s) => s.id === id), id).not.toBe(full.find((s) => s.id === id));
+    }
+    expect(parseArgs(['--deploy', 'B-CUT'])).toMatchObject({ deploy: 'b-cut' });
+    expect(() => parseArgs(['--deploy', 'd'])).toThrow(/--deploy a\|b\|b-cut\|c is required/);
+  });
+```
+
+```powershell
+Set-Location D:\Hackathons\hayba\.worktrees\p0-safety\mcp-tools\hayba-mcp
+npx vitest run tests/p0-live-ladder.test.ts
+```
+
+Expected: FAIL in the new case with `TypeError: Cannot read properties of undefined (reading 'map')`: `STEPS['b-cut']` does not exist yet. The other 12 cases pass.
+
+- [ ] **Step 3: Add the cut steps**
+
+In `scripts/p0-live-ladder.mjs`:
+
+(a) In the usage comment at the top, replace `--deploy a|b|c` with `--deploy a|b|b-cut|c`.
+
+(b) In `parseArgs`, replace
+
+```js
+  if (!['a', 'b', 'c'].includes(out.deploy)) throw new Error('--deploy a|b|c is required');
+```
+
+with
+
+```js
+  if (!['a', 'b', 'b-cut', 'c'].includes(out.deploy)) throw new Error('--deploy a|b|b-cut|c is required');
+```
+
+(c) Insert after the closing `];` of `B_STEPS`, before `export const STEPS`:
+
+```js
+// ----------------------------------------------------------------------------- Deploy B, cut line (T4-T6, T10)
+// Without T7 and T8: enforcement is Advisory, a renew needs the lease_id, and
+// nothing is refused for a missing owner.
+
+const deployB = (id) => B_STEPS.find((s) => s.id === id);
+
+const B_CUT_STEPS = [
+  {
+    id: 'B1',
+    title: 'ping reports lease_id; enforcement is advisory',
+    run: async (ctx) => {
+      const caps = (await ctx.call('ping')).data?.capabilities ?? {};
+      check(caps.lease_id === true, 'capabilities.lease_id is not true');
+      check(caps.owner_required === undefined, 'capabilities.owner_required is set: this build has T8; run --deploy b');
+      const status = await ctx.call('lease_status');
+      check(status.data?.enforcement === 'advisory', `lease_status.enforcement is ${status.data?.enforcement}`);
+    },
+  },
+  {
+    id: 'B2',
+    title: 'lease_id round trip: renew by id, one batch, release; a renew without an id is refused',
+    run: async (ctx) => {
+      const tail = new LogTail(ctx.logFile);
+      const c = await ctx.conn({ owner: 'ladder-b2' });
+      try {
+        const g = await c.send('lease_acquire', { resources: ['asset:/Game/__HaybaTest__/X'], ttl_s: 60 });
+        check(g.ok && g.data?.status === 'granted' && LEASE_ID_RE.test(g.data.lease_id ?? ''), `acquire: ${JSON.stringify(g.data ?? g.error)}`);
+        check(!('token' in g.data), 'the grant still carries token (R1)');
+        const id = g.data.lease_id;
+        const byId = await c.send('lease_renew', { lease_id: id, ttl_s: 60 });
+        check(byId.ok && byId.data?.renewed === true, `renew by lease_id: ${byId.error}`);
+        const noId = await c.send('lease_renew', {});
+        check(!noId.ok && /\[lease_id_required\]/.test(noId.error ?? ''),
+          `renew without an id: expected [lease_id_required], got ${noId.error ?? 'ok'}`);
+        const b = await c.send('editor_batch', { lease_id: id, steps: [{ cmd: 'ping', fence_after: 'none' }] });
+        check(b.ok && b.data?.job_id, `editor_batch: ${b.code ?? b.error}`);
+        const done = await waitFor('the batch finishes', async () => {
+          const s = await c.send('batch_status', { job_id: b.data.job_id });
+          return ['succeeded', 'failed'].includes(s.data?.status) ? s.data : null;
+        }, 30_000, 500);
+        check(done.status === 'succeeded', `the batch ended ${done.status}`);
+        const rel = await c.send('lease_release', { lease_id: id });
+        check(rel.ok && rel.data?.released === true, `release: ${rel.error}`);
+      } finally {
+        c.close();
+      }
+      check(tail.lines(/unknown or expired/).length === 0, 'the log has "unknown or expired" lines');
+    },
+  },
+  deployB('B3'),
+  deployB('B4'),
+  deployB('B5'),
+  deployB('B8'),
+  {
+    id: 'B10',
+    title: 'fifty per-call advisory conflicts log one Warning and one drained line (R-9, R-18)',
+    run: async (ctx) => {
+      const holder = { owner: 'ladder-b10-a' };
+      const g = await ctx.call('lease_acquire', { resources: ['global'], ttl_s: 180, bind_connection: false }, holder);
+      check(g.ok && LEASE_ID_RE.test(g.data?.lease_id ?? ''), `acquire: ${g.error}`);
+      const tail = new LogTail(ctx.logFile);
+      try {
+        for (let i = 0; i < 50; i++) {
+          // No owner and one connection per call: every caller is a new conn:<n>.
+          const r = await ctx.call('blueprint_add_node', { path: '/Game/__HaybaTest__/BP_None', node_type: 'branch' });
+          check(r.code !== 'lease_conflict' && r.code !== 'owner_required', `call ${i + 1}: Advisory refused with ${r.code}`);
+          check(r.lease_warning?.enforcement === 'advisory' && r.lease_warning?.holder_owner === 'ladder-b10-a',
+            `call ${i + 1}: no advisory lease_warning: ${JSON.stringify(r.lease_warning)}`);
+        }
+        await sleep(65_000);
+        const first = tail.lines(/Warning: \[advisory\] lease_conflict: 'blueprint_add_node' .* held by 'ladder-b10-a'/);
+        const drained = tail.lines(/\[advisory\] lease_conflict\/held repeated \d+ more times in 30 s: owner='conn:\*' cmd='blueprint_add_node' holder='ladder-b10-a'/);
+        check(first.length === 1, `expected 1 first-hit Warning, found ${first.length}`);
+        check(drained.length === 1 && /repeated 49 more times/.test(drained[0]), `drained line: ${drained.join(' | ') || 'none'}`);
+      } finally {
+        await ctx.call('lease_release', { lease_id: g.data.lease_id }, holder);
+      }
+    },
+  },
+];
+```
+
+(d) Change `export const STEPS = { a: A_STEPS, b: B_STEPS, c: [] };` to `export const STEPS = { a: A_STEPS, b: B_STEPS, 'b-cut': B_CUT_STEPS, c: [] };`.
+
+- [ ] **Step 4: Run the ladder tests, the TS gate, and commit**
+
+```powershell
+npx vitest run tests/p0-live-ladder.test.ts
+npx tsc --noEmit
+Set-Location D:\Hackathons\hayba\.worktrees\p0-safety
+git add mcp-tools/hayba-mcp/scripts/p0-live-ladder.mjs mcp-tools/hayba-mcp/tests/p0-live-ladder.test.ts
+git commit -m "test(tools): ladder steps for a Deploy B without the lease lifetime and enforcement changes"
+git status --short
+```
+
+Expected: PASS (13 tests in this file; GC.2's count is 14 from then on); `tsc` exits 0; `git status --short` prints nothing.
+
+- [ ] **Step 5: Run the gate (GB.1) with the cut's numbers**
+
+Run GB.1 Steps 1 to 9 with these four differences, and no other:
+
+| GB.1 step | As written | Under the cut |
+|---|---|---|
+| Step 1, expected | sections `# T0` to `# T8`; one `EnforcedForWrites` default line | sections `# T0` to `# T6`; the `Select-String` for the `EnforcedForWrites` default prints **nothing** (Step 1 of this task showed the `Advisory` default) |
+| Step 5, command | `--min-total ($R0 + 64)` | `--min-total ($R0 + 53)` |
+| Step 5, expected | 72 manifest names | 61 manifest names |
+| Step 9, command | `$NewNames = 64` | `$NewNames = 53` |
+
+GB.1 Step 8 (only after a watchdog) keeps its four test names: all four exist under the cut. `gate-b-sha.txt` is written as in GB.1 Step 1.
+
+- [ ] **Step 6: Run the cut ladder on the scratch GUI host**
+
+Launch the scratch GUI host with GA.2 Step 10's block (the host was built by Step 5 at the gate SHA). Then:
+
+```powershell
+$H = "D:\UEScratch\h58"; $WT = "D:\Hackathons\hayba\.worktrees\p0-safety"
+$SHA = (Get-Content "D:\UEScratch\logs\gate-b-sha.txt" -TotalCount 1).Trim().Substring(0, 8)
+node "$WT\mcp-tools\hayba-mcp\scripts\p0-live-ladder.mjs" --deploy b-cut --host-dir $H --only B1,B2,B3,B4,B5,B10 |
+  Tee-Object "D:\UEScratch\logs\gate-b-$SHA.txt" -Append
+node "$WT\mcp-tools\hayba-mcp\scripts\p0-live-ladder.mjs" --deploy b-cut --host-dir $H --only B8 --manual
+```
+
+Expected: six `PASS` lines and exit 0 from the first command; `B8` `PASS` from the second, which the person at the scratch editor runs (GB.2 Step 8 describes the Play presses). Close the scratch editor afterwards. GB.2's own ladder run (its Steps 6 to 8) is not done under the cut.
+
+- [ ] **Step 7: Write the cut handoff (GB.3)**
+
+Do GB.3 Step 1 as written. Then create `D:/UEScratch/tools/p0-cut-handoff.mjs`:
+
+```js
+// One-off for the cut-line Deploy B: rewrite the paragraphs of the Deploy B handoff
+// that describe T7 and T8. Every anchor must match exactly one line, or nothing is written.
+import { readFileSync, writeFileSync } from 'node:fs';
+
+const DOC = 'D:/Hackathons/hayba/.worktrees/p0-safety/docs/handoffs/HANDOFF-p0-deploy-b-consumer.md';
+
+// from: the start of the first line to replace. through: the start of the last line
+// of the block (omit it for one line). to: the lines that replace the block.
+const EDITS = [
+  {
+    from: '# Hand-off: P0 Deploy B to the consumer (',
+    to: [
+      '# Hand-off: P0 Deploy B to the consumer, cut line (lease_id, save refusals, Play veto for builds)',
+      '',
+      '**This is the cut-line Deploy B.** It ships `lease_id`, the save refusals, rate-limited lease warnings and the Play veto for builds. The lease lifetime changes and `EnforcedForWrites` follow in a second Deploy B window; until then lease enforcement stays `Advisory`.',
+    ],
+  },
+  {
+    from: '- **Enforcement and log volume (T6, T8).**',
+    to: [
+      '- **Log volume (T6).** Lease enforcement stays **`Advisory`**: a command that conflicts with another owner\'s lease still runs, and its reply carries a `lease_warning`. Every lease warning is rate-limited to one line per 30 s per key, with `(+N identical …)` and `repeated N more times …` counts. The `Processing command` log line names the owner, how it was resolved, and the connection.',
+    ],
+  },
+  {
+    from: '- **Lease lifetime (T7).**',
+    to: [
+      '- **Lease lifetime is unchanged from Deploy A.** A lease bound to a connection is deleted when that connection closes, and the editor closes a connection idle for 5 s. `lease_renew` and `lease_release` need the `lease_id` (or the `ticket` of a queued request). Renew by owner, `lease_release {all:true}` and the 60 s orphan grace arrive in the second Deploy B window.',
+    ],
+  },
+  {
+    from: '- Every MCP server a lane uses runs with `HAYBA_AGENT_ID`',
+    to: [
+      '- Every MCP server a lane uses runs with `HAYBA_AGENT_ID` equal to that lane\'s gate `--owner`. Otherwise the lane\'s own MCP writes carry a `lease_warning` against its own gate lease now, and are refused once `EnforcedForWrites` ships.',
+    ],
+  },
+  {
+    from: '- An undeclared `python_run` conflicts with every other owner\'s lease.',
+    to: [
+      '- `python_run` is classified as in Deploy A. Declaring `resources` on a script that writes is optional now and required once `EnforcedForWrites` ships, so start declaring them. The `read_only` declaration arrives with that deploy.',
+    ],
+  },
+  {
+    from: '  **Always pass `--label build:<id>`.**',
+    to: [
+      '  **Always pass `--label build:<id>`.** The build lease is then a second lease of the lane, with its own `lock.json` entry, and releasing the lane\'s gate lease never gives it back. From the second Deploy B window on, the label also keeps the build lease out of the release that a helper triggers when it sends a redacted handle under `token`.',
+    ],
+  },
+  {
+    from: '- `bpgraph.mjs`: on any reconnect send `lease_renew {}` before the next write.',
+    to: [
+      '- `bpgraph.mjs`: keep the socket busy (`ping` at least every 2 s while idle) and re-acquire after any reconnect, as in Deploy A: the 5 s drop still deletes a bound lease. Treat `r.data?.code === \'package_read_only\'` from `blueprint_compile` (`:942-948`, `:1169-1178`) as fatal: exit 3 and print `r.data.make_writable_hint`. Keep the `readOnlyPackages` preflight (`:672-700`). Reword the header comment (`:35-40`) that says a read-only save crashes the editor.',
+    ],
+  },
+  {
+    from: '#   capabilities.lease_id = true; lease_enforcement = "enforced_for_writes";',
+    to: ['#   capabilities.lease_id = true; editor_unsafe = false. lease_status reports enforcement "advisory".'],
+  },
+  {
+    from: '- **Enforcement problems** (no rebuild, no restart).',
+    through: '  and restart. Check: `ping` shows',
+    to: ['- **Enforcement** is `Advisory` in this deploy, so there is nothing to switch off.'],
+  },
+  {
+    from: '- **An old gate reached the new plugin**',
+    through: '  or restart the editor.',
+    to: [
+      '- **An old gate reached the new plugin** (`KeyError` at `editor_gate.py:273`). It left a global X lease with `bind_connection:false`. Under `Advisory` it refuses nothing: other owners\' writes carry a `lease_warning` until it lapses, 900 s at most. Restart the editor to clear it at once.',
+    ],
+  },
+  {
+    from: '- **Python-backed tools are writes unless they declare `read_only` (R-1).**',
+    to: [
+      '- **Enforcement is `Advisory`.** Nothing is refused for a lease conflict or a missing owner; conflicts are warnings on the reply and in the log. `EnforcedForWrites`, `owner_required`, the `read_only` declarations of the Python-backed tools, renew by owner, `lease_release {all:true}` and the orphan grace ship together in the second Deploy B window.',
+    ],
+  },
+  { from: '- **Undeclared `python_run` steps in `editor_batch` (R-24).**', to: [] },
+  {
+    from: '- **Read-like commands (R-12).**',
+    to: ['- **Read-like commands (R-12).** The 18 commands listed in Deploy A\'s §8 are reads: allowed during PIE.'],
+  },
+  {
+    from: '- **Asset-busy lifetimes (R-23).**',
+    to: [
+      '- **Asset-busy lifetimes (R-23).** A bound build lease still dies 5 s after its socket goes idle, so `asset_busy` and the Play veto for builds are lost mid-build unless bpgraph pings every 2 s (Deploy A\'s §2).',
+    ],
+  },
+];
+
+const text = readFileSync(DOC, 'utf8');
+const eol = text.includes('\r\n') ? '\r\n' : '\n';
+let lines = text.split(eol);
+for (const edit of EDITS) {
+  const starts = lines.flatMap((line, i) => (line.startsWith(edit.from) ? [i] : []));
+  if (starts.length !== 1) throw new Error(`${starts.length} lines start with: ${edit.from}`);
+  let end = starts[0];
+  if (edit.through) {
+    end = lines.findIndex((line, i) => i > starts[0] && line.startsWith(edit.through));
+    if (end < 0 || end - starts[0] > 12) throw new Error(`no end of block within 12 lines of: ${edit.from}`);
+  }
+  lines = [...lines.slice(0, starts[0]), ...edit.to, ...lines.slice(end + 1)];
+}
+writeFileSync(DOC, lines.join(eol));
+console.log(`rewrote ${EDITS.length} blocks`);
+```
+
+```powershell
+Set-Location D:\Hackathons\hayba\.worktrees\p0-safety
+node D:\UEScratch\tools\p0-cut-handoff.mjs
+$Doc = "docs\handoffs\HANDOFF-p0-deploy-b-consumer.md"
+Select-String -Path $Doc -Pattern 'EnforcedForWrites|enforced_for_writes|owner_required|lease_renew \{\}|all:true' | ForEach-Object { "$($_.LineNumber): $($_.Line.Substring(0, [math]::Min(110, $_.Line.Length)))" }
+```
+
+Expected: `rewrote 14 blocks`. Every line the `Select-String` prints describes what arrives later (it says `second Deploy B window`, `once … ships` or `is required once`), belongs to §6 (the exit-code table names `owner_required`), or is a helper rule that is harmless under `Advisory` (`stop at the first lease_conflict / owner_required`). No line says that `EnforcedForWrites` is the default, and none tells a lane to send `lease_renew {}` or `lease_release {all:true}`. Run the script once only: a second run throws on the first anchor, because the title no longer has its opening parenthesis after `the consumer`.
+
+Then do GB.3 Step 2 as written (its first count is `0` under the cut, because T8.3's `readOnly` declarations are not in the tree) and GB.3 Step 3 with this tag message instead:
+
+```powershell
+$SHA_B = (Get-Content "D:\UEScratch\logs\gate-b-sha.txt" -TotalCount 1).Trim()
+git tag -a p0-deploy-b $SHA_B -m "P0 Deploy B, cut line: lease_id, save sites, rate-limited lease warnings, Play veto for builds (T4-T6, T10)"
+git add docs/handoffs/HANDOFF-p0-deploy-b-consumer.md
+git commit -m "docs(handoff): P0 Deploy B (cut line) for the consumer's window"
+git push origin fix/p0-safety p0-deploy-b
+```
+
+- [ ] **Step 8: Merge (GB.4, GB.5) with the cut's expectations**
+
+Run GB.4 and GB.5 as written. The anim save fixups of GB.4 and the Blueprint save resolution of GB.5 are T5's, so they apply unchanged. Three texts differ:
+
+| Where | As written | Under the cut |
+|---|---|---|
+| GB.4 Step 5, expected | the checker exits 0 over T0–T8 and T10 | the checker exits 0 over T0–T6 and T10 (61 names) |
+| GB.5 Step 4, PR title | `Merge P0 Deploy B (T4-T8, T10) into the brain-client trunk` | `Merge P0 Deploy B, cut line (T4-T6, T10), into the brain-client trunk` |
+| GB.5 Step 4, PR body | the first paragraph names T4 to T8 and T10, and "all 72 manifest names" | replace the first paragraph with `P0 Deploy B, cut line, the tag p0-deploy-b ({TAG}), merged into the trunk ({SHA}): lease_id (T4), read-only save refusals with one raw save in the tree (T5), rate-limited lease warnings with the owner in the log (T6), and the Play veto for builds (T10). Lease enforcement stays Advisory; T7 and T8 follow.` and write `all 61 manifest names` |
+
+- [ ] **Step 9: Record what the second round changes**
+
+T7 and T8 then land on `fix/p0-safety` in the normal order (T7.1 to T7.4, T8.1 to T8.4), followed by a second Deploy B round: GB.1 to GB.5 exactly as written, with these names so that nothing of the first round is overwritten:
+
+| Item | First round (cut) | Second round |
+|---|---|---|
+| Tag | `p0-deploy-b` | `p0-deploy-b2` |
+| Handoff | `HANDOFF-p0-deploy-b-consumer.md` | `HANDOFF-p0-deploy-b2-consumer.md` |
+| Merge branches and worktrees | `merge/p0-deploy-b-consumer` (`p0b-consumer`), `merge/p0-deploy-b-into-bc` (`p0b-bc`) | `merge/p0-deploy-b2-consumer` (`p0b2-consumer`), `merge/p0-deploy-b2-into-bc` (`p0b2-bc`) |
+| Previous deploy in the handoff (`<MERGE_A>`) | Deploy A's merge commit | the cut's merge commit: before the second GB.3, run `Copy-Item D:\UEScratch\logs\merge-b-sha.txt D:\UEScratch\logs\merge-a-sha.txt` |
+| GB.4 Steps 2 and 3 (anim save fixups) | applied | already on the deploy branch: GB.4 Step 1's contract run passes, and Steps 2 and 3 change nothing |
+| Ladder | `--deploy b-cut` | `--deploy b` (GB.2 Steps 6 to 8) |
+
+The second round's GB.4 overwrites `merge-b-sha.txt` with its own deploy commit, which is what GC.3 must name as Deploy C's previous deploy. GC.1's check `git merge-base --is-ancestor p0-deploy-b HEAD` holds in both cases; after a cut, also run `git merge-base --is-ancestor p0-deploy-b2 HEAD` in GC.1 Step 1 and expect `0`.
+
+```powershell
+"GB.0 $(Get-Date -Format o): Deploy B shipped as the cut line (T4-T6, T10). Second round: tag p0-deploy-b2, handoff HANDOFF-p0-deploy-b2-consumer.md." |
+  Add-Content "D:\UEScratch\logs\gate-b-cut-note.txt"
+```
+
+**Done when:** the cut tree passed the gate with 61 manifest names and `R0 + 53`, the `b-cut` ladder passed (B8 by hand), the handoff describes `Advisory` enforcement and no T7 or T8 behaviour, `p0-deploy-b` is tagged at the gate SHA, and the note for the second round is written. Deploy B then shipped under D1: `lease_id` without `EnforcedForWrites`, never the reverse.
+
 ### Task GB.1: Deploy B gate: strict build, exact-name headless run, TS gate, host kit
 
 Spec §6.3, §7.1 and §7.4 row B. Deploy B ships T4–T8 plus T10 (D7 approved, mode 1), and D1 binds it: `EnforcedForWrites` ships in the same deploy as `lease_id`. This task changes no code.
 
 **Files:**
 - Read: `mcp-tools/hayba-mcp/scripts/p0-expected-automation-tests.txt`. It must hold sections `# T0`–`# T8` (T10 adds no name; it extends `Hayba.MCP.State.UserPlayDecision`): the 8 existing names plus 64 new ones (A's 33, then T4 5, T5 12, T6 3, T7 7, T8 4).
-- Write (outside the repo): `D:/UEScratch/out/p0-<SHA>/`, `D:/UEScratch/reports/<SHA>/`, `D:/UEScratch/reports/<SHA>-realpie/`, `D:/UEScratch/logs/gate-b-<SHA>.txt`
+- Write (outside the repo): `D:/UEScratch/out/p0-<SHA>/`, `D:/UEScratch/reports/<SHA>/`, `D:/UEScratch/reports/<SHA>-realpie/`, `D:/UEScratch/logs/gate-b-<SHA>.txt`, `D:/UEScratch/logs/gate-b-sha.txt`
 - Test: all of the above plus `python -m pytest <host-kit>/tests -q`
 
 **Interfaces:**
 - Consumes: `SCR/check-automation-report.mjs`, R0 (T0.3), the scratch host `D:/UEScratch/h58`.
-- Produces: `D:/UEScratch/logs/gate-b-<SHA>.txt`, cited by GB.3.
+- Produces: `D:/UEScratch/logs/gate-b-<SHA>.txt`, cited by GB.3, and `D:/UEScratch/logs/gate-b-sha.txt`, one line holding the full gate SHA, which GB.3 reads to substitute `<SHA_B>` and to place the tag.
 
 - [ ] **Step 1: Pin the commit and check the preconditions of D1 and R-26**
 
@@ -24317,6 +26444,7 @@ $WT  = "D:\Hackathons\hayba\.worktrees\p0-safety"
 $H   = "D:\UEScratch\h58"
 git -C $WT status --short
 $SHA = git -C $WT rev-parse --short HEAD
+git -C $WT rev-parse HEAD | Set-Content "D:\UEScratch\logs\gate-b-sha.txt"
 Test-Path "$H\Config\DefaultHaybaMCP.ini"
 Select-String -Path "$WT\mcp-tools\hayba-mcp\scripts\p0-expected-automation-tests.txt" -Pattern '^# T[0-9]+' | ForEach-Object Line
 Select-String -Path "$WT\unreal\HaybaMCPToolkit\Source\HaybaMCPToolkit\Private\HaybaMCPDeveloperSettings.h" -Pattern 'LeaseEnforcement\s*=\s*EHaybaMCPLeaseEnforcement::EnforcedForWrites' | ForEach-Object Line
@@ -24425,33 +26553,47 @@ Set-Location $WT
 python -m pytest <host-kit>/tests -q 2>&1 | Tee-Object "D:\UEScratch\logs\gate-b-$SHA.txt" -Append | Select-Object -Last 3
 ```
 
-Expected: `tsc` exits 0. vitest shows 0 failed and 1 skipped; that includes `lease-enforcement-contract.test.ts` (the C++ default is `EnforcedForWrites`) and `save-site-contract.test.ts` (one raw save, and at least 11 `RefuseIfReadOnly(TEXT("` sites). pytest reports `30 passed`: the 22 existing tests plus T4.4's 8.
+Expected: `tsc` exits 0. vitest shows 0 failed and 1 skipped; that includes `lease-enforcement-contract.test.ts` (the C++ default is `EnforcedForWrites`) and `save-site-contract.test.ts` (one raw save, and at least 11 `RefuseIfReadOnly(TEXT("` sites). pytest reports `33 passed`: the 22 tests at the base, GA.0's 5, and T4.4's 6.
 
 - [ ] **Step 8 (only if Step 4's watchdog fired): Rerun the owned-child-class tests on the GUI host**
 
-Launch the GUI host as in GA.2 Step 10. Then:
+Launch the GUI host with the first nine lines of GA.2 Step 10 (the two guards, the heartbeat cleanup, the launch and the wait for the heartbeat). Then run the tests through `test_run`, which runs them in an owned child, and poll the job it returns:
 
 ```powershell
+$S = "$WT\mcp-tools\hayba-mcp\scripts\invoke-tcp-command.ps1"
 $P = (Get-Content (Get-ChildItem "$H\Saved\HaybaMCP\instances\*.json" | Sort-Object LastWriteTime | Select-Object -Last 1) | ConvertFrom-Json).port
-pwsh "$WT\mcp-tools\hayba-mcp\scripts\invoke-tcp-command.ps1" -Port $P -Cmd test_run -TimeoutMs 60000 `
-  -ParamsJson '{"test_names":["Hayba.MCP.Save.ReadOnly.LevelSaveRefusesWithoutModal","Hayba.MCP.Save.ReadOnly.PythonMapSaveReturnsWithoutModal","Hayba.MCP.Health.BatchPumpStopsWhileUnsafe","Hayba.MCP.State.BatchHoldsDuringPIE"]}'
-pwsh "$WT\mcp-tools\hayba-mcp\scripts\invoke-tcp-command.ps1" -Port $P -Cmd build_status -ParamsJson '{"job_id":"<job_id from the test_run reply>"}'
+$run = pwsh $S -Port $P -Cmd test_run -TimeoutMs 60000 `
+  -ParamsJson '{"test_names":["Hayba.MCP.Save.ReadOnly.LevelSaveRefusesWithoutModal","Hayba.MCP.Save.ReadOnly.PythonMapSaveReturnsWithoutModal","Hayba.MCP.Health.BatchPumpStopsWhileUnsafe","Hayba.MCP.State.BatchHoldsDuringPIE"]}' | ConvertFrom-Json
+$job = $run.data.job_id
+if (-not $job) { throw "test_run returned no job_id: $($run | ConvertTo-Json -Compress -Depth 8)" }
+$statusParams = @{ job_id = $job } | ConvertTo-Json -Compress
+$deadline = (Get-Date).AddMinutes(30)
+do {
+  Start-Sleep -Seconds 10
+  $st = pwsh $S -Port $P -Cmd build_status -ParamsJson $statusParams | ConvertFrom-Json
+} until ($st.data.status -eq 'done' -or (Get-Date) -gt $deadline)
+"owned-child rerun: job $job status=$($st.data.status) exit_code=$($st.data.exit_code)" |
+  Tee-Object "D:\UEScratch\logs\gate-b-$SHA.txt" -Append
 ```
 
-Expected: every listed test passes. Record the hanging test. The hang blocks the tag until it is fixed and Steps 4–5 pass.
+Expected: the last line reads `status=done exit_code=0` (the exit code of a test job is its failure count). Record the hanging test's name in `gate-b-<SHA>.txt`, then close the scratch editor. The hang blocks the tag until it is fixed and Steps 4–5 pass.
 
 - [ ] **Step 9: Record the evidence**
 
 ```powershell
-"GB.1 $SHA $(Get-Date -Format o): BuildPlugin ok; host build x2 ok; manifest ok (R0+63); RealPIE ok; TS ok; host kit 30 passed" |
+$NewNames = 64   # the same number Step 5 passed to --min-total
+"GB.1 $SHA $(Get-Date -Format o): BuildPlugin ok; host build x2 ok; manifest ok (R0+$NewNames); RealPIE ok; TS ok; host kit 33 passed" |
   Add-Content "D:\UEScratch\logs\gate-b-$SHA.txt"
+Get-Content "D:\UEScratch\logs\gate-b-sha.txt"
 ```
 
-**Done when:** at one clean commit that has both `lease_id` and the `EnforcedForWrites` default, BuildPlugin succeeds; the host builds twice with the copied MetaSound satellite; all 72 manifest names pass (only `RenderWidgetToPng` may fail); `RealPIE` passes; TS is green; and the host kit shows 30 passed.
+Expected: the file holds the checker output, the vitest summary, the pytest summary and this line, and `gate-b-sha.txt` prints the full SHA of the commit that was gated. There is nothing to commit.
+
+**Done when:** at one clean commit that has both `lease_id` and the `EnforcedForWrites` default, BuildPlugin succeeds; the host builds twice with the copied MetaSound satellite; all 72 manifest names pass (only `RenderWidgetToPng` may fail); `RealPIE` passes; TS is green; and the host kit shows 33 passed.
 
 ### Task GB.2: Deploy B live ladder (B1–B10) on the scratch GUI host
 
-Ledger §5.4 B1–B10 and spec §6.5. The test that matters most here is the real modal check (R-3): the GUI host is not `-unattended`, so B4 and B5 are the only runs where a regression would actually open a dialog. It would show up as a reply timeout. B10 is the per-call raw pass (R-9, R-18).
+Appendix A.5.4 B1–B10 and spec §6.5. The test that matters most here is the real modal check (R-3): the GUI host is not `-unattended`, so B4 and B5 are the only runs where a regression would actually open a dialog. It would show up as a reply timeout. B10 is the per-call raw pass (R-9, R-18).
 
 **Files:**
 - Modify: `mcp-tools/hayba-mcp/scripts/p0-live-ladder.mjs`: add `B_STEPS` before `export const STEPS`, and change `b: []` to `b: B_STEPS`
@@ -24667,7 +26809,7 @@ const B_STEPS = [
       const g = await ctx.call('lease_acquire', { resources: ['global'], ttl_s: 60, bind_connection: false }, holder);
       check(g.ok && LEASE_ID_RE.test(g.data?.lease_id ?? ''), `acquire: ${g.error}`);
       try {
-        const params = { material_path: '/Game/__HaybaTest__/M_None', parameter_name: 'X', value: 1 };
+        const params = { instance_path: '/Game/__HaybaTest__/MI_None', param_name: 'X', value: 1 };
         const b = await ctx.call('material_set_param', params, { owner: 'ladder-b9-b' });
         check(b.code === 'lease_conflict' && b.lease?.enforcement === 'enforced_for_writes' && b.lease?.holder_owner === 'ladder-b9-a',
           `owner B: expected lease_conflict held by ladder-b9-a, got ${b.code} ${JSON.stringify(b.lease)}`);
@@ -24688,7 +26830,7 @@ const B_STEPS = [
       const tail = new LogTail(ctx.logFile);
       try {
         for (let i = 0; i < 50; i++) {
-          const r = await ctx.call('material_set_param', { material_path: '/Game/__HaybaTest__/M_None', parameter_name: 'X', value: i });
+          const r = await ctx.call('material_set_param', { instance_path: '/Game/__HaybaTest__/MI_None', param_name: 'X', value: i });
           check(r.code === 'owner_required', `call ${i + 1}: expected owner_required, got ${r.code}`);
         }
         await sleep(65_000);
@@ -24744,19 +26886,19 @@ Expected: `B7` and `B8` `PASS` and exit 0. B8 confirms D7 mode 1 live: the first
 
 ### Task GB.3: Deploy B handoff document and the `p0-deploy-b` tag
 
-Spec §5.2 (required host changes before B), §4.4 (the `lease_id` transition), §7.2, §7.4, T8 Rollback, and D7 (approved, mode 1); ledger §5.5.
+Spec §5.2 (required host changes before B), §4.4 (the `lease_id` transition), §7.2, §7.4, T8 Rollback, and D7 (approved, mode 1); Appendix A.5.5.
 
 **Files:**
 - Create: `docs/handoffs/HANDOFF-p0-deploy-b-consumer.md`
 - Test: the reference checks in Step 2
 
 **Interfaces:**
-- Consumes: the GB.1 SHA and evidence; GB.2 results; the R-1 outcome of T8.2 (`readOnly` on `PyToolDescriptor`, or not).
+- Consumes: `D:/UEScratch/logs/gate-b-sha.txt` (the GB.1 SHA) and the GB.1 evidence file; `D:/UEScratch/logs/merge-a-sha.txt` (`<MERGE_A>`, written by GA.4); the GB.2 results; the Deploy B host kit (T4.4: 33 tests, `--label`); R-1 as decided (T8.3: `readOnly` on the 47 reviewed read tools); handoff A's §7 recipes (`Count-Occurrences`, `Stamp`, `Test-RefuseRule`, the M7 listing).
 - Produces: the tag `p0-deploy-b`, and the handoff with `<MERGE_B>` for GB.4 to fill.
 
 - [ ] **Step 1: Write the handoff**
 
-Create `docs/handoffs/HANDOFF-p0-deploy-b-consumer.md` with this content. Substitute `<SHA_B>` (the GB.1 SHA) and `<MERGE_A>` (the Deploy A deploy commit from GA.4); leave `<MERGE_B>`.
+Create `docs/handoffs/HANDOFF-p0-deploy-b-consumer.md` with this content, tokens included. Step 2 substitutes `<SHA_B>` (from `gate-b-sha.txt`) and `<MERGE_A>` (from `merge-a-sha.txt`, written by GA.4); `<MERGE_B>` stays until GB.4 fills it.
 
 ````markdown
 # Hand-off: P0 Deploy B to the consumer (lease_id, save refusals, EnforcedForWrites, Play veto for builds)
@@ -24780,7 +26922,16 @@ For the consumer's session, to act on in its own closed-editor window. Hayba nev
 
 ## 2. Required before the window (D1 / R1 preconditions)
 
-**The migrated gate and its tests are installed and green** (`<host-kit>/`, as one `git apply` of `editor_gate.patch`). Checklist:
+**The migrated gate and its tests are installed and green.** The kit is `<host-kit>/` at `<MERGE_B>`. Its `editor_gate.patch` is cut against the Deploy A kit, the one handoff A installed, so it goes in as one `git apply`:
+
+```powershell
+Set-Location <project>
+git apply --check <deploy-worktree>\<host-kit>\editor_gate.patch
+git apply <deploy-worktree>\<host-kit>\editor_gate.patch
+python -m pytest Tools/GameFlow/tests -q      # 33 passed
+```
+
+If `git apply --check` fails, `Tools/GameFlow` does not hold the Deploy A kit (it was skipped, or the gate was edited by hand). Copy `editor_gate.py` to `Tools/GameFlow/editor_gate.py` and `tests/test_editor_gate.py` to `Tools/GameFlow/tests/test_editor_gate.py` instead, and run the same pytest. Install the kit **before** the window: against the Deploy A plugin it keeps the file lock, because it uses leases only when the editor reports both `lease_manager` and `lease_id`. Checklist of what the installed gate does:
 
 1. `lease_manager_available()` (`:160-168`) requires both `caps.lease_manager` and `caps.lease_id`; otherwise it uses the file lock.
 2. `LEASE_ID_RE = re.compile(r"^ls_[a-z0-9_]+$")` validates every id read from the editor, the environment, `--lease-id` / `--token` or `lock.json`.
@@ -24793,7 +26944,8 @@ For the consumer's session, to act on in its own closed-editor window. Hayba nev
 9. There is a `lease-id` subcommand and a `--lease-id` flag; `token` / `--token` stay as CLI aliases.
 10. The `belongs to` and `ticket` substring checks stay (`:258`, `:303`).
 11. `announce()` prints `HAYBA_AGENT_ID=<owner>` and, on its own labelled line, `HAYBA_LEASE=<lease_id>  # helpers only; never put this in an MCP server's environment`.
-12. `tests/test_editor_gate.py` passes, including the new tests `test_plugin_without_lease_id_capability_keeps_the_file_lock`, `test_redacted_mirror_entry_is_ignored_and_reacquired`, `test_renew_and_release_send_lease_id`, `test_timeout_withdraws_ticket_with_ticket_param`, `test_grant_without_usable_lease_id_exits_2`, `test_acquire_refuses_when_editor_unsafe_exit_4`, `test_renew_refused_unsafe_does_not_requeue` and `test_status_reports_editor_health`: `python -m pytest Tools/GameFlow/tests -q`.
+12. `acquire`, `release` and `lease-id` take `--label <text>` (default `editor_gate:<owner>`; at most 128 characters). A labelled lease is a second lease of the same owner, with its own `lock.json` entry `<owner>#<label>`. A labelled release never falls back to `HAYBA_LEASE` or to the owner's gate lease.
+13. `tests/test_editor_gate.py` passes (`python -m pytest Tools/GameFlow/tests -q`, 33 passed), including `test_plugin_without_lease_id_capability_keeps_the_file_lock`, `test_redacted_mirror_entry_is_ignored_and_reacquired`, `test_renew_and_release_send_lease_id`, `test_timeout_withdraws_ticket_with_ticket_param`, `test_grant_without_usable_lease_id_exits_2`, `test_acquire_refuses_when_editor_unsafe_exit_4`, `test_renew_refused_unsafe_does_not_requeue`, `test_status_reports_editor_health` and `test_label_flag_sets_lease_label`.
 
 **Lane environment:**
 - Every MCP server a lane uses runs with `HAYBA_AGENT_ID` equal to that lane's gate `--owner`. Otherwise, under `EnforcedForWrites`, the lane's own MCP writes are refused while its gate lease is held. Without it, a restarted Node server is a new owner and cannot revive its orphaned leases (R-10).
@@ -24804,6 +26956,12 @@ For the consumer's session, to act on in its own closed-editor window. Hayba nev
 - always send an owner: `HAYBA_AGENT_ID`, else `<script>-<pid>`;
 - exit 2 when `HAYBA_LEASE` is set but `HAYBA_AGENT_ID` is not;
 - stop at the first `lease_conflict` / `owner_required` (exit 5), printing `lease.holder_owner` and `lease.reason`;
+- `bpgraph.mjs` builds (D5): the build lease step of handoff A §2 stays. From Deploy B on, a build may take its leases through the gate instead:
+  ```powershell
+  python Tools/GameFlow/editor_gate.py acquire --owner <lane> --scope asset:/Game/<path> --lane long --label build:<id>
+  python Tools/GameFlow/editor_gate.py release --owner <lane> --label build:<id>
+  ```
+  **Always pass `--label build:<id>`.** Without it the lease is labelled `editor_gate:<lane>`, like the lane's gate lease. A helper that still sends a redacted handle under `token` on `lease_release` makes the editor release every lease labelled `editor_gate:<lane>`, and that would drop the build lease in the middle of the build. A lease labelled `build:<id>` is never released that way.
 - `bpgraph.mjs`: on any reconnect send `lease_renew {}` before the next write. Treat `r.data?.code === 'package_read_only'` from `blueprint_compile` (`:942-948`, `:1169-1178`) as fatal: exit 3 and print `r.data.make_writable_hint`. Keep the `readOnlyPackages` preflight (`:672-700`). Reword the header comment (`:35-40`) that says a read-only save crashes the editor.
 - Update ruling R49 ("read lock.json") and any memory note that teaches `lease_renew {token}`. The alias keeps them working until the alias is removed.
 
@@ -24910,38 +27068,64 @@ $lines | Select-String 'Compiling (\S+) before play' | ForEach-Object {
   $agent = $processing | Where-Object { $_.Matches[0].Groups[1].Value -eq 'editor_start_pie' -and (Stamp $_.Line) -and ($at - (Stamp $_.Line)).TotalSeconds -le 5 -and ($at - (Stamp $_.Line)).TotalSeconds -ge 0 }
   if (-not $agent) { "M6b candidate: $($_.Line)  (compare with editor_get_state.building at that time)" }
 }
+
+# Alias removal (design §4.4, phase C): uses of the deprecated `token` input and of the marker shim, per day.
+# The alias and the shim can be removed only after 7 working days with zero "deprecated param 'token'" lines.
+# The editor logs that line once per command, param and owner per session, so zero lines means zero uses.
+$since = (Get-Date).AddDays(-7)
+$sessionLogs = Get-ChildItem "<project>\Saved\Logs" -Filter "<Project>*.log" | Where-Object { $_.LastWriteTime -ge $since }
+$alias = @($sessionLogs | ForEach-Object { Select-String -Path $_.FullName -SimpleMatch "deprecated param 'token'" })
+$shim  = @($sessionLogs | ForEach-Object { Select-String -Path $_.FullName -SimpleMatch '(marker shim)' })
+foreach ($set in @(@{ name = "deprecated param 'token'"; hits = $alias }, @{ name = 'marker shim uses'; hits = $shim })) {
+  "$($set.name): $($set.hits.Count) line(s) in $(@($sessionLogs).Count) session log(s)"
+  $set.hits | Group-Object { if ($_.Line -match '^\[(\d{4}\.\d\d\.\d\d)') { $Matches[1] } else { 'undated' } } | Sort-Object Name |
+    ForEach-Object { "    $($_.Name): $($_.Count)" }
+}
+$alias | ForEach-Object { if ($_.Line -match "^.*?(\w+): deprecated param 'token' from owner '([^']*)'") { "$($Matches[2]) -> $($Matches[1])" } } |
+  Sort-Object -Unique
+
+# Secondary (T5): every package_read_only refusal carries the hint (target 100 %).
+# The execution journal (Saved\hayba-execution.log: one tab-separated line per command) holds the refusal text.
+$journal = "<project>\Saved\hayba-execution.log"
+$ro = @(Select-String -Path $journal -SimpleMatch '[package_read_only]')
+$hinted = @($ro | Where-Object { $_.Line -match 'git lfs lock' })
+"package_read_only refusals: $($ro.Count); with the git lfs lock hint: $($hinted.Count)"
+$ro | Where-Object { $_.Line -notmatch 'git lfs lock' } | ForEach-Object { "    NO HINT: $($_.Line)" }
 ```
 
-M4, M5, M6a and M8 use the recipe in `HANDOFF-p0-deploy-a-consumer.md` §7, unchanged. M7: crash dumps under `Saved/Crashes` with a Hayba command in the previous 10 s, per 10 000 commands; it needs at least 60 000 commands.
+The last list of the alias block names each owner and command that still sends `token`: those are the helpers to move to `lease_id`.
+
+M4, M5, M6a, M7 and M8 use the recipes in `HANDOFF-p0-deploy-a-consumer.md` §7, unchanged. M5 compares each command dispatched inside a PIE window with the PIE-safe list of that document (a list of names, not a pattern); the 18 read-like commands are on it, so a read during PIE is never counted as a mutation. M7's script lists every crash folder with the commands of its last 10 s, and its last line is the other secondary metric: read-only save crashes (I-3 class), target 0.
 
 ## 8. Known limits in Deploy B
 
-- **The Python tool factory never declares `read_only` (R-1).** Typed read tools that run through `python_run` count as undeclared writes, and get `lease_conflict` whenever another owner holds any lease, including a bpgraph `asset:` build lease. Expect lanes to wait more while a build runs, or run such reads in Advisory.
+- **Python-backed tools are writes unless they declare `read_only` (R-1).** The Node server's 47 reviewed read tools (`actor_find`, `object_inspect`, `light_list`, `seq_inspect` and the like) declare it and run while other owners hold leases. `seq_open` and `niagara_capability_probe` do not, and neither does any host script's own `python_run`: those get `lease_conflict` whenever another owner holds a lease, until the script declares `resources` or `read_only: true`.
 - **Undeclared `python_run` steps in `editor_batch` (R-24).** Under `EnforcedForWrites` a step without `resources` conflicts with any other owner's lease, and the batch fails at that step and unloads its regions. Declare `resources` on every `python_run` step of a World Partition bulk edit.
-- **Read-like commands during PIE (R-12)** are refused as in Deploy A (see its §8).
+- **Read-like commands (R-12).** The 18 commands listed in Deploy A's §8 are reads: allowed during PIE, and never refused as writes under `EnforcedForWrites`.
 - **Asset-busy lifetimes (R-23).** An orphaned `asset:` lease keeps `asset_busy`, and the Play veto, for up to 60 s after bpgraph dies. `lease_release {all:true}` from the bpgraph owner ends it at once.
 ````
 
-- [ ] **Step 2: Resolve the R-1 paragraph and check the document**
+- [ ] **Step 2: Substitute the SHAs and check the document**
 
 ```powershell
 Set-Location D:\Hackathons\hayba\.worktrees\p0-safety
-Select-String -Path mcp-tools\hayba-mcp\src\tools\py-tool-factory.ts -Pattern 'readOnly' | Measure-Object | ForEach-Object Count
-```
-
-If the count is greater than 0, T8.2 resolved R-1: delete the whole R-1 bullet from §8 of the handoff. Then:
-
-```powershell
+$SHA_B = (Get-Content "D:\UEScratch\logs\gate-b-sha.txt" -TotalCount 1).Trim()
+if ($SHA_B -notmatch '^[0-9a-f]{40}$') { throw "gate-b-sha.txt does not hold a commit SHA; run GB.1 first" }
+git merge-base --is-ancestor $SHA_B HEAD; if ($LASTEXITCODE -ne 0) { throw "$SHA_B is not an ancestor of HEAD" }
+$MERGE_A = (Get-Content "D:\UEScratch\logs\merge-a-sha.txt" -TotalCount 1).Trim()
+$Doc = "docs\handoffs\HANDOFF-p0-deploy-b-consumer.md"
+(Get-Content $Doc -Raw).Replace('<SHA_B>', $SHA_B.Substring(0, 8)).Replace('<MERGE_A>', $MERGE_A) | Set-Content $Doc -NoNewline
+(Select-String -Path mcp-tools\hayba-mcp\src\tools\*\*-py-tools.ts -Pattern '^\s*readOnly: true,').Count
 Select-String -Path docs\handoffs\HANDOFF-p0-deploy-b-consumer.md -Pattern '<SHA_B>|<MERGE_A>' | Measure-Object | ForEach-Object Count
 Select-String -Path docs\handoffs\HANDOFF-p0-deploy-b-consumer.md -Pattern 'token' | ForEach-Object Line
 ```
 
-Expected: `0` placeholders besides `<MERGE_B>`. Every `token` line talks about the deprecated input alias, the old gate, R49 or the `--token` CLI alias. None of them tells anyone to send or print a token.
+Expected: `47` (the read tools §8 names declare `read_only`; on the cut-line variant of GB.0 the count is `0` and GB.0 has replaced that paragraph); then `0` tokens left besides `<MERGE_B>`. Every `token` line talks about the deprecated input alias, the old gate, R49 or the `--token` CLI alias. None of them tells anyone to send or print a token.
 
 - [ ] **Step 3: Tag and commit**
 
 ```powershell
-$SHA_B = "<the GB.1 SHA>"
+$SHA_B = (Get-Content "D:\UEScratch\logs\gate-b-sha.txt" -TotalCount 1).Trim()
 git tag -a p0-deploy-b $SHA_B -m "P0 Deploy B: lease_id, save sites, EnforcedForWrites, lease lifetime, Play veto for builds (T4-T8, T10)"
 git add docs/handoffs/HANDOFF-p0-deploy-b-consumer.md
 git commit -m "docs(handoff): P0 Deploy B for the consumer's window"
@@ -24963,7 +27147,7 @@ Spec §7.3. The deploy branch has a fourth raw save, `HaybaAnimShared::SavePacka
 
 **Interfaces:**
 - Consumes: `HaybaSaveVerify::SaveAndVerify`, `Describe`, `FResult::DidReachDisk()`, and `RefuseIfReadOnly(const FString& Cmd, const FString& Package, FHaybaHandlerResult& OutRefusal, const FString& NoSaveAlternative)` (T5.1; returns `true` when it refused).
-- Produces: `<deploy-branch>` at `<MERGE_B>`.
+- Produces: `<deploy-branch>` at `<MERGE_B>`, and `D:/UEScratch/logs/merge-b-sha.txt` (one line: that commit), which GC.3 reads.
 
 - [ ] **Step 1: Merge and watch the contract fail**
 
@@ -25056,13 +27240,23 @@ Expected: both builds succeed; the checker exits 0 over T0–T8 and T10; the onl
 
 - [ ] **Step 6: Commit, fast-forward, fill the handoff, deliver**
 
+The merge staged every file it merged cleanly. Stage only what Steps 1 to 3 resolved or edited; `npm ci` and the builds have run in this worktree, so never `git add -A`.
+
 ```powershell
 Set-Location D:\Hackathons\hayba\.worktrees\p0b-consumer
-git add -A
+git status --short | Where-Object { $_ -match '^\?\?' }
+$Resolved = @(git diff --name-only --diff-filter=U) + @(
+  "unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/handlers/HaybaMCPAnimationHandler.cpp") | Sort-Object -Unique
+$Resolved
+git add -- $Resolved
+git diff --name-only --diff-filter=U
+git diff --name-only
 git commit -m "chore(merge): P0 Deploy B into the consumer's deploy branch" -m "The anim save goes through SaveAndVerify, and anim_blueprint_compile refuses a read-only package before compiling, so the tree keeps one raw SavePackage."
+git status --short
 git -C <deploy-worktree> merge --ff-only merge/p0-deploy-b-consumer
 git -C <deploy-worktree> push origin <deploy-branch>
 $MERGE_B = git -C <deploy-worktree> rev-parse --short HEAD
+$MERGE_B | Set-Content "D:\UEScratch\logs\merge-b-sha.txt"
 Set-Location D:\Hackathons\hayba\.worktrees\p0-safety
 (Get-Content docs\handoffs\HANDOFF-p0-deploy-b-consumer.md -Raw).Replace('<MERGE_B>', $MERGE_B) |
   Set-Content docs\handoffs\HANDOFF-p0-deploy-b-consumer.md -NoNewline
@@ -25070,6 +27264,8 @@ git add docs/handoffs/HANDOFF-p0-deploy-b-consumer.md
 git commit -m "docs(handoff): record the Deploy B merge commit"
 git push origin fix/p0-safety
 ```
+
+Expected: the first command prints nothing (an untracked file is generated output: leave it unstaged and find out what wrote it). `$Resolved` lists `HaybaMCPAnimationHandler.cpp` plus any file Step 1 reported as conflicted. Both `git diff` commands after the `git add` print nothing, and `git status --short` prints nothing after the commit. `merge-b-sha.txt` holds the deploy commit; GC.3 reads it.
 
 Then deliver the handoff as in GA.4 Step 6. Call `ListAgents`, then `SendMessage` the consumer's session with the doc path and `$MERGE_B`, and state that §2 of the doc is a hard precondition. Otherwise give both to the maintainer.
 
@@ -25099,7 +27295,86 @@ git merge --no-ff --no-commit p0-deploy-b
 git diff --name-only --diff-filter=U
 ```
 
-Resolve `HaybaMCPBlueprintHandler.cpp` by taking `bc`'s logic around each save, with T5's save form. That means no `UPackage::SavePackage` call is left. `Compile` reads `save` (default true), and when it saves, it calls `RefuseIfReadOnly(TEXT("blueprint_compile"), BP->GetOutermost()->GetName(), Refusal, TEXT("Or pass save:false to compile without saving."))` before `FKismetEditorUtilities::CompileBlueprint`. Keep both sides in every other file. Then:
+Resolve `HaybaMCPBlueprintHandler.cpp` by taking `bc`'s logic around each save, with T5's save form, so that no `UPackage::SavePackage` call is left in the file. Keep both sides in every other file. The three resolved places:
+
+(a) The includes: keep the trunk's include block and add `#include "HaybaMCPSaveVerify.h"` after `#include "HaybaMCPAssetGuard.h"`, as T5.1 did.
+
+(b) `Create` (`bc` `:467-492`). The trunk passes its own `BlueprintType` to `CreateBlueprint` and reports `blueprint_type`; both stay. Only the save block changes. The resolved text, from the `CreateBlueprint` call to the `saved` field:
+
+```cpp
+    UBlueprint* BP = FKismetEditorUtilities::CreateBlueprint(
+        ParentClass, Package, *Name, BlueprintType,
+        UBlueprint::StaticClass(), UBlueprintGeneratedClass::StaticClass());
+    if (!BP)
+        return FHaybaHandlerResult::Err(TEXT("blueprint_create: CreateBlueprint failed"));
+
+    FAssetRegistryModule::AssetCreated(BP);
+    Package->MarkPackageDirty();
+
+    // Persist immediately: CreateBlueprint only builds the asset in memory, so a
+    // crash before the next edit would lose it. Save the .uasset to disk now.
+    const bool bSaved = HaybaSaveVerify::SaveAndVerify(BP).DidReachDisk();
+
+    TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
+    Out->SetStringField(TEXT("path"), BP->GetPathName());
+    Out->SetStringField(TEXT("name"), Name);
+    // Read back from the asset rather than echoing the decision above.
+    Out->SetStringField(TEXT("blueprint_type"),
+        BP->BlueprintType == BPTYPE_FunctionLibrary ? TEXT("function_library") : TEXT("normal"));
+    Out->SetBoolField(TEXT("saved"), bSaved);
+```
+
+(c) `Compile` (`bc` `:1279-1348`). The preflight goes between the `LoadBPByPath` check and the results log, before `CompileBlueprint`; the save block at the end takes T5's form. The resolved beginning:
+
+```cpp
+    const bool bSave = ParamR.OptionalBool(TEXT("save"), true);
+    if (ParamR.HasErrors()) return FHaybaHandlerResult::Err(ParamR.ErrorMessage());
+    UBlueprint* BP = LoadBPByPath(Path);
+    if (!BP) return FHaybaHandlerResult::Err(BlueprintNotFoundError(TEXT("blueprint_compile"), Path));
+
+    if (bSave)
+    {
+        // Before CompileBlueprint: refusing after the compile would report a
+        // mutation that did happen as policy_blocked.
+        FHaybaHandlerResult ReadOnly;
+        if (HaybaSaveVerify::RefuseIfReadOnly(TEXT("blueprint_compile"), BP->GetOutermost()->GetName(), ReadOnly,
+                TEXT("Or pass save:false to compile without saving.")))
+        {
+            return ReadOnly;
+        }
+    }
+
+    FCompilerResultsLog ResultsLog;
+    ResultsLog.SetSourcePath(BP->GetPathName());
+    ResultsLog.BeginEvent(TEXT("Compile"));
+
+    FKismetEditorUtilities::CompileBlueprint(BP, EBlueprintCompileOptions::None, &ResultsLog);
+```
+
+and the resolved end, from the `warnings` field to the `return`:
+
+```cpp
+    Out->SetArrayField(TEXT("warnings"), Warnings);
+    bool bSaved = false;
+    if (bOk && bSave)
+    {
+        const HaybaSaveVerify::FResult Saved = HaybaSaveVerify::SaveAndVerify(BP);
+        bSaved = Saved.DidReachDisk();
+        if (!bSaved)
+        {
+            Out->SetStringField(TEXT("save_error"), FString::Printf(
+                TEXT("Compile succeeded but the save did not reach disk: %s The Blueprint is changed in memory and remains dirty; save it before closing the editor. Do not retry the mutation that preceded this compile."),
+                *Saved.Note));
+            Out->SetStringField(TEXT("save_error_code"), Saved.SaveErrorCode);
+        }
+    }
+    if (bSave) Out->SetBoolField(TEXT("saved"), bSaved);
+    else       Out->SetBoolField(TEXT("save_requested"), false);
+    Out->SetBoolField(TEXT("dirty"), BP->GetOutermost()->IsDirty());
+    return FHaybaHandlerResult::Ok(Out);
+```
+
+Everything between those two blocks (the broken-set bookkeeping, the message loop, the `BP compile` log line and the result fields) is the trunk's text, unchanged. Then:
 
 ```powershell
 npm ci; npm run build -w packages
@@ -25136,17 +27411,69 @@ node "$WT\mcp-tools\hayba-mcp\scripts\check-automation-report.mjs" "D:\UEScratch
 
 Expected: TS 0 failed; both builds succeed; the checker exits 0, including `Hayba.MCP.Save.ReadOnly.BlueprintCompileRefusesBeforeCompiling`.
 
-- [ ] **Step 3: Commit, push, open the PR**
+- [ ] **Step 3: Commit the merge**
+
+The merge staged every file it merged cleanly. Stage only the resolved files; never `git add -A` in a worktree where `npm ci` and the builds have run.
 
 ```powershell
 Set-Location D:\Hackathons\hayba\.worktrees\p0b-bc
-git add -A
+git status --short | Where-Object { $_ -match '^\?\?' }
+$Resolved = @(git diff --name-only --diff-filter=U) + @(
+  "unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/handlers/HaybaMCPBlueprintHandler.cpp") | Sort-Object -Unique
+$Resolved | Set-Content D:\UEScratch\reports\bc-b-resolved.txt
+git add -- $Resolved
+git diff --name-only --diff-filter=U
+git diff --name-only
 git commit -m "chore(merge): P0 Deploy B into the brain-client trunk" -m "The trunk's blueprint_create and blueprint_compile saves go through SaveAndVerify with the read-only preflight."
-git push -u origin merge/p0-deploy-b-into-bc
-gh pr create --base feat/hayba-brain-client --head merge/p0-deploy-b-into-bc --title "Merge P0 Deploy B (T4-T8, T10) into the brain-client trunk" --body-file D:\UEScratch\reports\bc-b-pr-body.md
+git status --short
 ```
 
-Write `bc-b-pr-body.md` first. It covers: the tag, the save-site resolution, and the gate evidence. End it with the executing session's PR attribution lines.
+Expected: the first command and both `git diff` commands print nothing, and `git status --short` prints nothing after the commit.
+
+- [ ] **Step 4: Write the PR body, push and open the PR**
+
+```powershell
+$WT  = "D:\Hackathons\hayba\.worktrees\p0b-bc"
+$SHA = git -C $WT rev-parse --short HEAD
+$Tag = git -C $WT rev-parse --short "p0-deploy-b^{commit}"
+$Files = (Get-Content D:\UEScratch\reports\bc-b-resolved.txt | ForEach-Object { "- ``$_``" }) -join "`n"
+$Checker = (node "$WT\mcp-tools\hayba-mcp\scripts\check-automation-report.mjs" "D:\UEScratch\reports\bc-b-$SHA\index.json" `
+  "$WT\mcp-tools\hayba-mcp\scripts\p0-expected-automation-tests.txt" --allow-fail Hayba.MCP.UI.RenderWidgetToPng) -join "`n"
+$Body = @'
+## What this merge brings
+
+P0 Deploy B, the tag `p0-deploy-b` ({TAG}), merged into the trunk ({SHA}): `lease_id` (T4), read-only save refusals with one raw save in the tree (T5), rate-limited lease warnings with the owner in the log (T6), lease lifetime (T7), `EnforcedForWrites` as the default with `owner_required` (T8), and the Play veto for builds (T10).
+
+## Conflicts and how each was resolved
+
+Resolved or edited in the merge commit:
+
+{FILES}
+
+- `HaybaMCPBlueprintHandler.cpp`, `Create`: the trunk's `BlueprintType` and `blueprint_type` field are kept; the save is `HaybaSaveVerify::SaveAndVerify(BP)`.
+- `HaybaMCPBlueprintHandler.cpp`, `Compile`: reads `save` (default true); when it saves, it refuses a read-only package before `CompileBlueprint`, and the save is `SaveAndVerify` with `save_error_code`.
+- No `UPackage::SavePackage` call is left outside `HaybaSaveVerify::Detail::SavePackageNoError`; `save-site-contract.test.ts` checks it.
+- Every other conflicted file keeps both sides.
+
+## Gate evidence
+
+- TS gate on the merge: `tsc --noEmit`, `vitest run` (0 failed), `lint:legacy-wrappers` and `build:server` all pass.
+- Headless `RunTests Hayba` on a throwaway UE 5.8 host, built twice, exact-name check of all 72 manifest names:
+
+<pre>
+{CHECKER}
+</pre>
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)
+'@
+$Body.Replace('{TAG}', $Tag).Replace('{SHA}', $SHA).Replace('{FILES}', $Files).Replace('{CHECKER}', $Checker) |
+  Set-Content -Encoding utf8 D:\UEScratch\reports\bc-b-pr-body.md
+Select-String -Path D:\UEScratch\reports\bc-b-pr-body.md -Pattern '^OK$', '^FAIL', '\{[A-Z_]+\}'
+git -C $WT push -u origin merge/p0-deploy-b-into-bc
+gh pr create --repo zajalist/hayba --base feat/hayba-brain-client --head merge/p0-deploy-b-into-bc --title "Merge P0 Deploy B (T4-T8, T10) into the brain-client trunk" --body-file D:\UEScratch\reports\bc-b-pr-body.md
+```
+
+Expected: the `Select-String` prints the checker's `OK` line and nothing else (no `FAIL`, no unfilled `{…}` token), and `gh` prints the PR URL. When the executing session's harness gives a session link as a second PR attribution line, append it as the last line of the body file before `gh pr create`.
 
 **Done when:** the PR is open with a green gate, and the maintainer has merged it.
 
@@ -25168,7 +27495,7 @@ Spec T9 (design bullets 1–3 and "Batch steps"), §4.1 slot 0, R-27. It lands a
   - `EffectiveOwner` (`:139-154`);
   - `OnConnectionClosed` (`:156-164`, in T7.2's form);
   - `CheckCommand` (T8.1's form of `:175-269`), split into `CheckCommandFacts` plus `AddLeaseBinding`.
-- Modify `…/Private/HaybaMCPCommandHandler.cpp` (ledger §1.4):
+- Modify `…/Private/HaybaMCPCommandHandler.cpp` (Appendix A.1.4):
   - hunk e `ProcessBatchStep` (`:1205-1217`);
   - hunk g, owner and lease resolve (T6.2's form of `:1283-1290`);
   - hunk h, the `Processing command` line (T6.2's form of `:1292`);
@@ -25182,18 +27509,21 @@ Spec T9 (design bullets 1–3 and "Batch steps"), §4.1 slot 0, R-27. It lands a
 - Modify TS:
   - `mcp-tools/hayba-mcp/src/tools/tool-executor.ts` (`UeToolErrorCode`, `KNOWN_UE_CODES`);
   - `mcp-tools/hayba-mcp/src/tools/ue-refusal-codes.test.ts` (append one `describe`).
-- Modify the tests that pin the pre-T9 `via: lease` owner rule: `…/Private/Tests/HaybaMCPLeaseEnforcementTest.cpp` (`Hayba.MCP.Lease.ProcessingLogOwner`) and `mcp-tools/hayba-mcp/src/tools/__tests__/lease-enforcement-contract.test.ts`.
+- Modify the tests that pin the pre-T9 owner rule:
+  - `…/Private/Tests/HaybaMCPLeaseEnforcementTest.cpp` (`Hayba.MCP.Lease.ProcessingLogOwner`: the `via: lease` expectation, and the hand-built contexts of its second part);
+  - `mcp-tools/hayba-mcp/src/tools/__tests__/lease-enforcement-contract.test.ts` (T6.2's `owners are resolved and sanitized in one place` names the new call; a new `lease enforcement contract (T9)` block).
 
 **Interfaces:**
 - Consumes:
   - `HaybaMCPEnforcement::SanitizeOwner`, `EHandle`, `FFacts.bOwnerFromEnvelope` / `.Handle` (T6.1);
-  - `FWarningLimiter::MakeKey`, `FHit` (T1.1); `FHaybaMCPLeaseManager::LeaseWarningLimiter` and `NoteAuthenticatedCaller` (T6.2);
+  - `FWarningLimiter::MakeKey`, `FHit`, `PreviousWindowSuffix` (T1.1); `FHaybaMCPLeaseManager::NoteLeaseWarning` and `NoteAuthenticatedCaller` (T6.2). Every lease warning is logged by `NoteLeaseWarning`, which also registers the text of its drained line; T6.2's contract allows `UE_LOG(LogHaybaMCPLease, Warning` only in `NoteLeaseWarning`, `DrainLeaseWarnings` and `NoteDeprecatedParam`;
+  - test helpers `HaybaMCPLeaseTest::FScopedCleanPresence` and `FLogCapture` (T6.2, `Tests/HaybaMCPLeaseTestUtil.h`);
   - `CurrentMode()`, `CurrentModeName()` (T8.1);
   - `HaybaMCPLease::IsRedactionMarker` (T4.1);
   - `FTable::OnConnectionClosed`, `FTable::ReleaseOwner`, `FTable::OrphanAllBound` (T7.1);
-  - router `FGateRefusal`, `MakeGateRefusal`, `GateRefusalLimiter` (T1.3);
+  - router `FGateRefusal`, `MakeGateRefusal`, `GateRefusalLimiter`, `LogDrainedGateRefusals` (T1.3). Every `GateRefusalLimiter().Note(` site calls `LogDrainedGateRefusals();` on the line before it; T1.3's contract in `editor-health-contract.test.ts` checks every site, slot 0 included;
   - `FHaybaEditorHealth::IsUnsafe` (T1.2); `EHaybaMCPLeaseEnforcement::EnforcedForWrites` (T8.1).
-- Produces (ledger §2.6, plus the ledger decisions noted):
+- Produces (the names come from spec T9's design; an entry marked **new** is a name this plan adds, and later tasks use exactly these signatures):
   - `enum class ELeaseRef : uint8 { None, Bound, Unknown, NotBound, Redacted };`
   - `struct FCallerResolution { FString Owner; FString Via; ELeaseRef LeaseRef; FString LeaseId; FString NamedLeaseOwner; bool bReservedViolation; };`. `Via` is `envelope` | `adopted` | `conn` | `local` | **`batch`** (a value this task adds).
   - `inline const TCHAR* LexLeaseRef(ELeaseRef)` → `none` | `valid` | `not_bound` | `unknown` | `redacted` (**new**, for the log line).
@@ -25207,6 +27537,8 @@ Spec T9 (design bullets 1–3 and "Batch steps"), §4.1 slot 0, R-27. It lands a
   - Top-level code `owner_reserved`, with detail key `owner` = `{claimed_owner, conn, caller_owner}`; advisory `input_rejected` / `not_started`.
   - Handler text codes (from `AdoptConnection`): `[adopt_needs_connection]`, `[owner_reserved]`, `[connection_already_adopted]`.
   - `lease_binding {named_lease_owner, caller_owner, fix}` on the `lease` detail; `lease_warning.reason = "lease_not_bound"` (non-Read classes only).
+  - Log lines (`LogHaybaMCPLease`, Warning, through `NoteLeaseWarning` with code `lease_warning` and reason `lease_not_bound`): `[<mode>] lease_warning/lease_not_bound: '<cmd>' from '<caller>' names a lease of '<owner>'`, and the drained `[<mode>] lease_warning/lease_not_bound repeated N more times in 30 s: owner='…' cmd='…' holder='<owner>' conflict='lease_not_bound'`.
+  - Log line (`LogHaybaMCPCmd`, Warning): the `owner_reserved: …` message with `FWarningLimiter::PreviousWindowSuffix`, drained as `[gate] owner_reserved repeated N more times in 30 s: owner='…' cmd='…'`.
   - TS: `UeToolErrorCode` / `KNOWN_UE_CODES` gain `'owner_reserved'`.
   - Tests `Hayba.MCP.Lease.ResolveCaller`, `.ReservedOwner`, `.RouterBinding`, `.UnknownLeaseRefusesWrites`.
 
@@ -25231,6 +27563,7 @@ Create `unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/Tests/HaybaMCPLeas
 #include "HaybaMCPModule.h"
 #include "HaybaMCPSettings.h"
 #include "Tests/HaybaMCPLatentTest.h"
+#include "Tests/HaybaMCPLeaseTestUtil.h"
 #include "Dom/JsonObject.h"
 #include "Misc/Guid.h"
 #include "Misc/ScopeExit.h"
@@ -25766,9 +28099,11 @@ git add unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/HaybaMCPLeaseManag
 git commit -m "feat(ue): owner-first caller resolution and connection adoption in the lease manager"
 ```
 
-- [ ] **Step 7: Write the failing TS mapping for `owner_reserved`**
+- [ ] **Step 7: Write the failing TS mapping for `owner_reserved` and the T9 contracts**
 
-T8's `lease-enforcement-contract.test.ts` requires every refusal code the plugin emits to be in `KNOWN_UE_CODES`, and slot 0 emits `owner_reserved` in this task. So the TS code lands with the router change, not in T9.2. Append to `mcp-tools/hayba-mcp/src/tools/ue-refusal-codes.test.ts`, reusing its existing imports of `executeCommand` and `InMemoryToolExecutor` from `./tool-executor.js` (add them to its import line if T1's block did not import both):
+Slot 0 emits `owner_reserved` in this task, and a top-level code Node does not know reaches the agent as `ue_error`. So the TS code lands with the router change, not in T9.2. No earlier contract would catch a missing code: T8.3's wire contract covers only the two codes `Decide` returns (`lease_conflict`, `owner_required`). This step adds the contract that covers every gate code the router sets, slot 0 included.
+
+(a) Append to `mcp-tools/hayba-mcp/src/tools/ue-refusal-codes.test.ts`, reusing its existing imports of `executeCommand` and `InMemoryToolExecutor` from `./tool-executor.js` (add them to its import line if T1's block did not import both):
 
 ```ts
 describe('T9: owner_reserved', () => {
@@ -25787,14 +28122,63 @@ describe('T9: owner_reserved', () => {
 });
 ```
 
+(b) In `mcp-tools/hayba-mcp/src/tools/__tests__/lease-enforcement-contract.test.ts`, replace T6.2's test `owners are resolved and sanitized in one place` with:
+
+```ts
+  it.runIf(available)('owners are resolved and sanitized in one place', () => {
+    const router = readFileSync(ROUTER, 'utf-8');
+    // T9: owner first. The router resolves the caller once, from the envelope owner,
+    // the connection and the envelope lease.
+    expect(router).toContain(
+      'FHaybaMCPLeaseManager::ResolveCaller(EnvelopeOwner, CallerContext->ConnId, EnvelopeLease)',
+    );
+    // The pre-T9 resolver no longer reads the parsed envelope in the router.
+    expect(router).not.toContain('ResolveOwner(Parsed');
+    const manager = readFileSync(MANAGER, 'utf-8');
+    expect(manager).toContain('HaybaMCPEnforcement::SanitizeOwner(EnvelopeOwner)');
+    expect(manager).toContain('HaybaMCPEnforcement::SanitizeOwner(Owner)');
+  });
+```
+
+and append at the end of the file:
+
+```ts
+describe('lease enforcement contract (T9)', () => {
+  it.runIf(available)('every gate code the router sets maps to its own UeToolError code', async () => {
+    const router = readFileSync(ROUTER, 'utf-8');
+    const codes = [
+      ...new Set([...router.matchAll(/\b(?:R|Refusal)\.Code = TEXT\("([a-z_]+)"\);/g)].map((m) => m[1]!)),
+    ].sort();
+    // Fail closed: the scan must find the gates it is about, slot 0 included.
+    expect(codes).toEqual(['asset_busy', 'editor_unsafe_restart_required', 'owner_reserved', 'pie_active']);
+    for (const code of codes) {
+      const send: Sender = async () => ({ id: 'x', ok: false, code, error: `${code}: refused` });
+      await expect(executeCommand('blueprint_add_node', {}, { sender: send })).rejects.toMatchObject({ code });
+    }
+  });
+
+  it.runIf(available)('the lease_not_bound warning is logged by NoteLeaseWarning', () => {
+    const manager = readFileSync(MANAGER, 'utf-8');
+    const start = manager.indexOf('void FHaybaMCPLeaseManager::AddLeaseBinding(');
+    expect(start).toBeGreaterThan(-1);
+    const body = manager.slice(start, manager.indexOf('\n}', start));
+    expect(body).toContain('NoteLeaseWarning(ModeName, TEXT("lease_warning"), TEXT("lease_not_bound")');
+    expect(body).not.toContain('UE_LOG(');
+    expect(body).not.toContain('LeaseWarningLimiter.Note(');
+  });
+});
+```
+
 Run:
 
 ```powershell
 Set-Location "$WT\mcp-tools\hayba-mcp"
-npx vitest run src/tools/ue-refusal-codes.test.ts
+npx vitest run src/tools/ue-refusal-codes.test.ts src/tools/__tests__/lease-enforcement-contract.test.ts
 ```
 
-Expected: the new case FAILS (`code: 'ue_error'`), and the earlier blocks pass.
+Expected: FAIL in four tests.
+- In `ue-refusal-codes.test.ts` the new case fails (`code: 'ue_error'`), and the earlier blocks pass.
+- In the contract, `owners are resolved and sanitized in one place` fails (the router still calls `ResolveOwner(Parsed, …)`), `every gate code the router sets…` fails (the scan finds three codes, without `owner_reserved`), and `the lease_not_bound warning…` fails (`start` is -1). They pass after Steps 8, 11 and 13; Step 16 runs them.
 
 - [ ] **Step 8: Add the code**
 
@@ -25822,6 +28206,13 @@ bool FHaybaMCPLeaseReservedOwnerTest::RunTest(const FString& Parameters)
 	if (!TestNotNull(TEXT("the router exists"), Router())) return false;
 	if (!TestFalse(TEXT("the editor is not unsafe (R-7)"), FHaybaEditorHealth::IsUnsafe())) return false;
 	FScopedGateSettings Gate(EHaybaMCPLeaseEnforcement::EnforcedForWrites);
+	// The editor_batch below has no owner. Under EnforcedForWrites an owner-less
+	// write is refused with owner_required while any identified owner is present,
+	// and earlier router tests leave owners present on fake connections that never
+	// close. Start with nobody present, so the result does not depend on test order.
+	// Nothing before the batch names an identified owner: a refused claim never
+	// reaches the presence hunk, and conn:<n> and local never count.
+	HaybaMCPLeaseTest::FScopedCleanPresence CleanPresence;
 	const FString Watcher = TEXT("hayba-test-") + Tag() + TEXT("-watch");
 
 	// Slot 0 refuses a claimed owner that is not the caller's, before anything runs.
@@ -25857,6 +28248,8 @@ bool FHaybaMCPLeaseReservedOwnerTest::RunTest(const FString& Parameters)
 	}
 	Batch->SetArrayField(TEXT("steps"), Steps);
 	const TSharedPtr<FJsonObject> Started = Send(TEXT("editor_batch"), Batch, 900001);
+	TestNotEqual(TEXT("an owner-less batch is not refused while nobody else is present"),
+		Str(Started, TEXT("code")), FString(TEXT("owner_required")));
 	const FString JobId = Str(Obj(Started, TEXT("data")), TEXT("job_id"));
 	TestEqual(TEXT("the batch owner is the connection's"), Str(Obj(Started, TEXT("data")), TEXT("owner")), FString(TEXT("conn:900001")));
 	if (!TestFalse(TEXT("editor_batch started"), JobId.IsEmpty()))
@@ -25931,11 +28324,22 @@ bool FHaybaMCPLeaseRouterBindingTest::RunTest(const FString& Parameters)
 	TestFalse(TEXT("no binding warning for the owner"), R.IsValid() && R->HasField(TEXT("lease_warning")));
 
 	// No conflict: the write runs, and the reply warns lease_not_bound.
+	HaybaMCPLeaseTest::FLogCapture LeaseLog(TEXT("LogHaybaMCPLease"));
 	R = Send(TEXT("blueprint_add_node"), AddFree, 900402, FString(), LeaseA);
 	TestNotEqual(TEXT("a non-conflicting write is not refused by the lease"), Str(R, TEXT("code")), FString(TEXT("lease_conflict")));
 	const TSharedPtr<FJsonObject> Warning = Obj(R, TEXT("lease_warning"));
 	TestEqual(TEXT("lease_not_bound warning"), Str(Warning, TEXT("reason")), FString(TEXT("lease_not_bound")));
 	TestEqual(TEXT("the warning carries lease_binding"), Str(Obj(Warning, TEXT("lease_binding")), TEXT("named_lease_owner")), OwnerA);
+	// The warning is rate-limited like every lease warning (R-18): a second hit in
+	// the same 30 s window answers with the warning again and logs nothing.
+	R = Send(TEXT("blueprint_add_node"), AddFree, 900402, FString(), LeaseA);
+	TestEqual(TEXT("the second hit still warns on the reply"),
+		Str(Obj(R, TEXT("lease_warning")), TEXT("reason")), FString(TEXT("lease_not_bound")));
+	LeaseLog.Flush();
+	TestEqual(TEXT("two lease_not_bound hits in one window log one Warning"),
+		LeaseLog.Count(FString::Printf(
+			TEXT("lease_warning/lease_not_bound: 'blueprint_add_node' from 'conn:900402' names a lease of '%s'"), *OwnerA),
+			ELogVerbosity::Warning), 1);
 
 	// Reads never warn about binding.
 	R = Send(TEXT("ping"), nullptr, 900402, FString(), LeaseA);
@@ -26009,7 +28413,7 @@ Expected:
 
 In `Private/HaybaMCPCommandHandler.cpp`, `ProcessCommandInContext`:
 
-(a) Replace hunk g. That is the block from the comment `// Optional, back-compatible envelope fields` through the end of its `if (FHaybaMCPRequestContext* Context = Leases.Current()) { … }`, including T6.2's `bFromEnvelope` local and its `ResolveOwner(Parsed, …, &bFromEnvelope)` / `SanitizeOwner` call. The replacement:
+(a) Replace hunk g. In T6.2's form that is the block from the comment `// Optional, back-compatible envelope fields` through the closing brace of `if (FHaybaMCPRequestContext* Context = Leases.Current()) { … }`, which holds `Context->Owner = FHaybaMCPLeaseManager::ResolveOwner(Parsed, Context->ConnId, &Context->bOwnerFromEnvelope);` and the `lease` read. The replacement:
 
 ```cpp
     // Owner first (T9): the envelope owner, else the connection's adopted owner,
@@ -26033,11 +28437,19 @@ In `Private/HaybaMCPCommandHandler.cpp`, `ProcessCommandInContext`:
         // accepted the batch (R-27). ProcessBatchStep set Context.Owner.
         CallerContext->Caller = FHaybaMCPLeaseManager::ResolveBatchCaller(CallerContext->Owner, EnvelopeLease);
     }
+    // T6.2's flag stays on the context; from T9 on it is derived from the resolution.
+    CallerContext->bOwnerFromEnvelope = FHaybaMCPLeaseManager::IsIdentifiedCaller(CallerContext->Caller);
 ```
 
-If T6.2 or T8.1 stored the envelope flag on the context (a `bOwnerFromEnvelope` member), assign it here instead of deleting it: `CallerContext->bOwnerFromEnvelope = FHaybaMCPLeaseManager::IsIdentifiedCaller(CallerContext->Caller);`. Delete every other use of the removed `bFromEnvelope` local. `rg -n "bFromEnvelope" unreal/HaybaMCPToolkit/Source` must print nothing afterwards.
+`FHaybaMCPRequestContext::bOwnerFromEnvelope` (T6.2) stays a member. The initial `ResolveOwner(nullptr, ConnId)` in `ProcessCommand` (`:1201` at the base) stays too: it seeds `Context.Owner` before the envelope is parsed. Check that the router no longer resolves the owner from the parsed envelope:
 
-(b) Replace hunk h (T6.2's `Processing command` line) with:
+```powershell
+rg -n "ResolveOwner\(Parsed" unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/HaybaMCPCommandHandler.cpp
+```
+
+Expected: no output.
+
+(b) Replace hunk h. In T6.2's form that is the whole block from the comment `// T6: who is acting, and how we know.` through its closing brace (the `LogContext`, `LogOwner`, `LeaseState`, `Via` and `BatchPart` locals and the `UE_LOG`). The replacement:
 
 ```cpp
     UE_LOG(LogHaybaMCPCmd, Log, TEXT("Processing command: %s (id: %s, owner: %s, via: %s, conn: %d, lease: %s%s)"),
@@ -26070,18 +28482,21 @@ If T6.2 or T8.1 stored the envelope flag on the context (a `bOwnerFromEnvelope` 
         R.DetailKey = TEXT("owner");
         R.Detail = Detail;
         R.FailureKind = EHaybaMCPFailureKind::InputRejected;
+        // The router rule for every gate log site (R-18): drain first, then Note,
+        // and the one suffix format of FWarningLimiter.
+        LogDrainedGateRefusals();
         const FWarningLimiter::FHit Hit = GateRefusalLimiter().Note(
             FWarningLimiter::MakeKey(TEXT("gate"), TEXT("owner_reserved"), CallerContext->Owner, Cmd, Claimed));
         if (Hit.bLog)
         {
             UE_LOG(LogHaybaMCPCmd, Warning, TEXT("%s%s"), *R.Message,
-                Hit.SuppressedInPreviousWindow > 0
-                    ? *FString::Printf(TEXT(" (+%d identical in the previous 30 s)"), Hit.SuppressedInPreviousWindow)
-                    : TEXT(""));
+                *FWarningLimiter::PreviousWindowSuffix(Hit.SuppressedInPreviousWindow));
         }
         return MakeGateRefusal(Id, Cmd, R);
     }
 ```
+
+T1.3's contract `drains the refusal limiter before every Note, at every site (R-18)` (`editor-health-contract.test.ts`) checks this site with the others: it counts every `GateRefusalLimiter().Note(` in the router and requires `LogDrainedGateRefusals();` within the two lines before it, in the same function. Step 16 runs it.
 
 `#include "HaybaMCPEnforcementPolicy.h"` is already among the router includes (T6, hunk a).
 
@@ -26193,11 +28608,17 @@ void FHaybaMCPLeaseManager::AddLeaseBinding(const FString& Cmd, FVerdict& Verdic
 		Verdict.Detail->SetObjectField(TEXT("lease_binding"), Binding);
 		return;
 	}
-	const FWarningLimiter::FHit Hit = LeaseWarningLimiter.Note(FWarningLimiter::MakeKey(
-		TEXT("lease"), TEXT("lease_not_bound"), CurrentContext->Owner, Cmd, Caller.NamedLeaseOwner));
+	// Through NoteLeaseWarning, like every lease warning (T6.2): it logs the first
+	// hit per key per 30 s, and it registers the text the 30 s drain ticker prints
+	// for the suppressed ones. No UE_LOG and no limiter call of its own here.
+	const FString ModeName = CurrentModeName();
+	const FWarningLimiter::FHit Hit = NoteLeaseWarning(ModeName, TEXT("lease_warning"), TEXT("lease_not_bound"),
+		CurrentContext->Owner, Cmd, Caller.NamedLeaseOwner, TEXT("lease_not_bound"),
+		FString::Printf(TEXT("lease_warning/lease_not_bound: '%s' from '%s' names a lease of '%s'"),
+			*Cmd, *CurrentContext->Owner, *Caller.NamedLeaseOwner));
 	TSharedPtr<FJsonObject> Warning = MakeShared<FJsonObject>();
 	Warning->SetStringField(TEXT("reason"), TEXT("lease_not_bound"));
-	Warning->SetStringField(TEXT("enforcement"), CurrentModeName());
+	Warning->SetStringField(TEXT("enforcement"), ModeName);
 	Warning->SetStringField(TEXT("command"), Cmd);
 	Warning->SetStringField(TEXT("caller_owner"), CurrentContext->Owner);
 	Warning->SetObjectField(TEXT("lease_binding"), Binding);
@@ -26207,30 +28628,55 @@ void FHaybaMCPLeaseManager::AddLeaseBinding(const FString& Cmd, FVerdict& Verdic
 	{
 		CurrentContext->LeaseWarning = Warning;
 	}
-	// No DrainExpired here: the manager's 30 s drain ticker (T6.2, R-18) drains
-	// LeaseWarningLimiter and prints the canonical "repeated N more times" line.
-	if (Hit.bLog)
-	{
-		UE_LOG(LogHaybaMCPLease, Warning, TEXT("[%s] lease_warning/lease_not_bound: '%s' from '%s' names a lease of '%s'%s"),
-			*CurrentModeName(), *Cmd, *CurrentContext->Owner, *Caller.NamedLeaseOwner,
-			Hit.SuppressedInPreviousWindow > 0
-				? *FString::Printf(TEXT(" (+%d identical in the previous 30 s)"), Hit.SuppressedInPreviousWindow)
-				: TEXT(""));
-	}
 }
 ```
 
+`NoteLeaseWarning` prints `[<mode>] lease_warning/lease_not_bound: '<cmd>' from '<caller>' names a lease of '<owner>'` for the first hit of a window, and the drain prints `[<mode>] lease_warning/lease_not_bound repeated N more times in 30 s: owner='…' cmd='…' holder='<owner>' conflict='lease_not_bound'`. T6.2's contract `every LogHaybaMCPLease warning goes through the limiter` stays green, because `AddLeaseBinding` holds no `UE_LOG`.
+
 - [ ] **Step 14: Teach the old owner-by-lease expectations the new rule**
+
+Two places in T6.2's `Hayba.MCP.Lease.ProcessingLogOwner` (`Private/Tests/HaybaMCPLeaseEnforcementTest.cpp`) pin the pre-T9 rule.
+
+(a) The sixth send of its first part is `Send(*R, 900655, Caller, TEXT("ping"), nullptr, HolderLease)`: it names `Caller` as the envelope owner and sends `Holder`'s lease. Before T9 that acted as `Holder`. From T9 on the caller is `Caller`, and the lease is classified `not_bound`. Replace:
+
+```cpp
+		TestEqual(TEXT("a valid handle acts as its lease's owner"),
+			Cmd.Count(FString::Printf(TEXT("owner: %s, via: lease, conn: 900655, lease: valid)"), *Holder)), 1);
+```
+
+with:
+
+```cpp
+		TestEqual(TEXT("another owner's lease does not change who is calling"),
+			Cmd.Count(FString::Printf(TEXT("owner: %s, via: envelope, conn: 900655, lease: not_bound)"), *Caller)), 1);
+		TestEqual(TEXT("no command is logged as its lease's owner"), Cmd.Count(TEXT("via: lease")), 0);
+```
+
+(b) Its second part builds 50 request contexts by hand and marks them identified with `Ctx.bOwnerFromEnvelope = true;`. From T9 on `CheckCommandFacts` reads `CurrentContext->Caller`, which the router fills and a hand-built context leaves empty, so those 50 callers would count as unidentified and the expected `lease_conflict/held` lines would become `owner_required/owner_missing`. Replace:
+
+```cpp
+			Ctx.bOwnerFromEnvelope = true;
+```
+
+with:
+
+```cpp
+			Ctx.bOwnerFromEnvelope = true;
+			// T9: the gate reads the resolved caller, which the router fills for a
+			// real request. A named caller is "via envelope".
+			Ctx.Caller.Owner = Ctx.Owner;
+			Ctx.Caller.Via = TEXT("envelope");
+```
+
+Then check that no guard still names the old form:
 
 ```powershell
 Set-Location $WT
 rg -n "via: lease" unreal/HaybaMCPToolkit/Source mcp-tools/hayba-mcp/src
-rg -n "envelope\|lease\|conn\|local" mcp-tools/hayba-mcp/src/tools/__tests__/lease-enforcement-contract.test.ts
+rg -n "envelope\|lease\|conn\|local" unreal/HaybaMCPToolkit/Source mcp-tools/hayba-mcp/src docs/adr
 ```
 
-In every hit of the first command (T6.2's `ProcessingLogOwner` expectations), change `via: lease` to `via: conn`, because a lease-only caller is now its connection. Where the second command shows a pinned list of `via` values, make it `envelope|adopted|conn|local|batch`. Then run `rg -n "via: lease" …` again.
-
-Expected: the final `rg` prints nothing. These guards scan for the log form, and a guard that is not taught the new form fails open.
+Expected: the first `rg` prints one line, the new `Cmd.Count(TEXT("via: lease")), 0` assertion. The second searches for the literal list of `via` values and prints nothing, unless a task after T6.2 wrote that list into a test or a doc; if it prints a line, make the list `envelope|adopted|conn|local|batch` there, in this commit. These guards scan for the log form, and a guard that is not taught the new form fails open. The contract's `owners are resolved and sanitized in one place` was taught the new call in Step 7.
 
 - [ ] **Step 15: Build twice and run the identity and lease tests**
 
@@ -26263,7 +28709,7 @@ npx tsc --noEmit
 npx vitest run 2>&1 | Select-Object -Last 6
 ```
 
-Expected: 0 failed. The 14 router-scanning test files still pass, and `lease-enforcement-contract.test.ts` sees `owner_reserved` in `KNOWN_UE_CODES`.
+Expected: 0 failed. The 14 router-scanning test files still pass. In `lease-enforcement-contract.test.ts`, the three tests of Step 7 pass now: the router calls `ResolveCaller(EnvelopeOwner, CallerContext->ConnId, EnvelopeLease)`, the four gate codes (`owner_reserved` among them) map to their own `UeToolError` code, and `AddLeaseBinding` logs through `NoteLeaseWarning`. In `editor-health-contract.test.ts`, `drains the refusal limiter before every Note, at every site (R-18)` passes with slot 0 as one of its sites.
 
 - [ ] **Step 17: Commit the router wiring**
 
@@ -26643,13 +29089,14 @@ FHaybaHandlerResult FHaybaMCPLeaseHandler::Adopt(const TSharedPtr<FJsonObject>& 
 		return FHaybaHandlerResult::Err(TEXT("lease_adopt: ") + Error);
 	}
 	const int32 Revived = Manager.ReviveOrphanedLeases(Owner, Context->ConnId);
-	const HaybaMCPLease::FLease* Now = Manager.Table().FindLease(LeaseId);
+	const HaybaMCPLease::FLease* Adopted = Manager.Table().FindLease(LeaseId);
 	TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
 	Out->SetBoolField(TEXT("adopted"), true);
 	Out->SetStringField(TEXT("owner"), Owner);
 	Out->SetStringField(TEXT("lease_id"), LeaseId);
 	Out->SetStringField(TEXT("connection_owner"), Manager.ConnectionOwner(Context->ConnId));
-	Out->SetNumberField(TEXT("expires_in_s"), Now ? FMath::Max(0.0, Now->ExpiresAt - FPlatformTime::Seconds()) : 0.0);
+	// The manager clock (T6.2), like every other reader of a lease time.
+	Out->SetNumberField(TEXT("expires_in_s"), Adopted ? FMath::Max(0.0, Adopted->ExpiresAt - Manager.Now()) : 0.0);
 	Out->SetStringField(TEXT("note"), FString::Printf(
 		TEXT("This connection now acts as '%s' whenever an envelope names no owner, until it closes. The editor drops ")
 		TEXT("connections idle for about 5 s: repeat lease_adopt after every reconnect. %d orphaned lease(s) of '%s' were ")
@@ -26794,7 +29241,7 @@ Expected: TS 0 failed and the lint passes. `git status --short` shows nothing le
 
 ### Task T9.3: Identity docs, host kit §5.3, and the T9 gate
 
-Spec T9 (docs via the ledger's §1.6 map), §5.3 (after Deploy B, before Deploy C), §6.2 and §6.3; ledger §5.2 "per task tip".
+Spec T9, §5.3 (after Deploy B, before Deploy C), §6.2 and §6.3; Appendix A.5.2 "per task tip". The docs this task edits are T9.3's share of the rows `docs/adr/0010-multi-agent-editor-leases.md`, `CONTEXT.md`, `CHANGELOG.md` and `<host-kit>/*` in the "Modified files" table.
 
 **Files:**
 - Modify `docs/adr/0010-multi-agent-editor-leases.md`:
@@ -26807,17 +29254,44 @@ Spec T9 (docs via the ledger's §1.6 map), §5.3 (after Deploy B, before Deploy 
   - the sentence "A command that carries `lease` acts as that lease's owner.";
   - a new §5.3 section.
 - Modify `<host-kit>/editor_gate.py`: `MAX_LEASE_TTL_S` (`:39`), `announce`, `acquire_lease`, a new `env`, the CLI, and the docstring
-- Modify `<host-kit>/tests/test_editor_gate.py`: `FakeHayba` (`max_ttl_s`) and 4 new tests
+- Modify `<host-kit>/tests/test_editor_gate.py`: `FakeHayba` (`max_ttl_s`, clamped replies), 2 changed tests and 4 new tests
 - Modify `<host-kit>/editor_gate.patch`: regenerated against the `p0-deploy-b` kit
 - Test: `python -m pytest <host-kit>/tests -q`, then the full T9 gate
 
 **Interfaces:**
-- Consumes: T7's `lease_acquire` reply field `max_ttl_s`; T4.4's `mirrored_lease_id(owner)`, `LEASE_ID_RE` and `announce` (with the two `HAYBA_AGENT_ID` / `HAYBA_LEASE` lines).
+- Consumes: T7's `lease_acquire` reply field `max_ttl_s`; T4.4's `mirrored_lease_id(owner, label=None)`, `LEASE_ID_RE`, `lease_calls(fake)` and `announce` (with the two `HAYBA_AGENT_ID` / `HAYBA_LEASE` lines).
 - Produces: `editor_gate.py env --owner X [--helper]`; `cap_note(requested_s, reply)`; `DEFAULT_MAX_LEASE_TTL_S = 900` (a fallback only).
 
 - [ ] **Step 1: Write the failing host-kit tests**
 
-In `tests/test_editor_gate.py`, add `re` to the first import line (`import json, os, pathlib, re, socket, …`). In `FakeHayba.__init__`, add `self.max_ttl_s = 900`. In `FakeHayba.answer`'s granted `lease_acquire` reply, add `"max_ttl_s": self.max_ttl_s` to its `data` dict. Append:
+In `tests/test_editor_gate.py`, add `re` to the first import line (`import json, os, pathlib, re, socket, …`). In `FakeHayba.__init__`, add `self.max_ttl_s = 900` after `self.counter = 0`.
+
+The gate stops clamping the TTL itself in this task (the editor clamps and reports `max_ttl_s`), so the fake must clamp like the editor, and the two tests that pinned the gate's own clamp change. In `FakeHayba.answer`, replace the granted `lease_acquire` reply and the `lease_renew` reply with:
+
+```python
+                return {"ok": True, "data": {"status": "granted", "lease_id": lease_id,
+                                             "expires_in_s": min(p.get("ttl_s", 120), self.max_ttl_s),
+                                             "max_ttl_s": self.max_ttl_s}}
+```
+
+```python
+                return {"ok": True, "data": {"lease_id": p["lease_id"], "renewed": True,
+                                             "expires_in_s": min(p.get("ttl_s", 120), self.max_ttl_s)}}
+```
+
+Replace `test_ttl_is_capped_at_the_editor_maximum` with:
+
+```python
+def test_ttl_is_capped_at_the_editor_maximum(tmp_path, hayba):
+    r = run(tmp_path, "acquire", "--owner", "A", "--ttl-min", "30", "--timeout-min", "0.05", port=hayba.port)
+    assert lease_calls(hayba)[-1][1]["ttl_s"] == 1800  # the gate asks for what the lane wanted; the editor clamps
+    assert "expires in 900 s" in r.stdout
+    assert "the editor caps leases at 15 min; re-run acquire to renew" in r.stdout
+```
+
+In `test_renew_and_release_send_lease_id`, replace `assert renew[1] == {"lease_id": lease_id, "ttl_s": 900}` with `assert renew[1] == {"lease_id": lease_id, "ttl_s": 1800}` (the default `--ttl-min 30`, no longer clamped by the gate).
+
+Append:
 
 ```python
 # ----------------------------------------------------------------------------- §5.3 (before Deploy C)
@@ -26853,7 +29327,7 @@ Set-Location D:\Hackathons\hayba\.worktrees\p0-safety
 python -m pytest <host-kit>/tests -q
 ```
 
-Expected: 4 failures. `env` is not a valid choice (argparse exits 2), and the cap note still says 15 min. The other 30 tests pass.
+Expected: `6 failed, 31 passed`. The three `env` tests fail because `env` is not a valid choice (argparse exits 2); `test_cap_note_uses_the_reply_max_ttl` fails because the cap note still says 15 min; and the two changed tests fail because the gate still clamps to 900 before it sends.
 
 - [ ] **Step 2: Implement `env` and the reply-driven cap note**
 
@@ -26883,8 +29357,9 @@ def announce(owner, lease_id, resources, expires_in_s, note):
 - In `acquire_lease`:
   - replace `ttl_s = max(5, min(MAX_LEASE_TTL_S, int(ttl_min * 60)))` with `ttl_s = max(5, int(ttl_min * 60))`, since the editor clamps;
   - delete the `capped = …` line;
-  - in the renew path call `announce(owner, lease_id, resources, data.get("expires_in_s", ttl_s), cap_note(ttl_s, data))`;
-  - in the grant path call `announce(owner, held["lease_id"], resources, expires_in_s, cap_note(ttl_s, held))`.
+  - in the renew path call `announce(owner, lease_id, resources, data.get("expires_in_s", ttl_s), cap_note(ttl_s, data))` (a `lease_renew` reply has no `max_ttl_s`, so `cap_note` falls back to `DEFAULT_MAX_LEASE_TTL_S`);
+  - in the grant path call `announce(owner, held["lease_id"], resources, expires_in_s, cap_note(ttl_s, held))`;
+  - leave T4.4's `label` handling and both `mirror_grant(…, label)` calls as they are.
 - Add:
 
 ```python
@@ -26916,9 +29391,10 @@ def env(owner, helper):
 
 ```powershell
 python -m pytest <host-kit>/tests -q
+Select-String -Path <host-kit>\editor_gate.py -Pattern '(?<!DEFAULT_)MAX_LEASE_TTL_S'
 ```
 
-Expected: `34 passed`.
+Expected: `37 passed`, and the `Select-String` prints nothing (no use of the old constant is left).
 
 - [ ] **Step 4: Regenerate the patch against the Deploy B kit**
 
@@ -27050,7 +29526,7 @@ Set-Location $WT
 python -m pytest <host-kit>/tests -q
 ```
 
-Expected: both builds succeed. The checker exits 0 with all 77 manifest names: 8 existing plus 69 new, the 5 T9 names included. TS shows 0 failed. pytest shows `34 passed`.
+Expected: both builds succeed. The checker exits 0 with all 77 manifest names: 8 existing plus 69 new, the 5 T9 names included. TS shows 0 failed. pytest shows `37 passed`.
 
 **Done when:** ADR-0010, `CONTEXT.md`, `CHANGELOG.md` and the migration README describe owner-first identity and `lease_adopt`; the host kit has `env [--helper]` and the reply-driven cap note, with a patch that applies to the Deploy B kit; and the full T9 gate is green.
 
@@ -27062,12 +29538,12 @@ Spec §6.3, §7.1 and §7.4 row C. Deploy C is T9 alone, on top of `p0-deploy-b`
 
 **Files:**
 - Read: `mcp-tools/hayba-mcp/scripts/p0-expected-automation-tests.txt` (sections `# T0`–`# T9`, with `# T9` holding 5 names; 77 names in all)
-- Write (outside the repo): `D:/UEScratch/out/p0-<SHA>/`, `D:/UEScratch/reports/<SHA>/`, `D:/UEScratch/reports/<SHA>-realpie/`, `D:/UEScratch/logs/gate-c-<SHA>.txt`
+- Write (outside the repo): `D:/UEScratch/out/p0-<SHA>/`, `D:/UEScratch/reports/<SHA>/`, `D:/UEScratch/reports/<SHA>-realpie/`, `D:/UEScratch/logs/gate-c-<SHA>.txt`, `D:/UEScratch/logs/gate-c-sha.txt`
 - Test: all of the above, plus the host kit
 
 **Interfaces:**
 - Consumes: `SCR/check-automation-report.mjs`, R0 (T0.3), `D:/UEScratch/h58`.
-- Produces: `D:/UEScratch/logs/gate-c-<SHA>.txt`, cited by GC.3.
+- Produces: `D:/UEScratch/logs/gate-c-<SHA>.txt`, cited by GC.3, and `D:/UEScratch/logs/gate-c-sha.txt`, one line holding the full gate SHA, which GC.3 reads to substitute `<SHA_C>` and to place the tag.
 
 - [ ] **Step 1: Pin the commit and check the preconditions**
 
@@ -27077,6 +29553,7 @@ $WT  = "D:\Hackathons\hayba\.worktrees\p0-safety"
 $H   = "D:\UEScratch\h58"
 git -C $WT status --short
 $SHA = git -C $WT rev-parse --short HEAD
+git -C $WT rev-parse HEAD | Set-Content "D:\UEScratch\logs\gate-c-sha.txt"
 git -C $WT merge-base --is-ancestor p0-deploy-b HEAD; $LASTEXITCODE
 Test-Path "$H\Config\DefaultHaybaMCP.ini"
 Select-String -Path "$WT\mcp-tools\hayba-mcp\scripts\p0-expected-automation-tests.txt" -Pattern '^Hayba\.MCP\.Lease\.(Adopt|ResolveCaller|RouterBinding|ReservedOwner|UnknownLeaseRefusesWrites)$' | Measure-Object | ForEach-Object Count
@@ -27157,25 +29634,29 @@ npm run lint:legacy-wrappers
 npm run build:server
 Set-Location $WT
 python -m pytest <host-kit>/tests -q 2>&1 | Tee-Object "D:\UEScratch\logs\gate-c-$SHA.txt" -Append | Select-Object -Last 3
-"GC.1 $SHA $(Get-Date -Format o): BuildPlugin ok; host build x2 ok; manifest ok (R0+68); RealPIE ok; TS ok; host kit 34 passed" |
+$NewNames = 69   # the same number Step 4 passed to --min-total
+"GC.1 $SHA $(Get-Date -Format o): BuildPlugin ok; host build x2 ok; manifest ok (R0+$NewNames); RealPIE ok; TS ok; host kit 37 passed" |
   Add-Content "D:\UEScratch\logs\gate-c-$SHA.txt"
+Get-Content "D:\UEScratch\logs\gate-c-sha.txt"
 ```
 
-Expected: `tsc` exits 0; vitest shows 0 failed and 1 skipped; the lint and build exit 0; pytest shows `34 passed`.
+Expected: `tsc` exits 0; vitest shows 0 failed and 1 skipped; the lint and build exit 0; pytest shows `37 passed`; and `gate-c-sha.txt` prints the full SHA of the commit that was gated.
 
-**Done when:** at one clean commit that descends from `p0-deploy-b`, BuildPlugin succeeds; the host builds twice; all 77 manifest names pass (only `RenderWidgetToPng` may fail); `RealPIE` passes; TS is green; and the host kit shows 34 passed.
+**Done when:** at one clean commit that descends from `p0-deploy-b`, BuildPlugin succeeds; the host builds twice; all 77 manifest names pass (only `RenderWidgetToPng` may fail); `RealPIE` passes; TS is green; and the host kit shows 37 passed.
 
 ### Task GC.2: Deploy C live ladder (C1–C3) on the scratch GUI host
 
-Ledger §5.4 C1–C3.
+Appendix A.5.4 C1–C3.
 
 **Files:**
 - Modify: `mcp-tools/hayba-mcp/scripts/p0-live-ladder.mjs`: add `C_STEPS` before `export const STEPS`, and change `c: []` to `c: C_STEPS`
 - Test: `mcp-tools/hayba-mcp/tests/p0-live-ladder.test.ts` (one new case)
 
 **Interfaces:**
-- Consumes: `lease_adopt {owner, lease_id}` → `data.{adopted, connection_owner}`; `lease_status` → `data.{caller_owner, connection_owner}`; code `owner_reserved`, with detail `owner.claimed_owner`; `editor_batch` → `data.{job_id, owner}`; `batch_status` → `data.{status, steps_run}`.
+- Consumes: `lease_adopt {owner, lease_id}` → `data.{adopted, connection_owner}`; `lease_status` → `data.{caller_owner, connection_owner}`; code `owner_reserved`, with detail `owner.claimed_owner`; `editor_batch` → `data.{job_id, owner}`; `batch_status` → `data.{status, steps_run}`; `Conn.send(cmd, params, {owner, lease})` (GA.2).
 - Produces: `STEPS.c`.
+
+**Why C3 sends its lease in the envelope.** C3's connection names no owner, and `editor_batch` is a write. Under `EnforcedForWrites` an owner-less write is refused with `owner_required` while an identified owner is present, and one always is when C3 runs: C1 named `ladder-c1` a moment earlier (an owner stays present for 60 s after it was last seen, and for as long as a connection that named it is open). The editor's presence cannot be reset from outside, and the order C1, C2, C3 is pinned. So C3 identifies its caller the way an owner-less raw client does: by the envelope `lease`. A live lease of the caller itself (`conn:<n>`) is `Bound`, which counts as identified (T8.1 `IsIdentified`, T9.1 `Facts.Handle`), and the batch owner is still `conn:<n>`. C3 also asserts that the refusal it avoids is real: the same `editor_batch` without the envelope lease answers `owner_required`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -27246,10 +29727,19 @@ const C_STEPS = [
     id: 'C3',
     title: 'a batch owned by conn:<n> keeps running after connection n closes',
     run: async (ctx) => {
+      // An identified owner must be present for the owner_required half of this step.
+      // C1 left one; name one here as well, so `--only C3` behaves the same.
+      const seen = await ctx.call('ping', {}, { owner: 'ladder-c3-watch' });
+      check(seen.ok, `ping as ladder-c3-watch: ${seen.code ?? seen.error}`);
       const n = await ctx.conn();
       const g = await n.send('lease_acquire', { resources: ['asset:/Game/__HaybaTest__/C3'], ttl_s: 60, bind_connection: false });
       check(g.ok && LEASE_ID_RE.test(g.data?.lease_id ?? ''), `acquire: ${g.error}`);
-      const b = await n.send('editor_batch', { lease_id: g.data.lease_id, steps: [{ cmd: 'ping' }, { cmd: 'ping' }, { cmd: 'ping' }] });
+      const steps = [{ cmd: 'ping' }, { cmd: 'ping' }, { cmd: 'ping' }];
+      // No owner and no envelope lease: nothing says who is writing.
+      const anon = await n.send('editor_batch', { lease_id: g.data.lease_id, steps });
+      check(anon.code === 'owner_required', `owner-less editor_batch: expected owner_required, got ${anon.code ?? 'ok'}`);
+      // The caller's own lease in the envelope identifies it; the batch owner stays conn:<n>.
+      const b = await n.send('editor_batch', { lease_id: g.data.lease_id, steps }, { lease: g.data.lease_id });
       check(b.ok && /^conn:\d+$/.test(b.data?.owner ?? ''), `editor_batch: ${b.code ?? b.error}`);
       n.close();
       const done = await waitFor('the batch finishes', async () => {
@@ -27288,7 +29778,7 @@ Launch with exactly GA.2 Step 10's block. Then:
 node "$WT\mcp-tools\hayba-mcp\scripts\p0-live-ladder.mjs" --deploy c --host-dir $H
 ```
 
-Expected: three `PASS` lines and exit 0. C3's batch owner is `conn:<n>`. Its steps keep running after the socket closes, because slot 0 is skipped for batch steps (R-27).
+Expected: three `PASS` lines and exit 0, in the order C1, C2, C3. C3's batch owner is `conn:<n>`. Its steps keep running after the socket closes, because slot 0 is skipped for batch steps (R-27). C3 passes whatever ran before it: it names its caller by the envelope lease, so the owners C1 and C2 left present do not change its result.
 
 - [ ] **Step 6: Re-run the Deploy B identity-sensitive steps on the new build**
 
@@ -27302,19 +29792,19 @@ Expected: three `PASS` lines. These send explicit owners, so owner-first resolut
 
 ### Task GC.3: Deploy C handoff document and the `p0-deploy-c` tag
 
-Spec §5.3 (required before Deploy C), T9 Rollback, §7.2 and §7.4; ledger §5.5.
+Spec §5.3 (required before Deploy C), T9 Rollback, §7.2 and §7.4; Appendix A.5.5.
 
 **Files:**
 - Create: `docs/handoffs/HANDOFF-p0-deploy-c-consumer.md`
 - Test: the reference checks in Step 2
 
 **Interfaces:**
-- Consumes: the GC.1 SHA and evidence, the GC.2 results, and `<MERGE_B>` from GB.4.
+- Consumes: `D:/UEScratch/logs/gate-c-sha.txt` (the GC.1 SHA) and the GC.1 evidence file; the GC.2 results; `D:/UEScratch/logs/merge-b-sha.txt` (`<MERGE_B>`, written by GB.4).
 - Produces: the tag `p0-deploy-c`, and the handoff with `<MERGE_C>` for GC.4 to fill.
 
 - [ ] **Step 1: Write the handoff**
 
-Create `docs/handoffs/HANDOFF-p0-deploy-c-consumer.md` with this content. Substitute `<SHA_C>` (the GC.1 SHA) and `<MERGE_B>`; leave `<MERGE_C>`.
+Create `docs/handoffs/HANDOFF-p0-deploy-c-consumer.md` with this content, tokens included. Step 2 substitutes `<SHA_C>` (from `gate-c-sha.txt`) and `<MERGE_B>` (from `merge-b-sha.txt`, written by GB.4); `<MERGE_C>` stays until GC.4 fills it.
 
 ````markdown
 # Hand-off: P0 Deploy C to the consumer (owner-first identity, lease_adopt)
@@ -27338,7 +29828,7 @@ For the consumer's session, to act on in its own closed-editor window. Hayba nev
 ## 2. Required before the window (§5.3)
 
 1. **Every helper that runs under a gate lease sends the gate's `--owner` as the envelope `owner`**: `bpgraph.mjs`, `apply_look.py`, `Tools/Foliage/check_pcg_culls.py`, `Tools/UI/import_input_prompts.py`. A helper that sends only `lease` becomes `conn:<id>`, and its conflicting writes get `lease_conflict` with a `lease_binding` fix hint.
-2. **Install the Deploy C host kit.** `git apply <host-kit>/editor_gate.patch` (from `<MERGE_C>`) applies to the Deploy B kit you installed before Deploy B. Then run `python -m pytest Tools/GameFlow/tests -q`, which must report `34 passed`. It brings:
+2. **Install the Deploy C host kit.** `git apply <host-kit>/editor_gate.patch` (from `<MERGE_C>`) applies to the Deploy B kit you installed before Deploy B. Then run `python -m pytest Tools/GameFlow/tests -q`, which must report `37 passed`. It brings:
    - the cap note, which reads the editor's `max_ttl_s` instead of the hard-coded 900 (`MAX_LEASE_TTL_S`, `:39`);
    - `env --owner X`, which prints only `HAYBA_AGENT_ID=X`, for launching MCP servers;
    - `env --owner X --helper`, which also prints `HAYBA_LEASE=<lease_id>`, for helper processes only. The two are never printed together by default, so an MCP server never inherits a lease that later dies.
@@ -27403,35 +29893,58 @@ Then run one bpgraph build end to end with `HAYBA_AGENT_ID` set. Its log must sh
 
 ## 7. Measuring
 
-Deploy C moves no new metric. Keep collecting M1–M8 with the recipe in `HANDOFF-p0-deploy-b-consumer.md` §7. The adoption signal is the count of helpers still sending a lease without an owner; it should fall to 0 within a day:
+Deploy C moves no new metric. Keep collecting M1–M8, the secondary metrics and the alias-removal counts with the recipes in `HANDOFF-p0-deploy-b-consumer.md` §7 (M4, M5, M6a, M7 and M8 are in `HANDOFF-p0-deploy-a-consumer.md` §7). The alias-removal counts matter most now: the deprecated `token` input and the marker shim can be removed only after 7 working days with zero `deprecated param 'token'` lines.
+
+The adoption signal is the count of helpers still sending a lease without an owner; it should fall to 0 within a day. Both lines are rate-limited, so the counts add the suppressed repeats:
 
 ```powershell
 $log = "<project>\Saved\Logs\<Project>.log"
-Select-String -Path $log -Pattern "lease_warning/lease_not_bound|lease_binding" | Measure-Object | ForEach-Object Count
-Select-String -Path $log -Pattern "owner_reserved:" | Measure-Object | ForEach-Object Count
+function Count-Occurrences($hits) {
+  $n = 0
+  foreach ($h in $hits) {
+    if ($h.Line -match 'repeated (\d+) more times in 30 s') { $n += [int]$Matches[1] }
+    elseif ($h.Line -match '\(\+(\d+) identical in the previous 30 s\)') { $n += 1 + [int]$Matches[1] }
+    else { $n += 1 }
+  }
+  $n
+}
+"lease_not_bound: $(Count-Occurrences (Select-String -Path $log -Pattern 'lease_warning/lease_not_bound'))"
+"owner_reserved:  $(Count-Occurrences (Select-String -Path $log -Pattern 'owner_reserved: |\[gate\] owner_reserved repeated'))"
+Select-String -Path $log -Pattern "lease_warning/lease_not_bound: '([^']+)' from '([^']+)'" |
+  ForEach-Object { "$($_.Matches[0].Groups[2].Value) -> $($_.Matches[0].Groups[1].Value)" } | Sort-Object -Unique
 ```
+
+The last command lists each caller and command that still names a lease without its owner: those are the helpers to fix.
 
 ## 8. Known limits in Deploy C
 
 - An adoption lives as long as its connection. The editor closes a connection idle for about 5 s, so a client that adopts must repeat `lease_adopt` after every reconnect. The Node MCP server sends `HAYBA_AGENT_ID` on every envelope and never needs to adopt.
 - A helper without an owner is `conn:<id>`. Because its envelope names a live lease, it is not refused as `owner_required`; its conflicting writes are refused as `lease_conflict` with `lease_binding`.
-- R-1, R-12, R-23 and R-24 are unchanged from Deploy B (see its §8).
+- The R-1, R-23 and R-24 limits are unchanged from Deploy B (see its §8).
 ````
 
-- [ ] **Step 2: Check the document**
+- [ ] **Step 2: Substitute the SHAs and check the document**
 
 ```powershell
 Set-Location D:\Hackathons\hayba\.worktrees\p0-safety
-Select-String -Path docs\handoffs\HANDOFF-p0-deploy-c-consumer.md -Pattern '<SHA_C>|<MERGE_B>' | Measure-Object | ForEach-Object Count
-Select-String -Path docs\handoffs\HANDOFF-p0-deploy-c-consumer.md -Pattern '\btoken\b' | ForEach-Object Line
+$SHA_C = (Get-Content "D:\UEScratch\logs\gate-c-sha.txt" -TotalCount 1).Trim()
+if ($SHA_C -notmatch '^[0-9a-f]{40}$') { throw "gate-c-sha.txt does not hold a commit SHA; run GC.1 first" }
+git merge-base --is-ancestor $SHA_C HEAD; if ($LASTEXITCODE -ne 0) { throw "$SHA_C is not an ancestor of HEAD" }
+$MERGE_B = (Get-Content "D:\UEScratch\logs\merge-b-sha.txt" -TotalCount 1).Trim()
+if ($MERGE_B -notmatch '^[0-9a-f]{7,40}$') { throw "merge-b-sha.txt does not hold a commit SHA; run GB.4 first" }
+$Doc = "docs\handoffs\HANDOFF-p0-deploy-c-consumer.md"
+(Get-Content $Doc -Raw).Replace('<SHA_C>', $SHA_C.Substring(0, 8)).Replace('<MERGE_B>', $MERGE_B) | Set-Content $Doc -NoNewline
+Select-String -Path $Doc -Pattern '<SHA_C>|<MERGE_B>' | Measure-Object | ForEach-Object Count
+Select-String -Path $Doc -Pattern '<MERGE_C>' | Measure-Object | ForEach-Object Count
+Select-String -Path $Doc -Pattern '\btoken\b' | ForEach-Object Line
 ```
 
-Expected: `0` and no output.
+Expected: `0` tokens left for `<SHA_C>` and `<MERGE_B>`; a non-zero count for `<MERGE_C>` (GC.4 fills it); and one line, the §7 sentence about removing the deprecated `token` input. No line tells anyone to send or print a token.
 
 - [ ] **Step 3: Tag and commit**
 
 ```powershell
-$SHA_C = "<the GC.1 SHA>"
+$SHA_C = (Get-Content "D:\UEScratch\logs\gate-c-sha.txt" -TotalCount 1).Trim()
 git tag -a p0-deploy-c $SHA_C -m "P0 Deploy C: owner-first identity, reserved owners, lease_adopt (T9)"
 git add docs/handoffs/HANDOFF-p0-deploy-c-consumer.md
 git commit -m "docs(handoff): P0 Deploy C for the consumer's window"
@@ -27497,12 +30010,22 @@ Expected: TS 0 failed; both builds succeed; the checker exits 0 over all 77 name
 
 - [ ] **Step 3: Commit, fast-forward, fill the handoff, deliver**
 
+The merge staged every file it merged cleanly. Stage only what Step 1 resolved or edited (nothing, when the merge was clean); `npm ci` and the builds have run in this worktree, so never `git add -A`.
+
 ```powershell
 Set-Location D:\Hackathons\hayba\.worktrees\p0c-consumer
+git status --short | Where-Object { $_ -match '^\?\?' }
+$Resolved = @(git diff --name-only --diff-filter=U) + @(git diff --name-only) | Sort-Object -Unique
+$Resolved
+if ($Resolved) { git add -- $Resolved }
+git diff --name-only --diff-filter=U
+git diff --name-only
 git commit -m "chore(merge): P0 Deploy C into the consumer's deploy branch"
+git status --short
 git -C <deploy-worktree> merge --ff-only merge/p0-deploy-c-consumer
 git -C <deploy-worktree> push origin <deploy-branch>
 $MERGE_C = git -C <deploy-worktree> rev-parse --short HEAD
+$MERGE_C | Set-Content "D:\UEScratch\logs\merge-c-sha.txt"
 Set-Location D:\Hackathons\hayba\.worktrees\p0-safety
 (Get-Content docs\handoffs\HANDOFF-p0-deploy-c-consumer.md -Raw).Replace('<MERGE_C>', $MERGE_C) |
   Set-Content docs\handoffs\HANDOFF-p0-deploy-c-consumer.md -NoNewline
@@ -27510,6 +30033,8 @@ git add docs/handoffs/HANDOFF-p0-deploy-c-consumer.md
 git commit -m "docs(handoff): record the Deploy C merge commit"
 git push origin fix/p0-safety
 ```
+
+Expected: the first command prints nothing (an untracked file is generated output: leave it unstaged and find out what wrote it). `$Resolved` is empty for a clean merge; otherwise it lists exactly the files Step 1 resolved, each a tracked source file. Both `git diff` commands after the `git add` print nothing, and `git status --short` prints nothing after the commit. The handoff has no `<MERGE_C>` left.
 
 Deliver the handoff as in GA.4 Step 6: call `ListAgents`, then `SendMessage` the consumer's session with the doc path and `$MERGE_C`, and state that §2 (helpers send their owner; the Deploy C host kit is installed) is a hard precondition. Otherwise give both to the maintainer.
 
@@ -27569,17 +30094,67 @@ node "$WT\mcp-tools\hayba-mcp\scripts\check-automation-report.mjs" "D:\UEScratch
 
 Expected: TS 0 failed (`plan-mode-gate.test.ts` still finds `M->PlanOwner = Proposer;`); both builds succeed; the checker exits 0 over all 77 names.
 
-- [ ] **Step 3: Commit, push, open the PR**
+- [ ] **Step 3: Commit the merge**
+
+The merge staged every file it merged cleanly. Stage only the files Step 1 resolved; never `git add -A` in a worktree where `npm ci` and the builds have run.
 
 ```powershell
 Set-Location D:\Hackathons\hayba\.worktrees\p0c-bc
-git add -A
-git commit -m "chore(merge): P0 Deploy C into the brain-client trunk"
-git push -u origin merge/p0-deploy-c-into-bc
-gh pr create --base feat/hayba-brain-client --head merge/p0-deploy-c-into-bc --title "Merge P0 Deploy C (T9) into the brain-client trunk" --body-file D:\UEScratch\reports\bc-c-pr-body.md
+git status --short | Where-Object { $_ -match '^\?\?' }
+$Resolved = @(git diff --name-only --diff-filter=U) + @(git diff --name-only) | Sort-Object -Unique
+$Resolved | Set-Content D:\UEScratch\reports\bc-c-resolved.txt
+if ($Resolved) { git add -- $Resolved }
+git diff --name-only --diff-filter=U
+git diff --name-only
+git commit -m "chore(merge): P0 Deploy C into the brain-client trunk" -m "Keeps the trunk's Agent-panel plan flow with T9's owner-first resolution, slot 0 and the four-argument ProcessBatchStep."
+git status --short
 ```
 
-Write `bc-c-pr-body.md` first. It covers: the tag, the resolved conflicts, and the gate evidence. End it with the executing session's PR attribution lines.
+Expected: the first command prints nothing. `$Resolved` lists the files Step 1 resolved (`HaybaMCPCommandHandler.cpp` when the router conflicted) and nothing generated. Both `git diff` commands after the `git add` print nothing, and `git status --short` prints nothing after the commit.
+
+- [ ] **Step 4: Write the PR body, push and open the PR**
+
+```powershell
+$WT  = "D:\Hackathons\hayba\.worktrees\p0c-bc"
+$SHA = git -C $WT rev-parse --short HEAD
+$Tag = git -C $WT rev-parse --short "p0-deploy-c^{commit}"
+$Files = (Get-Content D:\UEScratch\reports\bc-c-resolved.txt | ForEach-Object { "- ``$_``" }) -join "`n"
+if (-not $Files) { $Files = "- none: the merge was clean" }
+$Checker = (node "$WT\mcp-tools\hayba-mcp\scripts\check-automation-report.mjs" "D:\UEScratch\reports\bc-c-$SHA\index.json" `
+  "$WT\mcp-tools\hayba-mcp\scripts\p0-expected-automation-tests.txt" --allow-fail Hayba.MCP.UI.RenderWidgetToPng) -join "`n"
+$Body = @'
+## What this merge brings
+
+P0 Deploy C, the tag `p0-deploy-c` ({TAG}), merged into the trunk ({SHA}): owner-first caller resolution, reserved owners (`owner_reserved`), lease binding (`lease_binding`, `lease_not_bound`), batch steps that run as the batch owner, and `lease_adopt` (T9). The whole P0 safety train is in the trunk with this merge.
+
+## Conflicts and how each was resolved
+
+Resolved or edited in the merge commit:
+
+{FILES}
+
+- `HaybaMCPCommandHandler.cpp`: the trunk's Agent-panel plan flow is kept (`M->PlanOwner = Proposer;` before `ProposeExternalPlan`), together with T9's hunks: the `ResolveCaller` block, slot 0 before the presence hunk, and the four-argument `ProcessBatchStep`.
+- Every other conflicted file keeps both sides.
+
+## Gate evidence
+
+- TS gate on the merge: `tsc --noEmit`, `vitest run` (0 failed), `lint:legacy-wrappers` and `build:server` all pass.
+- Headless `RunTests Hayba` on a throwaway UE 5.8 host, built twice, exact-name check of all 77 manifest names:
+
+<pre>
+{CHECKER}
+</pre>
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)
+'@
+$Body.Replace('{TAG}', $Tag).Replace('{SHA}', $SHA).Replace('{FILES}', $Files).Replace('{CHECKER}', $Checker) |
+  Set-Content -Encoding utf8 D:\UEScratch\reports\bc-c-pr-body.md
+Select-String -Path D:\UEScratch\reports\bc-c-pr-body.md -Pattern '^OK$', '^FAIL', '\{[A-Z_]+\}'
+git -C $WT push -u origin merge/p0-deploy-c-into-bc
+gh pr create --repo zajalist/hayba --base feat/hayba-brain-client --head merge/p0-deploy-c-into-bc --title "Merge P0 Deploy C (T9) into the brain-client trunk" --body-file D:\UEScratch\reports\bc-c-pr-body.md
+```
+
+Expected: the `Select-String` prints the checker's `OK` line and nothing else (no `FAIL`, no unfilled `{…}` token), and `gh` prints the PR URL. When the executing session's harness gives a session link as a second PR attribution line, append it as the last line of the body file before `gh pr create`.
 
 **Done when:** the PR is open with a green gate, and the maintainer has merged it. The whole P0 train is then in the trunk.
 
@@ -27602,7 +30177,7 @@ Tasks cite correction ids (C1–C21), review-focus ids (R-1–R-30), the router 
 | C7 | `tools/declared-command-check.mjs` and `tools/capability-inventory.mjs` are **not on this branch**. `TS/tools/__tests__/wire-command-names.test.ts` fails if any `executeCommand('<name>')` in TS names a command the plugin does not register. | The five-layer check for `lease_adopt` (T9) is manual. The C++ registration and the Node handler must land **in the same commit**. |
 | C8 | Lease tools are TS-wrapped (`LEASE_DESCRIPTORS`, spread in `index.ts:3632/3642`). `TS/tools/code-mode/list-tool-categories.ts` has **no** `lease_*` entries. | For `lease_adopt`, layers 2–4 are the `LEASE_DESCRIPTORS` entry (`returns`, `schema`, `meta`). Layer 5 means adding a `lease` domain listing, or recording that lease tools are deliberately unlisted. Decide in T9.2. |
 | C9 | `FTable::ReleaseConnection` is called at `P/Private/HaybaMCPLeaseManager.cpp:158` and in `Tests/HaybaMCPLeasePolicyTest.cpp:236-238`. The current test asserts that a closed connection *deletes* the lease. `FHaybaMCPLeaseManager::OnConnectionClosed(int32)` already exists at `LeaseManager.h:74`. | T7 renames the table method to `FTable::OnConnectionClosed`, so both methods now share a name; always qualify them. T7 rewrites the test at `:236-238` in the same commit. |
-| C10 | Headless automation (`-unattended`) and `test_run` owned children (which also pass `-unattended`, `HaybaMCPTestHandler.cpp:919`) set `FApp::IsUnattended()`. `FMessageDialog::Open` then **never opens a modal** (UE 5.8 `MessageDialog.cpp:157`). | T5's `LevelSaveRefusesWithoutModal` and `PythonMapSaveReturnsWithoutModal` cannot fail for the modal reason in any automated run. Each needs a seam (see R-3 in §4). |
+| C10 | Headless automation (`-unattended`) and `test_run` owned children (which also pass `-unattended`, `HaybaMCPTestHandler.cpp:919`) set `FApp::IsUnattended()`. `FMessageDialog::Open` then **never opens a modal** (UE 5.8 `MessageDialog.cpp:157`). | T5's `LevelSaveRefusesWithoutModal` and `PythonMapSaveReturnsWithoutModal` cannot fail for the modal reason in any automated run. Each needs a seam (see R-3 in A.4). |
 | C11 | The toolkit **does not compile on UE 5.7** today: `MATUSAGE_*` errors in `D:/UEScratch/logs/run1-errors.txt`, from a prior 5.7 BuildPlugin. | T2's 5.7 `RequestPIEPermission(bool, FString&)` branch can be compiled only behind a version guard and cannot be verified. Say so in ADR-0012. |
 | C12 | `HaybaSaveVerify::SaveAndVerify` builds the path with `GetAssetPackageExtension()` (`.uasset`) for every package, which is wrong for `.umap` (`Public/HaybaMCPSaveVerify.h:61`). | T5's `FindReadOnlyPackageFiles` must resolve `.umap` vs `.uasset`, and `SaveAndVerify` should use the same resolver. |
 | C13 | `TS/tools/__tests__/seh-postprocessing-gate.test.ts:35` expects the router to contain `Treat the editor session as suspect`, and `:15` indexes `HaybaSeh::RunGuarded` (a prefix of `RunGuardedAt`, so it still matches). `SCR/audit-crash-threat-model.mjs:60` pins the old Error line `SEH guard caught a structured exception in handler for command '...'`. | T1 rewrites both checks in the same commit (ADR-0007). |
@@ -27610,10 +30185,10 @@ Tasks cite correction ids (C1–C21), review-focus ids (R-1–R-30), the router 
 | C15 | PieSafe prose vs the R12 union: `asset_browse` is in `UnsafeReads`, so it must be in `ReadCommands()` and becomes PieSafe. `test_cancel` is on the unsafe control plane, so it goes in `ControlPlaneCommands()` and becomes PieSafe. | Both are intended. `PieSafeDrift`'s expected list includes them. |
 | C16 | Registered-command audit: 243 commands in `GetCommands()` literals across the toolkit and satellites. Every name in the spec's sets is registered, except the router-inline four (`hayba_propose_plan`, `ui_memory_set`, `ui_tool_stream`, `ui_tool_stream_new_turn`), `blueprint_remove_node` (as the spec says), `wp_region_load`/`wp_region_unload` (native batch steps, **not** commands; keep them out of every set), and `test_inject_native_fault` (new). | The drift tests use "registered ∪ `RouterInlineCommands()`". |
 | C17 | `001c0537` (S1) lives on `<deploy-branch>` and `feat/anim-authoring`. Its names are `HaybaMCPAccess::AssetWriteCommands()` (`TMap<FString,FString>`), `AssetPackageKey(const FString&)` (lower-cased package, no `asset:` prefix) and `ImpliedAssetClaim(Cmd, Params, FClaim&)`. All its anim rows (`anim_bp_create`, `anim_graph_*`, `anim_sequence_*`, `ui_add_key_override`) are **unregistered here**. `anim_blueprint_compile` **is** registered. | T3.1 cherry-picks `001c0537` and replaces its rows with the blueprint and UI rows. Keep the names identical so the §7.3 merge produces a union. |
-| C18 | Headless editors claim a port in 52342–52350 and write `Saved/HaybaMCP/instances/<pid>.json`, unless the command line has `-HaybaAutomationChild=<token>` (`HaybaMCPModule.cpp:258-265`). Node falls back to 52342 when it finds no registry. | Every scripted scratch run passes `-HaybaAutomationChild=p0scratch`. Only the GUI ladder host opens TCP; see §5. |
+| C18 | Headless editors claim a port in 52342–52350 and write `Saved/HaybaMCP/instances/<pid>.json`, unless the command line has `-HaybaAutomationChild=<token>` (`HaybaMCPModule.cpp:258-265`). Node falls back to 52342 when it finds no registry. | Every scripted scratch run passes `-HaybaAutomationChild=p0scratch`. Only the GUI ladder host opens TCP; see A.5.4 and R-5 in A.4. |
 | C19 | UE 5.8 `IPIEAuthorizer`: `IsPIEAuthorizedInternal(bool) const` is **pure virtual** and `RequestPIEPermissionInternal(bool) const` is virtual. Both are `const`. UE 5.7: `RequestPIEPermission(bool, FString&) const = 0`. | T10's double-press state cannot live in the authorizer. It lives in `FHaybaMCPEditorState`, which is non-const. |
 | C20 | `UEditorEngine::IsPlaySessionInProgress()` = `IsPlayingSessionInEditor() \|\| IsPlaySessionRequestQueued()` (`EditorEngine.h:1842`). Today's `editor_get_state.pie_running` uses it. | `ResolvePie` must not use it, because it includes `IsPlayingSessionInEditor`. Compute `pie_running` from `ResolvePie`. |
-| C21 | The TS python factory (`TS/tools/py-tool-factory.ts` → `TS/tools/ue-python.ts:46 runUePythonJson` → `python_run {script}`) never sends `resources` or `read_only`. | After T8, **every** python-factory read tool counts as undeclared and conflicts with any other owner's lease (§4, R-1). The spec does not cover this. |
+| C21 | The TS python factory (`TS/tools/py-tool-factory.ts` → `TS/tools/ue-python.ts:46 runUePythonJson` → `python_run {script}`) never sends `resources` or `read_only`. | After T8, **every** python-factory read tool counts as undeclared and conflicts with any other owner's lease (R-1 in A.4). The spec does not cover this. |
 
 #### A.1.4 Router hunks: `P/Private/HaybaMCPCommandHandler.cpp`, in file order after this train
 
@@ -27649,7 +30224,8 @@ Tasks cite correction ids (C1–C21), review-focus ids (R-1–R-30), the router 
 - **`asset_busy`:** `asset_busy: '<cmd>' is refused: <asset> is being built by '<owner>' (label <label>, held <n> s, lease expires in <m> s). PIE/compile would use it half-built. Nothing ran; try again when editor_get_state.building no longer lists it.`
 - **`owner_required`:** `owner_required: '<cmd>' (<class>) names no owner while <n> other agents are connected (<owners>). Send the envelope 'owner' (HAYBA_AGENT_ID) or a valid lease handle, then retry.`
 - **Lease-gate messages:** `… the envelope's lease_id is unknown or expired` and `… the envelope's lease is a redaction marker, not a lease_id; run lease_acquire again and send the lease_id it returns`.
-- **Marker release with no gate lease:** `[lease_id_redacted] a redacted marker cannot name a lease; send lease_id, or all:true to release every lease you hold`.
+- **Marker release with no gate lease:** `lease_release: [lease_id_redacted] a redacted marker cannot name a lease; send lease_id, or all:true to release every lease you hold`.
+- **Deprecated alias:** the `deprecation` field reads `'token' was renamed to lease_id; send lease_id` on every reply that used `token`, in the editor (`TokenDeprecation`) and in Node (`TOKEN_DEPRECATION`). It is one text; no task restates it.
 - **Rules for every text above:**
   - No refusal text contains `token`.
   - No hint or `next` text contains `token:` or `token=`.
@@ -27661,7 +30237,7 @@ Ordered roughly by when they would bite first.
 
 | # | Input class / failure mode | Why it bites | Owner | What the plan should add |
 |---|---|---|---|---|
-| R-1 | **The Python factory never declares `read_only`** (C21). `py-tool-factory.ts` → `runUePythonJson` → `python_run {script}`. About 84 % of MCP calls go through Python. | After T8, undeclared `python_run` counts as global X for conflicts. Every read tool (`actor_find`, `object_inspect`, …) then gets `lease_conflict` whenever **any** other owner holds **any** lease, including bpgraph's `asset:` build leases. M2 regresses and lanes stall. The spec is silent on this. | T8.2 | **A maintainer decision is needed before T8.** Options: add `readOnly?: boolean` to `PyToolDescriptor` (default false, fail-closed) and pass `read_only:true` through `runUePythonJson(script, timeout, {readOnly})`; or accept the regression and document it in the §5.2 handoff. |
+| R-1 | **The Python factory never declares `read_only`** (C21). `py-tool-factory.ts` → `runUePythonJson` → `python_run {script}`. About 84 % of MCP calls go through Python. | After T8, undeclared `python_run` counts as global X for conflicts. Every read tool (`actor_find`, `object_inspect`, …) then gets `lease_conflict` whenever **any** other owner holds **any** lease, including bpgraph's `asset:` build leases. M2 regresses and lanes stall. The spec is silent on this. | T8.2 | **Decided 2026-09-28** (spec, "Maintainer decisions added 2026-09-28"): descriptors declare `read_only` when they only read, and anything undeclared is a write. T8.3 adds `readOnly?: boolean` to `PyToolDescriptor` (default false, fail closed), passes `read_only:true` through `runUePythonJson(script, timeout, {readOnly})`, and sets it on the 47 reviewed read tools. |
 | R-2 | **Router-inline commands pass slot 4.** `ui_tool_stream` mirrors every tool call. | The lease gate runs **before** inline specials (§4.1). If `ui_tool_stream`, `ui_tool_stream_new_turn`, `ui_memory_set` or `hayba_propose_plan` fall out of the Read sets, every mirrored call gets `lease_conflict` under EnforcedForWrites. | T1.1 (sets), T8.2 | `ReadClassDrift` asserts all four `RouterInlineCommands()` classify Read. |
 | R-3 | **Headless and owned-child runs are `-unattended`** (C10). | `LevelSaveRefusesWithoutModal` and `PythonMapSaveReturnsWithoutModal` pass even without the fix. | T5.2 | Add a test seam that records `GIsRunningUnattendedScript == true` at the `level_save` call and the `Unattended` flag on each `FPythonCommandEx`, and assert it. `save-site-contract.test.ts` pins the source form. The true modal check runs only in the GB.2 GUI ladder. |
 | R-4 | **The notification path under `-unattended`.** | If `FApp::IsUnattended()` is checked before the override seam, `UserNotifiedOnce` fails headless but passes in the GUI, or the reverse. | T1.2 | Ordering: override counter, then the unattended skip, then Slate. Log the "user notified" line in every branch (M8). |
@@ -27672,15 +30248,15 @@ Ordered roughly by when they would bite first.
 | R-9 | **Raw TCP clients open one connection per call** (e.g. `invoke-tcp-command.ps1`, apply_look). | Every call gets a new `conn:N` owner, which means limiter key churn (collapsed), `NoteDeprecatedParam` unbounded per (cmd, param, owner), and presence never counting it. A per-call `lease_acquire` defaults `bind_connection:true`, so the lease is orphaned after each reply and lapses 60 s later (T7). An agent PIE started this way has an unmatchable owner. | T4.2, T6, T7, T2 | Collapse and cap `NoteDeprecatedParam`. The ladder runs a per-call pass explicitly. The lease_acquire `next` hint tells per-call clients to use `bind_connection:false` or a persistent socket. |
 | R-10 | **Node restart changes the owner** (`node-<pid>-<rand>` when `HAYBA_AGENT_ID` is unset). | The old bound leases orphan and lapse after 60 s and cannot be revived (owner mismatch). The keeper's tracked ids are lost. An agent PIE becomes unmatchable (the stop-from-anyone rule covers it). Per-owner Plan approval is lost. | T7.3, T2 | Add a keeper test: restart with the same `HAYBA_AGENT_ID`, then `renewAllByOwner()` revives the orphans. Document `HAYBA_AGENT_ID` as required in the handoffs. |
 | R-11 | **PIE starts mid-batch, or a PIE request is queued between steps.** | `bHeld` must also see `IsPlaySessionRequestQueued()`. A `CollectGarbage` action chosen on the same tick PIE is queued must not run. A user Play while the batch holds loaded WP regions duplicates a heavy world. The batch lease keeps renewing through a 30-minute PIE and blocks others. | T2.4 | `BatchHoldsDuringPIE` covers a queued request, not only a running one. The status reports `busy:"pie"` and `held_s`. |
-| R-12 | **Read-like registered commands are refused by default** (neither in PieSafe nor in any Read set): `wait_for_idle`, `wait_for_shaders`, `asset_validate`, `material_validate`, `mesh_audit`, `mesh_list_dynamic`, `mesh_topology_stats`, `metasound_inspect`, `metasound_list`, `pcg_export_graph`, `pcg_read_node_output`, `pcg_validate_graph`, `placement_validate`, `scene_export`, `scene_validate_physics`, `texture_audit`, `ui_measure_text`, `copilot_get_key`. | From Deploy A they get `pie_active` during any user Play. After T8 they are WriteScoped (and `lease_conflict`) whenever another owner holds global X. Host scripts that `wait_for_idle` while the user plays break. | T2.3, T8.2 | `PieSafeDrift` prints this list. Get maintainer sign-off on which move into `ReadCommands()`. Default: add `wait_for_idle` and `wait_for_shaders`. |
+| R-12 | **Read-like registered commands are refused by default** (neither in PieSafe nor in any Read set): `wait_for_idle`, `wait_for_shaders`, `asset_validate`, `material_validate`, `mesh_audit`, `mesh_list_dynamic`, `mesh_topology_stats`, `metasound_inspect`, `metasound_list`, `pcg_export_graph`, `pcg_read_node_output`, `pcg_validate_graph`, `placement_validate`, `scene_export`, `scene_validate_physics`, `texture_audit`, `ui_measure_text`, `copilot_get_key`. | From Deploy A they get `pie_active` during any user Play. After T8 they are WriteScoped (and `lease_conflict`) whenever another owner holds global X. Host scripts that `wait_for_idle` while the user plays break. | T2.3, T8.2 | **Decided 2026-09-28** (spec, "Maintainer decisions added 2026-09-28"): all 18 are reads. T2.3 adds them to `ReadCommands()` (53 → 71). `PieSafeDrift` and `ReadClassDrift` assert that none of them is refused during PIE or classified as a write. |
 | R-13 | **`IPIEAuthorizer` details** (C19, C11). | The methods are `const`, so the double-press state lives in `FHaybaMCPEditorState`. `IsPIEAuthorizedInternal` is pure virtual on 5.8. A denied request is cancelled by the engine, so CancelPIE arrives with no BeginPIE and the tracker must not count two ends. The 5.7 branch is unverifiable. | T2.2, T10.1 | `PieTracker` gets a case: `PreBegin` then `Cancel` gives `EndSerial+1` once. |
 | R-14 | **Hooks under owned children.** | `Startup()` must be outside `if (!bOwnedAutomationChild …)` and before `StartTcpServer`. Otherwise `HooksBoundAtStartup` passes in the GUI and fails in children, or the reverse. | T2.2 | `HooksBoundAtStartup` runs in a child. |
-| R-15 | **Python corruption markers can be forged.** | `raise SystemError("unknown opcode")` or `print("Fatal Python error")` from any agent makes the editor sticky-unsafe until restart. That is a denial-of-service vector and a false-positive source, for example a script that reads an old log. | T1.3 | Scan only the exception or traceback text and LogPython **Error** lines, never stdout. Name the matched marker in the Error line. The GA.2 ladder uses this path on purpose as its live trigger, on a throwaway host only. |
+| R-15 | **Python corruption markers can be forged.** | `raise SystemError("unknown opcode")` or `print("Fatal Python error")` from any agent makes the editor sticky-unsafe until restart. That is a denial-of-service vector and a false-positive source, for example a script that reads an old log. | T1.3 | Scan LogPython **Error** lines and the text of an exception whose type is exactly the built-in `SystemError` (read through `BaseException.__getattribute__`, first argument only, a `str` only, at most 240 characters); never stdout, stderr or a subclass. Name the matched marker in the Error line. An agent that can run Python can still forge a marker (`unreal.log_error`, or raising the exact type): that costs a restart, never data, and refusing to scan would hide the real I-6 signature. The GA.2 ladder uses the LogPython path on purpose as its live trigger, on a throwaway host only. |
 | R-16 | **Read-only package variants.** | `.uexp`, `.ubulk`, `.uptnl` or `.m.ubulk` read-only while `.uasset` is writable. A `.umap` vs `SaveAndVerify`'s `.uasset` path (C12). OFPA `__ExternalActors__` packages in `level_save`. Engine or plugin content under a read-only install. A missing file (new asset) must **not** count as read-only. Only the `.umap` read-only while the external actors are writable. | T5.1, T5.2 | `FindReadOnlyPackageFiles` cases for each. `LevelSaveRefusesWithoutModal` covers a read-only external package. |
 | R-17 | **Preflight order.** | UI `ReconcileWidgetVariableGuids` mutates GUIDs, `material_set_param` calls `Modify()`, `create_graph` renames a same-name graph into transient (`:654-658`). A late preflight plus an observed mutation turns `policy_blocked` into `session_suspect`. | T5.2 | `save-site-contract` asserts `RefuseIfReadOnly(TEXT("<cmd>")` precedes the first mutation token in each named function. |
 | R-18 | **Log floods and drains.** A user PIE during a bpgraph build (25–35 calls/s); unsafe refusal storms; lease warnings. | `DrainExpired()` runs only on the next `Note`, so the last window's "repeated N more times" may never print, and M2 undercounts. | T1.1, T6.2 | Call `DrainExpired()` at every log site. Also add a 30 s core-ticker drain owned by `FHaybaMCPLeaseManager` (**ledger decision**). `ProcessingLogOwner` covers the drain line. |
 | R-19 | **Existing grep contracts** (C13, C14). | `seh-postprocessing-gate.test.ts:35` and `audit-crash-threat-model.mjs:60` fail open or fail when the wording changes. 14 test files scan the router. | T1.5 (and every router task) | Teach each check the new form in the same commit. Run the whole vitest suite after each router edit. |
-| R-20 | **`EHaybaFaultSite` scope.** | If the enum sits in `namespace HaybaSeh`, the source literal becomes `RunGuardedAt(HaybaSeh::EHaybaFaultSite::Python`, and T5's contract (`RunGuardedAt(EHaybaFaultSite::Python`) fails. | T1.2 | Declare it at global scope (§2.1). |
+| R-20 | **`EHaybaFaultSite` scope.** | If the enum sits in `namespace HaybaSeh`, the source literal becomes `RunGuardedAt(HaybaSeh::EHaybaFaultSite::Python`, and T5's contract (`RunGuardedAt(EHaybaFaultSite::Python`) fails. | T1.2 | Declare it at global scope, in T1.1's `Public/HaybaMCPSeh.h` hunk. |
 | R-21 | **`editor_get_state` size.** | After T1–T3 the reply has 18–19 top-level fields against `MaxTopLevelFields = 20`. A later field drops silently in lexical order. | T2.3 | `GetStateShape` asserts every field. Add a per-command limit (32, like `asset_import`) in the router. |
 | R-22 | **`pie_running` compatibility** (C20). | `IsPlaySessionInProgress` includes `IsPlayingSessionInEditor`, which may be stale after a Standalone launch. | T2.3 | Derive `pie_running` from `ResolvePie`. |
 | R-23 | **Asset-busy lifetimes.** | Before T7, bpgraph's bound lease dies after 5 s idle, so `asset_busy` protection is lost mid-build unless the host pings every 2 s. After T7, an orphaned asset lease keeps `asset_busy` (and refuses `editor_start_pie`) for up to 60 s after bpgraph dies. `AnyBusyCommands` counts the caller's own build. | T3, T7 | Handoff A text; `RouterAssetBusyStartPie` includes the caller-owned case. |
@@ -27720,7 +30296,8 @@ $SHA = git -C $WT rev-parse --short HEAD
 #                                  {"Name":"PCG","Enabled":true},{"Name":"EditorScriptingUtilities","Enabled":true}]}
 #   $H\Source\h58.Target.cs, $H\Source\h58Editor.Target.cs (BuildSettingsVersion.Latest, EngineIncludeOrderVersion.Latest, ExtraModuleNames.Add("h58")),
 #   $H\Source\h58\h58.Build.cs, $H\Source\h58\h58.cpp (IMPLEMENT_PRIMARY_GAME_MODULE(FDefaultGameModuleImpl, h58, "h58");)
-#   Provide a World Partition editor map for BatchPumpStopsWhileUnsafe / BatchHoldsDuringPIE, or have those tests create one. Decide in T1.4.
+#   No World Partition map is needed: BatchPumpStopsWhileUnsafe injects a region that counts as loaded (decided in T1.4),
+#   and BatchHoldsDuringPIE uses ping steps.
 #   No Config\DefaultHaybaMCP.ini (R-26).
 
 # Sync: COPY, never symlink; keep built Binaries/Intermediate
@@ -27773,7 +30350,7 @@ Set-Location $WT; python -m pytest <host-kit>/tests -q
 Notes:
 - **`-ExecCmds` form:** one leading `Automation`, with subcommands split on `;` (`AutomationCommandline.cpp:582`, verified on 5.8). `Automation List; Automation RunTests …` runs nothing.
 - **The prior 5.7 BuildPlugin failed** (`D:/UEScratch/logs/toolkit-buildplugin.log`). Only 5.8 is a valid gate.
-- **Report format:** `index.json` holds `tests[]` with `fullTestPath`/`FullTestPath` and `state`/`State`. Accepted states are `Success` and `SuccessWithWarnings`, the same parse as `HaybaMCPTestHandler.cpp:429-446`.
+- **Report format:** `index.json` holds `tests[]` with `fullTestPath`/`FullTestPath`, `state`/`State` and a per-test `warnings` count (the keys `HaybaMCPTestHandler.cpp:429-446` reads). The checker accepts only the state `Success` for a manifest name (spec §6.2) and prints warning counts as information. The plugin's own `test_run` parse also accepts `SuccessWithWarnings`, which UE 5.8 never writes as a per-test state.
 
 #### A.5.4 Live verification ladder
 
@@ -27829,4 +30406,4 @@ Each handoff contains:
 6. Rollback: the live Advisory setting; the ini fallback with its section header; `hayba.PIEBuildVeto 0`; redeploy the previous tag.
 7. The exit-code table (0–6) and the §5.1 host changes (A) or §5.2 changes (B).
 8. The M1–M8 measurement recipe, with the limiter's `(+N identical …)` and `repeated N more times` sums for M2.
-9. The known limits: R-1 (if not resolved), R-12, R-23, R-24.
+9. The known limits: R-1 (what stays undeclared), R-23, R-24.
