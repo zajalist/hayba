@@ -25377,7 +25377,7 @@ Expected: the T4 `lease_id` commits appear before the first `EnforcedForWrites` 
   - `material_set_param` and undeclared `python_run` conflict, while `read_only` and declared-`resources` scripts pass.
 - `ping` and `lease_status` report `enforced_for_writes` and switch to `advisory` live.
 - `lease-enforcement-contract.test.ts` proves the default, the wire names and the deleted `LexEnforcement`.
-- The maintainer's R-1 ruling is recorded.
+- R-1 is applied as decided on 2026-09-28 (spec "Maintainer decisions added 2026-09-28"): the 47 reviewed Python read tools declare `readOnly`, and every undeclared `python_run` is a write. No maintainer ruling is awaited during T8.
 - T8 ships only in Deploy B, with T4.
 
 ---
