@@ -441,6 +441,7 @@ static bool IsDestructiveCommand(const FString& Cmd)
         // Actor lifecycle + mutation
         TEXT("actor_spawn"),
         TEXT("actor_delete"),
+        TEXT("actor_transform"),
         TEXT("actor_duplicate"),
         TEXT("actor_batch_spawn"),
         TEXT("actor_spawn_from_asset"),

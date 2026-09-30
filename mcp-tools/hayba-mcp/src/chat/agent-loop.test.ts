@@ -88,6 +88,7 @@ describe('isDestructiveToolName', () => {
     expect(isDestructiveToolName('actor_delete')).toBe(true);
     expect(isDestructiveToolName('python_run')).toBe(true);
     expect(isDestructiveToolName('actor_set_properties')).toBe(true);
+    expect(isDestructiveToolName('actor_transform')).toBe(true);
     expect(isDestructiveToolName('material_create')).toBe(true);
     expect(isDestructiveToolName('actor_list')).toBe(false);
     expect(isDestructiveToolName('get_tool_signature')).toBe(false);

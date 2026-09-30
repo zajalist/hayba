@@ -64,6 +64,7 @@ const EXTRA_DESTRUCTIVE = new Set<string>([
   'editor_run_console_command',
   // Setters / mutations that are safe to retry (so not in NON_IDEMPOTENT) but
   // still mutate scene/asset state and must be plan-gated.
+  'actor_transform',
   'actor_set_properties',
   'actor_set_visibility',
   'actor_snap_to_socket',
