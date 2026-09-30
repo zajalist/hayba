@@ -1539,7 +1539,9 @@ FString FHaybaMCPCommandHandler::ProcessCommandInContext(const FString& CommandJ
     }
 
     // Lease gate (after auth, before anything runs). Never blocks: Advisory
-    // Advisory lets the command run and attaches lease_warning; Enforced refuses it. A PIE command slot 2 authorized skips it (R13): another owner's lease taken during the PIE would otherwise deadlock the PIE's owner.
+    // lets the command run and attaches lease_warning; Enforced refuses it.
+    // A PIE command slot 2 authorized skips it (R13): another owner's lease
+    // taken during the PIE would otherwise deadlock the PIE's owner.
     if (!bPieAuthorized)
     {
         const FHaybaMCPLeaseManager::FVerdict Verdict = Leases.CheckCommand(Cmd, Params);

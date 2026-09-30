@@ -14,7 +14,9 @@
 #include "Editor/EditorEngine.h"
 #include "Features/IModularFeatures.h"
 #include "GameFramework/Actor.h"
+#include "EdGraphSchema_K2.h"
 #include "IPIEAuthorizer.h"
+#include "Kismet2/BlueprintEditorUtils.h"
 #include "Kismet2/KismetEditorUtilities.h"
 #include "Misc/Guid.h"
 #include "Misc/ScopeExit.h"
@@ -22,6 +24,7 @@
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
+#include "Settings/LevelEditorPlaySettings.h"
 #include "UObject/Package.h"
 
 #if WITH_DEV_AUTOMATION_TESTS
@@ -387,23 +390,26 @@ bool FHaybaMCPStateStartPieBlockedByModalTest::RunTest(const FString& Parameters
 		FBlueprintPlayFacts Errored;
 		Errored.bError = true;
 		Errored.bDisplayCompilePIEWarning = true;
-		TestEqual(TEXT("an errored Blueprint opens the errors dialog"), PlayModalFor(Errored, false), EPlayModal::ErroredDialog);
+		TestEqual(TEXT("an errored Blueprint opens the errors dialog"), PlayModalFor(Errored), EPlayModal::ErroredDialog);
 		FBlueprintPlayFacts Acknowledged = Errored;
 		Acknowledged.bDisplayCompilePIEWarning = false;
-		TestEqual(TEXT("an acknowledged error does not"), PlayModalFor(Acknowledged, false), EPlayModal::None);
+		TestEqual(TEXT("an acknowledged error does not"), PlayModalFor(Acknowledged), EPlayModal::None);
 		FBlueprintPlayFacts Diffing = Errored;
 		Diffing.bForDiffing = true;
-		TestEqual(TEXT("a diff copy is ignored"), PlayModalFor(Diffing, false), EPlayModal::None);
+		TestEqual(TEXT("a diff copy is ignored"), PlayModalFor(Diffing), EPlayModal::None);
 		FBlueprintPlayFacts DirtyCode;
 		DirtyCode.bDirty = true;
-		TestEqual(TEXT("a dirty Blueprint prompts when the editor asks first"), PlayModalFor(DirtyCode, true), EPlayModal::RecompilePrompt);
-		TestEqual(TEXT("auto-recompile opens no prompt"), PlayModalFor(DirtyCode, false), EPlayModal::None);
+		// Prompted, or auto-recompiled into the errors dialog if the recompile fails.
+		TestEqual(TEXT("a dirty code Blueprint is a risk under either compile setting"), PlayModalFor(DirtyCode), EPlayModal::DirtyCode);
 		FBlueprintPlayFacts DirtyData = DirtyCode;
 		DirtyData.bDataOnly = true;
-		TestEqual(TEXT("a data-only Blueprint never prompts"), PlayModalFor(DirtyData, true), EPlayModal::None);
+		TestEqual(TEXT("a data-only Blueprint never prompts"), PlayModalFor(DirtyData), EPlayModal::None);
 		FBlueprintPlayFacts Fresh = Errored;
 		Fresh.bUpToDate = true;
-		TestEqual(TEXT("an up-to-date Blueprint is skipped"), PlayModalFor(Fresh, true), EPlayModal::None);
+		TestEqual(TEXT("an up-to-date Blueprint is skipped"), PlayModalFor(Fresh), EPlayModal::None);
+		TestEqual(TEXT("the dirty pie_blocked text names blueprint_compile"),
+			FormatPieBlockedMessage(1, TEXT("/Game/A/BP_B.BP_B"), EPlayModal::DirtyCode),
+			FString(TEXT("pie_blocked: 'editor_start_pie' was not run: 1 Blueprint(s) would open a modal dialog before play (/Game/A/BP_B.BP_B is dirty). Compile each listed Blueprint with blueprint_compile and fix what it reports, then call editor_start_pie again.")));
 		TestEqual(TEXT("the pie_blocked text"),
 			FormatPieBlockedMessage(2, TEXT("/Game/A/BP_A.BP_A"), EPlayModal::ErroredDialog),
 			FString(TEXT("pie_blocked: 'editor_start_pie' was not run: 2 Blueprint(s) would open a modal dialog before play (/Game/A/BP_A.BP_A is errored). Compile or fix them first.")));
@@ -459,6 +465,93 @@ bool FHaybaMCPStateStartPieBlockedByModalTest::RunTest(const FString& Parameters
 	TestTrue(TEXT("the errored scratch Blueprint is listed"), bListed);
 	TestFalse(TEXT("no PIE request was queued"), GEditor && GEditor->IsPlaySessionRequestQueued());
 	TestEqual(TEXT("no session was attributed"), FHaybaMCPEditorState::Get().CurrentPie().Kind, HaybaMCPState::EPieKind::None);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FHaybaMCPStateStartPieBlockedByDirtyCodeTest,
+	"Hayba.MCP.State.StartPieBlockedByDirtyCode",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FHaybaMCPStateStartPieBlockedByDirtyCodeTest::RunTest(const FString& Parameters)
+{
+	// The common agent path: an edit leaves a code Blueprint dirty (and possibly broken),
+	// then editor_start_pie. Under auto-recompile (the engine default) a failed recompile
+	// opens the errors dialog whatever bDisplayCompilePIEWarning says (PlayLevel.cpp:1352-1373).
+	const TSharedPtr<FHaybaMCPCommandHandler> Router = GetRouter(*this);
+	if (!Router.IsValid() || !NoRealPie(*this)) return false;
+	ON_SCOPE_EXIT { CancelQueuedPie(); };
+
+	ULevelEditorPlaySettings* PlaySettings = GetMutableDefault<ULevelEditorPlaySettings>();
+	const bool bPreviousAutoRecompile = PlaySettings->AutoRecompileBlueprints;
+	PlaySettings->AutoRecompileBlueprints = true;
+	ON_SCOPE_EXIT { GetMutableDefault<ULevelEditorPlaySettings>()->AutoRecompileBlueprints = bPreviousAutoRecompile; };
+
+	const FString AssetName = TEXT("BP_PieDirty_") + FGuid::NewGuid().ToString(EGuidFormats::Digits).Left(8);
+	UPackage* Package = CreatePackage(*(TEXT("/Game/__HaybaTest__/") + AssetName));
+	if (!TestNotNull(TEXT("scratch package"), Package)) return false;
+	Package->SetFlags(RF_Transient);
+	UBlueprint* Blueprint = FKismetEditorUtilities::CreateBlueprint(AActor::StaticClass(), Package, FName(*AssetName), BPTYPE_Normal);
+	if (!TestNotNull(TEXT("scratch Blueprint"), Blueprint)) return false;
+	ON_SCOPE_EXIT
+	{
+		Blueprint->Status = BS_UpToDate;
+		Package->SetDirtyFlag(false);
+		Blueprint->ClearFlags(RF_Public | RF_Standalone);
+		Blueprint->MarkAsGarbage();
+		Package->MarkAsGarbage();
+	};
+	// A member variable makes it a code Blueprint (IsDataOnlyBlueprint is false).
+	FBPVariableDescription Variable;
+	Variable.VarName = TEXT("bHaybaPieGate");
+	Variable.VarGuid = FGuid::NewGuid();
+	Variable.VarType.PinCategory = UEdGraphSchema_K2::PC_Boolean;
+	Blueprint->NewVariables.Add(Variable);
+	if (!TestFalse(TEXT("the scratch Blueprint is a code Blueprint"), FBlueprintEditorUtils::IsDataOnlyBlueprint(Blueprint))) return false;
+	Blueprint->Status = BS_Dirty;
+	Blueprint->bDisplayCompilePIEWarning = false;
+
+	const FString Owner = MakeTestOwner();
+	const TSharedPtr<FJsonObject> Reply = Send(*Router, 900131, Owner, TEXT("editor_start_pie"));
+	TestFalse(TEXT("editor_start_pie is refused under auto-recompile"), BoolOf(Reply, TEXT("ok")));
+	TestEqual(TEXT("with pie_blocked"), CodeOf(Reply), FString(TEXT("pie_blocked")));
+	TestTrue(TEXT("the error says to run blueprint_compile"), StringOf(Reply, TEXT("error")).Contains(TEXT("blueprint_compile")));
+	const TSharedPtr<FJsonObject> Data = ObjectOf(Reply, TEXT("data"));
+	const TArray<TSharedPtr<FJsonValue>>* Blocked = nullptr;
+	bool bListedDirty = false;
+	if (TestTrue(TEXT("blocked_assets is a list"), Data.IsValid() && Data->TryGetArrayField(TEXT("blocked_assets"), Blocked) && Blocked))
+	{
+		TestTrue(TEXT("at most 16 listed"), Blocked->Num() <= HaybaMCPState::MaxBlockedAssetsListed);
+		for (const TSharedPtr<FJsonValue>& Item : *Blocked)
+		{
+			const TSharedPtr<FJsonObject>* Entry = nullptr;
+			if (Item.IsValid() && Item->TryGetObject(Entry) && Entry
+				&& StringOf(*Entry, TEXT("asset")) == Blueprint->GetPathName()
+				&& StringOf(*Entry, TEXT("status")) == TEXT("dirty"))
+			{
+				bListedDirty = true;
+			}
+		}
+	}
+	TestTrue(TEXT("the dirty scratch Blueprint is listed as dirty"), bListedDirty);
+	TestFalse(TEXT("no PIE request was queued"), GEditor && GEditor->IsPlaySessionRequestQueued());
+	TestEqual(TEXT("no session was attributed"), FHaybaMCPEditorState::Get().CurrentPie().Kind, HaybaMCPState::EPieKind::None);
+
+	// Compiled (clean), the same Blueprint no longer blocks: the request is queued, then cancelled.
+	Blueprint->Status = BS_UpToDate;
+	const TSharedPtr<FJsonObject> Clean = Send(*Router, 900131, Owner, TEXT("editor_start_pie"));
+	if (CodeOf(Clean) == TEXT("pie_blocked"))
+	{
+		AddError(FString::Printf(TEXT("another loaded Blueprint blocks PIE in this host: %s"), *StringOf(Clean, TEXT("error"))));
+		return false;
+	}
+	TestTrue(TEXT("a clean Blueprint passes the preflight"), BoolOf(Clean, TEXT("ok")));
+	TestTrue(TEXT("pie_requested"), BoolOf(ObjectOf(Clean, TEXT("data")), TEXT("pie_requested")));
+	TestTrue(TEXT("a request is queued"), GEditor && GEditor->IsPlaySessionRequestQueued());
+	const TSharedPtr<FJsonObject> Stop = Send(*Router, 900131, Owner, TEXT("editor_stop_pie"));
+	TestTrue(TEXT("the owner cancels its queued session"), BoolOf(ObjectOf(Stop, TEXT("data")), TEXT("cancelled_queued_request")));
+	TestFalse(TEXT("nothing is queued any more"), GEditor && GEditor->IsPlaySessionRequestQueued());
+	TestEqual(TEXT("no PIE"), FHaybaMCPEditorState::Get().CurrentPie().Kind, HaybaMCPState::EPieKind::None);
 	return true;
 }
 

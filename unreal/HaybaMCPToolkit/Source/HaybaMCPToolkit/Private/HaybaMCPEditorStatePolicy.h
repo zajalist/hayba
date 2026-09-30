@@ -354,13 +354,17 @@ namespace HaybaMCPState
 		None,
 		/** ShowCompilationErrorsDialog (PlayLevel.cpp:1498). */
 		ErroredDialog,
-		/** The "compile them now?" prompt (PlayLevel.cpp:1313). */
-		RecompilePrompt,
+		/** A dirty code Blueprint. Without auto-recompile the editor asks "compile them
+		 *  now?" (PlayLevel.cpp:1313); with it (the default) a failed recompile puts the
+		 *  Blueprint in the errors dialog whatever its PIE-warning flag (:1352-1373, :2662). */
+		DirtyCode,
 	};
 
-	/** Mirrors PlayLevel.cpp:1276-1300: a dirty code Blueprint prompts only when the editor
-	 *  asks before recompiling; otherwise an errored one with its PIE warning opens the dialog. */
-	inline EPlayModal PlayModalFor(const FBlueprintPlayFacts& F, bool bPromptForCompile)
+	/** Mirrors PlayLevel.cpp:1276-1300. A dirty code Blueprint is a risk under either
+	 *  compile setting: the preflight cannot know whether its recompile would fail, and
+	 *  an agent's broken edit leaves exactly that. An errored one with its PIE warning
+	 *  opens the dialog. */
+	inline EPlayModal PlayModalFor(const FBlueprintPlayFacts& F)
 	{
 		if (F.bUpToDate || F.bForDiffing)
 		{
@@ -368,7 +372,7 @@ namespace HaybaMCPState
 		}
 		if (F.bDirty && !F.bDataOnly)
 		{
-			return bPromptForCompile ? EPlayModal::RecompilePrompt : EPlayModal::None;
+			return EPlayModal::DirtyCode;
 		}
 		if (F.bError && F.bDisplayCompilePIEWarning)
 		{
@@ -382,17 +386,24 @@ namespace HaybaMCPState
 		switch (M)
 		{
 		case EPlayModal::ErroredDialog:   return TEXT("errored");
-		case EPlayModal::RecompilePrompt: return TEXT("dirty");
+		case EPlayModal::DirtyCode:       return TEXT("dirty");
 		default:                          return TEXT("none");
 		}
 	}
 
 	constexpr int32 MaxBlockedAssetsListed = 16;
 
+	/** Also the refusal's data.hint (a hint field is hidden at the default advisory verbosity). */
+	inline const TCHAR* PieBlockedHint()
+	{
+		return TEXT("Compile each listed Blueprint with blueprint_compile and fix what it reports, then call editor_start_pie again.");
+	}
+
 	inline FString FormatPieBlockedMessage(int32 Count, const FString& FirstAsset, EPlayModal FirstModal)
 	{
 		return FString::Printf(
-			TEXT("pie_blocked: 'editor_start_pie' was not run: %d Blueprint(s) would open a modal dialog before play (%s is %s). Compile or fix them first."),
-			Count, *FirstAsset, LexPlayModal(FirstModal));
+			TEXT("pie_blocked: 'editor_start_pie' was not run: %d Blueprint(s) would open a modal dialog before play (%s is %s). %s"),
+			Count, *FirstAsset, LexPlayModal(FirstModal),
+			FirstModal == EPlayModal::DirtyCode ? PieBlockedHint() : TEXT("Compile or fix them first."));
 	}
 }

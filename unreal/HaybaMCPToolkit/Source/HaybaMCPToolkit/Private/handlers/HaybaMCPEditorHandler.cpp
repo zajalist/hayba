@@ -26,7 +26,6 @@
 #include "HaybaMCPEditorStatePolicy.h"
 #include "HaybaMCPLeaseManager.h"
 #include "Kismet2/BlueprintEditorUtils.h"
-#include "Settings/LevelEditorPlaySettings.h"
 #include "ShaderCompiler.h"
 #include "Modules/ModuleManager.h"
 #if WITH_LIVE_CODING
@@ -67,8 +66,6 @@ struct FHaybaPlayModalRisk
 // batch pump would hang until a human answered (docs/adr/0012).
 static TArray<FHaybaPlayModalRisk> FindPlayModalRisks()
 {
-    const ULevelEditorPlaySettings* PlaySettings = GetDefault<ULevelEditorPlaySettings>();
-    const bool bPromptForCompile = PlaySettings && !PlaySettings->AutoRecompileBlueprints;
     TArray<FHaybaPlayModalRisk> Risks;
     for (TObjectIterator<UBlueprint> It; It; ++It)
     {
@@ -83,7 +80,7 @@ static TArray<FHaybaPlayModalRisk> FindPlayModalRisks()
         Facts.bDisplayCompilePIEWarning = Blueprint->bDisplayCompilePIEWarning;
         // Only a dirty Blueprint needs the data-only test (the engine's order).
         Facts.bDataOnly = Facts.bDirty && !Facts.bUpToDate && FBlueprintEditorUtils::IsDataOnlyBlueprint(Blueprint);
-        const HaybaMCPState::EPlayModal Modal = HaybaMCPState::PlayModalFor(Facts, bPromptForCompile);
+        const HaybaMCPState::EPlayModal Modal = HaybaMCPState::PlayModalFor(Facts);
         if (Modal != HaybaMCPState::EPlayModal::None)
         {
             Risks.Add({ Blueprint->GetPathName(), Modal });
@@ -235,6 +232,7 @@ FHaybaHandlerResult FHaybaMCPEditorHandler::StartPIE(const TSharedPtr<FJsonObjec
         Refusal->SetStringField(TEXT("phase"), TEXT("preflight"));
         Refusal->SetStringField(TEXT("mutation_status"), TEXT("not_started"));
         Refusal->SetStringField(TEXT("failure_kind"), TEXT("retryable"));
+        Refusal->SetStringField(TEXT("hint"), HaybaMCPState::PieBlockedHint());
         TArray<TSharedPtr<FJsonValue>> Blocked;
         for (int32 I = 0; I < Risks.Num() && I < HaybaMCPState::MaxBlockedAssetsListed; ++I)
         {

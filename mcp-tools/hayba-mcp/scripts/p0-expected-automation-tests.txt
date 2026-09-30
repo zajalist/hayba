@@ -43,3 +43,4 @@ Hayba.MCP.State.RouterStopAgentPieFromAnyCaller
 Hayba.MCP.State.StartPieBlockedByModal
 Hayba.MCP.State.GetStateShape
 Hayba.MCP.State.PieSafeDrift
+Hayba.MCP.State.StartPieBlockedByDirtyCode
