@@ -1006,9 +1006,9 @@ function Write-BoundedBytes([Net.Sockets.NetworkStream]$Stream, [byte[]]$Bytes, 
 function Read-BoundedExact([Net.Sockets.NetworkStream]$Stream, [byte[]]$Bytes, [int]$Count, [string]$Operation) {
     $read = 0
     while ($read -lt $Count) {
-        $count = Wait-RawTask ($Stream.ReadAsync($Bytes, $read, $Count - $read)) $Operation
-        if ($count -le 0) { throw "connection closed before $Operation" }
-        $read += $count
+        $bytesRead = Wait-RawTask ($Stream.ReadAsync($Bytes, $read, $Count - $read)) $Operation
+        if ($bytesRead -le 0) { throw "connection closed before $Operation" }
+        $read += $bytesRead
     }
 }
 
@@ -1051,10 +1051,10 @@ function Send-RawFrame {
 
 function Get-BigEndianHeader([uint32]$Length) {
     return [byte[]]@(
-        ($Length -shr 24) -band 0xff,
-        ($Length -shr 16) -band 0xff,
-        ($Length -shr 8) -band 0xff,
-        $Length -band 0xff
+        (($Length -shr 24) -band 0xff),
+        (($Length -shr 16) -band 0xff),
+        (($Length -shr 8) -band 0xff),
+        ($Length -band 0xff)
     )
 }
 
