@@ -1,0 +1,14 @@
+# P0 safety train: every Hayba automation test the train adds or depends on.
+# One full test name per line. Lines starting with '#' are comments.
+# Each task appends its own "# T<n>" section in the commit that adds the tests.
+# Checked by scripts/check-automation-report.mjs against a -ReportExportPath index.json.
+
+# T0
+Hayba.MCP.Advisory.AllStates
+Hayba.MCP.Advisory.ResponseBoundary
+Hayba.MCP.Editor.GetStateNative
+Hayba.MCP.Lease.Classification
+Hayba.MCP.Lease.ClassificationDrift
+Hayba.MCP.Lease.Envelope
+Hayba.MCP.Lease.Table
+Hayba.MCP.Seh.WorldSwitchDriftClassification
