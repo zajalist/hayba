@@ -5,6 +5,7 @@ import { EventEmitter } from 'node:events';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { randomBytes } from 'node:crypto';
+import { isRedactionMarker, isUsableLeaseId } from './lease-id.js';
 
 export interface TcpCommand {
   cmd: string;
@@ -13,7 +14,7 @@ export interface TcpCommand {
   /** Which agent is calling. Optional on the wire; the editor falls back to
    *  one owner per connection. Leases and Plan-Mode approval are per owner. */
   owner?: string;
-  /** A held lease token to act under (e.g. handed to a helper process). */
+  /** A held lease_id to act under (HAYBA_LEASE_ID, an explicit opt-in; see resolveEnvLease). */
   lease?: string;
 }
 
@@ -70,6 +71,36 @@ export function buildEnvelope(
   return command;
 }
 
+/**
+ * R9: the envelope lease comes only from HAYBA_LEASE_ID, an explicit opt-in.
+ * HAYBA_LEASE (the gate's helper variable) and HAYBA_LEASE_TOKEN (the
+ * pre-lease_id name) are never read: the owner (HAYBA_AGENT_ID) already covers
+ * a lane's gate lease, and an inherited lease that later dies would turn every
+ * write from this server into a lease_conflict.
+ */
+export function resolveEnvLease(
+  env: NodeJS.ProcessEnv = process.env,
+  warn: (message: string) => void = (message) => console.error(message),
+): string | null {
+  const ignored = ['HAYBA_LEASE', 'HAYBA_LEASE_TOKEN'].filter((name) => env[name]?.trim());
+  if (ignored.length > 0) {
+    warn(
+      `[hayba] ${ignored.join(' and ')} ${ignored.length > 1 ? 'are' : 'is'} ignored: this MCP server sends a lease only from HAYBA_LEASE_ID. Set HAYBA_AGENT_ID to your gate owner instead.`,
+    );
+  }
+  const value = env.HAYBA_LEASE_ID?.trim();
+  if (!value) return null;
+  if (!isUsableLeaseId(value)) {
+    warn(
+      `[hayba] HAYBA_LEASE_ID is ignored: it is not a lease_id (expected ls_<seq>_<mac>)${
+        isRedactionMarker(value) ? '; it is a redaction marker' : ''
+      }.`,
+    );
+    return null;
+  }
+  return value;
+}
+
 // ── Injectable types (also used in tests) ────────────────────────────────────
 export type DelayFn = (ms: number) => Promise<void>;
 export type DiscoverPortFn = () => number | null;
@@ -85,6 +116,8 @@ export class UETcpClient extends EventEmitter {
     resolve: (value: TcpResponse) => void;
     reject: (reason: Error) => void;
     timer: ReturnType<typeof setTimeout>;
+    /** params.lease_id of the request, to match a [lease_id_unknown] reply to the env lease. */
+    namedLeaseId?: unknown;
   }>();
   /** Framing lives in FrameDecoder, not here. The 4-byte big-endian length
    *  prefix is the single most important invariant in the repo — both ends of
@@ -94,7 +127,9 @@ export class UETcpClient extends EventEmitter {
   private requestCounter = 0;
   private connected = false;
   private owner: string = resolveAgentOwner();
-  private lease: string | null = process.env.HAYBA_LEASE_TOKEN?.trim() || null;
+  private lease: string | null = resolveEnvLease();
+  /** The lease came from HAYBA_LEASE_ID (not setLease): dropped once the editor says it is unknown. */
+  private leaseFromEnv = this.lease !== null;
 
   constructor(host = '127.0.0.1', port = 52342) {
     super();
@@ -158,13 +193,34 @@ export class UETcpClient extends EventEmitter {
     this.owner = owner.trim().slice(0, MAX_OWNER_CHARS) || resolveAgentOwner({});
   }
 
-  /** Lease token sent with every command (null = none). HAYBA_LEASE_TOKEN seeds it. */
+  /** The lease_id sent with every command (null = none). HAYBA_LEASE_ID seeds it. */
   getLease(): string | null {
     return this.lease;
   }
 
-  setLease(token: string | null): void {
-    this.lease = token?.trim() || null;
+  setLease(leaseId: string | null): void {
+    this.lease = leaseId?.trim() || null;
+    this.leaseFromEnv = false;
+  }
+
+  /**
+   * R9: an env-seeded lease the editor no longer knows (released, expired, or
+   * the editor restarted) would make every later write a lease_conflict, so it
+   * is dropped once, with one log line. A lease set through setLease is left alone.
+   */
+  noteReply(response: TcpResponse, namedLeaseId?: unknown): void {
+    if (!this.leaseFromEnv || this.lease === null) return;
+    const gateSaysUnknown = [response.lease, response.lease_warning].some(
+      (detail) => !!detail && (detail.reason === 'lease_unknown' || detail.lease_id_error === 'unknown_or_expired'),
+    );
+    const handlerSaysUnknown =
+      namedLeaseId === this.lease && typeof response.error === 'string' && response.error.includes('[lease_id_unknown]');
+    if (!gateSaysUnknown && !handlerSaysUnknown) return;
+    console.error(
+      `[hayba] the editor no longer knows the lease from HAYBA_LEASE_ID (${this.lease}); this server stops sending it.`,
+    );
+    this.lease = null;
+    this.leaseFromEnv = false;
   }
 
   async send(cmd: string, params: Record<string, unknown> = {}, timeoutMs = 30000): Promise<TcpResponse> {
@@ -188,7 +244,7 @@ export class UETcpClient extends EventEmitter {
         reject(new Error(`Timeout waiting for response to ${cmd} (id: ${id})`));
       }, timeoutMs);
 
-      this.pendingRequests.set(id, { resolve, reject, timer });
+      this.pendingRequests.set(id, { resolve, reject, timer, namedLeaseId: params.lease_id });
       this.socket!.write(frame);
     });
   }
@@ -201,6 +257,7 @@ export class UETcpClient extends EventEmitter {
         if (pending) {
           clearTimeout(pending.timer);
           this.pendingRequests.delete(response.id);
+          this.noteReply(response, pending.namedLeaseId);
           pending.resolve(response);
         }
       } catch {

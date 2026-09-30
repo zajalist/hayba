@@ -342,4 +342,44 @@ describe('bounded central secret redaction', () => {
     expect(sink).toHaveBeenCalledTimes(1);
     expect(JSON.stringify(sink.mock.calls)).not.toContain('SENTINEL_EXPRESS');
   });
+
+  it('lease protocol keys are not secret-shaped (ADR-0010, "Lease ids")', () => {
+    const id = 'ls_12_aad6bc3c3546';
+    const payload = {
+      lease_id: id,
+      lease_id_error: 'unknown_or_expired',
+      ticket: 'lq_13_b4086670970d',
+      renewing_lease_ids: [id],
+      deprecation: "'token' was renamed to lease_id; send lease_id",
+      lease: id,
+      bound_to_connection: true,
+    };
+    const result = redactSecrets(payload);
+    expect(result.value).toBe(payload);
+    expect(result.summary.applied).toBe(false);
+    const mcp = { content: [{ type: 'text', text: JSON.stringify(payload, null, 2) }] };
+    expect(redactMcpResult(mcp)).toBe(mcp);
+
+    // 20,000 pseudo-random ids through the text rules: no value regex may match one.
+    let seed = 0x2545f491;
+    const next = () => {
+      seed ^= seed << 13;
+      seed ^= seed >>> 17;
+      seed ^= seed << 5;
+      return seed >>> 0;
+    };
+    let changed = 0;
+    for (let i = 0; i < 20_000; i += 1) {
+      const mac = `${next().toString(16).padStart(8, '0')}${next().toString(16).padStart(8, '0')}`.slice(0, 12);
+      const leaseId = `${i % 2 ? 'ls' : 'lq'}_${next() % 100_000}_${mac}`;
+      const text = { content: [{ type: 'text', text: JSON.stringify({ lease_id: leaseId, ticket: leaseId }, null, 2) }] };
+      if (redactMcpResult(text) !== text) changed += 1;
+    }
+    expect(changed).toBe(0);
+
+    // Negative control: the old key is still redacted.
+    const old = redactSecrets({ token: id });
+    expect(old.summary.applied).toBe(true);
+    expect(JSON.stringify(old.value)).not.toContain(id);
+  });
 });
