@@ -20,7 +20,11 @@ param(
     [int]$TimeoutMs = 10000,
     [string]$Auth = '',
     [string]$Owner = '',
-    [string]$Lease = ''
+    [string]$Lease = '',
+
+    # Startup callers can retry only a transport deadline, without parsing a
+    # diagnostic or treating malformed/refused replies as readiness.
+    [switch]$ThrowOnTimeout
 )
 
 $ErrorActionPreference = 'Stop'
@@ -40,7 +44,7 @@ function Get-DiagnosticHash([object]$Value) {
 function Get-RemainingTimeoutMs([string]$Operation) {
     $remaining = $TimeoutMs - [int]$Clock.ElapsedMilliseconds
     if ($remaining -le 0) {
-        throw "$Operation exceeded the absolute ${TimeoutMs}ms command deadline"
+        throw [TimeoutException]::new("$Operation exceeded the absolute ${TimeoutMs}ms command deadline")
     }
     return $remaining
 }
@@ -48,7 +52,7 @@ function Get-RemainingTimeoutMs([string]$Operation) {
 function Wait-IoTask([System.Threading.Tasks.Task]$Task, [string]$Operation) {
     $remaining = Get-RemainingTimeoutMs $Operation
     if (-not $Task.Wait($remaining)) {
-        throw "$Operation exceeded the absolute ${TimeoutMs}ms command deadline"
+        throw [TimeoutException]::new("$Operation exceeded the absolute ${TimeoutMs}ms command deadline")
     }
     return $Task.GetAwaiter().GetResult()
 }
@@ -127,6 +131,7 @@ try {
     }
 }
 catch {
+    if ($ThrowOnTimeout -and $_.Exception -is [TimeoutException]) { throw }
     # This helper is often used by security probes. Never echo a peer-controlled
     # response fragment or request sentinel into captured CI/editor evidence.
     $digest = Get-DiagnosticHash $_.Exception.Message

@@ -58,7 +58,7 @@ param(
     [int]$Port = 0,
 
     # A cold UE editor can spend several minutes compiling shaders and loading
-    # the host project before the plugin binds its listener.  The timeout is a
+    # the host project before game-thread commands are ready. The timeout is a
     # harness patience limit, not a per-case safety limit; hostile commands are
     # still bounded independently by MaxCaseMs.
     [ValidateRange(10000, 600000)]
@@ -94,6 +94,8 @@ $CleanupAttempted = $false
 $LogCursors = @{}
 $LogCriticalCount = 0
 $CaseDeadline = $null
+$StartupClock = $null
+$StartupReadinessEvidence = $null
 $FrameReadTimeoutMs = 5000
 $ActiveMaxRequestBytes = 1MB
 $ActiveMaxJsonNestingDepth = 64
@@ -712,6 +714,9 @@ $InitialCrashEvidence = Get-CrashEvidence
 $InitialFilesystemEvidence = Get-ProjectFilesystemEvidence
 Initialize-LogEvidence
 
+# One clock covers launch/attach setup, identity, listener and game-thread
+# readiness. Opening the listener alone does not mean frame-zero work is done.
+$StartupClock = [Diagnostics.Stopwatch]::StartNew()
 if ($EditorPid -eq 0) {
     if ([string]::IsNullOrWhiteSpace($SessionToken)) {
         $SessionToken = [guid]::NewGuid().ToString('N')
@@ -741,36 +746,9 @@ else {
     $OwnsTarget = $true
 }
 
-$identityWait = [Diagnostics.Stopwatch]::StartNew()
-while ($null -eq $EditorIdentity -and $identityWait.ElapsedMilliseconds -lt [Math]::Min($StartupTimeoutMs, 10000)) {
-    try { $EditorIdentity = New-EditorIdentity $EditorPid }
-    catch {
-        if ($null -eq $LaunchedProcess) { throw }
-        if (-not (Get-Process -Id $EditorPid -ErrorAction SilentlyContinue)) { throw }
-        Start-Sleep -Milliseconds 100
-    }
-}
-if ($null -eq $EditorIdentity) { throw 'could not capture the exact launched editor identity' }
-
-if ($Port -eq 0) {
-    $startup = [Diagnostics.Stopwatch]::StartNew()
-    while ($startup.ElapsedMilliseconds -lt $StartupTimeoutMs) {
-        if (-not (Get-Process -Id $EditorPid -ErrorAction SilentlyContinue)) {
-            throw "tagged editor PID $EditorPid exited before opening an MCP listener"
-        }
-        $Port = Find-OwnedMcpPort $EditorPid
-        if ($Port -ne 0) { break }
-        Start-Sleep -Milliseconds 250
-    }
-    if ($Port -eq 0) {
-        throw "tagged editor PID $EditorPid did not open a Hayba MCP listener within ${StartupTimeoutMs}ms"
-    }
-}
-elseif ($Port -lt 52342 -or $Port -gt 52350) {
+if ($Port -ne 0 -and ($Port -lt 52342 -or $Port -gt 52350)) {
     throw "Port must be 0 for owned discovery or an explicit Hayba port in 52342-52350; got $Port"
 }
-
-Assert-EditorIdentity | Out-Null
 
 function Get-ListenerOwner {
     $owners = @(
@@ -781,6 +759,63 @@ function Get-ListenerOwner {
         throw "Expected exactly one listener on port $Port; found $($owners.Count)"
     }
     return [int]$owners[0]
+}
+
+function Get-RemainingStartupMs {
+    $remaining = $StartupTimeoutMs - $StartupClock.ElapsedMilliseconds
+    # The transport accepts 100..60000ms. Never round the remaining allowance
+    # up, reset it on retry, or borrow from a subsequent hostile case.
+    if ($remaining -lt 100) { throw "exhausted the absolute ${StartupTimeoutMs}ms startup deadline" }
+    return [int][Math]::Min($remaining, 60000)
+}
+
+function Wait-EditorReady {
+    $script:StartupReadinessEvidence = [pscustomobject]@{
+        ready = $false
+        request_id_correlated = $false
+        attempts = 0
+        transport_timeouts = 0
+        elapsed_ms = 0
+        timeout_ms = $StartupTimeoutMs
+    }
+    try {
+        # Capture identity even if launch consumed the deadline, so failure
+        # cleanup can still verify and close the owned process safely.
+        $script:EditorIdentity = New-EditorIdentity $EditorPid
+        while ($true) {
+            Get-RemainingStartupMs | Out-Null
+            Assert-EditorIdentity | Out-Null
+            if ($Port -eq 0) {
+                $script:Port = Find-OwnedMcpPort $EditorPid
+                if ($Port -eq 0) {
+                    Start-Sleep -Milliseconds ([Math]::Min(250, (Get-RemainingStartupMs)))
+                    continue
+                }
+            }
+            if ((Get-ListenerOwner) -ne $EditorPid) { throw 'startup listener ownership changed' }
+            $timeout = Get-RemainingStartupMs
+            $StartupReadinessEvidence.attempts++
+            try {
+                # Each invocation generates a fresh ID and validates its reply.
+                $text = & $Invoker -Cmd 'ping' -ParamsJson '{}' -Port $Port -TimeoutMs $timeout -Auth $Auth -ThrowOnTimeout
+            }
+            catch [TimeoutException] {
+                $StartupReadinessEvidence.transport_timeouts++
+                continue
+            }
+            if ($LASTEXITCODE -ne 0) { throw 'startup transport failed for ping' }
+            $response = $text | ConvertFrom-Json
+            if ($response.ok -isnot [bool] -or $response.ok -ne $true) { throw 'startup readiness ping was malformed or refused' }
+            Get-RemainingStartupMs | Out-Null
+            Assert-EditorIdentity | Out-Null
+            if ((Get-ListenerOwner) -ne $EditorPid) { throw 'startup listener ownership changed' }
+            Get-RemainingStartupMs | Out-Null
+            $StartupReadinessEvidence.ready = $true
+            $StartupReadinessEvidence.request_id_correlated = $true
+            return $response
+        }
+    }
+    finally { $StartupReadinessEvidence.elapsed_ms = $StartupClock.ElapsedMilliseconds }
 }
 
 function Get-RemainingCaseMs([string]$Operation = 'case operation') {
@@ -1214,8 +1249,7 @@ function Stop-OwnedEditorWithEvidence {
 }
 
     if (-not (Test-Path -LiteralPath $Invoker)) { throw "missing invoker: $Invoker" }
-    $transportProbe = Invoke-HaybaCommand -Command 'ping'
-    if ($transportProbe.ok -ne $true) { throw 'initial transport-limit probe failed' }
+    $transportProbe = Wait-EditorReady
     $rawLimits = $transportProbe.data.transport_limits
     if ([string]$rawLimits.applies -cne 'active_tcp_server_snapshot') {
         throw 'ping transport_limits were not the active TCP server snapshot'
@@ -1309,7 +1343,7 @@ function Stop-OwnedEditorWithEvidence {
     $fatalCases = @(
         @{ Name='world_switch_new_blank_map'; Script='import unreal; unreal.EditorLoadingAndSavingUtils.new_blank_map(False)' },
         @{ Name='world_switch_load_map'; Script='import unreal; unreal.EditorLoadingAndSavingUtils.load_map("/Game/Nope")' },
-        @{ Name='self_socket_deadlock'; Script='import socket; s=socket.socket(); s.connect(("127.0.0.1",52342))' },
+        @{ Name='self_socket_deadlock'; Script="import socket; s=socket.socket(); s.connect((`"127.0.0.1`",$Port))" },
         @{ Name='dangling_tick_callback'; Script='import unreal; unreal.register_slate_post_tick_callback(lambda dt: None)' },
         @{ Name='python_background_thread'; Script='import threading; threading.Thread(target=lambda:None).start()' },
         @{ Name='game_thread_sleep'; Script='import time; time.sleep(10)' },
@@ -1575,6 +1609,7 @@ p.write_text('this line must never execute', encoding='utf-8')
         editor_pid = $EditorPid
         port = $Port
         environment = $EnvironmentEvidence
+        startup_readiness = $StartupReadinessEvidence
         crash_evidence_before = $InitialCrashEvidence
         editor_state_before = [pscustomobject]@{
             map_sha256 = Get-SanitizedHash $InitialEditorState.map
@@ -1639,6 +1674,7 @@ catch {
         port = $Port
         fatal_error = $fatalDigest
         environment = $EnvironmentEvidence
+        startup_readiness = $StartupReadinessEvidence
         crash_evidence_before = $InitialCrashEvidence
         filesystem_evidence_before = $InitialFilesystemEvidence
         critical_log_signatures_seen = $LogCriticalCount
