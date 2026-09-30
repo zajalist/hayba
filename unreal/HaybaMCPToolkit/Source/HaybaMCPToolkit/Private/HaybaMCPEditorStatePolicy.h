@@ -11,6 +11,10 @@
 
 #include "CoreMinimal.h"
 #include "HaybaMCPCommandSets.h"
+#include "HaybaMCPAccessPolicy.h"
+#include "HaybaMCPLeasePolicy.h"
+#include "Dom/JsonObject.h"
+#include "Dom/JsonValue.h"
 
 namespace HaybaMCPState
 {
@@ -307,6 +311,181 @@ namespace HaybaMCPState
 		double HeldSeconds = 0.0;
 		double ExpiresInSeconds = 0.0;
 	};
+
+	// -------------------------------------------------------------------------
+	// asset_busy (P0 T3, D5). A build marks its assets busy by holding
+	// asset:<path> X leases. These tables say which commands would use such an
+	// asset half-built. The router's slot 3 applies them (docs/adr/0012).
+	// -------------------------------------------------------------------------
+
+	/** Compile or save of ONE asset, and the request field(s) that name it.
+	 *  Refused while ANOTHER owner holds X on that asset under a refusing
+	 *  LeaseEnforcement; runs with state_warning under Advisory. Pinned by
+	 *  Hayba.MCP.State.AssetBusyTargets and asset-busy-drift.test.ts. */
+	inline const TMap<FString, TArray<FString>>& AssetBusyTargets()
+	{
+		static const TMap<FString, TArray<FString>> Targets = {
+			{ TEXT("blueprint_compile"), { TEXT("path") } },
+			{ TEXT("anim_blueprint_compile"), { TEXT("path") } },
+			{ TEXT("bt_compile"), { TEXT("path") } },
+			{ TEXT("audio_asset_save"), { TEXT("path") } },
+			{ TEXT("ui_compile_widget"), { TEXT("widget_blueprint_path") } },
+			{ TEXT("ui_save_widget"), { TEXT("widget_blueprint_path") } },
+			{ TEXT("material_compile"), { TEXT("material_path"), TEXT("function_path") } },
+		};
+		return Targets;
+	}
+
+	/** Commands that use every loaded asset: PIE's pre-play compile, and
+	 *  save-all. Refused while ANY owner, the caller included, holds an asset X
+	 *  lock. A lane's own agent must not play its own half-built build (I-6).
+	 *  A tool releases its build leases before it starts PIE. */
+	inline const TSet<FString>& AnyBusyCommands()
+	{
+		static const TSet<FString> Commands = {
+			TEXT("editor_start_pie"),
+			TEXT("editor_save_all_and_quit"),
+		};
+		return Commands;
+	}
+
+	/** LeaseEnforcement as slot 3 reads it. Refusing covers every mode stronger
+	 *  than Advisory (Enforced, and EnforcedForWrites once T8 adds it). */
+	enum class EBusyMode : uint8 { Off, Advisory, Refusing };
+
+	/** Slot 3's verdict. */
+	enum class EBusyGate : uint8 { Pass, Warn, Refuse };
+
+	/** What one request would use: every asset, or these lock keys. */
+	struct FBusyQuery
+	{
+		bool bAnyBusy = false;
+		/** Lower-cased lock keys, "asset:/game/…". */
+		TArray<FString> AssetKeys;
+
+		bool IsEmpty() const { return !bAnyBusy && AssetKeys.Num() == 0; }
+	};
+
+	inline FBusyQuery BusyQueryFor(const FString& Cmd, const TSharedPtr<FJsonObject>& Params)
+	{
+		FBusyQuery Query;
+		if (AnyBusyCommands().Contains(Cmd))
+		{
+			Query.bAnyBusy = true;
+			return Query;
+		}
+		const TArray<FString>* Fields = AssetBusyTargets().Find(Cmd);
+		if (!Fields || !Params.IsValid())
+		{
+			return Query;
+		}
+		for (const FString& Field : *Fields)
+		{
+			FString Path;
+			if (!Params->TryGetStringField(*Field, Path))
+			{
+				continue;
+			}
+			// A field that is not a package path cannot name a build. The
+			// handler rejects it on its own.
+			const FString Package = HaybaMCPAccess::AssetPackageKey(Path);
+			if (!Package.IsEmpty())
+			{
+				Query.AssetKeys.AddUnique(TEXT("asset:") + Package);
+			}
+		}
+		return Query;
+	}
+
+	/** NumHolders are the X holders the router found for the query: any owner
+	 *  for bAnyBusy, and owners other than the caller for AssetKeys. */
+	inline EBusyGate DecideAssetBusy(const FBusyQuery& Query, int32 NumHolders, EBusyMode Mode)
+	{
+		if (Mode == EBusyMode::Off || NumHolders <= 0 || Query.IsEmpty())
+		{
+			return EBusyGate::Pass;
+		}
+		if (Query.bAnyBusy)
+		{
+			return EBusyGate::Refuse;
+		}
+		return Mode == EBusyMode::Refusing ? EBusyGate::Refuse : EBusyGate::Warn;
+	}
+
+	inline FString LabelOrNone(const FString& Label)
+	{
+		return Label.IsEmpty() ? FString(TEXT("none")) : Label;
+	}
+
+	/** Copies the holds at once: FAssetHold::Lease is valid only until the next
+	 *  table call. `Now` is the table clock (FPlatformTime::Seconds in the
+	 *  editor). `UtcNow` dates `since`. */
+	inline TArray<FBusyAsset> MakeBusyAssets(const TArray<HaybaMCPLease::FAssetHold>& Holds, double Now, const FDateTime& UtcNow)
+	{
+		TArray<FBusyAsset> Out;
+		Out.Reserve(Holds.Num());
+		for (const HaybaMCPLease::FAssetHold& Hold : Holds)
+		{
+			if (!Hold.Lease)
+			{
+				continue;
+			}
+			FBusyAsset Asset;
+			Asset.Asset = Hold.AssetKey.StartsWith(TEXT("asset:")) ? Hold.AssetKey.Mid(6) : Hold.AssetKey;
+			Asset.Owner = Hold.Lease->Owner;
+			Asset.Label = Hold.Lease->Label;
+			Asset.Lane = Hold.Lease->Lane == HaybaMCPLease::ELane::Long ? TEXT("long") : TEXT("interactive");
+			Asset.HeldSeconds = FMath::Max(0.0, Now - Hold.Lease->GrantedAt);
+			Asset.ExpiresInSeconds = FMath::Max(0.0, Hold.Lease->ExpiresAt - Now);
+			Asset.SinceUtc = (UtcNow - FTimespan::FromSeconds(Asset.HeldSeconds)).ToIso8601();
+			Out.Add(MoveTemp(Asset));
+		}
+		return Out;
+	}
+
+	/** {asset, owner, label, lane, held_s, since, expires_in_s}. Never a lease handle. */
+	inline TSharedRef<FJsonObject> BusyAssetToJson(const FBusyAsset& Asset)
+	{
+		TSharedRef<FJsonObject> Json = MakeShared<FJsonObject>();
+		Json->SetStringField(TEXT("asset"), Asset.Asset);
+		Json->SetStringField(TEXT("owner"), Asset.Owner);
+		Json->SetStringField(TEXT("label"), Asset.Label);
+		Json->SetStringField(TEXT("lane"), Asset.Lane);
+		Json->SetNumberField(TEXT("held_s"), FMath::RoundToDouble(Asset.HeldSeconds * 10.0) / 10.0);
+		Json->SetStringField(TEXT("since"), Asset.SinceUtc);
+		Json->SetNumberField(TEXT("expires_in_s"), FMath::RoundToDouble(Asset.ExpiresInSeconds * 10.0) / 10.0);
+		return Json;
+	}
+
+	inline TArray<TSharedPtr<FJsonValue>> BusyAssetsToJson(const TArray<FBusyAsset>& Assets)
+	{
+		TArray<TSharedPtr<FJsonValue>> Out;
+		Out.Reserve(Assets.Num());
+		for (const FBusyAsset& Asset : Assets)
+		{
+			Out.Add(MakeShared<FJsonValueObject>(BusyAssetToJson(Asset)));
+		}
+		return Out;
+	}
+
+	/** The `busy` detail of an asset_busy refusal or state_warning. */
+	inline TSharedRef<FJsonObject> MakeBusyDetail(const FString& Cmd, const FString& CallerOwner, const TArray<FBusyAsset>& Assets)
+	{
+		TSharedRef<FJsonObject> Detail = MakeShared<FJsonObject>();
+		Detail->SetStringField(TEXT("command"), Cmd);
+		Detail->SetStringField(TEXT("caller_owner"), CallerOwner);
+		Detail->SetArrayField(TEXT("assets"), BusyAssetsToJson(Assets));
+		return Detail;
+	}
+
+	/** The asset_busy refusal text (P0 spec section 2.10). */
+	inline FString MakeBusyMessage(const FString& Cmd, const FBusyAsset& First)
+	{
+		return FString::Printf(
+			TEXT("asset_busy: '%s' is refused: %s is being built by '%s' (label %s, held %.0f s, lease expires in %.0f s). ")
+			TEXT("PIE/compile would use it half-built. Nothing ran; try again when editor_get_state.building no longer lists it."),
+			*Cmd, *First.Asset, *First.Owner, *LabelOrNone(First.Label), First.HeldSeconds, First.ExpiresInSeconds);
+	}
 
 	struct FPlayDecision
 	{

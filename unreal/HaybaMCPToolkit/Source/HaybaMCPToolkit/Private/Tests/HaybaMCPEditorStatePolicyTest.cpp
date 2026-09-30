@@ -1,5 +1,10 @@
 #include "Misc/AutomationTest.h"
 #include "HaybaMCPEditorStatePolicy.h"
+#include "HaybaMCPLeasePolicy.h"
+#include "HaybaMCPAccessPolicy.h"
+#include "HaybaMCPCommandHandler.h"
+#include "HaybaMCPModule.h"
+#include "Modules/ModuleManager.h"
 #include "HaybaMCPEditorState.h"
 #include "HaybaMCPEditorHealth.h"
 #include "Misc/ScopeExit.h"
@@ -313,6 +318,136 @@ bool FHaybaMCPStateUserPlayDecisionTest::RunTest(const FString& Parameters)
 	}
 	TestFalse(TEXT("the health override left a clean process"), FHaybaEditorHealth::IsUnsafe());
 	TestFalse(TEXT("a healthy editor allows Play"), FHaybaMCPEditorState::Get().EvaluateUserPlayRequest(FPlatformTime::Seconds()).bDeny);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FHaybaMCPStateAssetBusyTargetsTest,
+	"Hayba.MCP.State.AssetBusyTargets",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FHaybaMCPStateAssetBusyTargetsTest::RunTest(const FString& Parameters)
+{
+	using namespace HaybaMCPState;
+
+	// The pinned rows (spec T3 design 3).
+	const TMap<FString, TArray<FString>> Expected = {
+		{ TEXT("blueprint_compile"), { TEXT("path") } },
+		{ TEXT("anim_blueprint_compile"), { TEXT("path") } },
+		{ TEXT("bt_compile"), { TEXT("path") } },
+		{ TEXT("audio_asset_save"), { TEXT("path") } },
+		{ TEXT("ui_compile_widget"), { TEXT("widget_blueprint_path") } },
+		{ TEXT("ui_save_widget"), { TEXT("widget_blueprint_path") } },
+		{ TEXT("material_compile"), { TEXT("material_path"), TEXT("function_path") } },
+	};
+	TestEqual(TEXT("AssetBusyTargets has the pinned rows"), AssetBusyTargets().Num(), Expected.Num());
+	for (const TPair<FString, TArray<FString>>& Row : Expected)
+	{
+		const TArray<FString>* Fields = AssetBusyTargets().Find(Row.Key);
+		if (TestNotNull(*FString::Printf(TEXT("busy target %s"), *Row.Key), Fields))
+		{
+			TestEqual(*FString::Printf(TEXT("fields of %s"), *Row.Key), *Fields, Row.Value);
+		}
+	}
+	TestEqual(TEXT("AnyBusyCommands has two names"), AnyBusyCommands().Num(), 2);
+	TestTrue(TEXT("editor_start_pie uses every asset"), AnyBusyCommands().Contains(TEXT("editor_start_pie")));
+	TestTrue(TEXT("save-all uses every asset"), AnyBusyCommands().Contains(TEXT("editor_save_all_and_quit")));
+
+	// Every name is registered. A typo silently skips the gate.
+	FHaybaMCPModule* Module = FModuleManager::GetModulePtr<FHaybaMCPModule>(TEXT("HaybaMCPToolkit"));
+	if (TestNotNull(TEXT("toolkit module is loaded"), Module) && TestTrue(TEXT("router exists"), Module->GetCommandHandler().IsValid()))
+	{
+		const TSet<FString> Registered(Module->GetCommandHandler()->GetAllCommands());
+		for (const TPair<FString, TArray<FString>>& Row : AssetBusyTargets())
+		{
+			TestTrue(*FString::Printf(TEXT("busy target is registered: %s"), *Row.Key), Registered.Contains(Row.Key));
+		}
+		for (const FString& Cmd : AnyBusyCommands())
+		{
+			TestTrue(*FString::Printf(TEXT("any-busy command is registered: %s"), *Cmd), Registered.Contains(Cmd));
+		}
+	}
+
+	// BusyQueryFor: which assets a request would use.
+	const FBusyQuery Pie = BusyQueryFor(TEXT("editor_start_pie"), MakeShared<FJsonObject>());
+	TestTrue(TEXT("editor_start_pie asks about any asset"), Pie.bAnyBusy && Pie.AssetKeys.Num() == 0);
+	TestTrue(TEXT("save-all asks about any asset"), BusyQueryFor(TEXT("editor_save_all_and_quit"), nullptr).bAnyBusy);
+	TSharedPtr<FJsonObject> Params = MakeShared<FJsonObject>();
+	Params->SetStringField(TEXT("path"), TEXT("/Game/X/BP_A.BP_A_C"));
+	TestEqual(TEXT("a class path names its package"), BusyQueryFor(TEXT("blueprint_compile"), Params).AssetKeys,
+		TArray<FString>{ TEXT("asset:/game/x/bp_a") });
+	TSharedPtr<FJsonObject> Function = MakeShared<FJsonObject>();
+	Function->SetStringField(TEXT("function_path"), TEXT("/Game/M/MF_A"));
+	TestEqual(TEXT("material_compile reads function_path"), BusyQueryFor(TEXT("material_compile"), Function).AssetKeys,
+		TArray<FString>{ TEXT("asset:/game/m/mf_a") });
+	TSharedPtr<FJsonObject> Material = MakeShared<FJsonObject>();
+	Material->SetStringField(TEXT("material_path"), TEXT("/Game/M/M_A.M_A"));
+	TestEqual(TEXT("material_compile reads material_path"), BusyQueryFor(TEXT("material_compile"), Material).AssetKeys,
+		TArray<FString>{ TEXT("asset:/game/m/m_a") });
+	TestTrue(TEXT("a widget command ignores 'path'"), BusyQueryFor(TEXT("ui_save_widget"), Params).IsEmpty());
+	TSharedPtr<FJsonObject> Bare = MakeShared<FJsonObject>();
+	Bare->SetStringField(TEXT("path"), TEXT("BP_A"));
+	TestTrue(TEXT("a bare name is not an asset"), BusyQueryFor(TEXT("blueprint_compile"), Bare).IsEmpty());
+	TestTrue(TEXT("an authoring write is not a busy target"), BusyQueryFor(TEXT("blueprint_add_node"), Params).IsEmpty());
+	TestTrue(TEXT("an unrelated command asks nothing"), BusyQueryFor(TEXT("actor_spawn"), Params).IsEmpty());
+
+	// DecideAssetBusy: slot 3's truth table (spec T3 design 4).
+	const FBusyQuery Target = BusyQueryFor(TEXT("blueprint_compile"), Params);
+	TestEqual(TEXT("off: any-busy passes"), DecideAssetBusy(Pie, 1, EBusyMode::Off), EBusyGate::Pass);
+	TestEqual(TEXT("advisory: any-busy refuses"), DecideAssetBusy(Pie, 1, EBusyMode::Advisory), EBusyGate::Refuse);
+	TestEqual(TEXT("refusing: any-busy refuses"), DecideAssetBusy(Pie, 1, EBusyMode::Refusing), EBusyGate::Refuse);
+	TestEqual(TEXT("off: a target passes"), DecideAssetBusy(Target, 1, EBusyMode::Off), EBusyGate::Pass);
+	TestEqual(TEXT("advisory: a target warns"), DecideAssetBusy(Target, 1, EBusyMode::Advisory), EBusyGate::Warn);
+	TestEqual(TEXT("refusing: a target refuses"), DecideAssetBusy(Target, 1, EBusyMode::Refusing), EBusyGate::Refuse);
+	TestEqual(TEXT("nothing built: pass"), DecideAssetBusy(Pie, 0, EBusyMode::Refusing), EBusyGate::Pass);
+	TestEqual(TEXT("an empty query: pass"), DecideAssetBusy(FBusyQuery(), 3, EBusyMode::Refusing), EBusyGate::Pass);
+
+	// MakeBusyAssets from a real pure table: what the wire shows.
+	double Now = 1000.0;
+	HaybaMCPLease::FTable Table([&Now]() { return Now; });
+	HaybaMCPLease::FRequest Request;
+	Request.Owner = TEXT("builder");
+	Request.Label = TEXT("build:x");
+	Request.Lane = HaybaMCPLease::ELane::Long;
+	Request.TtlSeconds = 60.0;
+	HaybaMCPAccess::FClaim Claim;
+	FString Error;
+	TestTrue(TEXT("claim parses"), HaybaMCPAccess::ParseResource(TEXT("asset:/Game/B/BP_A"), Claim.Resource, Error));
+	Request.Claims.Add(Claim);
+	TestEqual(TEXT("build granted"), Table.Acquire(Request).Status, HaybaMCPLease::EStatus::Granted);
+	Now += 12.0;
+	const FDateTime UtcNow(2026, 9, 28, 12, 0, 0);
+	const TArray<FBusyAsset> Busy = MakeBusyAssets(Table.FindAssetHolders(FString()), Now, UtcNow);
+	if (TestEqual(TEXT("one busy asset"), Busy.Num(), 1))
+	{
+		TestEqual(TEXT("asset is the package path without the lock prefix"), Busy[0].Asset, FString(TEXT("/game/b/bp_a")));
+		TestEqual(TEXT("owner"), Busy[0].Owner, FString(TEXT("builder")));
+		TestEqual(TEXT("label"), Busy[0].Label, FString(TEXT("build:x")));
+		TestEqual(TEXT("lane"), Busy[0].Lane, FString(TEXT("long")));
+		TestEqual(TEXT("held"), Busy[0].HeldSeconds, 12.0);
+		TestEqual(TEXT("expires in"), Busy[0].ExpiresInSeconds, 48.0);
+		TestEqual(TEXT("since is ISO-8601 UTC"), Busy[0].SinceUtc, FDateTime(2026, 9, 28, 11, 59, 48).ToIso8601());
+
+		const TSharedRef<FJsonObject> Json = BusyAssetToJson(Busy[0]);
+		TestEqual(TEXT("seven keys"), Json->Values.Num(), 7);
+		for (const TCHAR* Key : { TEXT("asset"), TEXT("owner"), TEXT("label"), TEXT("lane"), TEXT("held_s"), TEXT("since"), TEXT("expires_in_s") })
+		{
+			TestTrue(*FString::Printf(TEXT("busy asset has %s"), Key), Json->HasField(Key));
+		}
+		TestFalse(TEXT("never a lease handle"), Json->HasField(TEXT("lease_id")) || Json->HasField(TEXT("token")));
+
+		const TSharedRef<FJsonObject> Detail = MakeBusyDetail(TEXT("editor_start_pie"), TEXT("lane5"), Busy);
+		TestEqual(TEXT("detail command"), Detail->GetStringField(TEXT("command")), FString(TEXT("editor_start_pie")));
+		TestEqual(TEXT("detail caller"), Detail->GetStringField(TEXT("caller_owner")), FString(TEXT("lane5")));
+		TestEqual(TEXT("detail assets"), Detail->GetArrayField(TEXT("assets")).Num(), 1);
+
+		TestEqual(TEXT("the refusal text (spec 2.10)"), MakeBusyMessage(TEXT("editor_start_pie"), Busy[0]),
+			FString(TEXT("asset_busy: 'editor_start_pie' is refused: /game/b/bp_a is being built by 'builder' (label build:x, held 12 s, lease expires in 48 s). PIE/compile would use it half-built. Nothing ran; try again when editor_get_state.building no longer lists it.")));
+		FBusyAsset NoLabel = Busy[0];
+		NoLabel.Label.Reset();
+		TestTrue(TEXT("an empty label reads none"), MakeBusyMessage(TEXT("blueprint_compile"), NoLabel).Contains(TEXT("(label none,")));
+		TestFalse(TEXT("no refusal text contains 'token'"), MakeBusyMessage(TEXT("editor_start_pie"), Busy[0]).Contains(TEXT("token")));
+	}
 	return true;
 }
 

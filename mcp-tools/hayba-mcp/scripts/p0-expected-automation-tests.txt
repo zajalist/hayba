@@ -49,3 +49,4 @@ Hayba.MCP.State.BatchHoldsDuringPIE
 # T3
 Hayba.MCP.Lease.AssetWrites
 Hayba.MCP.Lease.AssetHolders
+Hayba.MCP.State.AssetBusyTargets
