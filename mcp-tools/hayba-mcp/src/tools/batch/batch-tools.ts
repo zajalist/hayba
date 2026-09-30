@@ -71,11 +71,13 @@ export const batchStepSchema = z
 
 export const editorBatchSchema = z
   .object({
-    lease: z
+    lease_id: z
       .string()
       .min(1)
+      .max(128)
       .optional()
-      .describe('A lease token from lease_acquire. Optional only when this server holds exactly one lease.'),
+      .describe('The lease_id from lease_acquire this batch runs under. Optional only when this server holds exactly one lease.'),
+    lease: z.string().min(1).max(128).optional().describe('Same as lease_id (kept for existing callers).'),
     steps: z.array(batchStepSchema).min(1).max(BATCH_MAX_STEPS),
     on_error: z
       .enum(['stop', 'unload_then_stop'])
@@ -92,6 +94,18 @@ export const editorBatchSchema = z
       .describe('A fence that never settles fails its step after this long (default 120).'),
   })
   .strict();
+
+/** editor_batch arguments as the handler accepts them: lease_id and lease may
+ *  not name different leases (the editor answers the same way). */
+export const editorBatchArgsSchema = editorBatchSchema.superRefine((v, ctx) => {
+  if (v.lease_id !== undefined && v.lease !== undefined && v.lease_id.trim() !== v.lease.trim()) {
+    ctx.addIssue({
+      code: 'custom',
+      message: 'editor_batch [lease_id_ambiguous]: lease_id and lease name different leases; pass one',
+      path: ['lease_id'],
+    });
+  }
+});
 
 export const batchStatusSchema = z
   .object({
@@ -133,24 +147,24 @@ function validated<S extends z.ZodTypeAny>(schema: S, run: (args: z.infer<S>) =>
   };
 }
 
-/** The lease a batch runs under: the explicit token, else the single lease this server holds. */
+/** The lease a batch runs under: the one named, else the single lease this server holds. */
 export function resolveBatchLease(explicit: string | undefined, held: string[]): { lease?: string; error?: string } {
-  if (explicit) return { lease: explicit };
+  if (explicit) return { lease: explicit.trim() };
   if (held.length === 1) return { lease: held[0] };
   if (held.length === 0) {
     return {
       error:
-        'editor_batch needs a lease: call lease_acquire for what the steps touch (e.g. world:/Game/Maps/Valley or a wp-region), then pass its token as lease.',
+        'editor_batch needs a lease: call lease_acquire for what the steps touch (e.g. world:/Game/Maps/Valley or a wp-region), then pass its lease_id.',
     };
   }
-  return { error: `this server holds ${held.length} leases; pass the one this batch runs under as lease.` };
+  return { error: `this server holds ${held.length} leases; pass the one this batch runs under as lease_id.` };
 }
 
 export async function handleEditorBatch(args: z.infer<typeof editorBatchSchema>) {
-  const { lease, error } = resolveBatchLease(args.lease, getLeaseKeeper().heldTokens());
+  const { lease: aliasLease, lease_id: leaseIdArg, ...rest } = args;
+  const { lease, error } = resolveBatchLease(leaseIdArg ?? aliasLease, getLeaseKeeper().heldLeaseIds());
   if (!lease) return text({ error }, true);
-  const params: Record<string, unknown> = { ...args, lease };
-  return text(await executeCommand('editor_batch', params));
+  return text(await executeCommand('editor_batch', { ...rest, lease_id: lease }));
 }
 
 export interface BatchStatusDeps {
@@ -175,7 +189,7 @@ export const BATCH_DESCRIPTORS: ToolDescriptor[] = [
     description:
       'Run several editor commands in order under one lease, one step per editor tick, with a fence after each (wait for shaders/asset loads/GC/async loading to settle; gc also collects garbage under an exclusive region/world lease). Returns {job_id} at once; follow it with batch_status. Steps may be wp_region_load {bounds:[minX,minY,maxX,maxY], name?} / wp_region_unload {name?}: the batch owns those World Partition regions and always releases them by the end. Other agents\' queued interactive lease requests are served at fences.',
     meta: batchMeta,
-    handler: validated(editorBatchSchema, handleEditorBatch) as never,
+    handler: validated(editorBatchArgsSchema, handleEditorBatch) as never,
     cost: 'low',
     returns: '{job_id, status:"running", steps_total, owner, on_error, plan_covered}',
     schema: editorBatchSchema.shape,

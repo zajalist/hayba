@@ -41,7 +41,7 @@ afterEach(() => {
 });
 
 describe('editor_batch', () => {
-  it('forwards the steps and the lease and returns the job id', async () => {
+  it('forwards the steps and sends the lease as lease_id', async () => {
     const editor = fakeEditor(() => ({ ok: true, data: { job_id: 'job-1', status: 'running', steps_total: 3 } }));
     setDefaultSender(editor.send);
     const steps = [
@@ -49,20 +49,37 @@ describe('editor_batch', () => {
       { cmd: 'actor_set_transform', params: { actor: '/Game/Maps/Valley.Valley:PersistentLevel.Tree_3' } },
       { cmd: 'wp_region_unload', params: { name: 'west' }, fence_after: 'gc' },
     ];
-    const r = await tool('editor_batch')({ lease: 'lease-abc-1', steps, on_error: 'unload_then_stop' });
+    const r = await tool('editor_batch')({ lease_id: 'ls_4_aad6bc3c3546', steps, on_error: 'unload_then_stop' });
     expect(r.isError).toBeUndefined();
     expect(body(r)).toMatchObject({ job_id: 'job-1', status: 'running' });
     expect(editor.calls).toEqual([
-      { cmd: 'editor_batch', params: { lease: 'lease-abc-1', steps, on_error: 'unload_then_stop' } },
+      { cmd: 'editor_batch', params: { lease_id: 'ls_4_aad6bc3c3546', steps, on_error: 'unload_then_stop' } },
     ]);
+  });
+
+  it('accepts the permanent lease param and sends it as lease_id', async () => {
+    const editor = fakeEditor(() => ({ ok: true, data: { job_id: 'job-3', status: 'running' } }));
+    setDefaultSender(editor.send);
+    await tool('editor_batch')({ lease: 'ls_5_aad6bc3c3546', steps: [{ cmd: 'level_save' }] });
+    expect(editor.calls[0]!.params).toEqual({ lease_id: 'ls_5_aad6bc3c3546', steps: [{ cmd: 'level_save' }] });
+  });
+
+  it('refuses lease_id and lease that name different leases, without contacting the editor', async () => {
+    const editor = fakeEditor(() => ({ ok: true, data: {} }));
+    setDefaultSender(editor.send);
+    const r = await tool('editor_batch')({ lease_id: 'ls_1_aad6bc3c3546', lease: 'ls_2_b30995e71074', steps: [{ cmd: 'level_save' }] });
+    expect(r.isError).toBe(true);
+    expect(r.content[0]!.text).toContain('editor_batch [lease_id_ambiguous]');
+    expect(editor.calls).toEqual([]);
   });
 
   it('uses the single lease this server holds when none is named', async () => {
     const editor = fakeEditor(() => ({ ok: true, data: { job_id: 'job-2', status: 'running' } }));
     setDefaultSender(editor.send);
-    getLeaseKeeper().track('lease-held-7', 120);
+    getLeaseKeeper().track('ls_7_aad6bc3c3546', 120);
     await tool('editor_batch')({ steps: [{ cmd: 'level_save' }] });
-    expect(editor.calls[0]!.params.lease).toBe('lease-held-7');
+    expect(editor.calls[0]!.params.lease_id).toBe('ls_7_aad6bc3c3546');
+    expect(editor.calls[0]!.params).not.toHaveProperty('lease');
   });
 
   it('refuses without a lease, and when the lease is ambiguous, without contacting the editor', async () => {
@@ -72,8 +89,8 @@ describe('editor_batch', () => {
     expect(none.isError).toBe(true);
     expect(String(body(none).error)).toContain('lease_acquire');
 
-    getLeaseKeeper().track('a', 60);
-    getLeaseKeeper().track('b', 60);
+    getLeaseKeeper().track('ls_1_aaaaaaaaaaaa', 60);
+    getLeaseKeeper().track('ls_2_bbbbbbbbbbbb', 60);
     const two = await tool('editor_batch')({ steps: [{ cmd: 'level_save' }] });
     expect(two.isError).toBe(true);
     expect(String(body(two).error)).toContain('2 leases');
