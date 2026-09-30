@@ -18,7 +18,9 @@ param(
     [int]$Port = 52342,
     [ValidateRange(100, 60000)]
     [int]$TimeoutMs = 10000,
-    [string]$Auth = ''
+    [string]$Auth = '',
+    [string]$Owner = '',
+    [string]$Lease = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -84,6 +86,8 @@ try {
             params = $paramsObject
         }
         if ($Auth) { $request.auth = $Auth }
+        if ($Owner) { $request.owner = $Owner }
+        if ($Lease) { $request.lease = $Lease }
 
         $json = $request | ConvertTo-Json -Compress -Depth 30
         $payload = [System.Text.Encoding]::UTF8.GetBytes($json)
