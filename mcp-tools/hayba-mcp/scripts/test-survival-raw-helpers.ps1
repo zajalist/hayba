@@ -12,7 +12,8 @@ $ast = [Management.Automation.Language.Parser]::ParseFile($HarnessPath, [ref]$to
 if ($parseErrors.Count) { throw 'Survival harness did not parse' }
 # Load only the exact helper definitions. Never evaluate the editor launch or
 # hostile cases, and never open a socket to an editor's MCP port.
-foreach ($name in @('Get-BigEndianHeader', 'Read-BoundedExact', 'Wait-RawTask', 'Get-RemainingCaseMs')) {
+foreach ($name in @('Get-BigEndianHeader', 'Read-BoundedExact', 'Wait-RawTask', 'Get-RemainingCaseMs',
+    'Open-BoundedClient', 'Write-BoundedBytes', 'Send-RawFrame', 'Wait-ForBoundedPeerClose')) {
     $definitions = @($ast.FindAll({ param($node)
         $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name
     }, $true))
@@ -31,11 +32,37 @@ foreach ($name in @('Read-ExactAsync', 'Wait-IoTask', 'Get-RemainingTimeoutMs'))
 
 Add-Type -TypeDefinition @'
 using System.Net.Sockets;
+using System.IO;
+using System.Threading;
 using System.Threading.Tasks;
 public static class HaybaSurvivalRawFixture {
     public static async Task WriteRestAsync(NetworkStream stream) {
         await Task.Delay(150);
         await stream.WriteAsync(new byte[] { 0x42, 0x43, 0x44 }, 0, 3);
+    }
+}
+public sealed class HaybaHalfClosePeer {
+    public byte[] ReceivedBytes;
+    public bool SawEof;
+    public bool SentEof;
+    public async Task ServeAsync(TcpListener listener, int closeDelayMs, CancellationToken token) {
+        using (var client = await listener.AcceptTcpClientAsync(token))
+        using (var stream = client.GetStream())
+        using (var received = new MemoryStream()) {
+            var buffer = new byte[64];
+            while (true) {
+                int count = await stream.ReadAsync(buffer, 0, buffer.Length, token);
+                if (count == 0) break;
+                received.Write(buffer, 0, count);
+            }
+            ReceivedBytes = received.ToArray();
+            SawEof = true;
+            // Data before EOF ensures the helper drains reads until real EOF.
+            await stream.WriteAsync(new byte[] { 0x41 }, 0, 1, token);
+            await Task.Delay(closeDelayMs, token);
+            client.Client.Shutdown(SocketShutdown.Send);
+            SentEof = true;
+        }
     }
 }
 '@
@@ -115,6 +142,67 @@ foreach ($scenario in @('fragmented_read', 'early_eof', 'stalled_deadline', 'inv
         $listener.Stop()
     }
     $results.Add([pscustomobject]@{ name=$scenario; passed=$passed; elapsed_ms=$elapsed })
+}
+foreach ($scenario in @('truncated_header_halfclose', 'truncated_body_halfclose',
+    'delayed_peer_eof', 'nonclosing_peer_deadline')) {
+    $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
+    $peer = [HaybaHalfClosePeer]::new()
+    $cancel = [Threading.CancellationTokenSource]::new(2000)
+    $peerTask = $null
+    $passed = $false
+    $diagnostic = ''
+    $peerDiagnostic = ''
+    $elapsed = 0
+    try {
+        $listener.Start()
+        $Port = $listener.LocalEndpoint.Port
+        $neverCloses = $scenario -ceq 'nonclosing_peer_deadline'
+        $closeDelay = if ($neverCloses) { -1 } elseif ($scenario -ceq 'delayed_peer_eof') { 150 } else { 0 }
+        $peerTask = $peer.ServeAsync($listener, $closeDelay, $cancel.Token)
+        $header = if ($scenario -ceq 'truncated_header_halfclose') { [byte[]]@(0, 0) } else { Get-BigEndianHeader 100 }
+        $body = if ($scenario -ceq 'truncated_header_halfclose') { [byte[]]@() } else { [byte[]]@(0x7b) }
+        $expected = if ($scenario -ceq 'truncated_header_halfclose') { '0,0' } else { '0,0,0,100,123' }
+        $timeoutMs = if ($neverCloses) { 250 } else { 1000 }
+        $CaseDeadline = [DateTime]::UtcNow.AddMilliseconds($timeoutMs)
+        $caseTimer = [Diagnostics.Stopwatch]::StartNew()
+        try {
+            $response = Send-RawFrame -Header $header -Body $body -HalfCloseSend -ExpectPeerClose
+            $elapsed = $caseTimer.ElapsedMilliseconds
+            $passed = -not $neverCloses -and $response -ceq '' -and $elapsed -lt $timeoutMs
+            if ($scenario -ceq 'delayed_peer_eof' -and $elapsed -lt 150) { $passed = $false }
+        }
+        catch {
+            $elapsed = $caseTimer.ElapsedMilliseconds
+            $diagnostic = $_.Exception.Message
+            $passed = $neverCloses -and $diagnostic -ceq 'malformed frame peer close exceeded the absolute case deadline' -and
+                $elapsed -ge 150 -and $elapsed -lt 1000
+        }
+        if (-not $neverCloses) {
+            try {
+                if (-not $peerTask.Wait(1000)) { throw 'Half-close peer exceeded its bounded deadline' }
+                $peerTask.GetAwaiter().GetResult() | Out-Null
+            }
+            catch { $passed = $false; $peerDiagnostic = $_.Exception.Message }
+        }
+        $passed = $passed -and $peer.SawEof -and ($peer.ReceivedBytes -join ',') -ceq $expected -and
+            ($peer.SentEof -eq (-not $neverCloses))
+    }
+    finally {
+        $CaseDeadline = $null
+        $cancel.Cancel()
+        if ($null -ne $peerTask) {
+            try { $peerTask.GetAwaiter().GetResult() | Out-Null }
+            catch {
+                if ($_.Exception.InnerException -isnot [OperationCanceledException]) {
+                    $passed = $false
+                    $peerDiagnostic = $_.Exception.Message
+                }
+            }
+        }
+        $cancel.Dispose()
+        $listener.Stop()
+    }
+    $results.Add([pscustomobject]@{ name=$scenario; passed=$passed; elapsed_ms=$elapsed; diagnostic=$diagnostic; peer_diagnostic=$peerDiagnostic })
 }
 $results | ConvertTo-Json -Compress
 if (@($results | Where-Object { -not $_.passed }).Count) { exit 1 }

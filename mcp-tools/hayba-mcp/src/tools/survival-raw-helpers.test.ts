@@ -21,11 +21,12 @@ describe('survival harness raw transport helpers', () => {
     results = JSON.parse(run.stdout);
     exitStatus = run.status;
     diagnostics = run.stderr;
-    expect(results).toHaveLength(7);
+    expect(results).toHaveLength(11);
   }, 15_000);
 
   for (const scenario of ['endian_boundaries', 'fragmented_read', 'early_eof', 'stalled_deadline',
-    'invoker_fragmented_read', 'invoker_early_eof', 'invoker_stalled_deadline']) {
+    'invoker_fragmented_read', 'invoker_early_eof', 'invoker_stalled_deadline',
+    'truncated_header_halfclose', 'truncated_body_halfclose', 'delayed_peer_eof', 'nonclosing_peer_deadline']) {
     it(scenario, () => {
       const result = results.find((item) => item.name === scenario);
       expect(result, scenario).toBeDefined();

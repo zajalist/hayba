@@ -1081,7 +1081,7 @@ function Send-RawFrame {
             $client.Client.Shutdown([Net.Sockets.SocketShutdown]::Send)
         }
         if ($ExpectPeerClose) {
-            Wait-ForBoundedPeerClose $client 'malformed frame peer close' | Out-Null
+            Wait-ForBoundedPeerClose $stream 'malformed frame peer close' | Out-Null
             return ''
         }
         if (-not $ReadResponse) { return '' }
@@ -1116,11 +1116,12 @@ function New-RawCommandFrame([string]$Command, [hashtable]$Params, [string]$Id) 
     return [pscustomobject]@{ header = Get-BigEndianHeader $body.Length; body = $body; id = $Id }
 }
 
-function Wait-ForBoundedPeerClose([Net.Sockets.TcpClient]$Client, [string]$Operation) {
-    $stream = $Client.GetStream()
+function Wait-ForBoundedPeerClose([Net.Sockets.NetworkStream]$Stream, [string]$Operation) {
+    # The caller retains its valid stream across send-side half-close; asking
+    # TcpClient.GetStream again after Shutdown(Send) can reject that socket.
     $buffer = [byte[]]::new(4096)
     while ($true) {
-        $count = Wait-RawTask ($stream.ReadAsync($buffer, 0, $buffer.Length)) $Operation
+        $count = Wait-RawTask ($Stream.ReadAsync($buffer, 0, $buffer.Length)) $Operation
         if ($count -eq 0) { return $true }
     }
 }
@@ -1501,14 +1502,16 @@ p.write_text('this line must never execute', encoding='utf-8')
             }
             $extra = Open-BoundedClient
             $frame = New-RawCommandFrame 'ping' @{} ('limit_' + [guid]::NewGuid().ToString('N'))
+            $extraStream = $null
             try {
-                Write-BoundedBytes ($extra.GetStream()) $frame.header 'over-limit header write'
-                Write-BoundedBytes ($extra.GetStream()) $frame.body 'over-limit body write'
+                $extraStream = $extra.GetStream()
+                Write-BoundedBytes $extraStream $frame.header 'over-limit header write'
+                Write-BoundedBytes $extraStream $frame.body 'over-limit body write'
             }
             catch {
                 # A write-side refusal is already the desired bounded outcome.
             }
-            if ($extra.Connected) { Wait-ForBoundedPeerClose $extra 'over-limit peer close' | Out-Null }
+            if ($extra.Connected) { Wait-ForBoundedPeerClose $extraStream 'over-limit peer close' | Out-Null }
         }
         finally {
             if ($null -ne $extra) { $extra.Dispose() }
@@ -1521,14 +1524,17 @@ p.write_text('this line must never execute', encoding='utf-8')
         # per-read idle timeout would never fire. Only a total-frame deadline
         # closes these sockets while they continue to make progress.
         $clients = [Collections.Generic.List[Net.Sockets.TcpClient]]::new()
+        $streams = [Collections.Generic.List[Net.Sockets.NetworkStream]]::new()
         $closed = [Collections.Generic.HashSet[int]]::new()
         try {
             $declared = Get-BigEndianHeader 512
             for ($i = 0; $i -lt $ConfiguredMaxClients; $i++) {
                 $client = Open-BoundedClient
-                Write-BoundedBytes ($client.GetStream()) $declared 'slowloris header write'
-                Write-BoundedBytes ($client.GetStream()) ([byte[]]@(0x7b)) 'slowloris initial body byte'
+                $stream = $client.GetStream()
+                Write-BoundedBytes $stream $declared 'slowloris header write'
+                Write-BoundedBytes $stream ([byte[]]@(0x7b)) 'slowloris initial body byte'
                 $clients.Add($client)
+                $streams.Add($stream)
             }
             $drip = [Diagnostics.Stopwatch]::StartNew()
             $interval = [Math]::Max(100, [Math]::Min(500, [int]($FrameReadTimeoutMs / 3)))
@@ -1536,13 +1542,13 @@ p.write_text('this line must never execute', encoding='utf-8')
                 Start-Sleep -Milliseconds $interval
                 for ($i = 0; $i -lt $clients.Count; $i++) {
                     if ($closed.Contains($i)) { continue }
-                    try { Write-BoundedBytes ($clients[$i].GetStream()) ([byte[]]@(0x20)) 'slowloris drip byte' }
+                    try { Write-BoundedBytes $streams[$i] ([byte[]]@(0x20)) 'slowloris drip byte' }
                     catch { [void]$closed.Add($i) }
                 }
             }
             for ($i = 0; $i -lt $clients.Count; $i++) {
                 if (-not $closed.Contains($i)) {
-                    Wait-ForBoundedPeerClose $clients[$i] 'slowloris total-deadline peer close' | Out-Null
+                    Wait-ForBoundedPeerClose $streams[$i] 'slowloris total-deadline peer close' | Out-Null
                 }
             }
         }
@@ -1568,7 +1574,7 @@ p.write_text('this line must never execute', encoding='utf-8')
                     break
                 }
             }
-            if (-not $writeRejected) { Wait-ForBoundedPeerClose $client 'pipeline-limit peer close' | Out-Null }
+            if (-not $writeRejected) { Wait-ForBoundedPeerClose $stream 'pipeline-limit peer close' | Out-Null }
         }
         finally { $client.Dispose() }
     }
