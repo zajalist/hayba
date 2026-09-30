@@ -80,7 +80,12 @@ and PIE sit directly under global: an asset is not inside a world.
 
 An undeclared WriteScoped command takes only IX on its world, so scoped
 writers do not exclude each other, but they do collide with anyone holding
-the whole world or everything.
+the whole world or everything. The exception is a command that writes one
+asset named in its own request (`AssetWriteCommands`: Blueprint graph and
+Widget Blueprint authoring, including their compile-and-save): it takes X on
+`asset:<package>` of that field, so two agents editing one asset collide and
+a world or region lease does not block it. The same `asset:` X lock is how a
+build marks its assets busy (`asset_busy`, ADR-0012).
 
 ### The lease table never blocks
 

@@ -55,6 +55,51 @@ describe('lease access-class tables name real commands', () => {
     expect(named.filter((cmd) => !known.has(cmd)).sort()).toEqual([]);
   });
 
+  // Asset writers lock asset:<path> from their own request. A misspelt entry
+  // would fall back to the world intent lock and two agents could edit one
+  // AnimBP at once.
+  it.runIf(available)('every AssetWrite entry is a handler command keyed by a request field', () => {
+    const src = readFileSync(POLICY, 'utf-8');
+    const start = src.indexOf('inline const TMap<FString, FString>& AssetWriteCommands()');
+    expect(start, 'AssetWriteCommands() not found in HaybaMCPAccessPolicy.h - was it renamed?').toBeGreaterThan(-1);
+    const body = src.slice(start, src.indexOf('};', start));
+    const pairs = [...body.matchAll(/\{\s*TEXT\("([^"]+)"\),\s*TEXT\("([^"]+)"\)\s*\}/g)].map((m) => [m[1]!, m[2]!] as const);
+    expect(pairs.length).toBeGreaterThan(5);
+    const known = handlerCommands();
+    expect(pairs.map(([cmd]) => cmd).filter((cmd) => !known.has(cmd)).sort()).toEqual([]);
+    for (const [cmd, field] of pairs) expect(field, cmd).toMatch(/^[a-z_]+$/);
+  });
+
+  // Spec T3 design 1: this branch carries the Blueprint and widget rows only.
+  // The deploy branch's animation rows arrive by merge (spec 7.3), which must
+  // update this pin to the union.
+  it.runIf(available)('pins the S1 rows: Blueprint writers by path, widget writers by widget_blueprint_path', () => {
+    const src = readFileSync(POLICY, 'utf-8');
+    const start = src.indexOf('inline const TMap<FString, FString>& AssetWriteCommands()');
+    expect(start, 'AssetWriteCommands() not found').toBeGreaterThan(-1);
+    const body = src.slice(start, src.indexOf('};', start));
+    const rows = Object.fromEntries(
+      [...body.matchAll(/\{\s*TEXT\("([^"]+)"\),\s*TEXT\("([^"]+)"\)\s*\}/g)].map((m) => [m[1]!, m[2]!]),
+    );
+    expect(rows).toEqual({
+      blueprint_add_node: 'path',
+      blueprint_connect_nodes: 'path',
+      blueprint_set_pin_default: 'path',
+      blueprint_add_variable: 'path',
+      blueprint_add_function: 'path',
+      blueprint_add_event: 'path',
+      blueprint_compile: 'path',
+      ui_build_tree: 'widget_blueprint_path',
+      ui_mutate_tree: 'widget_blueprint_path',
+      ui_set_variable: 'widget_blueprint_path',
+      ui_set_widget_properties: 'widget_blueprint_path',
+      ui_add_element: 'widget_blueprint_path',
+      ui_bind_property: 'widget_blueprint_path',
+      ui_compile_widget: 'widget_blueprint_path',
+      ui_save_widget: 'widget_blueprint_path',
+    });
+  });
+
   it.runIf(available)('keeps the commands the design names in their classes', () => {
     const src = readFileSync(POLICY, 'utf-8');
     const world = tableNames(src, 'WriteWorldCommands');

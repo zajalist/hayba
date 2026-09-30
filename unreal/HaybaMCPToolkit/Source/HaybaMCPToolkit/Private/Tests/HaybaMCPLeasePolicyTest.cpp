@@ -87,6 +87,65 @@ bool FHaybaMCPLeaseClassificationTest::RunTest(const FString& Parameters)
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FHaybaMCPLeaseAssetWriteTest,
+	"Hayba.MCP.Lease.AssetWrites",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FHaybaMCPLeaseAssetWriteTest::RunTest(const FString& Parameters)
+{
+	// Blueprint graph and widget authoring write one asset. They are scoped
+	// writes whatever Plan Mode says, including compile-and-save, which Plan
+	// Mode does not gate.
+	const FClassification Node = ClassifyCommand(TEXT("blueprint_add_node"), true);
+	TestEqual(TEXT("blueprint graph authoring is a scoped write"), Node.Class, EAccessClass::WriteScoped);
+	TestTrue(TEXT("by the asset table, not by default"), Node.bExplicit);
+	TestEqual(TEXT("blueprint compile-and-save is a scoped write even ungated"),
+		ClassifyCommand(TEXT("blueprint_compile"), false).Class, EAccessClass::WriteScoped);
+	TestEqual(TEXT("widget authoring is a scoped write even ungated"),
+		ClassifyCommand(TEXT("ui_set_variable"), false).Class, EAccessClass::WriteScoped);
+
+	// Every spelling of one asset is one lock.
+	TestEqual(TEXT("package path"), AssetPackageKey(TEXT("/Game/Pawn/BP_Pawn")), FString(TEXT("/game/pawn/bp_pawn")));
+	TestEqual(TEXT("object path"), AssetPackageKey(TEXT("/Game/Pawn/BP_Pawn.BP_Pawn")), FString(TEXT("/game/pawn/bp_pawn")));
+	TestEqual(TEXT("class path"), AssetPackageKey(TEXT("/Game/Pawn/BP_Pawn.BP_Pawn_C")), FString(TEXT("/game/pawn/bp_pawn")));
+	TestTrue(TEXT("a bare name is not a package"), AssetPackageKey(TEXT("BP_Pawn")).IsEmpty());
+	TestTrue(TEXT("a resource string is not a package"), AssetPackageKey(TEXT("asset:/Game/X")).IsEmpty());
+
+	TSharedPtr<FJsonObject> Params = MakeShared<FJsonObject>();
+	Params->SetStringField(TEXT("path"), TEXT("/Game/Pawn/BP_Pawn.BP_Pawn"));
+	FClaim Claim;
+	TestTrue(TEXT("a Blueprint writer implies its asset"), ImpliedAssetClaim(TEXT("blueprint_connect_nodes"), Params, Claim));
+	TestEqual(TEXT("as asset:<package>"), Claim.Resource.Key(), FString(TEXT("asset:/game/pawn/bp_pawn")));
+	TestTrue(TEXT("exclusively"), Claim.bExclusive);
+	FClaim Other;
+	TestFalse(TEXT("other commands imply nothing"), ImpliedAssetClaim(TEXT("actor_spawn"), Params, Other));
+	TestFalse(TEXT("nor does a request without the path"),
+		ImpliedAssetClaim(TEXT("blueprint_connect_nodes"), MakeShared<FJsonObject>(), Other));
+	TestFalse(TEXT("a widget writer does not read 'path'"), ImpliedAssetClaim(TEXT("ui_build_tree"), Params, Other));
+
+	TSharedPtr<FJsonObject> WidgetParams = MakeShared<FJsonObject>();
+	WidgetParams->SetStringField(TEXT("widget_blueprint_path"), TEXT("/Game/UI/WBP_Menu.WBP_Menu"));
+	FClaim Widget;
+	TestTrue(TEXT("a widget writer implies its widget blueprint"), ImpliedAssetClaim(TEXT("ui_build_tree"), WidgetParams, Widget));
+	TestEqual(TEXT("keyed on widget_blueprint_path"), Widget.Resource.Key(), FString(TEXT("asset:/game/ui/wbp_menu")));
+
+	// Two agents on one Blueprint collide; on different assets, or against a
+	// world lease, they do not: an asset is not inside a world.
+	const TArray<FLock> Mine = RequiredLocks(EAccessClass::WriteScoped, { Claim }, TEXT("/Game/Maps/Valley"));
+	Params->SetStringField(TEXT("path"), TEXT("/Game/Pawn/BP_Pawn"));
+	FClaim Same;
+	ImpliedAssetClaim(TEXT("blueprint_add_node"), Params, Same);
+	TestTrue(TEXT("same Blueprint, two spellings: conflict"),
+		FindConflict(Mine, RequiredLocks(EAccessClass::WriteScoped, { Same }, TEXT("/Game/Maps/Valley"))));
+	TestFalse(TEXT("a Blueprint and a widget: no conflict"),
+		FindConflict(Mine, RequiredLocks(EAccessClass::WriteScoped, { Widget }, TEXT("/Game/Maps/Valley"))));
+	TestFalse(TEXT("a world lease does not block asset authoring"),
+		FindConflict(Mine, ExpandClaims({ ParseClaim(*this, TEXT("world:/Game/Maps/Valley")) })));
+	TestTrue(TEXT("a global lease does"), FindConflict(Mine, ExpandClaims({ FClaim() })));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FHaybaMCPLeaseResourceTest,
 	"Hayba.MCP.Lease.Resources",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
@@ -390,6 +449,41 @@ bool FHaybaMCPLeaseClassificationDriftTest::RunTest(const FString& Parameters)
 	for (const FString& Cmd : GlobalCommands())
 	{
 		TestTrue(*FString::Printf(TEXT("Global table names a registered command: %s"), *Cmd), Registered.Contains(Cmd));
+	}
+	for (const TPair<FString, FString>& Entry : AssetWriteCommands())
+	{
+		TestTrue(*FString::Printf(TEXT("AssetWrite table names a registered command: %s"), *Entry.Key), Registered.Contains(Entry.Key));
+	}
+	// S1 rows are pinned (P0 spec T3 design 1). Blueprint rows key on path and
+	// widget rows on widget_blueprint_path. The deploy branch's animation rows
+	// arrive by merge, and that merge updates this pin to the union (spec 7.3).
+	const TMap<FString, FString> ExpectedAssetWrites = {
+		{ TEXT("blueprint_add_node"), TEXT("path") },
+		{ TEXT("blueprint_connect_nodes"), TEXT("path") },
+		{ TEXT("blueprint_set_pin_default"), TEXT("path") },
+		{ TEXT("blueprint_add_variable"), TEXT("path") },
+		{ TEXT("blueprint_add_function"), TEXT("path") },
+		{ TEXT("blueprint_add_event"), TEXT("path") },
+		{ TEXT("blueprint_compile"), TEXT("path") },
+		{ TEXT("ui_build_tree"), TEXT("widget_blueprint_path") },
+		{ TEXT("ui_mutate_tree"), TEXT("widget_blueprint_path") },
+		{ TEXT("ui_set_variable"), TEXT("widget_blueprint_path") },
+		{ TEXT("ui_set_widget_properties"), TEXT("widget_blueprint_path") },
+		{ TEXT("ui_add_element"), TEXT("widget_blueprint_path") },
+		{ TEXT("ui_bind_property"), TEXT("widget_blueprint_path") },
+		{ TEXT("ui_compile_widget"), TEXT("widget_blueprint_path") },
+		{ TEXT("ui_save_widget"), TEXT("widget_blueprint_path") },
+	};
+	TestEqual(TEXT("AssetWrite rows are exactly the Blueprint and widget writers"),
+		AssetWriteCommands().Num(), ExpectedAssetWrites.Num());
+	for (const TPair<FString, FString>& Row : ExpectedAssetWrites)
+	{
+		const FString* Field = AssetWriteCommands().Find(Row.Key);
+		TestTrue(*FString::Printf(TEXT("AssetWrite row %s keys on %s"), *Row.Key, *Row.Value),
+			Field != nullptr && *Field == Row.Value);
+		const FClassification RowClass = ClassifyCommand(Row.Key, false);
+		TestEqual(*FString::Printf(TEXT("AssetWrite row %s is a scoped write"), *Row.Key), RowClass.Class, EAccessClass::WriteScoped);
+		TestTrue(*FString::Printf(TEXT("AssetWrite row %s is explicit"), *Row.Key), RowClass.bExplicit);
 	}
 
 	// Every registered command classifies, and nothing Plan Mode gates is a read.

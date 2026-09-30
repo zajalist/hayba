@@ -208,6 +208,17 @@ FHaybaMCPLeaseManager::FVerdict FHaybaMCPLeaseManager::CheckCommand(
 			Declared.Num() > 0);
 	}
 
+	if (Declared.Num() == 0)
+	{
+		// An asset writer names its asset in its own request; lock that asset
+		// instead of only intending the world.
+		HaybaMCPAccess::FClaim Implied;
+		if (HaybaMCPAccess::ImpliedAssetClaim(Cmd, Params, Implied))
+		{
+			Declared.Add(MoveTemp(Implied));
+		}
+	}
+
 	const FString World = CurrentWorldPackage();
 	const TArray<HaybaMCPAccess::FLock> Required = HaybaMCPAccess::RequiredLocks(Class.Class, Declared, World);
 

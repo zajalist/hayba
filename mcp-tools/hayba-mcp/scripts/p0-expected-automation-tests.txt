@@ -46,3 +46,5 @@ Hayba.MCP.State.PieSafeDrift
 Hayba.MCP.State.StartPieBlockedByDirtyCode
 Hayba.MCP.State.BatchHoldsDuringPIE
 # optional: Hayba.MCP.State.RealPIE (run alone with -HaybaRealPIETests)
+# T3
+Hayba.MCP.Lease.AssetWrites

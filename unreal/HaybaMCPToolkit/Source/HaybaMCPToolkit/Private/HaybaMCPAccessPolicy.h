@@ -87,6 +87,70 @@ namespace HaybaMCPAccess
 		return Commands;
 	}
 
+	/**
+	 * Commands that write exactly one asset, and the request field that names
+	 * it. Without declared resources they lock X on asset:<that package> rather
+	 * than only intending the world. So two agents editing one Blueprint or
+	 * Widget Blueprint collide, agents editing different assets do not, and a
+	 * world or region lease does not block asset authoring, because an asset
+	 * is not inside a world (docs/adr/0010). Same drift rule as the tables
+	 * above; the rows are pinned by Hayba.MCP.Lease.ClassificationDrift and
+	 * access-policy-drift.test.ts.
+	 *
+	 * Compile-and-save commands are listed too. Plan Mode leaves them alone,
+	 * because a compile is derived state, but saving writes the asset. The
+	 * animation rows of <deploy-branch> arrive by merge (P0 spec
+	 * section 7.3).
+	 */
+	inline const TMap<FString, FString>& AssetWriteCommands()
+	{
+		static const TMap<FString, FString> Commands = {
+			// Blueprint graph authoring.
+			{ TEXT("blueprint_add_node"), TEXT("path") },
+			{ TEXT("blueprint_connect_nodes"), TEXT("path") },
+			{ TEXT("blueprint_set_pin_default"), TEXT("path") },
+			{ TEXT("blueprint_add_variable"), TEXT("path") },
+			{ TEXT("blueprint_add_function"), TEXT("path") },
+			{ TEXT("blueprint_add_event"), TEXT("path") },
+			{ TEXT("blueprint_compile"), TEXT("path") },
+			// Widget Blueprint authoring.
+			{ TEXT("ui_build_tree"), TEXT("widget_blueprint_path") },
+			{ TEXT("ui_mutate_tree"), TEXT("widget_blueprint_path") },
+			{ TEXT("ui_set_variable"), TEXT("widget_blueprint_path") },
+			{ TEXT("ui_set_widget_properties"), TEXT("widget_blueprint_path") },
+			{ TEXT("ui_add_element"), TEXT("widget_blueprint_path") },
+			{ TEXT("ui_bind_property"), TEXT("widget_blueprint_path") },
+			{ TEXT("ui_compile_widget"), TEXT("widget_blueprint_path") },
+			{ TEXT("ui_save_widget"), TEXT("widget_blueprint_path") },
+		};
+		return Commands;
+	}
+
+	/**
+	 * The package an asset path names, lower-cased, so every spelling of one
+	 * asset is one lock: "/Game/A/ABP_X", "/Game/A/ABP_X.ABP_X" and the class
+	 * path "/Game/A/ABP_X.ABP_X_C" are all asset:/game/a/abp_x. Empty when the
+	 * text is not a package path.
+	 */
+	inline FString AssetPackageKey(const FString& InPath)
+	{
+		FString Path = InPath.TrimStartAndEnd();
+		int32 Dot = INDEX_NONE;
+		if (Path.FindChar(TEXT('.'), Dot))
+		{
+			Path = Path.Left(Dot);
+		}
+		while (Path.Len() > 1 && Path.EndsWith(TEXT("/")))
+		{
+			Path.LeftChopInline(1);
+		}
+		if (!Path.StartsWith(TEXT("/")) || Path.Len() < 2 || Path.Contains(TEXT(":")) || Path.Contains(TEXT("//")))
+		{
+			return FString();
+		}
+		return Path.ToLower();
+	}
+
 	struct FClassification
 	{
 		EAccessClass Class = EAccessClass::Read;
@@ -121,6 +185,11 @@ namespace HaybaMCPAccess
 		if (Cmd == TEXT("python_run"))
 		{
 			return { EAccessClass::WriteWorld, true };
+		}
+		if (AssetWriteCommands().Contains(Cmd))
+		{
+			// Even the ones Plan Mode leaves alone (compile-and-save) write the asset (S1).
+			return { EAccessClass::WriteScoped, true };
 		}
 		return { bIsDestructive ? EAccessClass::WriteScoped : EAccessClass::Read, false };
 	}
@@ -370,6 +439,32 @@ namespace HaybaMCPAccess
 		FResource Resource;
 		bool bExclusive = true;
 	};
+
+	/**
+	 * The asset claim an asset-writing command implies from its own request,
+	 * for when the caller declared no resources. False when the command is not
+	 * an asset writer (AssetWriteCommands) or its path field is missing or not
+	 * a package path; the command then keeps the undeclared WriteScoped locks.
+	 */
+	inline bool ImpliedAssetClaim(const FString& Cmd, const TSharedPtr<FJsonObject>& Params, FClaim& OutClaim)
+	{
+		const FString* Field = AssetWriteCommands().Find(Cmd);
+		FString Path;
+		if (!Field || !Params.IsValid() || !Params->TryGetStringField(**Field, Path))
+		{
+			return false;
+		}
+		const FString Package = AssetPackageKey(Path);
+		if (Package.IsEmpty())
+		{
+			return false;
+		}
+		OutClaim = FClaim();
+		OutClaim.Resource.Kind = EResourceKind::Asset;
+		OutClaim.Resource.Path = Package;
+		OutClaim.bExclusive = true;
+		return true;
+	}
 
 	/** One node lock, after expanding a claim into its intent path. */
 	struct FLock
