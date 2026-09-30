@@ -11,7 +11,11 @@ export type UeToolErrorCode =
   | 'ue_error'
   | 'editor_busy'
   // Another agent holds a lease on what this command touches (Enforced mode).
-  | 'lease_conflict';
+  | 'lease_conflict'
+  // An earlier native fault left the editor unsafe; nothing runs until it restarts (ADR-0011).
+  | 'editor_unsafe_restart_required'
+  // This command raised a native fault; its outcome is unknown and the editor must restart (ADR-0011).
+  | 'native_fault_contained';
 
 export class UeToolError extends Error {
   readonly code: UeToolErrorCode;
@@ -24,7 +28,13 @@ export class UeToolError extends Error {
   }
 }
 
-const KNOWN_UE_CODES = new Set<UeToolErrorCode>(['plan_gate', 'tool_disabled', 'lease_conflict']);
+const KNOWN_UE_CODES = new Set<UeToolErrorCode>([
+  'plan_gate',
+  'tool_disabled',
+  'lease_conflict',
+  'editor_unsafe_restart_required',
+  'native_fault_contained',
+]);
 function mapUeCode(raw: string | undefined): UeToolErrorCode {
   if (raw && KNOWN_UE_CODES.has(raw as UeToolErrorCode)) return raw as UeToolErrorCode;
   return 'ue_error';

@@ -30,6 +30,10 @@ export interface TcpResponse {
   lease_warning?: Record<string, unknown>;
   /** Enforced lease mode: the conflict that refused the command (code lease_conflict). */
   lease?: Record<string, unknown>;
+  /** Sticky editor health on editor_unsafe_restart_required and native_fault_contained (ADR-0011). */
+  editor_health?: Record<string, unknown>;
+  /** Typed lifecycle advisory the editor attaches to failures (state, mutation_status, session_health, …). */
+  advisory?: Record<string, unknown>;
 }
 
 const MAX_OWNER_CHARS = 128;

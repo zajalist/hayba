@@ -5,6 +5,14 @@ All notable changes to Hayba MCP Toolkit are documented here. Format based on [K
 ## [Unreleased]
 
 ### Added
+- Sticky `editor_unsafe` (ADR-0011). After Hayba contains a native fault, the
+  editor refuses writes, Python, saves, compiles, PIE and batches with
+  `code: "editor_unsafe_restart_required"` until it restarts; status commands
+  (and, unless the fault stranded a save, a fixed set of reads) still answer.
+  The command that faulted answers `native_fault_contained`. The person at the
+  editor sees one persistent notification. `ping` and `editor_get_state` report
+  `editor_unsafe`, `python_unhealthy` and `health`; `ping` advertises
+  `capabilities.editor_health`.
 - Multi-agent editor leases (ADR-0010). `lease_acquire` / `lease_renew` /
   `lease_release` / `lease_status` claim `global`, `world:`, `wp-region:`,
   `asset:`, `actor:` or `pie` resources. Acquire never blocks: it answers

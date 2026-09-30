@@ -5,13 +5,13 @@ import { setCachedSidecarHealth } from './visual/sidecar-client.js';
 // and "transport fails" without vi.resetModules()/vi.doMock() churn, which
 // previously left later tests importing an unmocked (real, network-shelling)
 // tcp-client and hanging.
-const tcpState = vi.hoisted(() => ({ shouldFail: false }));
+const tcpState = vi.hoisted(() => ({ shouldFail: false, pingData: null as Record<string, unknown> | null }));
 
 vi.mock('../tcp-client.js', () => ({
   ensureConnected: vi.fn(async () => {
     if (tcpState.shouldFail) throw new Error('ECONNREFUSED');
     return {
-      send: async () => ({ ok: true, data: { status: 'idle', ueVersion: '5.4' } }),
+      send: async () => ({ ok: true, data: tcpState.pingData ?? { status: 'idle', ueVersion: '5.4' } }),
     };
   }),
 }));
@@ -195,5 +195,51 @@ describe('checkUeStatus / onConnected hook', () => {
     await checkUeStatus({ onConnected, listProcesses });
     await checkUeStatus({ onConnected, listProcesses });
     expect(onConnected).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('checkUeStatus / editor restart diagnostic (ADR-0011)', () => {
+  beforeEach(() => setCachedSidecarHealth({
+    available: false, url: '', models: {}, active_models: [], checked_at: Date.now(),
+  }));
+  afterEach(() => {
+    tcpState.pingData = null;
+    setCachedSidecarHealth(null);
+  });
+
+  it('turns ping.editor_unsafe into a restart diagnostic naming the faulted command and time', async () => {
+    tcpState.pingData = {
+      status: 'ok',
+      editor_unsafe: true,
+      python_unhealthy: true,
+      health: { cause: 'python_native_fault', faulted_command: 'python_run', faulted_at_utc: '2026-09-28T02:10:01Z' },
+    };
+    const { checkUeStatus } = await import('./check-ue-status.js');
+    const status = await checkUeStatus({ listProcesses: async () => [{ name: 'UnrealEditor.exe', pid: 1111 }] });
+    expect(status.connected).toBe(true);
+    expect(status.editor_restart_required).toBe(true);
+    expect(status.diagnostic).toContain("'python_run'");
+    expect(status.diagnostic).toContain('2026-09-28T02:10:01Z');
+    expect(status.diagnostic).toContain('Save your work (File > Save All) and restart the editor.');
+  });
+
+  it('tells the user not to save after an engine fatal during a package save', async () => {
+    tcpState.pingData = {
+      status: 'ok',
+      editor_unsafe: true,
+      health: { cause: 'stranded_package_save', faulted_command: 'level_save', faulted_at_utc: '2026-09-28T03:00:00Z' },
+    };
+    const { checkUeStatus } = await import('./check-ue-status.js');
+    const status = await checkUeStatus({ listProcesses: async () => [] });
+    expect(status.diagnostic).toContain('Do not save; restart the editor now.');
+    expect(status.diagnostic).not.toContain('File > Save All');
+  });
+
+  it('adds nothing for a healthy editor', async () => {
+    tcpState.pingData = { status: 'ok', editor_unsafe: false, health: { cause: 'none' } };
+    const { checkUeStatus } = await import('./check-ue-status.js');
+    const status = await checkUeStatus({ listProcesses: async () => [] });
+    expect(status.editor_restart_required).toBeUndefined();
+    expect(status.diagnostic).toBeUndefined();
   });
 });

@@ -172,6 +172,24 @@ export function buildProcessDiagnostic(id: UeProcessIdentity, connected: boolean
   return undefined;
 }
 
+/**
+ * ping.editor_unsafe (ADR-0011): a contained native fault left the editor
+ * unsafe until it restarts. Names the faulted command and time, and after a
+ * stranded save or engine fatal tells the user NOT to save.
+ */
+export function editorRestartDiagnostic(ping: Record<string, unknown>): string | undefined {
+  if (ping.editor_unsafe !== true) return undefined;
+  const health = (typeof ping.health === 'object' && ping.health !== null ? ping.health : {}) as Record<string, unknown>;
+  const command = typeof health.faulted_command === 'string' && health.faulted_command ? health.faulted_command : 'an unknown command';
+  const at = typeof health.faulted_at_utc === 'string' && health.faulted_at_utc ? health.faulted_at_utc : 'an unknown time';
+  const noSave = health.cause === 'stranded_package_save' || health.cause === 'engine_fatal_swallowed';
+  return (
+    `Editor restart required: a native fault was contained in '${command}' at ${at}. Hayba refuses writes, Python, ` +
+    'saves, compiles and PIE until the editor restarts; status commands such as editor_get_state still answer. ' +
+    (noSave ? 'Do not save; restart the editor now.' : 'Save your work (File > Save All) and restart the editor.')
+  );
+}
+
 export interface UeStatus {
   connected: boolean;
   error?: string;
@@ -186,6 +204,8 @@ export interface UeStatus {
   ue_processes?: UeProcessIdentity;
   /** Human-readable "what did we find" summary — always names flavor + PID. */
   process_identity?: string;
+  /** ping reported editor_unsafe; only a restart clears it (ADR-0011). */
+  editor_restart_required?: true;
   [key: string]: unknown;
 }
 
@@ -241,14 +261,18 @@ export async function checkUeStatus(opts: CheckUeStatusOpts = {}): Promise<UeSta
       // check identity, even on the happy path.
       const { identity, guiDetected } = await detectIdentity(listProcesses);
       const diagnostic = identity ? buildProcessDiagnostic(identity, true) : undefined;
+      const data = response.data as Record<string, unknown>;
+      const restart = editorRestartDiagnostic(data);
+      const combined = [restart, diagnostic].filter((part): part is string => Boolean(part)).join(' ');
       return {
         connected: true,
         ...sidecarFields,
-        ...(response.data as Record<string, unknown>),
+        ...data,
         editor_process_detected: guiDetected,
         ue_processes: identity,
         process_identity: identity ? describeProcessIdentity(identity) : undefined,
-        ...(diagnostic ? { diagnostic } : {}),
+        ...(restart ? { editor_restart_required: true as const } : {}),
+        ...(combined ? { diagnostic: combined } : {}),
       };
     }
     const { identity, guiDetected } = await detectIdentity(listProcesses);
