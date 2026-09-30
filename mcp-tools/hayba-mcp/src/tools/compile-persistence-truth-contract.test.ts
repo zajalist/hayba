@@ -98,7 +98,9 @@ describe('compile and persistence truth contract', () => {
     );
     for (const guardedFault of [functionFault, materialFault]) {
       expect(guardedFault).toContain('TEXT("session_suspect"), true');
-      expect(guardedFault).toContain('Restart the editor before another mutation');
+      expect(guardedFault).toContain('Fault contained');
+      expect(guardedFault).toContain('Restart the editor before further work');
+      expect(guardedFault).not.toContain('kept alive');
     }
   });
 

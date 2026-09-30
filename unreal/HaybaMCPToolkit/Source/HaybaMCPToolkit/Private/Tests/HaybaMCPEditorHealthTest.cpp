@@ -10,6 +10,10 @@
 #include "HaybaMCPCommandSets.h"
 #include "HaybaMCPHealthPolicy.h"
 #include "HaybaMCPWarningLimiter.h"
+#include "HaybaMCPEditorHealth.h"
+#include "IPythonScriptPlugin.h"
+#include "Misc/App.h"
+#include "UObject/UObjectGlobals.h"
 #include "HaybaMCPCommandHandler.h"
 #include "HaybaMCPModule.h"
 #include "Modules/ModuleManager.h"
@@ -349,6 +353,88 @@ bool FHaybaLeaseWarningLimiterTest::RunTest(const FString&)
 	const TArray<FWarningLimiter::FDrained> Overflowed = Small.DrainExpired();
 	TestTrue(TEXT("the overflow window drains with its count"),
 		Overflowed.ContainsByPredicate([](const FWarningLimiter::FDrained& D) { return D.Key == TEXT("<overflow>") && D.Suppressed == 1; }));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FHaybaHealthUserNotifiedOnceTest,
+	"Hayba.MCP.Health.UserNotifiedOnce",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FHaybaHealthUserNotifiedOnceTest::RunTest(const FString&)
+{
+	// The "editor_unsafe: user notified … frame <n>" line is Log verbosity, which the
+	// automation framework does not capture; Step 12 greps the log for it instead (M8).
+	AddExpectedErrorPlain(TEXT("editor_unsafe: native fault"), EAutomationExpectedErrorFlags::Contains, 3);
+	{
+		FHaybaEditorHealth::FScopedOverrideForTests Override;
+		const FString Cmd = TEXT("python_run"), Id = TEXT("notify-1"), Owner = TEXT("hayba-test-notify");
+		FHaybaEditorHealth::FScopedDispatchNote Note(Cmd, Id, Owner);
+
+		FHaybaEditorHealth::RecordCaughtFault(EHaybaFaultSite::Python, AccessViolation);
+		TestEqual(TEXT("nothing is posted synchronously inside the faulting stack"), Override.NotificationCount(), 0);
+		FHaybaEditorHealth::RecordCaughtFault(EHaybaFaultSite::HandlerInner, AccessViolation);
+		TestEqual(TEXT("one Error line per fault"), Override.FaultErrorLineCount(), 2);
+
+		TestTrue(TEXT("the first fault scheduled one next-tick notification"), Override.FlushPendingNotification());
+		TestFalse(TEXT("a second fault schedules nothing more"), Override.FlushPendingNotification());
+		// R-4: headless runs are -unattended; the test seam must still be reached first.
+		AddInfo(FString::Printf(TEXT("FApp::IsUnattended() = %d"), FApp::IsUnattended() ? 1 : 0));
+		TestEqual(TEXT("raised exactly once"), Override.NotificationCount(), 1);
+		TestEqual(TEXT("cause-specific text of the FIRST fault"), Override.LastNotificationText(),
+			FString(TEXT("Hayba contained a native fault in 'python_run'. Save now (File > Save All) and restart the editor. Do not compile, press Play or load a map before restarting.")));
+	}
+	{
+		FHaybaEditorHealth::FScopedOverrideForTests Override;
+		const FString Cmd = TEXT("level_save"), Id = TEXT("notify-2"), Owner = TEXT("hayba-test-notify");
+		FHaybaEditorHealth::FScopedDispatchNote Note(Cmd, Id, Owner);
+		FHaybaEditorHealth::RecordCaughtFault(EHaybaFaultSite::Dispatch, 0x4000u);
+		TestTrue(TEXT("the engine-fatal fault scheduled a notification"), Override.FlushPendingNotification());
+		TestEqual(TEXT("engine-fatal text tells the user not to save"), Override.LastNotificationText(),
+			FString(TEXT("Hayba contained an engine fatal error in 'level_save' during a package save. Do not save; restart the editor now. Saving in this state can crash the editor or write a corrupt package.")));
+	}
+	TestFalse(TEXT("the real editor health is untouched (R-7)"), FHaybaEditorHealth::IsUnsafe());
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FHaybaHealthPythonFaultUnhooksPreGcTest,
+	"Hayba.MCP.Health.PythonFaultUnhooksPreGc",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FHaybaHealthPythonFaultUnhooksPreGcTest::RunTest(const FString&)
+{
+	AddExpectedErrorPlain(TEXT("editor_unsafe: native fault"), EAutomationExpectedErrorFlags::Contains, 4);
+	{
+		FHaybaEditorHealth::FScopedOverrideForTests Override;
+		FHaybaEditorHealth::RecordCaughtFault(EHaybaFaultSite::Python, AccessViolation);
+		TestEqual(TEXT("a python fault unhooks once"), Override.PreGcUnhookCount(), 1);
+		FHaybaEditorHealth::RecordCaughtFault(EHaybaFaultSite::Python, AccessViolation);
+		TestEqual(TEXT("a second python fault does not unhook again"), Override.PreGcUnhookCount(), 1);
+		TestTrue(TEXT("python is unhealthy"), FHaybaEditorHealth::IsPythonUnhealthy());
+	}
+	{
+		FHaybaEditorHealth::FScopedOverrideForTests Override;
+		FHaybaEditorHealth::RecordCaughtFault(EHaybaFaultSite::Dispatch, AccessViolation);
+		TestEqual(TEXT("a native fault never unhooks Python"), Override.PreGcUnhookCount(), 0);
+		TestFalse(TEXT("a native fault does not mark python unhealthy"), FHaybaEditorHealth::IsPythonUnhealthy());
+		TestTrue(TEXT("but the editor is unsafe"), FHaybaEditorHealth::IsUnsafe());
+	}
+	{
+		FHaybaEditorHealth::FScopedOverrideForTests Override;
+		FHaybaEditorHealth::RecordPythonCorruption(TEXT("SystemError: unknown opcode"));
+		TestEqual(TEXT("a corruption marker is a python fault and unhooks"), Override.PreGcUnhookCount(), 1);
+		TestEqual(TEXT("a corruption marker reports HCR-NATIVE-002"),
+			FHaybaEditorHealth::Snapshot().FaultCode, FString(TEXT("HCR-NATIVE-002")));
+		TestEqual(TEXT("a corruption marker has no exception code"),
+			static_cast<int64>(FHaybaEditorHealth::Snapshot().ExceptionCode), static_cast<int64>(0));
+	}
+	if (IPythonScriptPlugin* Python = IPythonScriptPlugin::Get())
+	{
+		TestTrue(TEXT("the seam never touched the real pre-GC binding"),
+			FCoreUObjectDelegates::GetPreGarbageCollectDelegate().IsBoundToObject(Python));
+	}
+	TestFalse(TEXT("the real editor health is untouched (R-7)"), FHaybaEditorHealth::IsUnsafe());
 	return true;
 }
 

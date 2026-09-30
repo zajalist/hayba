@@ -21,6 +21,7 @@
 #include "Widgets/Notifications/SNotificationList.h"
 #include "HaybaMCPTcpServer.h"
 #include "HaybaMCPCommandHandler.h"
+#include "HaybaMCPEditorHealth.h"
 #include "IHaybaMCPHandler.h"
 #include "handlers/HaybaMCPLegacyHandler.h"
 #include "handlers/HaybaMCPActorHandler.h"
@@ -391,6 +392,9 @@ void FHaybaMCPModule::ShutdownModule()
         UToolMenus::UnRegisterStartupCallback(PlanModeMenuStartupHandle);
         PlanModeMenuStartupHandle.Reset();
     }
+
+    // A pending editor_unsafe notification is a core-ticker delegate into this DLL.
+    FHaybaEditorHealth::RevokeCallbacks();
 
     // Ticker lambdas execute plugin code. Remove/fail an in-flight test job
     // before module unload so no callback can jump into an unloaded DLL.

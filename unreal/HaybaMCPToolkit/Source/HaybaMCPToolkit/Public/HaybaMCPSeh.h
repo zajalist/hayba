@@ -8,9 +8,10 @@
 // reach a stale/destroyed callback — most often a Python-registered editor
 // delegate whose target was garbage-collected — and dereference freed memory.
 // That is a C-level access violation, NOT a C++/Python exception, so try/catch
-// cannot stop it: it takes the whole editor down. RunGuarded wraps the call in
-// Windows SEH and converts such a fault into a reported flag, keeping the
-// editor alive.
+// cannot stop it: it takes the whole editor down. RunGuardedAt wraps the call in
+// Windows SEH, converts such a fault into a reported flag, and records it in
+// FHaybaEditorHealth: the editor is then sticky-unsafe until it restarts
+// (ADR-0011). Catching a fault does not make the process healthy.
 //
 // The thunk takes a void* context so callers can pass a CAPTURELESS lambda
 // (which converts to a function pointer). TFunctionRef cannot be used: MSVC
@@ -36,6 +37,15 @@ enum class EHaybaFaultSite : uint8
 
 namespace HaybaSeh
 {
+    /**
+     * Runs Thunk(Context) under the toolkit's only __except. On a caught fault
+     * it repairs a stranded play-world switch, then records the fault (site,
+     * exception code, repair) in FHaybaEditorHealth, in ordinary code after
+     * the guard has returned.
+     */
+    void RunGuardedAt(EHaybaFaultSite Site, void (*Thunk)(void*), void* Context, bool& bOutCrashed);
+
+    /** RunGuardedAt(EHaybaFaultSite::HandlerInner, …): a handler guarding its own crash-prone call. */
     void RunGuarded(void (*Thunk)(void*), void* Context, bool& bOutCrashed);
 
     // ---- Editor world-switch repair after a swallowed structured exception ----

@@ -19,3 +19,5 @@ Hayba.MCP.Health.UnsafeGatePolicy
 Hayba.MCP.Health.AllowlistDrift
 Hayba.MCP.Health.EngineAssertCodeIsEngineFatal
 Hayba.MCP.Lease.WarningLimiter
+Hayba.MCP.Health.UserNotifiedOnce
+Hayba.MCP.Health.PythonFaultUnhooksPreGc

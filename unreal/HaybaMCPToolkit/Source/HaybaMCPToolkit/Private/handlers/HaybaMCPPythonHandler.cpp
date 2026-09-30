@@ -3,13 +3,10 @@
 #include "PythonScriptTypes.h"
 #include "Misc/Base64.h"
 #include "Dom/JsonObject.h"
-#include "HaybaMCPSeh.h"   // world-switch repair after a swallowed fault
+#include "HaybaMCPSeh.h"   // RunGuardedAt: the toolkit's one SEH guard (ADR-0011)
 #include "HaybaMCPAccessPolicy.h"
 #include "HaybaMCPDeveloperSettings.h"
 #include "HaybaMCPLeaseManager.h"
-#if PLATFORM_WINDOWS
-#include <excpt.h>   // EXCEPTION_EXECUTE_HANDLER for the SEH guard below
-#endif
 
 namespace
 {
@@ -1766,57 +1763,31 @@ namespace
     }
 }
 
-// Run one Python command under Structured Exception Handling so a NATIVE access
-// violation inside CPython / the UE Python bindings (a stale or GC'd UObject, a
-// destroyed actor handle, re-entrant editor mutation) is converted into a
-// recoverable error instead of taking down the whole editor. The Python-level
-// try/except in the script wrapper cannot catch a C-level AV — only SEH can.
-//
-// This MUST be its own function with ONLY trivially-destructible params (raw
-// pointers + a bool&): MSVC forbids __try/__except in any function that needs
-// C++ object unwinding (C2712), and the handler is full of FString locals — and
-// even a TFunctionRef parameter trips it. After a caught AV the interpreter may
-// be degraded, so the caller stops and returns rather than issuing follow-ups.
-static bool ExecPythonGuardedRaw(IPythonScriptPlugin* Plugin, FPythonCommandEx* Cmd, bool& bOutCrashed)
+// Run one Python command under the toolkit's SEH guard so a NATIVE access
+// violation inside CPython / the UE Python bindings (a stale or GC'd UObject,
+// a destroyed actor handle, re-entrant editor mutation) is caught instead of
+// taking down the editor. The Python-level try/except in the wrapper cannot
+// catch a C-level AV; only SEH can. HaybaSeh::RunGuardedAt owns the one
+// __except (ADR-0011): it repairs a stranded play-world switch and records the
+// fault, which marks the editor unsafe and python_unhealthy until restart.
+// The thunk is captureless and the context is POD, so nothing needs C++
+// unwinding across __try (C2712).
+struct FPythonCommandRun
 {
-    bOutCrashed = false;
-#if PLATFORM_WINDOWS
-    // Keep the result in a trivially-destructible local and return AFTER the __try.
-    // MSVC 14.50+ raises C2712 if a `return <call>;` lives inside __try (the
-    // returned-value construction counts as object unwinding); the older 14.44
-    // toolchain did not. Capturing to a bool first sidesteps it without changing
-    // the SEH guard's behaviour.
-    bool bResult = false;
-    __try
-    {
-        bResult = Plugin->ExecPythonCommandEx(*Cmd);
-    }
-    __except (EXCEPTION_EXECUTE_HANDLER)
-    {
-        bOutCrashed = true;
-        bResult = false;
-    }
-    return bResult;
-#else
-    return Plugin->ExecPythonCommandEx(*Cmd);
-#endif
-}
+    IPythonScriptPlugin* Plugin;
+    FPythonCommandEx* Command;
+    bool bResult;
+};
 
-// A caught fault does not unwind the frames it jumped over, so the engine's own
-// play-world switch (UEditorEngine::OnScriptExecutionStart, which fires whenever
-// python reaches Blueprint code on a PIE object) can be left pushed — and GWorld
-// stuck on the PIE world kills the editor on the next tick. See the long note in
-// HaybaMCPSeh.h. Same repair as HaybaSeh::RunGuarded, applied to this handler's
-// own guard; the __try stays isolated in ExecPythonGuardedRaw for C2712.
-static bool ExecPythonGuarded(IPythonScriptPlugin* Plugin, FPythonCommandEx* Cmd, bool& bOutCrashed)
+static bool RunPythonCommandGuarded(IPythonScriptPlugin* Plugin, FPythonCommandEx* Command, bool& bOutCrashed)
 {
-    const HaybaSeh::FWorldSwitchSnapshot Before = HaybaSeh::CaptureWorldSwitchState();
-    const bool bResult = ExecPythonGuardedRaw(Plugin, Cmd, bOutCrashed);
-    if (bOutCrashed)
+    FPythonCommandRun Run{ Plugin, Command, false };
+    HaybaSeh::RunGuardedAt(EHaybaFaultSite::Python, +[](void* P)
     {
-        HaybaSeh::RepairWorldSwitchState(Before);
-    }
-    return bResult;
+        FPythonCommandRun* R = static_cast<FPythonCommandRun*>(P);
+        R->bResult = R->Plugin->ExecPythonCommandEx(*R->Command);
+    }, &Run, bOutCrashed);
+    return !bOutCrashed && Run.bResult;
 }
 
 TArray<FString> FHaybaMCPPythonHandler::GetCommands() const
@@ -2195,7 +2166,7 @@ FHaybaHandlerResult FHaybaMCPPythonHandler::Run(const TSharedPtr<FJsonObject>& P
     // Guard the user-script execution against native access violations so a bad
     // script returns an error instead of crashing the editor.
     bool bRunCrashed = false;
-    const bool bExecOk = ExecPythonGuarded(PythonPlugin, &RunCmd, bRunCrashed);
+    const bool bExecOk = RunPythonCommandGuarded(PythonPlugin, &RunCmd, bRunCrashed);
     if (bRunCrashed)
     {
         return FHaybaHandlerResult::Err(TEXT(
@@ -2220,7 +2191,7 @@ FHaybaHandlerResult FHaybaMCPPythonHandler::Run(const TSharedPtr<FJsonObject>& P
             TEXT("__import__('base64').b64encode((getattr(__import__('builtins'),'%s','') or '').encode('utf-8')).decode('ascii')"),
             *Attr);
         E.ExecutionMode = EPythonCommandExecutionMode::EvaluateStatement;
-        ExecPythonGuarded(PythonPlugin, &E, bOutCrashed);
+        RunPythonCommandGuarded(PythonPlugin, &E, bOutCrashed);
         if (bOutCrashed) return FString();
         FString R = E.CommandResult.TrimStartAndEnd();
         if (R.Len() >= 2 && (R.StartsWith(TEXT("'")) || R.StartsWith(TEXT("\""))))
@@ -2252,7 +2223,7 @@ FHaybaHandlerResult FHaybaMCPPythonHandler::Run(const TSharedPtr<FJsonObject>& P
     OkCmd.Command = TEXT("repr(getattr(__import__('builtins'),'_hayba_ok',True))");
     OkCmd.ExecutionMode = EPythonCommandExecutionMode::EvaluateStatement;
     bool bOkReadCrashed = false;
-    ExecPythonGuarded(PythonPlugin, &OkCmd, bOkReadCrashed);
+    RunPythonCommandGuarded(PythonPlugin, &OkCmd, bOkReadCrashed);
     if (bOkReadCrashed)
     {
         return FHaybaHandlerResult::Err(TEXT(
@@ -2267,7 +2238,7 @@ FHaybaHandlerResult FHaybaMCPPythonHandler::Run(const TSharedPtr<FJsonObject>& P
     TimeoutCmd.Command = TEXT("repr(getattr(__import__('builtins'),'_hayba_timed_out',False))");
     TimeoutCmd.ExecutionMode = EPythonCommandExecutionMode::EvaluateStatement;
     bool bTimeoutReadCrashed = false;
-    ExecPythonGuarded(PythonPlugin, &TimeoutCmd, bTimeoutReadCrashed);
+    RunPythonCommandGuarded(PythonPlugin, &TimeoutCmd, bTimeoutReadCrashed);
     if (bTimeoutReadCrashed)
     {
         return FHaybaHandlerResult::Err(TEXT(
@@ -2285,7 +2256,7 @@ FHaybaHandlerResult FHaybaMCPPythonHandler::Run(const TSharedPtr<FJsonObject>& P
         "    if hasattr(_hb_cleanup_b, _hb_cleanup_name): delattr(_hb_cleanup_b, _hb_cleanup_name)\n");
     CleanupCmd.ExecutionMode = EPythonCommandExecutionMode::ExecuteFile;
     bool bCleanupCrashed = false;
-    ExecPythonGuarded(PythonPlugin, &CleanupCmd, bCleanupCrashed);
+    RunPythonCommandGuarded(PythonPlugin, &CleanupCmd, bCleanupCrashed);
     if (bCleanupCrashed)
     {
         return FHaybaHandlerResult::Err(TEXT(
