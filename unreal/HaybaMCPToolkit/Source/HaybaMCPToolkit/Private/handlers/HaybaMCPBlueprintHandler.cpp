@@ -3,6 +3,7 @@
 #include "HaybaMCPParams.h"
 #include "HaybaMCPReflection.h"
 #include "HaybaMCPAssetGuard.h"
+#include "HaybaMCPSaveVerify.h"
 #include "Json.h"
 #include "Editor.h"
 #include "Kismet2/KismetEditorUtilities.h"
@@ -313,15 +314,7 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::Create(const TSharedPtr<FJsonObje
 
     // Persist immediately: CreateBlueprint only builds the asset in memory, so a
     // crash before the next edit would lose it. Save the .uasset to disk now.
-    bool bSaved = false;
-    {
-        const FString FileName = FPackageName::LongPackageNameToFilename(
-            Package->GetName(), FPackageName::GetAssetPackageExtension());
-        FSavePackageArgs SaveArgs;
-        SaveArgs.TopLevelFlags = RF_Public | RF_Standalone;
-        SaveArgs.SaveFlags = SAVE_NoError;
-        bSaved = UPackage::SavePackage(Package, BP, *FileName, SaveArgs);
-    }
+    const bool bSaved = HaybaSaveVerify::SaveAndVerify(BP).DidReachDisk();
 
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
     Out->SetStringField(TEXT("path"), BP->GetPathName());
@@ -948,6 +941,17 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::Compile(const TSharedPtr<FJsonObj
     if (ParamR.HasErrors()) return FHaybaHandlerResult::Err(ParamR.ErrorMessage());
     UBlueprint* BP = LoadBPByPath(Path);
     if (!BP) return FHaybaHandlerResult::Err(BlueprintNotFoundError(TEXT("blueprint_compile"), Path));
+    if (bSave)
+    {
+        // Before CompileBlueprint: refusing after the compile would report a
+        // mutation that did happen as policy_blocked.
+        FHaybaHandlerResult ReadOnly;
+        if (HaybaSaveVerify::RefuseIfReadOnly(TEXT("blueprint_compile"), BP->GetOutermost()->GetName(), ReadOnly,
+                TEXT("Or pass save:false to compile without saving.")))
+        {
+            return ReadOnly;
+        }
+    }
 
     FCompilerResultsLog ResultsLog;
     ResultsLog.SetSourcePath(BP->GetPathName());
@@ -998,13 +1002,15 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::Compile(const TSharedPtr<FJsonObj
     bool bSaved = false;
     if (bOk && bSave)
     {
-        UPackage* Package = BP->GetOutermost();
-        const FString Filename = FPackageName::LongPackageNameToFilename(Package->GetName(), FPackageName::GetAssetPackageExtension());
-        FSavePackageArgs Args; Args.TopLevelFlags = RF_Public | RF_Standalone;
-        bSaved = UPackage::SavePackage(Package, BP, *Filename, Args);
+        const HaybaSaveVerify::FResult Saved = HaybaSaveVerify::SaveAndVerify(BP);
+        bSaved = Saved.DidReachDisk();
         if (!bSaved)
-            Out->SetStringField(TEXT("save_error"),
-                TEXT("Compile succeeded but SavePackage failed. The Blueprint is changed in memory and remains dirty; save it before closing the editor. Do not retry the mutation that preceded this compile."));
+        {
+            Out->SetStringField(TEXT("save_error"), FString::Printf(
+                TEXT("Compile succeeded but the save did not reach disk: %s The Blueprint is changed in memory and remains dirty; save it before closing the editor. Do not retry the mutation that preceded this compile."),
+                *Saved.Note));
+            Out->SetStringField(TEXT("save_error_code"), Saved.SaveErrorCode);
+        }
     }
     if (bSave) Out->SetBoolField(TEXT("saved"), bSaved);
     else       Out->SetBoolField(TEXT("save_requested"), false);

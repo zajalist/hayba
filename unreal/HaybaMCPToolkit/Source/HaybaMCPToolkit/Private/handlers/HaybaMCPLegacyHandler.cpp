@@ -7,6 +7,7 @@
 #include "HaybaMCPSettings.h"
 #include "HaybaMCPEditorHealth.h"
 #include "HaybaMCPLandscapeImporter.h"
+#include "HaybaMCPSaveVerify.h"
 #include "Interfaces/IPluginManager.h"
 #include "Runtime/Launch/Resources/Version.h"
 #include "Json.h"
@@ -643,6 +644,16 @@ FHaybaHandlerResult FHaybaMCPLegacyHandler::Cmd_CreateGraph(const TSharedPtr<FJs
     FString PackagePath = TEXT("/Game/Hayba/Generated");
     FString FullPath = FString::Printf(TEXT("%s/%s"), *PackagePath, *SafeName);
 
+    // Before CreatePackage: a read-only graph must not be displaced into the
+    // transient package (below) and then fail to save.
+    {
+        FHaybaHandlerResult ReadOnly;
+        if (HaybaSaveVerify::RefuseIfReadOnly(TEXT("create_graph"), FullPath, ReadOnly))
+        {
+            return ReadOnly;
+        }
+    }
+
     UPackage* Package = CreatePackage(*FullPath);
     if (!Package)
     {
@@ -951,10 +962,8 @@ FHaybaHandlerResult FHaybaMCPLegacyHandler::Cmd_CreateGraph(const TSharedPtr<FJs
     FAssetRegistryModule::AssetCreated(NewGraph);
     Package->MarkPackageDirty();
 
-    FString FilePath = FPackageName::LongPackageNameToFilename(FullPath, FPackageName::GetAssetPackageExtension());
-    FSavePackageArgs SaveArgs;
-    SaveArgs.TopLevelFlags = RF_Public | RF_Standalone;
-    const bool bSaved = UPackage::SavePackage(Package, NewGraph, *FilePath, SaveArgs);
+    const HaybaSaveVerify::FResult Saved = HaybaSaveVerify::SaveAndVerify(NewGraph);
+    const bool bSaved = Saved.DidReachDisk();
 
     TSharedPtr<FJsonObject> Data = MakeShareable(new FJsonObject());
     Data->SetBoolField(TEXT("created"), true);
@@ -964,6 +973,11 @@ FHaybaHandlerResult FHaybaMCPLegacyHandler::Cmd_CreateGraph(const TSharedPtr<FJs
     // The save result was previously discarded, so a graph that failed to reach
     // disk still reported created:true and then vanished on editor restart.
     Data->SetBoolField(TEXT("saved"), bSaved);
+    if (!bSaved)
+    {
+        Data->SetStringField(TEXT("save_error"), Saved.Note);
+        Data->SetStringField(TEXT("save_error_code"), Saved.SaveErrorCode);
+    }
 
     Data->SetNumberField(TEXT("propertiesApplied"), PropertiesApplied);
     if (PropertyProblems.Num() > 0)

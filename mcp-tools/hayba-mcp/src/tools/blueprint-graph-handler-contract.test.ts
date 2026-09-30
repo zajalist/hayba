@@ -24,6 +24,6 @@ describe('Blueprint event-graph authoring contract', () => {
   });
 
   it('saves only after a clean explicit compile', () => {
-    expect(source).toMatch(/if \(bOk && bSave\)[\s\S]*UPackage::SavePackage/);
+    expect(source).toMatch(/if \(bOk && bSave\)[\s\S]*HaybaSaveVerify::SaveAndVerify\(BP\)/);
   });
 });

@@ -12,6 +12,7 @@
 #include "IAssetTools.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "HaybaMCPAssetGuard.h"
+#include "HaybaMCPSaveVerify.h"
 #include "AssetRegistry/IAssetRegistry.h"
 #include "Components/StaticMeshComponent.h"
 #include "GameFramework/Actor.h"
@@ -155,19 +156,15 @@ static bool HaybaPersistAsset(UObject* Asset, FString& OutError)
 {
     if (!Asset) { OutError = TEXT("null asset"); return false; }
     Asset->MarkPackageDirty();
-    UPackage* Pkg = Asset->GetOutermost();
-    if (!Pkg) { OutError = TEXT("no package"); return false; }
-
-    const FString FileName = FPackageName::LongPackageNameToFilename(
-        Pkg->GetName(), FPackageName::GetAssetPackageExtension());
-
-    FSavePackageArgs Args;
-    Args.TopLevelFlags = RF_Public | RF_Standalone;
-    Args.SaveFlags = SAVE_NoError;
-    const bool bOk = UPackage::SavePackage(Pkg, nullptr, *FileName, Args);
-    if (!bOk)
+    const HaybaSaveVerify::FResult Saved = HaybaSaveVerify::SaveAndVerify(Asset);
+    if (Saved.bRefusedReadOnly)
     {
-        OutError = FString::Printf(TEXT("SavePackage failed for %s"), *Pkg->GetName());
+        OutError = TEXT("[package_read_only] ") + Saved.Note;
+        return false;
+    }
+    if (!Saved.DidReachDisk())
+    {
+        OutError = FString::Printf(TEXT("SavePackage failed for %s. %s"), *Asset->GetOutermost()->GetName(), *Saved.Note);
         return false;
     }
     return true;

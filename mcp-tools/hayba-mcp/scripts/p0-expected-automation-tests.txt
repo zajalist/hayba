@@ -59,3 +59,11 @@ Hayba.MCP.Lease.IdParam
 Hayba.MCP.Lease.IdSurvivesRedaction
 Hayba.MCP.Lease.WireRoundTrip
 Hayba.MCP.Batch.WireRoundTrip
+
+# T5
+Hayba.MCP.Save.ReadOnly.FindReadOnlyPackageFiles
+Hayba.MCP.Save.ReadOnly.SaveAndVerifyRefusesWithoutSaving
+Hayba.MCP.Save.ReadOnly.NoErrorSaveSurvivesMissedPreflight
+Hayba.MCP.Save.ReadOnly.BlueprintCompileRefusesBeforeCompiling
+Hayba.MCP.Save.ReadOnly.CreateGraphKeepsExistingGraph
+Hayba.MCP.MetaSound.Compile.ReadOnlyRefusesBeforeConform
