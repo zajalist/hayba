@@ -311,7 +311,7 @@ void FHaybaMCPLeaseManager::OnConnectionClosed(int32 ConnId)
 	if (Orphaned > 0)
 	{
 		UE_LOG(LogHaybaMCPLease, Log,
-			TEXT("Connection %d closed: %d bound lease(s) orphaned; each lapses %.0f s later unless its owner renews it"),
+			TEXT("Connection %d closed: %d bound lease(s) orphaned; each lapses in up to %.0f s, or at its earlier expiry, unless its owner renews it"),
 			ConnId, Orphaned, LeaseTable.GetTuning().OrphanGraceSeconds);
 	}
 }
@@ -336,6 +336,43 @@ bool FHaybaMCPLeaseManager::CallerHoldsExclusiveOnCurrentWorld()
 	return LeaseTable.OwnerHoldsExclusive(EffectiveOwner(), Key);
 }
 
+FHaybaMCPLeaseManager::FRequiredAccess FHaybaMCPLeaseManager::ResolveRequiredAccess(
+	const FString& Cmd, const TSharedPtr<FJsonObject>& Params, const FString& CurrentWorld)
+{
+	FRequiredAccess Out;
+	Out.Class = HaybaMCPAccess::ClassifyCommand(Cmd, FHaybaMCPCommandHandler::IsPlanGatedCommand(Cmd)).Class;
+	if (Cmd == TEXT("python_run"))
+	{
+		FString Script;
+		bool bWorldPartition = false;
+		if (Params.IsValid())
+		{
+			Params->TryGetStringField(TEXT("script"), Script);
+			Params->TryGetBoolField(TEXT("world_partition"), bWorldPartition);
+		}
+		if (!ParseClaims(Params, /*bDefaultExclusive=*/true, Out.Declared, Out.ClaimError))
+		{
+			// An unparseable declaration is treated as no declaration.
+			Out.Declared.Reset();
+		}
+		Out.Class = HaybaMCPAccess::ClassifyPythonRun(
+			FHaybaMCPPythonHandler::IsReadOnlyScriptForAccess(Script),
+			bWorldPartition || HaybaMCPAccess::ScriptTouchesWorldPartition(Script),
+			Out.Declared.Num() > 0);
+	}
+	if (Out.Declared.Num() == 0)
+	{
+		// An asset writer names its asset in its own request (S1).
+		HaybaMCPAccess::FClaim Implied;
+		if (HaybaMCPAccess::ImpliedAssetClaim(Cmd, Params, Implied))
+		{
+			Out.Declared.Add(MoveTemp(Implied));
+		}
+	}
+	Out.Locks = HaybaMCPAccess::RequiredLocks(Out.Class, Out.Declared, CurrentWorld);
+	return Out;
+}
+
 FHaybaMCPLeaseManager::FVerdict FHaybaMCPLeaseManager::CheckCommand(
 	const FString& Cmd, const TSharedPtr<FJsonObject>& Params)
 {
@@ -346,118 +383,88 @@ FHaybaMCPLeaseManager::FVerdict FHaybaMCPLeaseManager::CheckCommand(
 	{
 		return Verdict;
 	}
+	const TCHAR* ModeName = Mode == EHaybaMCPLeaseEnforcement::Enforced ? TEXT("enforced") : TEXT("advisory");
 
-	HaybaMCPAccess::FClassification Class =
-		HaybaMCPAccess::ClassifyCommand(Cmd, FHaybaMCPCommandHandler::IsPlanGatedCommand(Cmd));
-	TArray<HaybaMCPAccess::FClaim> Declared;
-	FString ClaimError;
-	if (Cmd == TEXT("python_run"))
-	{
-		FString Script;
-		bool bWorldPartition = false;
-		if (Params.IsValid())
-		{
-			Params->TryGetStringField(TEXT("script"), Script);
-			Params->TryGetBoolField(TEXT("world_partition"), bWorldPartition);
-		}
-		if (!ParseClaims(Params, /*bDefaultExclusive=*/true, Declared, ClaimError))
-		{
-			// An unparseable declaration is treated as no declaration: the
-			// command falls back to the undeclared (world) class.
-			Declared.Reset();
-		}
-		Class.Class = HaybaMCPAccess::ClassifyPythonRun(
-			FHaybaMCPPythonHandler::IsReadOnlyScriptForAccess(Script),
-			bWorldPartition || HaybaMCPAccess::ScriptTouchesWorldPartition(Script),
-			Declared.Num() > 0);
-	}
-
-	if (Declared.Num() == 0)
-	{
-		// An asset writer names its asset in its own request; lock that asset
-		// instead of only intending the world.
-		HaybaMCPAccess::FClaim Implied;
-		if (HaybaMCPAccess::ImpliedAssetClaim(Cmd, Params, Implied))
-		{
-			Declared.Add(MoveTemp(Implied));
-		}
-	}
-
-	const FString World = CurrentWorldPackage();
-	const TArray<HaybaMCPAccess::FLock> Required = HaybaMCPAccess::RequiredLocks(Class.Class, Declared, World);
-
-	// The envelope's lease: a marker (the handle was redacted on its way to
-	// the client) or an id this session never issued / already dropped.
-	FString LeaseIdError;
-	FString LeaseIdProblem;
-	if (CurrentContext && !CurrentContext->LeaseToken.IsEmpty())
-	{
-		if (HaybaMCPLease::IsRedactionMarker(CurrentContext->LeaseToken))
-		{
-			LeaseIdError = TEXT("redaction_marker");
-			LeaseIdProblem = TEXT("the envelope's lease is a redaction marker, not a lease_id; run lease_acquire again and send the lease_id it returns");
-		}
-		else if (!LeaseTable.FindLease(CurrentContext->LeaseToken))
-		{
-			LeaseIdError = TEXT("unknown_or_expired");
-			LeaseIdProblem = TEXT("the envelope's lease_id is unknown or expired");
-		}
-	}
+	const FRequiredAccess Access = ResolveRequiredAccess(Cmd, Params, CurrentWorldPackage());
+	const EEnvelopeLease LeaseState = CurrentContext ? ClassifyEnvelopeLease(CurrentContext->LeaseToken) : EEnvelopeLease::None;
+	const bool bHandleUnknown = LeaseState == EEnvelopeLease::Unknown;
+	// R5: a redaction marker names no lease. It counts as absent for admission
+	// and is reported as lease_handle_redacted; other conflicts still refuse.
+	const bool bHandleRedacted = LeaseState == EEnvelopeLease::Redacted;
 
 	FString ConflictDetail;
 	const FString Owner = EffectiveOwner();
-	const HaybaMCPLease::FLease* Holder = LeaseTable.FindConflictingHolder(Owner, Required, &ConflictDetail);
-	if (!Holder && LeaseIdProblem.IsEmpty())
+	const HaybaMCPLease::FLease* Holder = LeaseTable.FindConflictingHolder(Owner, Access.Locks, &ConflictDetail);
+	if (!Holder && !bHandleUnknown && !bHandleRedacted)
 	{
 		return Verdict;
 	}
 
+	const TCHAR* Reason = Holder ? TEXT("held") : (bHandleUnknown ? TEXT("lease_unknown") : TEXT("lease_handle_redacted"));
 	TSharedPtr<FJsonObject> Detail = MakeShared<FJsonObject>();
-	Detail->SetStringField(TEXT("enforcement"), Mode == EHaybaMCPLeaseEnforcement::Enforced ? TEXT("enforced") : TEXT("advisory"));
+	Detail->SetStringField(TEXT("code"), TEXT("lease_conflict"));
+	Detail->SetStringField(TEXT("enforcement"), ModeName);
+	Detail->SetStringField(TEXT("reason"), Reason);
 	Detail->SetStringField(TEXT("command"), Cmd);
-	Detail->SetStringField(TEXT("access_class"), HaybaMCPAccess::LexAccessClass(Class.Class));
+	Detail->SetStringField(TEXT("access_class"), HaybaMCPAccess::LexAccessClass(Access.Class));
 	Detail->SetStringField(TEXT("caller_owner"), Owner);
-	if (!ClaimError.IsEmpty())
+	if (!Access.ClaimError.IsEmpty())
 	{
-		Detail->SetStringField(TEXT("resources_error"), ClaimError);
+		Detail->SetStringField(TEXT("resources_error"), Access.ClaimError);
 	}
 	if (Holder)
 	{
-		// Never the holder's lease_id: a lease_id in the envelope acts as its owner.
+		// Never the holder's lease_id: an envelope lease acts as its owner.
 		Detail->SetStringField(TEXT("holder_owner"), Holder->Owner);
 		if (!Holder->Label.IsEmpty()) Detail->SetStringField(TEXT("holder_label"), Holder->Label);
-		Detail->SetNumberField(TEXT("holder_expires_in_s"),
-			FMath::Max(0.0, Holder->ExpiresAt - Now()));
+		Detail->SetNumberField(TEXT("holder_expires_in_s"), FMath::Max(0.0, Holder->ExpiresAt - Now()));
 		Detail->SetStringField(TEXT("conflict"), ConflictDetail);
 	}
-	if (!LeaseIdError.IsEmpty())
-	{
-		Detail->SetStringField(TEXT("lease_id_error"), LeaseIdError);
-	}
-	Detail->SetStringField(TEXT("hint"),
-		TEXT("Call lease_acquire for the resources this command needs; it answers granted or queued (with position and ETA) "
-			 "and never blocks. lease_status shows every holder."));
+	if (bHandleUnknown) Detail->SetStringField(TEXT("lease_id_error"), TEXT("unknown_or_expired"));
+	if (bHandleRedacted) Detail->SetStringField(TEXT("lease_id_error"), TEXT("redaction_marker"));
+	Detail->SetStringField(TEXT("hint"), Holder
+		? TEXT("Wait for the holder or ask it to release. lease_acquire queues you fairly: it answers granted or queued (with position and ETA) and never blocks. lease_status shows every holder.")
+		: bHandleUnknown
+			? TEXT("The envelope's lease_id is dead. Run lease_acquire again and send the lease_id it returns, or stop sending the envelope lease and send only your owner.")
+			: TEXT("Send the lease_id from lease_acquire. A [REDACTED:...] marker is ignored; this command was judged by its owner."));
 
-	Verdict.Detail = Detail;
 	Verdict.Message = Holder
 		? FString::Printf(TEXT("lease_conflict: '%s' (%s) conflicts with a lease held by '%s' (%s)"),
-			*Cmd, HaybaMCPAccess::LexAccessClass(Class.Class), *Holder->Owner, *ConflictDetail)
-		: FString::Printf(TEXT("lease_conflict: '%s': %s"), *Cmd, *LeaseIdProblem);
-	if (Mode == EHaybaMCPLeaseEnforcement::Enforced)
+			*Cmd, HaybaMCPAccess::LexAccessClass(Access.Class), *Holder->Owner, *ConflictDetail)
+		: bHandleUnknown
+			? FString::Printf(TEXT("lease_conflict: '%s': the envelope's lease_id is unknown or expired"), *Cmd)
+			: FString::Printf(TEXT("lease_conflict: '%s': the envelope's lease is a redaction marker, not a lease_id; run lease_acquire again and send the lease_id it returns"), *Cmd);
+	const FWarningLimiter::FHit Hit = NoteLeaseWarning(ModeName, TEXT("lease_conflict"), Reason, Owner, Cmd,
+		Holder ? Holder->Owner : FString(), ConflictDetail, Verdict.Message);
+	Detail->SetNumberField(TEXT("repeats_in_window"), Hit.RepeatsInWindow);
+	Verdict.Detail = Detail;
+
+	// Enforced refuses a held conflict or a dead handle; a marker alone never refuses (R5).
+	if (Mode == EHaybaMCPLeaseEnforcement::Enforced && (Holder || bHandleUnknown))
 	{
 		Verdict.bRefuse = true;
 	}
 	else if (CurrentContext)
 	{
-		// One Warning per (reason, owner, command, holder) per 30 s; the reply
-		// still carries its own lease_warning, now with repeats_in_window.
-		const TCHAR* WarningReason = Holder ? TEXT("held")
-			: LeaseIdError == TEXT("redaction_marker") ? TEXT("lease_handle_redacted") : TEXT("lease_unknown");
-		const FWarningLimiter::FHit Hit = NoteLeaseWarning(TEXT("advisory"), TEXT("lease_conflict"),
-			WarningReason, Owner, Cmd,
-			Holder ? Holder->Owner : FString(), ConflictDetail, Verdict.Message);
-		Detail->SetNumberField(TEXT("repeats_in_window"), Hit.RepeatsInWindow);
 		CurrentContext->LeaseWarning = Detail;
 	}
 	return Verdict;
+}
+
+void FHaybaMCPLeaseManager::TouchOnUse(const FString& Cmd, const TSharedPtr<FJsonObject>& Params)
+{
+	// Reads, status polls and refused commands never keep a lease alive, and an
+	// orphan is never touched: only an explicit renew by its owner revives it.
+	const FRequiredAccess Access = ResolveRequiredAccess(Cmd, Params, CurrentWorldPackage());
+	if (Access.Class == HaybaMCPAccess::EAccessClass::Read || Access.Locks.Num() == 0)
+	{
+		return;
+	}
+	LeaseTable.Touch(EffectiveOwner(), Access.Locks);
+}
+
+void FHaybaMCPLeaseManager::NoteMarkerShim(const FString& Cmd, const FString& Owner, const FString& Outcome)
+{
+	UE_LOG(LogHaybaMCPLease, Log, TEXT("%s: redaction marker under the deprecated alias from owner '%s' (marker shim): %s"),
+		*Cmd, *FWarningLimiter::CollapseOwner(Owner), *Outcome);
 }

@@ -83,3 +83,9 @@ Hayba.MCP.Lease.ProcessingLogOwner
 # T7
 Hayba.MCP.Lease.IdempotentAcquire
 Hayba.MCP.Lease.RenewByOwner
+
+Hayba.MCP.Lease.TouchOnUse
+Hayba.MCP.Lease.RenewRevivesOrphanedLeaseOfSameOwner
+Hayba.MCP.Lease.ConnectionDrop
+Hayba.MCP.Lease.RenewWithoutHandle
+Hayba.MCP.Lease.RedactedMarkerShim

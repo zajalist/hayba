@@ -147,6 +147,25 @@ public:
 	 */
 	FVerdict CheckCommand(const FString& Cmd, const TSharedPtr<FJsonObject>& Params);
 
+	/** What one command needs from the lease table: its class and its locks
+	 *  (python_run refined per request, S1 implied asset claims). */
+	struct FRequiredAccess
+	{
+		HaybaMCPAccess::EAccessClass Class = HaybaMCPAccess::EAccessClass::Read;
+		TArray<HaybaMCPAccess::FClaim> Declared;
+		TArray<HaybaMCPAccess::FLock> Locks;
+		FString ClaimError;
+	};
+	static FRequiredAccess ResolveRequiredAccess(const FString& Cmd, const TSharedPtr<FJsonObject>& Params, const FString& CurrentWorld);
+
+	/** Renew-on-use (T7). The router calls it only for a command that passed
+	 *  every gate, just before dispatch. Reads never touch. */
+	void TouchOnUse(const FString& Cmd, const TSharedPtr<FJsonObject>& Params);
+
+	/** One Log line per use of the R5 marker shim (the removal metric). */
+	void NoteMarkerShim(const FString& Cmd, const FString& Owner, const FString& Outcome);
+
+
 private:
 	FHaybaMCPLeaseManager();
 

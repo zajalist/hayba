@@ -12,11 +12,6 @@ namespace
 	/** On renew/release replies that named the lease with `token`. Same text in the Node tools. */
 	const TCHAR* const TokenDeprecation = TEXT("'token' was renamed to lease_id; send lease_id");
 
-	FString IdRequired(const TCHAR* Cmd)
-	{
-		return FString::Printf(TEXT("%s [lease_id_required]: lease_id is required; send the lease_id lease_acquire returned"), Cmd);
-	}
-
 	FString IdAmbiguous(const TCHAR* Cmd)
 	{
 		return FString::Printf(TEXT("%s [lease_id_ambiguous]: lease_id and its deprecated alias name different leases; send lease_id only"), Cmd);
@@ -87,6 +82,55 @@ namespace
 	FString CallerOwner()
 	{
 		return FHaybaMCPLeaseManager::Get().EffectiveOwner();
+	}
+
+	/** The table's owner-mismatch text with its bracket code (R3 channel). The
+	 *  substrings "belongs to" and "ticket" stay verbatim (editor_gate.py). An
+	 *  unknown lease never reaches the table: the handler answers IdUnknown first. */
+	FString CodedTableError(const FString& TableError)
+	{
+		if (TableError.StartsWith(TEXT("lease belongs to")) || TableError.StartsWith(TEXT("ticket belongs to")))
+		{
+			return TEXT("[lease_owner_mismatch] ") + TableError;
+		}
+		return TableError;
+	}
+
+	const TCHAR* RedactedReleaseError()
+	{
+		return TEXT("lease_release: [lease_id_redacted] a redacted marker cannot name a lease; send lease_id, or all:true to release every lease you hold");
+	}
+
+	/** lease_renew with no lease_id (R6), or a marker under the alias (R5). */
+	FHaybaHandlerResult RenewByOwnerReply(const FString& Owner, double Ttl, int32 ConnId, bool bDeprecated)
+	{
+		FHaybaMCPLeaseManager& Manager = FHaybaMCPLeaseManager::Get();
+		FTable& Table = Manager.Table();
+		const FOwnerRenewResult Renewed = Table.RenewOwner(Owner, Ttl, ConnId);
+		if (Renewed.Renewed == 0)
+		{
+			return FHaybaHandlerResult::Err(FString::Printf(
+				TEXT("lease_renew: [no_leases] owner '%s' holds no live lease; lease_acquire first"), *Owner));
+		}
+		const double Now = Manager.Now();
+		TArray<TSharedPtr<FJsonValue>> LeasesJson;
+		for (const FLease& Lease : Table.GetLeases())
+		{
+			if (Lease.Owner != Owner) continue;
+			TSharedPtr<FJsonObject> Item = MakeShared<FJsonObject>();
+			Item->SetStringField(TEXT("lease_id"), Lease.Token);
+			Item->SetArrayField(TEXT("resources"), ClaimsToJson(Lease.Claims));
+			Item->SetNumberField(TEXT("expires_in_s"), FMath::Max(0.0, Lease.ExpiresAt - Now));
+			Item->SetBoolField(TEXT("orphaned"), Lease.IsOrphaned());
+			LeasesJson.Add(MakeShared<FJsonValueObject>(Item));
+		}
+		TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
+		Out->SetStringField(TEXT("owner"), Owner);
+		Out->SetNumberField(TEXT("renewed"), Renewed.Renewed);
+		Out->SetNumberField(TEXT("expires_in_s"), FMath::Max(0.0, Renewed.MinExpiresAt - Now));
+		Out->SetArrayField(TEXT("leases"), LeasesJson);
+		if (bDeprecated) Out->SetStringField(TEXT("deprecation"), TokenDeprecation);
+		return FHaybaHandlerResult::Ok(Out);
 	}
 }
 
@@ -168,22 +212,21 @@ FHaybaHandlerResult FHaybaMCPLeaseHandler::Acquire(const TSharedPtr<FJsonObject>
 		Out->SetStringField(TEXT("lease_id"), Result.Token);
 		Out->SetNumberField(TEXT("expires_in_s"), FMath::Max(0.0, Result.ExpiresAt - FHaybaMCPLeaseManager::Get().Now()));
 		Out->SetBoolField(TEXT("bound_to_connection"), Request.ConnId != 0);
+		Out->SetBoolField(TEXT("reused"), Result.bReused);
 		if (Lease)
 		{
+			Out->SetNumberField(TEXT("ttl_s"), Lease->TtlSeconds);
+			Out->SetBoolField(TEXT("bind_connection"), Lease->bBindConnection);
 			Out->SetArrayField(TEXT("resources"), ClaimsToJson(Lease->Claims));
 		}
-		FString Next = TEXT(
-			"Send this lease_id as the envelope 'lease' field (or keep the same owner), renew with lease_renew {lease_id} "
-			"before it lapses, and lease_release {lease_id} when done.");
-		if (Request.ConnId != 0)
-		{
-			// R-9: a raw client that opens one connection per call loses a bound
-			// lease the moment its reply is sent.
-			Next += TEXT(
-				" It is bound to this connection and ends when the connection closes; the editor drops a connection idle "
-				"for 5 s, so a client that opens one connection per call should pass bind_connection:false or keep one socket open.");
-		}
-		Out->SetStringField(TEXT("next"), Next);
+		Out->SetNumberField(TEXT("max_ttl_s"), Manager.Table().GetTuning().MaxTtlSeconds);
+		Out->SetNumberField(TEXT("orphan_grace_s"), Manager.Table().GetTuning().OrphanGraceSeconds);
+
+		Out->SetStringField(TEXT("next"),
+			TEXT("Keep sending your envelope owner (HAYBA_AGENT_ID); send this lease_id as the envelope 'lease' only from a helper "
+				 "process that has no owner. Renew before it lapses (lease_renew {} renews every lease you hold) and lease_release "
+				 "when done. A bound lease is orphaned on closing and dropped within orphan_grace_s after closing, unless it expires sooner or you "
+				 "renew it. Per-call clients should pass bind_connection:false or keep one socket open."));
 	}
 	else
 	{
@@ -204,110 +247,151 @@ FHaybaHandlerResult FHaybaMCPLeaseHandler::Acquire(const TSharedPtr<FJsonObject>
 
 FHaybaHandlerResult FHaybaMCPLeaseHandler::Renew(const TSharedPtr<FJsonObject>& P)
 {
-	const FIdParam Id = ReadLeaseId(P);
-	switch (Id.Kind)
-	{
-	case EIdParam::None:            return FHaybaHandlerResult::Err(IdRequired(TEXT("lease_renew")));
-	case EIdParam::Ambiguous:       return FHaybaHandlerResult::Err(IdAmbiguous(TEXT("lease_renew")));
-	case EIdParam::RedactionMarker: return FHaybaHandlerResult::Err(IdRedacted(TEXT("lease_renew")));
-	case EIdParam::Value:           break;
-	}
 	FHaybaMCPLeaseManager& Manager = FHaybaMCPLeaseManager::Get();
-	const FString Caller = CallerOwner();
+	const FString Owner = CallerOwner();
+	const int32 ConnId = Manager.Current() ? Manager.Current()->ConnId : 0;
+	const FIdParam Id = ReadLeaseId(P);
+	double Ttl = 0.0;
+	P->TryGetNumberField(TEXT("ttl_s"), Ttl);
 	if (Id.bFromAlias)
 	{
-		Manager.NoteDeprecatedParam(TEXT("lease_renew"), TEXT("token"), Caller);
+		Manager.NoteDeprecatedParam(TEXT("lease_renew"), TEXT("token"), Owner);
+	}
+
+	// R6: no id renews by owner. R5: a marker under the deprecated alias does too.
+	const bool bShim = Id.Kind == EIdParam::RedactionMarker && Id.bFromAlias;
+	if (Id.Kind == EIdParam::None || bShim)
+	{
+		const FHaybaHandlerResult Result = RenewByOwnerReply(Owner, Ttl, ConnId, Id.bFromAlias);
+		if (bShim)
+		{
+			Manager.NoteMarkerShim(TEXT("lease_renew"), Owner, Result.bOk ? TEXT("renewed by owner") : TEXT("no leases"));
+		}
+		return Result;
+	}
+	// The T4 codes keep T4.2's texts: the helpers build them.
+	if (Id.Kind == EIdParam::Ambiguous)
+	{
+		return FHaybaHandlerResult::Err(IdAmbiguous(TEXT("lease_renew")));
+	}
+	if (Id.Kind == EIdParam::RedactionMarker)
+	{
+		// A marker under the canonical lease_id is an error (R5); only the alias is shimmed.
+		return FHaybaHandlerResult::Err(IdRedacted(TEXT("lease_renew")));
 	}
 	if (!Manager.Table().FindLease(Id.Value))
 	{
 		return FHaybaHandlerResult::Err(IdUnknown(TEXT("lease_renew")));
 	}
-	double Ttl = 0.0;
-	P->TryGetNumberField(TEXT("ttl_s"), Ttl);
+
 	double ExpiresAt = 0.0;
 	FString Error;
-	if (!Manager.Table().Renew(Id.Value, Caller, Ttl, ExpiresAt, Error))
+	if (!Manager.Table().Renew(Id.Value, Owner, Ttl, ExpiresAt, Error, ConnId))
 	{
-		return FHaybaHandlerResult::Err(TEXT("lease_renew: ") + Error);   // "lease belongs to '<owner>'"
+		return FHaybaHandlerResult::Err(TEXT("lease_renew: ") + CodedTableError(Error));
 	}
 	TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
 	Out->SetStringField(TEXT("lease_id"), Id.Value);
 	Out->SetBoolField(TEXT("renewed"), true);
-	Out->SetNumberField(TEXT("expires_in_s"), FMath::Max(0.0, ExpiresAt - FHaybaMCPLeaseManager::Get().Now()));
-	if (Id.bFromAlias)
-	{
-		Out->SetStringField(TEXT("deprecation"), TokenDeprecation);
-	}
+	Out->SetNumberField(TEXT("expires_in_s"), FMath::Max(0.0, ExpiresAt - Manager.Now()));
+	if (Id.bFromAlias) Out->SetStringField(TEXT("deprecation"), TokenDeprecation);
 	return FHaybaHandlerResult::Ok(Out);
 }
 
 FHaybaHandlerResult FHaybaMCPLeaseHandler::Release(const TSharedPtr<FJsonObject>& P)
 {
-	const FIdParam Id = ReadLeaseId(P);
+	FHaybaMCPLeaseManager& Manager = FHaybaMCPLeaseManager::Get();
+	FTable& Table = Manager.Table();
+	const FString Owner = CallerOwner();
 	FString Ticket;
 	P->TryGetStringField(TEXT("ticket"), Ticket);
 	Ticket.TrimStartAndEndInline();
-	if (Id.Kind == EIdParam::Ambiguous)
-	{
-		return FHaybaHandlerResult::Err(IdAmbiguous(TEXT("lease_release")));
-	}
-	if (Id.Kind != EIdParam::None && !Ticket.IsEmpty())
-	{
-		return FHaybaHandlerResult::Err(TEXT("lease_release [lease_id_ambiguous]: pass lease_id or ticket, not both"));
-	}
-	if (Id.Kind == EIdParam::None && Ticket.IsEmpty())
-	{
-		return FHaybaHandlerResult::Err(TEXT("lease_release [lease_id_required]: pass lease_id (a held lease) or ticket (a queued request)"));
-	}
-	if (Id.Kind == EIdParam::RedactionMarker)
-	{
-		return FHaybaHandlerResult::Err(IdRedacted(TEXT("lease_release")));
-	}
+	const bool bHasAll = P->HasField(TEXT("all"));
+	bool bAll = false;
+	P->TryGetBoolField(TEXT("all"), bAll);
+	const FIdParam Id = ReadLeaseId(P);
 
-	FHaybaMCPLeaseManager& Manager = FHaybaMCPLeaseManager::Get();
-	FTable& Table = Manager.Table();
-	const FString Caller = CallerOwner();
+	const int32 Options = (Id.Kind != EIdParam::None ? 1 : 0) + (Ticket.IsEmpty() ? 0 : 1) + (bHasAll ? 1 : 0);
+	if (Options != 1 || (bHasAll && !bAll))
+	{
+		return FHaybaHandlerResult::Err(TEXT("lease_release: [bad_request] send exactly one of lease_id, ticket or all:true"));
+	}
 	if (Id.bFromAlias)
 	{
-		Manager.NoteDeprecatedParam(TEXT("lease_release"), TEXT("token"), Caller);
+		Manager.NoteDeprecatedParam(TEXT("lease_release"), TEXT("token"), Owner);
 	}
-	// Old clients withdrew a queued ticket under `token`.
-	if (Ticket.IsEmpty() && Id.bFromAlias && IsWaitingTicket(Table, Id.Value))
+
+	TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
+	if (bAll)
+	{
+		const FOwnerReleaseResult Released = Table.ReleaseOwner(Owner);
+		Out->SetStringField(TEXT("owner"), Owner);
+		Out->SetNumberField(TEXT("released"), Released.Released);
+		Out->SetNumberField(TEXT("tickets_withdrawn"), Released.TicketsWithdrawn);
+		return FHaybaHandlerResult::Ok(Out);
+	}
+	// Old clients withdrew a queued ticket under `token` (T4.2's mapping, kept).
+	const bool bTicketUnderAlias = Ticket.IsEmpty() && Id.Kind == EIdParam::Value && Id.bFromAlias
+		&& IsWaitingTicket(Table, Id.Value);
+	if (bTicketUnderAlias)
 	{
 		Ticket = Id.Value;
 	}
-
-	FString Error;
-	TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
 	if (!Ticket.IsEmpty())
 	{
 		if (!IsWaitingTicket(Table, Ticket))
 		{
 			return FHaybaHandlerResult::Err(TEXT("lease_release: unknown or expired ticket"));
 		}
-		if (!Table.Release(Ticket, Caller, Error))
+		FString Error;
+		if (!Table.Release(Ticket, Owner, Error))
 		{
-			return FHaybaHandlerResult::Err(TEXT("lease_release: ") + Error);   // "ticket belongs to '<owner>'"
+			return FHaybaHandlerResult::Err(TEXT("lease_release: ") + CodedTableError(Error));
 		}
 		Out->SetStringField(TEXT("ticket"), Ticket);
+		Out->SetBoolField(TEXT("released"), true);
+		if (bTicketUnderAlias) Out->SetStringField(TEXT("deprecation"), TokenDeprecation);
+		return FHaybaHandlerResult::Ok(Out);
 	}
-	else
+	if (Id.Kind == EIdParam::RedactionMarker && Id.bFromAlias)
 	{
-		if (!Table.FindLease(Id.Value))
+		// R5 shim: only the owner's legacy editor_gate:<owner> leases, never a
+		// running batch's lease or a build's asset leases.
+		const int32 Released = Table.ReleaseLegacyGateLeases(Owner);
+		Manager.NoteMarkerShim(TEXT("lease_release"), Owner,
+			FString::Printf(TEXT("released %d legacy gate lease(s)"), Released));
+		if (Released == 0)
 		{
-			return FHaybaHandlerResult::Err(IdUnknown(TEXT("lease_release")));
+			return FHaybaHandlerResult::Err(RedactedReleaseError());
 		}
-		if (!Table.Release(Id.Value, Caller, Error))
-		{
-			return FHaybaHandlerResult::Err(TEXT("lease_release: ") + Error);  // "lease belongs to '<owner>'"
-		}
-		Out->SetStringField(TEXT("lease_id"), Id.Value);
-	}
-	Out->SetBoolField(TEXT("released"), true);
-	if (Id.bFromAlias)
-	{
+		Out->SetStringField(TEXT("owner"), Owner);
+		Out->SetNumberField(TEXT("released"), Released);
+		Out->SetBoolField(TEXT("legacy_gate_leases"), true);
 		Out->SetStringField(TEXT("deprecation"), TokenDeprecation);
+		return FHaybaHandlerResult::Ok(Out);
 	}
+	// The T4 codes keep T4.2's texts: the helpers build them.
+	if (Id.Kind == EIdParam::Ambiguous)
+	{
+		return FHaybaHandlerResult::Err(IdAmbiguous(TEXT("lease_release")));
+	}
+	if (Id.Kind == EIdParam::RedactionMarker)
+	{
+		// A marker under the canonical lease_id names no lease and releases nothing (R5).
+		return FHaybaHandlerResult::Err(IdRedacted(TEXT("lease_release")));
+	}
+	if (!Table.FindLease(Id.Value))
+	{
+		return FHaybaHandlerResult::Err(IdUnknown(TEXT("lease_release")));
+	}
+	FString Error;
+	if (!Table.Release(Id.Value, Owner, Error))
+	{
+		return FHaybaHandlerResult::Err(TEXT("lease_release: ") + CodedTableError(Error));
+	}
+	Out->SetStringField(TEXT("lease_id"), Id.Value);
+	Out->SetBoolField(TEXT("released"), true);
+	if (Id.bFromAlias) Out->SetStringField(TEXT("deprecation"), TokenDeprecation);
 	return FHaybaHandlerResult::Ok(Out);
 }
 
@@ -336,6 +420,10 @@ FHaybaHandlerResult FHaybaMCPLeaseHandler::Status(const TSharedPtr<FJsonObject>&
 		Item->SetNumberField(TEXT("held_s"), Now - Lease.GrantedAt);
 		Item->SetNumberField(TEXT("expires_in_s"), FMath::Max(0.0, Lease.ExpiresAt - Now));
 		Item->SetBoolField(TEXT("bound_to_connection"), Lease.ConnId != 0);
+		Item->SetBoolField(TEXT("orphaned"), Lease.IsOrphaned());
+		Item->SetBoolField(TEXT("bind_connection"), Lease.bBindConnection);
+		Item->SetNumberField(TEXT("ttl_s"), Lease.TtlSeconds);
+
 		LeasesJson.Add(MakeShared<FJsonValueObject>(Item));
 	}
 
@@ -359,6 +447,9 @@ FHaybaHandlerResult FHaybaMCPLeaseHandler::Status(const TSharedPtr<FJsonObject>&
 	Out->SetStringField(TEXT("current_world"), FHaybaMCPLeaseManager::CurrentWorldPackage());
 	Out->SetNumberField(TEXT("lease_count"), LeasesJson.Num());
 	Out->SetNumberField(TEXT("waiter_count"), WaitersJson.Num());
+	Out->SetNumberField(TEXT("max_ttl_s"), Table.GetTuning().MaxTtlSeconds);
+	Out->SetNumberField(TEXT("orphan_grace_s"), Table.GetTuning().OrphanGraceSeconds);
+
 	Out->SetArrayField(TEXT("leases"), LeasesJson);
 	Out->SetArrayField(TEXT("waiters"), WaitersJson);
 	return FHaybaHandlerResult::Ok(Out);

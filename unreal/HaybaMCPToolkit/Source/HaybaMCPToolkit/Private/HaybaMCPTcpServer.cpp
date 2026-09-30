@@ -332,8 +332,8 @@ void FHaybaMCPTcpServer::Shutdown()
 		Discarded.PendingReservation.Reset();
 		Discarded.ResponseReservation.Reset();
     }
-    // Leases outlive a TCP restart only until their TTL; bound ones are not
-    // released here because the router may already be gone during shutdown.
+    // Bound leases are not touched here (the router may already be gone during
+    // shutdown); FHaybaMCPModule::StartTcpServer orphans them on the next start.
     int32 IgnoredClosedConnId = 0;
     while (ClosedConnections.Dequeue(IgnoredClosedConnId))
     {

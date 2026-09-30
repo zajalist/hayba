@@ -440,6 +440,15 @@ bool FHaybaMCPModule::StartTcpServer()
         UE_LOG(LogHaybaMCP, Warning, TEXT("TCP server already running on port %d"), TcpPort);
         return false;
     }
+    // T7: a new server hands out new connection ids, so every lease bound to
+    // the previous server's connections is orphaned (60 s grace) instead of
+    // living on to its TTL.
+    const int32 Orphaned = FHaybaMCPLeaseManager::Get().Table().OrphanAllBound();
+    if (Orphaned > 0)
+    {
+        UE_LOG(LogHaybaMCP, Log, TEXT("TCP server starting: orphaned %d lease(s) bound to the previous server's connections"), Orphaned);
+    }
+
     // Initiative #3: scan a small port range so multiple UE editor instances
     // can run side-by-side without EADDRINUSE collisions. The first instance
     // claims 52342; subsequent ones walk forward. Heartbeat written to disk

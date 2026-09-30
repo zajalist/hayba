@@ -1845,6 +1845,12 @@ FString FHaybaMCPCommandHandler::ProcessCommandInContext(const FString& CommandJ
             TEXT("so restart the editor."), *Cmd), Cmd, false, true);
     }
 
+    // Touch-on-use (T7): the command passed every gate (slots 0-4, inline
+    // specials, the Plan gate) and is about to run, so the leases of its owner
+    // whose locks it uses stay alive. Reads, status polls and refused commands
+    // never get here or never touch.
+    Leases.TouchOnUse(Cmd, Params);
+
     // Capture actor before-state for destructive ops so the Diff panel shows true Before -> After.
     const TMap<FString, FString> BeforeState = CaptureBeforeState(Cmd, Params);
 

@@ -359,6 +359,8 @@ bool FHaybaMCPLeaseWireRoundTripTest::RunTest(const FString& Parameters)
 		FString Ignored;
 		FHaybaMCPLeaseManager::Get().Table().Release(LeaseId, Owner, Ignored);
 		FHaybaMCPLeaseManager::Get().Table().Release(BoundId, Owner, Ignored);
+		FHaybaMCPLeaseManager::Get().ForgetOwnerForTests(Owner);
+		R->NotifyConnectionClosed(W::TestConnId);
 	};
 	// One deprecation line for this owner, however often it sends `token` (R-9).
 	AddExpectedMessagePlain(
@@ -400,7 +402,7 @@ bool FHaybaMCPLeaseWireRoundTripTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("acquire: granted"), W::Str(Acquired, TEXT("status")), FString(TEXT("granted")));
 	TestTrue(TEXT("acquire: lease_id is ls_<seq>_<mac12>"), LIT::IsWellFormed(LeaseId, TEXT("ls")));
 	TestFalse(TEXT("acquire: no token field"), Acquired->HasField(TEXT("token")));
-	TestFalse(TEXT("acquire (unbound): no connection hint"), W::Str(Acquired, TEXT("next")).Contains(TEXT("bind_connection:false")));
+	TestTrue(TEXT("acquire (unbound): next gives per-call guidance"), W::Str(Acquired, TEXT("next")).Contains(TEXT("bind_connection:false")));
 
 	// A bound lease tells per-call raw clients how not to lose it (R-9).
 	const TSharedPtr<FJsonObject> Bound = W::Field(Call(TEXT("lease_acquire"),
@@ -431,7 +433,11 @@ bool FHaybaMCPLeaseWireRoundTripTest::RunTest(const FString& Parameters)
 		TEXT("[lease_id_ambiguous]"));
 	ExpectRefused(TEXT("renew with a marker under lease_id"),
 		Call(TEXT("lease_renew"), TEXT(R"({"lease_id":"[REDACTED:token]"})")), TEXT("[lease_id_redacted]"));
-	ExpectRefused(TEXT("renew with no id (before T7)"), Call(TEXT("lease_renew"), TEXT("{}")), TEXT("[lease_id_required]"));
+	// T7 (R6): no id renews every lease the caller holds.
+	const TSharedPtr<FJsonObject> ByOwner = Call(TEXT("lease_renew"), TEXT("{}"));
+	TestTrue(TEXT("renew with no id renews by owner"), W::Bool(ByOwner, TEXT("ok")));
+	TestTrue(TEXT("renew by owner renewed the caller's leases"),
+		W::Field(ByOwner, TEXT("data"))->GetNumberField(TEXT("renewed")) >= 1.0);
 
 	// status: the owner sees its lease_id, nobody sees a token.
 	bool bListed = false;
@@ -453,6 +459,7 @@ bool FHaybaMCPLeaseWireRoundTripTest::RunTest(const FString& Parameters)
 	// Until T9 an envelope that names a lease_id acts as that lease's owner, so
 	// a leaked id would let one agent act as another.
 	const FString Other = W::UniqueOwner();
+	ON_SCOPE_EXIT { FHaybaMCPLeaseManager::Get().ForgetOwnerForTests(Other); };
 	FString OtherRaw;
 	int32 SeenOfOwner = 0;
 	const TArray<TSharedPtr<FJsonValue>>* OtherLeases = nullptr;
@@ -489,10 +496,10 @@ bool FHaybaMCPLeaseWireRoundTripTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("release: released"), W::Bool(W::Field(Released, TEXT("data")), TEXT("released")));
 	ExpectRefused(TEXT("second release"),
 		Call(TEXT("lease_release"), FString::Printf(TEXT(R"({"lease_id":"%s"})"), *LeaseId)), TEXT("[lease_id_unknown]"));
-	ExpectRefused(TEXT("release with nothing named"), Call(TEXT("lease_release"), TEXT("{}")), TEXT("[lease_id_required]"));
+	ExpectRefused(TEXT("release with nothing named"), Call(TEXT("lease_release"), TEXT("{}")), TEXT("[bad_request]"));
 	ExpectRefused(TEXT("release with a lease_id and a ticket"),
 		Call(TEXT("lease_release"), FString::Printf(TEXT(R"({"lease_id":"%s","ticket":"lq_1_000000000000"})"), *BoundId)),
-		TEXT("[lease_id_ambiguous]"));
+		TEXT("[bad_request]"));
 
 	// No reply was secret-shaped, so nothing was redacted.
 	for (const FString& Raw : RawReplies)
