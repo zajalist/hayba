@@ -58,7 +58,7 @@ The result is a baseline, not a complete bottleneck attribution. Unreal Insights
 - Native tests exercise exact existing/missing CVar names, real zero versus absent, defaults and set-by provenance, input bounds, and no world/package dirtying.
 - A native test records a bounded snapshot in the disposable UE host and checks units, context, finite values, sample count, and explicit insufficient-sample behavior. If headless rendering cannot provide a defensible timing window, the test asserts `unavailable` rather than fabricating one.
 - Sidecar tests show both tools are discoverable, disabled-tool filtering still works, performance wording routes to the profiler, and unrelated QA wording remains with Quality Reviewer or the coordinator.
-- A real Agent turn in a disposable editor shows tool provenance and a measured-versus-unknown summary. The live Saskartarad plugin is installed and verified only after the user closes that editor; no locked DLL is overwritten.
+- A real Agent turn in a disposable editor shows tool provenance and a measured-versus-unknown summary. The first consumer project's live plugin is installed and verified only after the user closes that editor; no locked DLL is overwritten.
 - Build and focused tests pass; the full native suite's existing failures are named separately rather than hidden in a “green” claim.
 
 ## Deferred work

@@ -66,5 +66,5 @@
 
 - [ ] Build the Unreal 5.8 plugin in the disposable host; run both new focused tests and existing workspace/activity tests.
 - [ ] Confirm the editor's real Agent dock has no legacy Preview/Create/Test row and that Inspect produces a factual result without running the AI model.
-- [ ] `git diff --check` and `git status --short`; record any skipped live-project installation because the Saskartarad editor holds the DLL.
+- [ ] `git diff --check` and `git status --short`; record any skipped live-project installation because the first consumer project's editor holds the DLL.
 - [ ] Do not call this the spatial-field release. The renderer, stable scene graph, PLUMB constraints, and draft placement need their own implementation plan and acceptance evidence.

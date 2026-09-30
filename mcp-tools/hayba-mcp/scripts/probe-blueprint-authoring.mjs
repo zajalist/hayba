@@ -13,7 +13,8 @@
 // deleted at the end; --keep leaves it for inspection. With --project the port
 // is discovered from Saved/HaybaMCP/instances and deletion is confirmed on disk.
 //
-//   node scripts/probe-blueprint-authoring.mjs --project D:/UnrealEngine/saskartarad
+//   node scripts/probe-blueprint-authoring.mjs --project <project>
+//   HAYBA_UE_PROJECT=<project> node scripts/probe-blueprint-authoring.mjs
 //   node scripts/probe-blueprint-authoring.mjs --port 52342 --keep
 
 import net from 'node:net';
@@ -23,7 +24,7 @@ import { join } from 'node:path';
 const args = parseArgs(process.argv.slice(2));
 
 function parseArgs(argv) {
-  const out = { keep: false };
+  const out = { keep: false, project: process.env.HAYBA_UE_PROJECT || undefined };
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--keep') out.keep = true;
     else if (argv[i] === '--port') out.port = Number(argv[++i]);
