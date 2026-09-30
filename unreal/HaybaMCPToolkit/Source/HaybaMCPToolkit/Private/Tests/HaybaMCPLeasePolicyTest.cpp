@@ -312,7 +312,9 @@ bool FHaybaMCPLeaseFairQueueTest::RunTest(const FString& Parameters)
 
 		const FAcquireResult Quick3 = Table.Acquire(MakeRequest(*this, TEXT("quick3"), TEXT("actor:/Game/V.V:PersistentLevel.B3")));
 		TestEqual(TEXT("an aged long waiter cannot be overtaken"), Quick3.Status, EStatus::Queued);
-		TestEqual(TEXT("the aged waiter is ahead"), Quick3.Position, 1);
+		// Position is the 1-based place in line: one waiter (the aged long one)
+		// goes first, so this request is second.
+		TestEqual(TEXT("the aged waiter is ahead"), Quick3.Position, 2);
 		TestEqual(TEXT("the queue names who is ahead"), Quick3.HolderOwner, FString(TEXT("bulk")));
 
 		const FAcquireResult Unrelated = Table.Acquire(MakeRequest(*this, TEXT("other"), TEXT("world:/Game/Other")));
