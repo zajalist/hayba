@@ -34,3 +34,5 @@ Hayba.MCP.State.PieVerdict
 Hayba.MCP.State.PieTracker
 Hayba.MCP.State.ResolvePieBackstop
 Hayba.MCP.State.UserPlayDecision
+Hayba.MCP.Batch.HoldExcludedFromFenceTimeout
+Hayba.MCP.Batch.ValidateRejectsPieSteps

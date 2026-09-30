@@ -487,4 +487,117 @@ bool FHaybaMCPBatchFenceGrantTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FHaybaMCPBatchHoldExcludedFromFenceTimeoutTest,
+	"Hayba.MCP.Batch.HoldExcludedFromFenceTimeout",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FHaybaMCPBatchHoldExcludedFromFenceTimeoutTest::RunTest(const FString& Parameters)
+{
+	// A hold during a fence spends none of the fence timeout: 10 x FenceTimeoutSeconds held, then the fence settles.
+	{
+		FTuning Tuning;
+		Tuning.FenceTimeoutSeconds = 1.0;
+		Tuning.IdleTicksRequired = 2;
+		FHarness H(MakeSteps({ EFence::Idle, EFence::None }), EOnError::Stop, Tuning);
+		H.In.bIdle = false;
+		H.In.BusyReason = TEXT("shaders");
+		TestEqual(TEXT("step 0 runs"), H.TickOnce(), EAction::RunStep);
+		TestEqual(TEXT("its fence waits"), H.TickOnce(), EAction::Wait);
+		H.In.bHeld = true;
+		int32 HeldWaits = 0;
+		for (int32 I = 0; I < 100; ++I)
+		{
+			HeldWaits += H.TickOnce() == EAction::Wait ? 1 : 0;
+		}
+		TestEqual(TEXT("every held tick waits"), HeldWaits, 100);
+		TestTrue(TEXT("the machine reports the hold"), H.Machine.IsHeld());
+		TestEqual(TEXT("held seconds up to the last held tick"), H.Machine.GetHeldSeconds(), 9.9, 1e-6);
+		H.In.bHeld = false;
+		H.In.bIdle = true;
+		H.In.BusyReason.Reset();
+		TestEqual(TEXT("idle 1 after the hold"), H.TickOnce(), EAction::Wait);
+		TestFalse(TEXT("the hold is over"), H.Machine.IsHeld());
+		TestEqual(TEXT("idle 2 satisfies the fence and runs step 1"), H.TickOnce(), EAction::RunStep);
+		H.RunToEnd();
+		TestTrue(TEXT("the batch succeeds"), H.Machine.Succeeded());
+		TestEqual(TEXT("the whole hold is counted"), H.Machine.GetHeldSeconds(), 10.0, 1e-6);
+	}
+	// Control: the same schedule without the hold times the fence out.
+	{
+		FTuning Tuning;
+		Tuning.FenceTimeoutSeconds = 1.0;
+		FHarness H(MakeSteps({ EFence::Idle, EFence::None }), EOnError::Stop, Tuning);
+		H.In.bIdle = false;
+		H.In.BusyReason = TEXT("shaders");
+		H.RunToEnd();
+		TestTrue(TEXT("unheld busy time does time out"), H.Machine.Failed());
+	}
+	// A hold during a yield spends none of YieldMaxSeconds.
+	{
+		FTuning Tuning;
+		Tuning.YieldMaxSeconds = 1.0;
+		FHarness H(MakeSteps({ EFence::None, EFence::None }), EOnError::Stop, Tuning);
+		TestEqual(TEXT("step 0"), H.TickOnce(), EAction::RunStep);
+		H.In.bEligibleWaiter = true;
+		TestEqual(TEXT("the fence opens"), H.TickOnce(), EAction::BeginYield);
+		H.In.FenceGrantsOutstanding = 1;
+		H.In.bHeld = true;
+		for (int32 I = 0; I < 100; ++I)
+		{
+			H.TickOnce();
+		}
+		H.In.bHeld = false;
+		TestEqual(TEXT("still parked: the hold did not reach YieldMaxSeconds"), H.TickOnce(), EAction::Wait);
+		H.In.FenceGrantsOutstanding = 0;
+		H.In.bEligibleWaiter = false;
+		TestEqual(TEXT("the grant is released: the fence closes"), H.TickOnce(), EAction::EndYield);
+		TestTrue(TEXT("yield time excludes the hold"), H.Machine.GetYieldSeconds() < 1.0);
+		H.RunToEnd();
+		TestTrue(TEXT("the batch succeeds"), H.Machine.Succeeded());
+	}
+	// Held before the first step: no step runs until the hold ends.
+	{
+		FHarness H(MakeSteps({ EFence::None }), EOnError::Stop);
+		H.In.bHeld = true;
+		TestEqual(TEXT("held: no step"), H.TickOnce(), EAction::Wait);
+		TestEqual(TEXT("nothing ran"), H.StepsRunAt.Num(), 0);
+		H.In.bHeld = false;
+		TestEqual(TEXT("resumes with step 0"), H.TickOnce(), EAction::RunStep);
+	}
+	// R-11: a gc fence never collects on a held tick.
+	{
+		FHarness H(MakeSteps({ EFence::Gc, EFence::None }), EOnError::Stop);
+		H.In.bLeaseAllowsGc = true;
+		TestEqual(TEXT("step 0"), H.TickOnce(), EAction::RunStep);
+		H.In.bHeld = true;
+		TestEqual(TEXT("held: no CollectGarbage"), H.TickOnce(), EAction::Wait);
+		TestEqual(TEXT("nothing collected"), H.GcCount, 0);
+		H.In.bHeld = false;
+		TestEqual(TEXT("collects once the hold ends"), H.TickOnce(), EAction::CollectGarbage);
+	}
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FHaybaMCPBatchValidateRejectsPieStepsTest,
+	"Hayba.MCP.Batch.ValidateRejectsPieSteps",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FHaybaMCPBatchValidateRejectsPieStepsTest::RunTest(const FString& Parameters)
+{
+	for (const TCHAR* Cmd : { TEXT("editor_start_pie"), TEXT("editor_stop_pie"), TEXT("editor_pie_press_key"),
+		TEXT("editor_pie_screenshot"), TEXT("editor_pie_actor_list") })
+	{
+		TArray<FStepSpec> Steps = MakeSteps({ EFence::None, EFence::None });
+		Steps[1].Cmd = Cmd;
+		TestEqual(*FString::Printf(TEXT("%s is rejected at validation"), Cmd), ValidateSteps(Steps),
+			FString(TEXT("steps[1]: PIE cannot run inside a batch; batches pause during PIE")));
+	}
+	TArray<FStepSpec> Plain = MakeSteps({ EFence::None, EFence::None });
+	Plain[1].Cmd = TEXT("editor_get_state");
+	TestTrue(TEXT("a non-PIE editor step is still allowed"), ValidateSteps(Plain).IsEmpty());
+	return true;
+}
+
 #endif

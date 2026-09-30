@@ -126,6 +126,12 @@ namespace HaybaMCPBatch
 				return FString::Printf(
 					TEXT("steps[%d]: %s cannot run inside a batch; the batch runs under the lease it was given"), I, *Cmd);
 			}
+			if (Cmd == TEXT("editor_start_pie") || Cmd == TEXT("editor_stop_pie") || Cmd.StartsWith(TEXT("editor_pie_")))
+			{
+				// A batch that started PIE would pause itself before its own stop
+				// step, renewing its lease and never yielding (docs/adr/0012).
+				return FString::Printf(TEXT("steps[%d]: PIE cannot run inside a batch; batches pause during PIE"), I);
+			}
 		}
 		return FString();
 	}
@@ -242,6 +248,9 @@ namespace HaybaMCPBatch
 		int32 FenceGrantsOutstanding = 0;
 		/** Regions the batch has loaded and not released. */
 		int32 LoadedRegions = 0;
+		/** PIE is running or queued (docs/adr/0012): the machine waits, evaluates
+		 *  nothing, and spends no fence or yield time. */
+		bool bHeld = false;
 	};
 
 	class FMachine
@@ -256,6 +265,25 @@ namespace HaybaMCPBatch
 
 		EAction Tick(const FInputs& In)
 		{
+			if (In.bHeld)
+			{
+				if (!bHoldActive)
+				{
+					bHoldActive = true;
+					HeldSince = In.Now;
+				}
+				LastHeldNow = In.Now;
+				return EAction::Wait;
+			}
+			if (bHoldActive)
+			{
+				// Held time never counts against FenceTimeoutSeconds or the yield timers.
+				const double HeldSpan = FMath::Max(0.0, In.Now - HeldSince);
+				FenceStartedAt += HeldSpan;
+				YieldStartedAt += HeldSpan;
+				HeldSecondsTotal += HeldSpan;
+				bHoldActive = false;
+			}
 			switch (Phase)
 			{
 			case EPhase::Step:
@@ -320,6 +348,10 @@ namespace HaybaMCPBatch
 		const TArray<FString>& GetNotes() const { return Notes; }
 		EFence GetFenceKind() const { return FenceKind; }
 		int32 GetIdleStreak() const { return IdleStreak; }
+		/** PIE holds the batch right now. */
+		bool IsHeld() const { return bHoldActive; }
+		/** Seconds PIE has held the batch, the current hold included up to its last held tick. */
+		double GetHeldSeconds() const { return HeldSecondsTotal + (bHoldActive ? LastHeldNow - HeldSince : 0.0); }
 
 	private:
 		void Fail(const FString& Why)
@@ -513,5 +545,10 @@ namespace HaybaMCPBatch
 		bool bSettleAfterCleanup = false;
 		bool bUnloadIssued = false;
 		TArray<FString> Notes;
+
+		bool bHoldActive = false;
+		double HeldSince = 0.0;
+		double LastHeldNow = 0.0;
+		double HeldSecondsTotal = 0.0;
 	};
 }
