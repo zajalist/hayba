@@ -21,7 +21,9 @@ export type UeToolErrorCode =
   // editor_start_pie found loaded Blueprints that would open a modal dialog before play.
   | 'pie_blocked'
   // Another owner is building an asset this command would use half-built; nothing ran (P0 T3).
-  | 'asset_busy';
+  | 'asset_busy'
+  // A handler preflight found a read-only package file (T5); data.make_writable_hint says how to fix it.
+  | 'package_read_only';
 
 export class UeToolError extends Error {
   readonly code: UeToolErrorCode;
@@ -43,6 +45,7 @@ const KNOWN_UE_CODES = new Set<UeToolErrorCode>([
   'pie_active',
   'pie_blocked',
   'asset_busy',
+  'package_read_only',
 ]);
 function mapUeCode(raw: string | undefined): UeToolErrorCode {
   if (raw && KNOWN_UE_CODES.has(raw as UeToolErrorCode)) return raw as UeToolErrorCode;

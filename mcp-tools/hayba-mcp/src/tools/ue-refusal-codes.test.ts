@@ -164,3 +164,20 @@ describe('asset_busy (P0 T3)', () => {
     expect(Object.keys(busy.assets[0]!).some((k) => /token|lease_id/.test(k))).toBe(false);
   });
 });
+
+describe('T5: package_read_only', () => {
+  it('is a known UE code, promoted from the handler preflight', async () => {
+    const { executeCommand } = await import('./tool-executor.js');
+    const reply = {
+      id: 'x',
+      ok: false,
+      code: 'package_read_only',
+      error: 'level_save [package_read_only]: /Game/Maps/Valley cannot be saved: Content/Maps/Valley.umap is read-only on disk. Nothing was changed.',
+      data: { ok: false, code: 'package_read_only', make_writable_hint: 'Take its source-control lock and retry: git lfs lock "Content/Maps/Valley.umap"' },
+    };
+    await expect(executeCommand('level_save', {}, { sender: async () => reply })).rejects.toMatchObject({
+      name: 'UeToolError',
+      code: 'package_read_only',
+    });
+  });
+});

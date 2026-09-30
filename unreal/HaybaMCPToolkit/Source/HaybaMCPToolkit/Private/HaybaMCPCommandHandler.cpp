@@ -1282,7 +1282,7 @@ static FString MakeOffGameThreadResponse()
  *  package_read_only. */
 static bool IsWireRefusalCode(const FString& Code)
 {
-    static const TSet<FString> Codes = { TEXT("pie_blocked") };
+    static const TSet<FString> Codes = { TEXT("pie_blocked"), TEXT("package_read_only") };
     return Codes.Contains(Code);
 }
 

@@ -873,4 +873,63 @@ bool FHaybaMCPSaveReadOnlySanitizerTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FHaybaMCPSaveReadOnlyEnvelopeTest,
+	"Hayba.MCP.Save.ReadOnly.EnvelopeCarriesCodeAndHint",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FHaybaMCPSaveReadOnlyEnvelopeTest::RunTest(const FString& Parameters)
+{
+	namespace RO = HaybaSaveReadOnlyTest;
+	RO::FScopedPlanModeOff PlanOff;
+	TGuardValue<EHaybaMCPAdvisoryVerbosity> ErrorsOnly(FHaybaMCPSettings::Get().AdvisoryVerbosity, EHaybaMCPAdvisoryVerbosity::ErrorsOnly);
+	UBlueprint* BP = RO::NewBlueprint(TEXT("BP_Env"));
+	RO::FScopedReadOnlyPackage Fixture(BP);
+	if (!TestTrue(TEXT("the fixture reached disk"), Fixture.WasSaved())) return false;
+	FBlueprintEditorUtils::MarkBlueprintAsModified(BP);
+	Fixture.MakeReadOnly();
+
+	TSharedPtr<FJsonObject> Params = MakeShared<FJsonObject>();
+	Params->SetStringField(TEXT("path"), BP->GetPathName());
+	Params->SetBoolField(TEXT("save"), true);
+	const TSharedPtr<FJsonObject> Reply = RO::SendCommand(*this, TEXT("blueprint_compile"), Params, 900503);
+
+	bool bOk = true;
+	Reply->TryGetBoolField(TEXT("ok"), bOk);
+	TestFalse(TEXT("envelope ok is false"), bOk);
+	TestEqual(TEXT("IsWireRefusalCode promotes data.code to the envelope code"), RO::Str(Reply, TEXT("code")), FString(TEXT("package_read_only")));
+	TestTrue(TEXT("the envelope error carries [package_read_only]"), RO::Str(Reply, TEXT("error")).Contains(TEXT("[package_read_only]")));
+
+	const TSharedPtr<FJsonObject>* Advisory = nullptr;
+	if (TestTrue(TEXT("the envelope has an advisory"), Reply->TryGetObjectField(TEXT("advisory"), Advisory) && Advisory))
+	{
+		TestEqual(TEXT("advisory.state"), RO::Str(*Advisory, TEXT("state")), FString(TEXT("policy_blocked")));
+		TestEqual(TEXT("advisory.mutation_status"), RO::Str(*Advisory, TEXT("mutation_status")), FString(TEXT("not_started")));
+		const FString RecoveryStep = TEXT("Make the package file writable (take its source-control lock), then retry; see data.make_writable_hint. Retrying unchanged will fail again.");
+		TestEqual(TEXT("advisory.next_action survives ErrorsOnly"), RO::Str(*Advisory, TEXT("next_action")), RecoveryStep);
+		const TArray<TSharedPtr<FJsonValue>>* Recovery = nullptr;
+		bool bNextAction = false;
+		if ((*Advisory)->TryGetArrayField(TEXT("mandatory_recovery"), Recovery) && Recovery)
+		{
+			for (const TSharedPtr<FJsonValue>& Step : *Recovery)
+			{
+				bNextAction |= Step->AsString() == RecoveryStep;
+			}
+		}
+		TestTrue(TEXT("the make-writable step is mandatory recovery (survives ErrorsOnly)"), bNextAction);
+	}
+
+	const TSharedPtr<FJsonObject>* Data = nullptr;
+	if (TestTrue(TEXT("the envelope keeps data"), Reply->TryGetObjectField(TEXT("data"), Data) && Data))
+	{
+		const FString Hint = RO::Str(*Data, TEXT("make_writable_hint"));
+		TestTrue(TEXT("data.make_writable_hint names git lfs lock"), Hint.Contains(TEXT("git lfs lock")));
+		TestTrue(TEXT("data.make_writable_hint keeps the save:false alternative"), Hint.EndsWith(TEXT("Or pass save:false to compile without saving.")));
+		const TArray<TSharedPtr<FJsonValue>>* Files = nullptr;
+		TestTrue(TEXT("data.read_only_files"), (*Data)->TryGetArrayField(TEXT("read_only_files"), Files) && Files && Files->Num() > 0);
+	}
+	TestEqual(TEXT("nothing was compiled"), static_cast<int32>(BP->Status.GetValue()), static_cast<int32>(BS_Dirty));
+	return true;
+}
+
 #endif // WITH_DEV_AUTOMATION_TESTS

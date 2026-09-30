@@ -1049,7 +1049,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": true,
-      "notes": "Wrapped by hayba_create_pcg_graph (src/tools/create-pcg-graph.ts). Validates before creating; on validation failure returns {created:false, errors:[...]}."
+      "notes": "Wrapped by hayba_create_pcg_graph (src/tools/create-pcg-graph.ts). Validates before creating; on validation failure returns {created:false, errors:[...]}. A read-only /Game/Hayba/Generated/<name> package is refused before anything is created or replaced (code package_read_only, data.make_writable_hint); the existing graph is kept."
     },
     "pcg_create_graph": {
       "aliases": [
@@ -2282,6 +2282,13 @@
           "name": "path",
           "type": "string",
           "required": true
+        },
+        {
+          "name": "save",
+          "type": "boolean",
+          "required": false,
+          "default": true,
+          "description": "Defaults true. Pass false to compile without saving, e.g. for a read-only package."
         }
       ],
       "returns": {
@@ -2294,12 +2301,27 @@
           {
             "name": "errors",
             "type": "array"
+          },
+          {
+            "name": "saved",
+            "type": "boolean",
+            "description": "Present when save is true: the change reached disk."
+          },
+          {
+            "name": "save_error",
+            "type": "string",
+            "description": "Why the save did not reach disk; the Blueprint stays changed in memory."
+          },
+          {
+            "name": "save_error_code",
+            "type": "string",
+            "description": "package_read_only or save_failed."
           }
         ]
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Compile a Blueprint and report errors. Every blueprint_* edit is staged until this runs, so call it before expecting a change to exist — and read `errors`, because a failed compile leaves the old class in place."
+      "notes": "Compile a Blueprint and report errors. Every blueprint_* edit is staged until this runs, so call it before expecting a change to exist — and read `errors`, because a failed compile leaves the old class in place. With save true, a read-only package is refused before compiling with code package_read_only and data.make_writable_hint; nothing changes. Take the file's lock and retry, or pass save:false."
     },
     "blueprint_set_defaults": {
       "aliases": [],
@@ -2647,7 +2669,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Save the current level, or the one at `path`. Editor edits live in memory until this runs, so an unsaved level loses everything on restart or a rebuild."
+      "notes": "Save the current level, or the one at `path`. Editor edits live in memory until this runs, so an unsaved level loses everything on restart or a rebuild. A map or external actor package that needs saving, including clean packages requiring transient-reference repair, is refused before anything changes when its file is read-only (code package_read_only, data.make_writable_hint). The save runs unattended, so it never opens a modal dialog."
     },
     "level_load": {
       "aliases": [],
@@ -3064,7 +3086,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": true,
-      "notes": "Single native persistence boundary used by the first-class TS tool: persist every loaded dirty map/content package, verify none remain, then optionally schedule editor exit after the response flushes. Exit revalidates dirtiness and cancels if queued/background work changed state. Refuses queued or active PIE and any save failure. Plan-Mode gated and non-idempotent when quit is true."
+      "notes": "Single native persistence boundary used by the first-class TS tool: persist every loaded dirty map/content package, verify none remain, then optionally schedule editor exit after the response flushes. Exit revalidates dirtiness and cancels if queued/background work changed state. Refuses queued or active PIE and any save failure. Plan-Mode gated and non-idempotent when quit is true. If any dirty package's file is read-only, nothing is saved, the editor stays open, no exit is scheduled, and the reply is code package_read_only with data.make_writable_hint."
     },
     "editor_run_console_command": {
       "aliases": [],
@@ -3976,7 +3998,7 @@
       "params":[{"name":"path","type":"string","required":true}],
       "returns":{"shape":"object","fields":[{"name":"path","type":"string"},{"name":"package_file","type":"string"},{"name":"persistence","type":"string"},{"name":"readback","type":"object"}]},
       "agent_callable":true,"has_ts_wrapper":true,
-      "notes":"Single-target explicit save. It verifies the .uasset exists on disk and fails rather than reporting nested saved:false."
+      "notes":"Single-target explicit save. It verifies the .uasset exists on disk and fails rather than reporting nested saved:false. A read-only package is refused before saving (code package_read_only, data.make_writable_hint)."
     },
     "audio_component_play": {
       "aliases": [], "handler_cpp": "FHaybaMCPAudioHandler::Handle",
@@ -5446,7 +5468,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Conforms the asset to its document, initializes editor node locations, validates, and saves explicitly. Half-authored graphs are never implicitly saved by node edits."
+      "notes": "Conforms the asset to its document, initializes editor node locations, validates, and saves explicitly. Half-authored graphs are never implicitly saved by node edits. With save true, a read-only package is refused before conforming (code package_read_only, data.make_writable_hint). A save that fails after conforming returns ok:false, valid:true, mutation_status applied_unsaved."
     },
     "metasound_inspect": {
       "aliases": ["metasound_export"],
