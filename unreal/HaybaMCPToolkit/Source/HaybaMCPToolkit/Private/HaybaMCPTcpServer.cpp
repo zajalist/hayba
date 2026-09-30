@@ -439,10 +439,14 @@ void FHaybaMCPTcpServer::HandleClientConnection(FHaybaMCPClientConnectionPtr Con
         FString Message;
         if (!ReadMessage(Conn, Message))
         {
-            // Client disconnected. Mark dead so any in-flight response task
-            // skips its send; the socket is destroyed once the last shared
-            // reference (this loop + any queued game-thread task) drops.
-            Conn->bAlive = false;
+			if (Conn->bInputEnded && bIsRunning && Conn->bAlive)
+			{
+				// No producer remains after a boundary terminal receive. Keep
+				// dispatch and the writer alive for every accepted reservation,
+				// even if no response has reached the outbound queue yet.
+				if (Conn->OutboundEvent) Conn->OutboundEvent->Trigger();
+				return;
+			}
 			break;
         }
 		Conn->RequestsReceived.Increment();
@@ -477,10 +481,18 @@ void FHaybaMCPTcpServer::HandleClientConnection(FHaybaMCPClientConnectionPtr Con
 			MoveTemp(Message), Conn, MoveTemp(PendingReservation), MoveTemp(ResponseReservation), Conn->ConnId });
     }
 
-    Conn->bAlive = false;
-	// bAlive is already false, so any command this connection still has queued
-	// is skipped by the drain; the close itself releases its bound leases there.
-	ClosedConnections.Enqueue(Conn->ConnId);
+	CloseClientConnection(Conn);
+}
+
+void FHaybaMCPTcpServer::CloseClientConnection(const FHaybaMCPClientConnectionPtr& Conn)
+{
+	Conn->bAlive = false;
+	// Reader failures and writer completion can race. Notify bound-lease closure
+	// once, only after accepted responses drain or a cancellation/failure wins.
+	if (Conn->CloseNotificationRequested.Increment() == 1)
+	{
+		ClosedConnections.Enqueue(Conn->ConnId);
+	}
 	if (Conn->Socket)
 	{
 		Conn->Socket->Shutdown(ESocketShutdownMode::ReadWrite);
@@ -494,6 +506,10 @@ void FHaybaMCPTcpServer::HandleClientWrites(FHaybaMCPClientConnectionPtr Conn)
 		FHaybaMCPOutboundResponse Response;
 		if (!Conn->OutboundResponses.Dequeue(Response))
 		{
+			if (Conn->bInputEnded && Conn->ResponsesPending.GetValue() == 0)
+			{
+				break;
+			}
 			if (Conn->OutboundEvent)
 			{
 				Conn->OutboundEvent->Wait(SocketPollMs);
@@ -508,6 +524,7 @@ void FHaybaMCPTcpServer::HandleClientWrites(FHaybaMCPClientConnectionPtr Conn)
 		// conversion, not merely while the item waits in OutboundResponses.
 		Response.MemoryReservation.Reset();
 	}
+	CloseClientConnection(Conn);
 }
 
 void FHaybaMCPTcpServer::CompleteClientWorker(
@@ -639,6 +656,18 @@ bool FHaybaMCPTcpServer::DrainPendingCommands(float /*DeltaTime*/)
     return true; // keep ticking
 }
 
+FHaybaMCPTcpServer::EReceiveResult FHaybaMCPTcpServer::ReceiveAvailable(
+	FSocket& Socket, uint8* Destination, int32 NumBytes, int32& BytesRead)
+{
+	// UE streaming Recv returns false/zero for BOTH EOF and fatal errors, and
+	// true/zero for would-block. Connection readiness and stale last-error state
+	// cannot separate the terminal outcomes. Stop input for either; only a clean
+	// frame boundary may drain owed replies through the existing bounded writer.
+	if (!Socket.Recv(Destination, NumBytes, BytesRead)) return EReceiveResult::InputEnded;
+	if (BytesRead <= 0) return EReceiveResult::WouldBlock;
+	return EReceiveResult::Progress;
+}
+
 bool FHaybaMCPTcpServer::ReadMessage(const FHaybaMCPClientConnectionPtr& Conn, FString& OutMessage)
 {
 	if (!Conn.IsValid() || !Conn->Socket)
@@ -687,17 +716,18 @@ bool FHaybaMCPTcpServer::ReadMessage(const FHaybaMCPClientConnectionPtr& Conn, F
 			}
 
 			int32 BytesRead = 0;
-			if (!Socket->Recv(Destination + TotalRead, NumBytes - TotalRead, BytesRead))
+			const EReceiveResult Receive = ReceiveAvailable(
+				*Socket, Destination + TotalRead, NumBytes - TotalRead, BytesRead);
+			if (Receive == EReceiveResult::InputEnded)
 			{
-				if (Socket->GetConnectionState() != SCS_Connected)
-				{
-					return false;
-				}
-				continue;
-			}
-			if (BytesRead <= 0)
-			{
+				// Any byte of an incomplete next frame retains the failure path:
+				// partial input must never become a response-protected idle wait.
+				if (!ReadPolicy.HasStartedFrame()) Conn->bInputEnded = true;
 				return false;
+			}
+			if (Receive == EReceiveResult::WouldBlock)
+			{
+				continue;
 			}
 			const double ReceivedAt = FPlatformTime::Seconds();
 			// Once a frame started, bytes observed at/after its deadline are late

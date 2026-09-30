@@ -89,3 +89,11 @@ Hayba.MCP.Lease.RenewRevivesOrphanedLeaseOfSameOwner
 Hayba.MCP.Lease.ConnectionDrop
 Hayba.MCP.Lease.RenewWithoutHandle
 Hayba.MCP.Lease.RedactedMarkerShim
+
+# Native EOF/drain correction
+Hayba.MCP.Transport.NativeIncompleteFIN
+Hayba.MCP.Transport.NativeDelayedHalfClose
+Hayba.MCP.Transport.NativeWouldBlock
+Hayba.MCP.Transport.NativeResetDrain
+Hayba.MCP.Transport.NativeShutdownPending
+Hayba.MCP.Transport.NativePartialNextFIN
