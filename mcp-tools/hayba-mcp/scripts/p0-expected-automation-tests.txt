@@ -48,3 +48,4 @@ Hayba.MCP.State.BatchHoldsDuringPIE
 # optional: Hayba.MCP.State.RealPIE (run alone with -HaybaRealPIETests)
 # T3
 Hayba.MCP.Lease.AssetWrites
+Hayba.MCP.Lease.AssetHolders

@@ -121,6 +121,16 @@ namespace HaybaMCPLease
 		FString Error;
 	};
 
+	/** One exclusive asset lock and the lease that holds it (a build marking
+	 *  its asset busy, D5). `Lease` points into the table and is valid only
+	 *  until the next call on the table; copy what you need at once. */
+	struct FAssetHold
+	{
+		/** The lock key, lower-cased: "asset:/game/…". */
+		FString AssetKey;
+		const FLease* Lease = nullptr;
+	};
+
 	/** Only the owner that proposed a plan may spend its approval. A plan
 	 *  proposed with no owner (a pre-lease client) keeps the old global rule. */
 	inline bool PlanApprovalApplies(bool bApproved, const FString& PlanOwner, const FString& CallerOwner)
@@ -367,6 +377,43 @@ namespace HaybaMCPLease
 				}
 			}
 			return nullptr;
+		}
+
+		/**
+		 * Exclusive asset locks, one entry per asset per lease. This is what
+		 * asset_busy and editor_get_state.building report. It expires lapsed
+		 * leases first. An empty ExcludeOwner excludes nobody. An empty AssetKey
+		 * matches any asset; otherwise only that key matches, ignoring case.
+		 * Shared asset locks, intent locks and world or global locks are not
+		 * builds and never appear.
+		 */
+		TArray<FAssetHold> FindAssetHolders(const FString& ExcludeOwner, const FString& AssetKey = FString())
+		{
+			Expire();
+			TArray<FAssetHold> Out;
+			for (const FLease& L : Leases)
+			{
+				if (!ExcludeOwner.IsEmpty() && L.Owner == ExcludeOwner)
+				{
+					continue;
+				}
+				for (const FLock& Lock : L.Locks)
+				{
+					if (Lock.Mode != HaybaMCPAccess::ELockMode::Exclusive || !Lock.Key.StartsWith(TEXT("asset:")))
+					{
+						continue;
+					}
+					if (!AssetKey.IsEmpty() && !Lock.Key.Equals(AssetKey, ESearchCase::IgnoreCase))
+					{
+						continue;
+					}
+					FAssetHold Hold;
+					Hold.AssetKey = Lock.Key;
+					Hold.Lease = &L;
+					Out.Add(MoveTemp(Hold));
+				}
+			}
+			return Out;
 		}
 
 		// ---------------------------------------------------------------------

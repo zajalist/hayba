@@ -334,6 +334,68 @@ bool FHaybaMCPLeaseTableTest::RunTest(const FString& Parameters)
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FHaybaMCPLeaseAssetHoldersTest,
+	"Hayba.MCP.Lease.AssetHolders",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FHaybaMCPLeaseAssetHoldersTest::RunTest(const FString& Parameters)
+{
+	using namespace HaybaMCPLease;
+	double Now = 1000.0;
+	FTable Table([&Now]() { return Now; });
+	TestEqual(TEXT("an empty table has no asset holders"), Table.FindAssetHolders(FString()).Num(), 0);
+
+	// A build holds two assets exclusively in one lease (D5). A reader shares a
+	// third asset. A world writer holds a world.
+	FRequest Build = MakeRequest(*this, TEXT("builder"), TEXT("asset:/Game/B/BP_A"), ELane::Long);
+	Build.Claims.Add(ParseClaim(*this, TEXT("asset:/Game/B/BP_B")));
+	Build.Label = TEXT("build:bpgraph_1");
+	Build.TtlSeconds = 60.0;
+	TestEqual(TEXT("the build lease is granted"), Table.Acquire(Build).Status, EStatus::Granted);
+	TestEqual(TEXT("a shared asset reader is granted"),
+		Table.Acquire(MakeRequest(*this, TEXT("reader"), TEXT("asset:/Game/B/BP_C"), ELane::Interactive, false)).Status,
+		EStatus::Granted);
+	TestEqual(TEXT("a world writer is granted"),
+		Table.Acquire(MakeRequest(*this, TEXT("mapper"), TEXT("world:/Game/Maps/V"))).Status, EStatus::Granted);
+
+	const TArray<FAssetHold> All = Table.FindAssetHolders(FString());
+	TestEqual(TEXT("only exclusive asset locks count, one per asset"), All.Num(), 2);
+	TSet<FString> Keys;
+	for (const FAssetHold& Hold : All)
+	{
+		Keys.Add(Hold.AssetKey);
+		if (TestNotNull(TEXT("every hold names its lease"), Hold.Lease))
+		{
+			TestEqual(TEXT("held by the builder"), Hold.Lease->Owner, FString(TEXT("builder")));
+			TestEqual(TEXT("with its label"), Hold.Lease->Label, FString(TEXT("build:bpgraph_1")));
+		}
+	}
+	TestTrue(TEXT("asset A is listed by its lock key"), Keys.Contains(TEXT("asset:/game/b/bp_a")));
+	TestTrue(TEXT("asset B is listed by its lock key"), Keys.Contains(TEXT("asset:/game/b/bp_b")));
+
+	TestEqual(TEXT("excluding the builder leaves nobody"), Table.FindAssetHolders(TEXT("builder")).Num(), 0);
+	TestEqual(TEXT("another caller sees the build"), Table.FindAssetHolders(TEXT("lane5")).Num(), 2);
+	TestEqual(TEXT("one asset key"), Table.FindAssetHolders(FString(), TEXT("asset:/game/b/bp_a")).Num(), 1);
+	TestEqual(TEXT("the key match ignores case"), Table.FindAssetHolders(FString(), TEXT("asset:/Game/B/BP_A")).Num(), 1);
+	TestEqual(TEXT("a shared-only asset is not busy"), Table.FindAssetHolders(FString(), TEXT("asset:/game/b/bp_c")).Num(), 0);
+	TestEqual(TEXT("a world key is never an asset hold"), Table.FindAssetHolders(FString(), TEXT("world:/game/maps/v")).Num(), 0);
+
+	// A global X holder (the editor gate) is not an asset build.
+	{
+		double GateNow = 0.0;
+		FTable Gate([&GateNow]() { return GateNow; });
+		TestEqual(TEXT("a global lease is granted"), Gate.Acquire(MakeRequest(*this, TEXT("gate"), TEXT("global"))).Status, EStatus::Granted);
+		TestEqual(TEXT("a global lease marks no asset busy"), Gate.FindAssetHolders(FString()).Num(), 0);
+	}
+
+	// Expire runs first: a lapsed build is no longer busy; the others remain.
+	Now += 61.0;
+	TestEqual(TEXT("a lapsed build lease is no longer busy"), Table.FindAssetHolders(FString()).Num(), 0);
+	TestEqual(TEXT("the unrelated leases are still held"), Table.GetLeases().Num(), 2);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FHaybaMCPLeaseFairQueueTest,
 	"Hayba.MCP.Lease.FairQueue",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
