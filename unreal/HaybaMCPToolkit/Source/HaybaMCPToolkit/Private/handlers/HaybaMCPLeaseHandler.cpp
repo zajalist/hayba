@@ -9,6 +9,45 @@ namespace
 {
 	using namespace HaybaMCPLease;
 
+	/** On renew/release replies that named the lease with `token`. Same text in the Node tools. */
+	const TCHAR* const TokenDeprecation = TEXT("'token' was renamed to lease_id; send lease_id");
+
+	FString IdRequired(const TCHAR* Cmd)
+	{
+		return FString::Printf(TEXT("%s [lease_id_required]: lease_id is required; send the lease_id lease_acquire returned"), Cmd);
+	}
+
+	FString IdAmbiguous(const TCHAR* Cmd)
+	{
+		return FString::Printf(TEXT("%s [lease_id_ambiguous]: lease_id and its deprecated alias name different leases; send lease_id only"), Cmd);
+	}
+
+	FString IdRedacted(const TCHAR* Cmd)
+	{
+		return FString::Printf(TEXT("%s [lease_id_redacted]: the value is a redaction marker, not a lease_id; run lease_acquire again and send the lease_id it returns"), Cmd);
+	}
+
+	FString IdUnknown(const TCHAR* Cmd)
+	{
+		return FString::Printf(TEXT("%s [lease_id_unknown]: unknown or expired lease"), Cmd);
+	}
+
+	/** A request's lease: `lease_id`, or the deprecated `token`. */
+	FIdParam ReadLeaseId(const TSharedPtr<FJsonObject>& P)
+	{
+		FString Canonical;
+		FString Alias;
+		P->TryGetStringField(TEXT("lease_id"), Canonical);
+		P->TryGetStringField(TEXT("token"), Alias);
+		return ResolveIdParam(Canonical, Alias);
+	}
+
+	bool IsWaitingTicket(FTable& Table, const FString& Ticket)
+	{
+		Table.Expire();
+		return Table.GetWaiters().ContainsByPredicate([&Ticket](const FWaiter& W) { return W.Ticket == Ticket; });
+	}
+
 	/** Re-poll hint for a queued request: soon, but never a busy loop. */
 	double PollAfterSeconds(double EtaSeconds)
 	{
@@ -44,7 +83,7 @@ namespace
 		}
 	}
 
-	/** The envelope owner, or the owner of the lease its `lease` token names. */
+	/** The envelope owner, or the owner of the lease its `lease` field names. */
 	FString CallerOwner()
 	{
 		return FHaybaMCPLeaseManager::Get().EffectiveOwner();
@@ -126,16 +165,25 @@ FHaybaHandlerResult FHaybaMCPLeaseHandler::Acquire(const TSharedPtr<FJsonObject>
 	{
 		const FLease* Lease = Manager.Table().FindLease(Result.Token);
 		Out->SetStringField(TEXT("status"), TEXT("granted"));
-		Out->SetStringField(TEXT("token"), Result.Token);
+		Out->SetStringField(TEXT("lease_id"), Result.Token);
 		Out->SetNumberField(TEXT("expires_in_s"), FMath::Max(0.0, Result.ExpiresAt - FPlatformTime::Seconds()));
 		Out->SetBoolField(TEXT("bound_to_connection"), Request.ConnId != 0);
 		if (Lease)
 		{
 			Out->SetArrayField(TEXT("resources"), ClaimsToJson(Lease->Claims));
 		}
-		Out->SetStringField(TEXT("next"),
-			TEXT("Send this token as the envelope 'lease' field (or keep the same owner), renew with lease_renew before it lapses, "
-				 "and lease_release when done."));
+		FString Next = TEXT(
+			"Send this lease_id as the envelope 'lease' field (or keep the same owner), renew with lease_renew {lease_id} "
+			"before it lapses, and lease_release {lease_id} when done.");
+		if (Request.ConnId != 0)
+		{
+			// R-9: a raw client that opens one connection per call loses a bound
+			// lease the moment its reply is sent.
+			Next += TEXT(
+				" It is bound to this connection and ends when the connection closes; the editor drops a connection idle "
+				"for 5 s, so a client that opens one connection per call should pass bind_connection:false or keep one socket open.");
+		}
+		Out->SetStringField(TEXT("next"), Next);
 	}
 	else
 	{
@@ -156,41 +204,110 @@ FHaybaHandlerResult FHaybaMCPLeaseHandler::Acquire(const TSharedPtr<FJsonObject>
 
 FHaybaHandlerResult FHaybaMCPLeaseHandler::Renew(const TSharedPtr<FJsonObject>& P)
 {
-	FString Token;
-	if (!P->TryGetStringField(TEXT("token"), Token) || Token.IsEmpty())
+	const FIdParam Id = ReadLeaseId(P);
+	switch (Id.Kind)
 	{
-		return FHaybaHandlerResult::Err(TEXT("lease_renew: token is required"));
+	case EIdParam::None:            return FHaybaHandlerResult::Err(IdRequired(TEXT("lease_renew")));
+	case EIdParam::Ambiguous:       return FHaybaHandlerResult::Err(IdAmbiguous(TEXT("lease_renew")));
+	case EIdParam::RedactionMarker: return FHaybaHandlerResult::Err(IdRedacted(TEXT("lease_renew")));
+	case EIdParam::Value:           break;
+	}
+	FHaybaMCPLeaseManager& Manager = FHaybaMCPLeaseManager::Get();
+	const FString Caller = CallerOwner();
+	if (Id.bFromAlias)
+	{
+		Manager.NoteDeprecatedParam(TEXT("lease_renew"), TEXT("token"), Caller);
+	}
+	if (!Manager.Table().FindLease(Id.Value))
+	{
+		return FHaybaHandlerResult::Err(IdUnknown(TEXT("lease_renew")));
 	}
 	double Ttl = 0.0;
 	P->TryGetNumberField(TEXT("ttl_s"), Ttl);
 	double ExpiresAt = 0.0;
 	FString Error;
-	if (!FHaybaMCPLeaseManager::Get().Table().Renew(Token, CallerOwner(), Ttl, ExpiresAt, Error))
+	if (!Manager.Table().Renew(Id.Value, Caller, Ttl, ExpiresAt, Error))
 	{
-		return FHaybaHandlerResult::Err(TEXT("lease_renew: ") + Error);
+		return FHaybaHandlerResult::Err(TEXT("lease_renew: ") + Error);   // "lease belongs to '<owner>'"
 	}
 	TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
-	Out->SetStringField(TEXT("token"), Token);
+	Out->SetStringField(TEXT("lease_id"), Id.Value);
 	Out->SetBoolField(TEXT("renewed"), true);
 	Out->SetNumberField(TEXT("expires_in_s"), FMath::Max(0.0, ExpiresAt - FPlatformTime::Seconds()));
+	if (Id.bFromAlias)
+	{
+		Out->SetStringField(TEXT("deprecation"), TokenDeprecation);
+	}
 	return FHaybaHandlerResult::Ok(Out);
 }
 
 FHaybaHandlerResult FHaybaMCPLeaseHandler::Release(const TSharedPtr<FJsonObject>& P)
 {
-	FString Token;
-	if (!P->TryGetStringField(TEXT("token"), Token) || Token.IsEmpty())
+	const FIdParam Id = ReadLeaseId(P);
+	FString Ticket;
+	P->TryGetStringField(TEXT("ticket"), Ticket);
+	Ticket.TrimStartAndEndInline();
+	if (Id.Kind == EIdParam::Ambiguous)
 	{
-		return FHaybaHandlerResult::Err(TEXT("lease_release: token (a lease token or a queued ticket) is required"));
+		return FHaybaHandlerResult::Err(IdAmbiguous(TEXT("lease_release")));
 	}
+	if (Id.Kind != EIdParam::None && !Ticket.IsEmpty())
+	{
+		return FHaybaHandlerResult::Err(TEXT("lease_release [lease_id_ambiguous]: pass lease_id or ticket, not both"));
+	}
+	if (Id.Kind == EIdParam::None && Ticket.IsEmpty())
+	{
+		return FHaybaHandlerResult::Err(TEXT("lease_release [lease_id_required]: pass lease_id (a held lease) or ticket (a queued request)"));
+	}
+	if (Id.Kind == EIdParam::RedactionMarker)
+	{
+		return FHaybaHandlerResult::Err(IdRedacted(TEXT("lease_release")));
+	}
+
+	FHaybaMCPLeaseManager& Manager = FHaybaMCPLeaseManager::Get();
+	FTable& Table = Manager.Table();
+	const FString Caller = CallerOwner();
+	if (Id.bFromAlias)
+	{
+		Manager.NoteDeprecatedParam(TEXT("lease_release"), TEXT("token"), Caller);
+	}
+	// Old clients withdrew a queued ticket under `token`.
+	if (Ticket.IsEmpty() && Id.bFromAlias && IsWaitingTicket(Table, Id.Value))
+	{
+		Ticket = Id.Value;
+	}
+
 	FString Error;
-	if (!FHaybaMCPLeaseManager::Get().Table().Release(Token, CallerOwner(), Error))
-	{
-		return FHaybaHandlerResult::Err(TEXT("lease_release: ") + Error);
-	}
 	TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
-	Out->SetStringField(TEXT("token"), Token);
+	if (!Ticket.IsEmpty())
+	{
+		if (!IsWaitingTicket(Table, Ticket))
+		{
+			return FHaybaHandlerResult::Err(TEXT("lease_release: unknown or expired ticket"));
+		}
+		if (!Table.Release(Ticket, Caller, Error))
+		{
+			return FHaybaHandlerResult::Err(TEXT("lease_release: ") + Error);   // "ticket belongs to '<owner>'"
+		}
+		Out->SetStringField(TEXT("ticket"), Ticket);
+	}
+	else
+	{
+		if (!Table.FindLease(Id.Value))
+		{
+			return FHaybaHandlerResult::Err(IdUnknown(TEXT("lease_release")));
+		}
+		if (!Table.Release(Id.Value, Caller, Error))
+		{
+			return FHaybaHandlerResult::Err(TEXT("lease_release: ") + Error);  // "lease belongs to '<owner>'"
+		}
+		Out->SetStringField(TEXT("lease_id"), Id.Value);
+	}
 	Out->SetBoolField(TEXT("released"), true);
+	if (Id.bFromAlias)
+	{
+		Out->SetStringField(TEXT("deprecation"), TokenDeprecation);
+	}
 	return FHaybaHandlerResult::Ok(Out);
 }
 
@@ -210,8 +327,8 @@ FHaybaHandlerResult FHaybaMCPLeaseHandler::Status(const TSharedPtr<FJsonObject>&
 		Item->SetBoolField(TEXT("mine"), bMine);
 		if (bMine)
 		{
-			// Only the owner sees its token; a token in an envelope acts as its owner.
-			Item->SetStringField(TEXT("token"), Lease.Token);
+			// Only the owner sees its lease_id; a lease_id in an envelope acts as its owner.
+			Item->SetStringField(TEXT("lease_id"), Lease.Token);
 		}
 		if (!Lease.Label.IsEmpty()) Item->SetStringField(TEXT("label"), Lease.Label);
 		Item->SetArrayField(TEXT("resources"), ClaimsToJson(Lease.Claims));

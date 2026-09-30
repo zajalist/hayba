@@ -1403,7 +1403,7 @@ FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson, int3
     }
 
     // Publish who is calling for the whole dispatch: lease_acquire, python_run
-    // deadline_s and the Plan-Mode gate all ask. Owner and lease token are
+    // deadline_s and the Plan-Mode gate all ask. Owner and lease_id are
     // filled in once the envelope has parsed.
     FHaybaMCPRequestContext Context;
     Context.ConnId = ConnId;
@@ -1493,7 +1493,7 @@ FString FHaybaMCPCommandHandler::ProcessCommandInContext(const FString& CommandJ
     if (!Params.IsValid()) Params = MakeShared<FJsonObject>();
 
     // Optional, back-compatible envelope fields: `owner` names the agent
-    // (else one owner per connection) and `lease` names a held lease token.
+    // (else one owner per connection) and `lease` names a held lease_id.
     FHaybaMCPLeaseManager& Leases = FHaybaMCPLeaseManager::Get();
     if (FHaybaMCPRequestContext* Context = Leases.Current())
     {

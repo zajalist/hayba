@@ -16,7 +16,7 @@ struct FHaybaMCPRequestContext
 	FString Owner;
 	/** TCP connection the command arrived on; 0 for in-process callers. */
 	int32 ConnId = 0;
-	/** Envelope `lease` token, when the caller named one. */
+	/** Envelope `lease`: the lease_id the caller named (may be a redaction marker). */
 	FString LeaseToken;
 	/** Set by the Advisory check; merged into the response as `lease_warning`. */
 	TSharedPtr<FJsonObject> LeaseWarning;
@@ -72,12 +72,21 @@ public:
 	/** The request being processed, or null outside ProcessCommand. */
 	FHaybaMCPRequestContext* Current() const { return CurrentContext; }
 
-	/** The owner the current command acts as: the named lease's owner when a
-	 *  valid `lease` token was sent, otherwise the envelope owner. */
+	/** The owner the current command acts as: the named lease's owner when a valid envelope lease_id was sent, otherwise the envelope owner. */
 	FString EffectiveOwner();
 
 	/** bind_connection: release everything a closed connection held or queued. */
 	void OnConnectionClosed(int32 ConnId);
+
+	/**
+	 * One Warning per (command, param, owner) per session when a caller uses a
+	 * deprecated param, e.g. lease_renew's `token`:
+	 *   lease_renew: deprecated param 'token' from owner 'X'; send lease_id
+	 * The owner is collapsed (conn:<n> -> conn:*) and the set is capped, so raw
+	 * per-call clients cannot grow it (R-9). This line is the removal metric
+	 * for the alias (spec §4.4).
+	 */
+	void NoteDeprecatedParam(const FString& Cmd, const FString& Param, const FString& Owner);
 
 	/** True when the current caller holds an exclusive lease on the current
 	 *  world or on global (python_run deadline_s above 5 s). */
@@ -104,4 +113,5 @@ private:
 
 	HaybaMCPLease::FTable LeaseTable;
 	FHaybaMCPRequestContext* CurrentContext = nullptr;
+	HaybaMCPLease::FOncePerKey DeprecatedParamNotes{ 512 };
 };

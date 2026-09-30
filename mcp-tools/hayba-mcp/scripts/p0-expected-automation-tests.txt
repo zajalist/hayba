@@ -57,3 +57,5 @@ Hayba.MCP.State.RouterAssetBusyCompile
 Hayba.MCP.Lease.IdFormat
 Hayba.MCP.Lease.IdParam
 Hayba.MCP.Lease.IdSurvivesRedaction
+Hayba.MCP.Lease.WireRoundTrip
+Hayba.MCP.Batch.WireRoundTrip

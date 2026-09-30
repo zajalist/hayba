@@ -14,6 +14,13 @@
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
+#include "HaybaMCPCommandHandler.h"
+#include "HaybaMCPModule.h"
+#include "HaybaMCPSettings.h"
+#include "HaybaMCPDeveloperSettings.h"
+#include "Modules/ModuleManager.h"
+#include "Misc/ScopeExit.h"
+#include "Tests/HaybaMCPLatentTest.h"
 
 namespace HaybaLeaseIdTest
 {
@@ -260,6 +267,307 @@ bool FHaybaMCPLeaseIdSurvivesRedactionTest::RunTest(const FString& Parameters)
 	TestFalse(TEXT("negative control: a value under 'token' is still erased"),
 		LIT::Serialize(Redacted).Contains(TEXT("ls_1_aad6bc3c3546")));
 	TestTrue(TEXT("negative control: the redaction is reported in _meta"), Redacted->HasField(TEXT("_meta")));
+	return true;
+}
+
+namespace HaybaLeaseWireTest
+{
+	constexpr int32 TestConnId = 900401;
+
+	FString UniqueOwner()
+	{
+		return TEXT("hayba-test-") + FGuid::NewGuid().ToString(EGuidFormats::Digits).Left(8).ToLower();
+	}
+
+	TSharedPtr<FHaybaMCPCommandHandler> Router(FAutomationTestBase& Test)
+	{
+		FHaybaMCPModule* Module = FModuleManager::GetModulePtr<FHaybaMCPModule>(TEXT("HaybaMCPToolkit"));
+		if (!Test.TestNotNull(TEXT("toolkit module is loaded"), Module))
+		{
+			return nullptr;
+		}
+		const TSharedPtr<FHaybaMCPCommandHandler> Handler = Module->GetCommandHandler();
+		Test.TestTrue(TEXT("command router exists"), Handler.IsValid());
+		return Handler;
+	}
+
+	/** One request through ProcessCommand, so the reply really passes
+	 *  JsonToString -> RedactFinalEnvelope. */
+	TSharedPtr<FJsonObject> Send(FHaybaMCPCommandHandler& Router, const FString& Owner, const FString& Cmd,
+		const FString& ParamsJson, const FString& EnvelopeLease = FString(), FString* OutRaw = nullptr)
+	{
+		TSharedPtr<FJsonObject> Envelope = MakeShared<FJsonObject>();
+		Envelope->SetStringField(TEXT("cmd"), Cmd);
+		Envelope->SetStringField(TEXT("id"), TEXT("lease-wire-") + FGuid::NewGuid().ToString(EGuidFormats::Digits).Left(8));
+		Envelope->SetObjectField(TEXT("params"), HaybaLeaseIdTest::Parse(ParamsJson));
+		if (!Owner.IsEmpty()) Envelope->SetStringField(TEXT("owner"), Owner);
+		if (!EnvelopeLease.IsEmpty()) Envelope->SetStringField(TEXT("lease"), EnvelopeLease);
+		const FString& Auth = FHaybaMCPSettings::Get().CapabilityToken;
+		if (!Auth.IsEmpty()) Envelope->SetStringField(TEXT("auth"), Auth);
+		const FString Raw = Router.ProcessCommand(HaybaLeaseIdTest::Serialize(Envelope), TestConnId);
+		if (OutRaw) *OutRaw = Raw;
+		return HaybaLeaseIdTest::Parse(Raw);
+	}
+
+	TSharedPtr<FJsonObject> Field(const TSharedPtr<FJsonObject>& Object, const TCHAR* Name)
+	{
+		const TSharedPtr<FJsonObject>* Out = nullptr;
+		return Object.IsValid() && Object->TryGetObjectField(Name, Out) && Out && Out->IsValid()
+			? *Out : MakeShared<FJsonObject>();
+	}
+
+	FString Str(const TSharedPtr<FJsonObject>& Object, const TCHAR* Name)
+	{
+		FString Value;
+		if (Object.IsValid()) Object->TryGetStringField(Name, Value);
+		return Value;
+	}
+
+	bool Bool(const TSharedPtr<FJsonObject>& Object, const TCHAR* Name)
+	{
+		bool bValue = false;
+		if (Object.IsValid()) Object->TryGetBoolField(Name, bValue);
+		return bValue;
+	}
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FHaybaMCPLeaseWireRoundTripTest,
+	"Hayba.MCP.Lease.WireRoundTrip",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FHaybaMCPLeaseWireRoundTripTest::RunTest(const FString& Parameters)
+{
+	namespace LIT = HaybaLeaseIdTest;
+	namespace W = HaybaLeaseWireTest;
+	const TSharedPtr<FHaybaMCPCommandHandler> R = W::Router(*this);
+	if (!R.IsValid()) return false;
+
+	UHaybaMCPDeveloperSettings* Dev = GetMutableDefault<UHaybaMCPDeveloperSettings>();
+	const EHaybaMCPLeaseEnforcement WasMode = Dev->LeaseEnforcement;
+	FHaybaMCPSettings& Settings = FHaybaMCPSettings::Get();
+	const bool bWasPlanMode = Settings.bPlanModeEnabled;
+	Dev->LeaseEnforcement = EHaybaMCPLeaseEnforcement::Advisory;   // the gate detail rides on lease_warning
+	Settings.bPlanModeEnabled = false;
+	const FString Owner = W::UniqueOwner();
+	FString LeaseId;
+	FString BoundId;
+	ON_SCOPE_EXIT
+	{
+		Dev->LeaseEnforcement = WasMode;
+		FHaybaMCPSettings::Get().bPlanModeEnabled = bWasPlanMode;
+		FString Ignored;
+		FHaybaMCPLeaseManager::Get().Table().Release(LeaseId, Owner, Ignored);
+		FHaybaMCPLeaseManager::Get().Table().Release(BoundId, Owner, Ignored);
+	};
+	// One deprecation line for this owner, however often it sends `token` (R-9).
+	AddExpectedMessagePlain(
+		FString::Printf(TEXT("lease_renew: deprecated param 'token' from owner '%s'; send lease_id"), *Owner),
+		ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 1);
+	// The two gate probes below run under Advisory, which logs each problem once.
+	AddExpectedMessagePlain(
+		TEXT("[advisory] lease_conflict: 'ping': the envelope's lease is a redaction marker, not a lease_id"),
+		ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 1);
+	AddExpectedMessagePlain(
+		TEXT("[advisory] lease_conflict: 'ping': the envelope's lease_id is unknown or expired"),
+		ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 1);
+
+	TArray<FString> RawReplies;
+	auto Call = [&](const FString& Cmd, const FString& ParamsJson, const FString& EnvelopeLease = FString())
+	{
+		FString Raw;
+		const TSharedPtr<FJsonObject> Reply = W::Send(*R, Owner, Cmd, ParamsJson, EnvelopeLease, &Raw);
+		RawReplies.Add(Raw);
+		return Reply;
+	};
+	auto ExpectRefused = [&](const TCHAR* What, const TSharedPtr<FJsonObject>& Reply, const TCHAR* Code)
+	{
+		TestFalse(*FString::Printf(TEXT("%s: refused"), What), W::Bool(Reply, TEXT("ok")));
+		const FString Error = W::Str(Reply, TEXT("error"));
+		TestTrue(*FString::Printf(TEXT("%s: %s in '%s'"), What, Code, *Error), Error.Contains(Code));
+		TestFalse(*FString::Printf(TEXT("%s: no refusal text contains token"), What), Error.Contains(TEXT("token")));
+	};
+
+	// The host handshake.
+	TestTrue(TEXT("ping: capabilities.lease_id"),
+		W::Bool(W::Field(W::Field(Call(TEXT("ping"), TEXT("{}")), TEXT("data")), TEXT("capabilities")), TEXT("lease_id")));
+
+	// acquire: lease_id, never token.
+	const FString Asset = FString::Printf(TEXT("asset:/Game/__HaybaTest__/LeaseWire_%s"), *Owner.Right(8));
+	const TSharedPtr<FJsonObject> Acquired = W::Field(Call(TEXT("lease_acquire"),
+		FString::Printf(TEXT(R"({"resources":["%s"],"bind_connection":false,"ttl_s":60})"), *Asset)), TEXT("data"));
+	LeaseId = W::Str(Acquired, TEXT("lease_id"));
+	TestEqual(TEXT("acquire: granted"), W::Str(Acquired, TEXT("status")), FString(TEXT("granted")));
+	TestTrue(TEXT("acquire: lease_id is ls_<seq>_<mac12>"), LIT::IsWellFormed(LeaseId, TEXT("ls")));
+	TestFalse(TEXT("acquire: no token field"), Acquired->HasField(TEXT("token")));
+	TestFalse(TEXT("acquire (unbound): no connection hint"), W::Str(Acquired, TEXT("next")).Contains(TEXT("bind_connection:false")));
+
+	// A bound lease tells per-call raw clients how not to lose it (R-9).
+	const TSharedPtr<FJsonObject> Bound = W::Field(Call(TEXT("lease_acquire"),
+		FString::Printf(TEXT(R"({"resources":["%s_bound"],"ttl_s":60})"), *Asset)), TEXT("data"));
+	BoundId = W::Str(Bound, TEXT("lease_id"));
+	TestTrue(TEXT("acquire (bound): next tells per-call clients to pass bind_connection:false"),
+		W::Str(Bound, TEXT("next")).Contains(TEXT("bind_connection:false")));
+
+	// renew by lease_id.
+	const TSharedPtr<FJsonObject> Renewed = Call(TEXT("lease_renew"), FString::Printf(TEXT(R"({"lease_id":"%s","ttl_s":60})"), *LeaseId));
+	TestTrue(TEXT("renew by lease_id: ok"), W::Bool(Renewed, TEXT("ok")));
+	TestEqual(TEXT("renew by lease_id: echoes lease_id"), W::Str(W::Field(Renewed, TEXT("data")), TEXT("lease_id")), LeaseId);
+	TestFalse(TEXT("renew by lease_id: no deprecation"), W::Field(Renewed, TEXT("data"))->HasField(TEXT("deprecation")));
+
+	// renew by the deprecated alias, twice: both work, both say so, one log line.
+	for (int32 Attempt = 0; Attempt < 2; ++Attempt)
+	{
+		const TSharedPtr<FJsonObject> ByAlias = Call(TEXT("lease_renew"), FString::Printf(TEXT(R"({"token":"%s"})"), *LeaseId));
+		const TSharedPtr<FJsonObject> Data = W::Field(ByAlias, TEXT("data"));
+		TestTrue(TEXT("renew by token: ok"), W::Bool(ByAlias, TEXT("ok")));
+		TestEqual(TEXT("renew by token: replies lease_id"), W::Str(Data, TEXT("lease_id")), LeaseId);
+		TestEqual(TEXT("renew by token: deprecation"), W::Str(Data, TEXT("deprecation")), FString(TEXT("'token' was renamed to lease_id; send lease_id")));
+		TestFalse(TEXT("renew by token: never echoes token"), Data->HasField(TEXT("token")));
+	}
+
+	ExpectRefused(TEXT("renew with two different ids"),
+		Call(TEXT("lease_renew"), FString::Printf(TEXT(R"({"lease_id":"%s","token":"ls_999999_000000000000"})"), *LeaseId)),
+		TEXT("[lease_id_ambiguous]"));
+	ExpectRefused(TEXT("renew with a marker under lease_id"),
+		Call(TEXT("lease_renew"), TEXT(R"({"lease_id":"[REDACTED:token]"})")), TEXT("[lease_id_redacted]"));
+	ExpectRefused(TEXT("renew with no id (before T7)"), Call(TEXT("lease_renew"), TEXT("{}")), TEXT("[lease_id_required]"));
+
+	// status: the owner sees its lease_id, nobody sees a token.
+	bool bListed = false;
+	const TArray<TSharedPtr<FJsonValue>>* Leases = nullptr;
+	// Hold the reply: Leases points into it.
+	const TSharedPtr<FJsonObject> StatusData = W::Field(Call(TEXT("lease_status"), TEXT("{}")), TEXT("data"));
+	if (StatusData->TryGetArrayField(TEXT("leases"), Leases) && Leases)
+	{
+		for (const TSharedPtr<FJsonValue>& Value : *Leases)
+		{
+			const TSharedPtr<FJsonObject> Entry = Value->AsObject();
+			TestFalse(TEXT("status: no entry has a token field"), Entry->HasField(TEXT("token")));
+			bListed |= W::Str(Entry, TEXT("lease_id")) == LeaseId;
+		}
+	}
+	TestTrue(TEXT("status: the caller's lease is listed by lease_id"), bListed);
+
+	// status as another owner: it sees that the leases exist, never their ids.
+	// Until T9 an envelope that names a lease_id acts as that lease's owner, so
+	// a leaked id would let one agent act as another.
+	const FString Other = W::UniqueOwner();
+	FString OtherRaw;
+	int32 SeenOfOwner = 0;
+	const TArray<TSharedPtr<FJsonValue>>* OtherLeases = nullptr;
+	const TSharedPtr<FJsonObject> OtherData = W::Field(W::Send(*R, Other, TEXT("lease_status"), TEXT("{}"), FString(), &OtherRaw), TEXT("data"));
+	if (OtherData->TryGetArrayField(TEXT("leases"), OtherLeases) && OtherLeases)
+	{
+		for (const TSharedPtr<FJsonValue>& Value : *OtherLeases)
+		{
+			const TSharedPtr<FJsonObject> Entry = Value->AsObject();
+			if (W::Str(Entry, TEXT("owner")) != Owner) continue;
+			++SeenOfOwner;
+			TestFalse(TEXT("status as another owner: mine is false"), W::Bool(Entry, TEXT("mine")));
+			TestFalse(TEXT("status as another owner: no lease_id field"), Entry->HasField(TEXT("lease_id")));
+			TestFalse(TEXT("status as another owner: no token field"), Entry->HasField(TEXT("token")));
+		}
+	}
+	TestEqual(TEXT("status as another owner: both of the holder's leases are listed"), SeenOfOwner, 2);
+	TestFalse(TEXT("status as another owner: the reply holds neither id anywhere"),
+		OtherRaw.Contains(LeaseId) || OtherRaw.Contains(BoundId));
+	RawReplies.Add(OtherRaw);
+
+	// The gate: a marker, and an unknown id, in the envelope.
+	TestEqual(TEXT("gate: an envelope marker gives lease_id_error redaction_marker"),
+		W::Str(W::Field(Call(TEXT("ping"), TEXT("{}"), TEXT("[REDACTED:token]")), TEXT("lease_warning")), TEXT("lease_id_error")),
+		FString(TEXT("redaction_marker")));
+	TestEqual(TEXT("gate: an unknown envelope lease_id gives lease_id_error unknown_or_expired"),
+		W::Str(W::Field(Call(TEXT("ping"), TEXT("{}"), TEXT("ls_999999_000000000000")), TEXT("lease_warning")), TEXT("lease_id_error")),
+		FString(TEXT("unknown_or_expired")));
+
+	// release, then release again.
+	const TSharedPtr<FJsonObject> Released = Call(TEXT("lease_release"), FString::Printf(TEXT(R"({"lease_id":"%s"})"), *LeaseId));
+	TestTrue(TEXT("release: ok"), W::Bool(Released, TEXT("ok")));
+	TestEqual(TEXT("release: echoes lease_id"), W::Str(W::Field(Released, TEXT("data")), TEXT("lease_id")), LeaseId);
+	TestTrue(TEXT("release: released"), W::Bool(W::Field(Released, TEXT("data")), TEXT("released")));
+	ExpectRefused(TEXT("second release"),
+		Call(TEXT("lease_release"), FString::Printf(TEXT(R"({"lease_id":"%s"})"), *LeaseId)), TEXT("[lease_id_unknown]"));
+	ExpectRefused(TEXT("release with nothing named"), Call(TEXT("lease_release"), TEXT("{}")), TEXT("[lease_id_required]"));
+	ExpectRefused(TEXT("release with a lease_id and a ticket"),
+		Call(TEXT("lease_release"), FString::Printf(TEXT(R"({"lease_id":"%s","ticket":"lq_1_000000000000"})"), *BoundId)),
+		TEXT("[lease_id_ambiguous]"));
+
+	// No reply was secret-shaped, so nothing was redacted.
+	for (const FString& Raw : RawReplies)
+	{
+		TestFalse(TEXT("no reply has a token key"), Raw.Contains(TEXT("\"token\":")));
+		TestFalse(TEXT("no reply was redacted"), Raw.Contains(TEXT("hayba/security_redaction")));
+	}
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FHaybaMCPBatchWireRoundTripTest,
+	"Hayba.MCP.Batch.WireRoundTrip",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FHaybaMCPBatchWireRoundTripTest::RunTest(const FString& Parameters)
+{
+	namespace LIT = HaybaLeaseIdTest;
+	namespace W = HaybaLeaseWireTest;
+	const TSharedPtr<FHaybaMCPCommandHandler> R = W::Router(*this);
+	if (!R.IsValid()) return false;
+
+	struct FState
+	{
+		FString Owner;
+		FString LeaseId;
+		FString JobId;
+		FString Status;
+		bool bPlanModeWas = true;
+	};
+	const TSharedRef<FState> S = MakeShared<FState>();
+	S->Owner = W::UniqueOwner();
+	S->bPlanModeWas = FHaybaMCPSettings::Get().bPlanModeEnabled;
+	FHaybaMCPSettings::Get().bPlanModeEnabled = false;   // editor_batch is plan-gated; the last latent command restores it
+	const auto Cleanup = [S]()
+	{
+		FString Ignored;
+		FHaybaMCPLeaseManager::Get().Table().Release(S->LeaseId, S->Owner, Ignored);
+		FHaybaMCPSettings::Get().bPlanModeEnabled = S->bPlanModeWas;
+	};
+
+	S->LeaseId = W::Str(W::Field(W::Send(*R, S->Owner, TEXT("lease_acquire"),
+		FString::Printf(TEXT(R"({"resources":["asset:/Game/__HaybaTest__/BatchWire_%s"],"bind_connection":false,"ttl_s":60})"),
+			*S->Owner.Right(8))), TEXT("data")), TEXT("lease_id"));
+	if (!TestTrue(TEXT("the batch's lease is granted with a lease_id"), LIT::IsWellFormed(S->LeaseId, TEXT("ls"))))
+	{
+		Cleanup();
+		return false;
+	}
+
+	// The exact call refused at 01:25:52 in I-5, now with the lease's id.
+	const TSharedPtr<FJsonObject> Started = W::Send(*R, S->Owner, TEXT("editor_batch"),
+		FString::Printf(TEXT(R"({"lease_id":"%s","steps":[{"cmd":"ping","fence_after":"none"}]})"), *S->LeaseId));
+	S->JobId = W::Str(W::Field(Started, TEXT("data")), TEXT("job_id"));
+	if (!TestTrue(FString::Printf(TEXT("editor_batch {lease_id} starts (%s)"), *W::Str(Started, TEXT("error"))),
+		W::Bool(Started, TEXT("ok")) && !S->JobId.IsEmpty()))
+	{
+		Cleanup();
+		return false;
+	}
+
+	ADD_LATENT_AUTOMATION_COMMAND(FHaybaWaitUntilLatentCommand(this, TEXT("editor_batch reaches a final status"),
+		[R, S]()
+		{
+			S->Status = W::Str(W::Field(W::Send(*R, S->Owner, TEXT("batch_status"),
+				FString::Printf(TEXT(R"({"job_id":"%s"})"), *S->JobId)), TEXT("data")), TEXT("status"));
+			return !S->Status.IsEmpty() && S->Status != TEXT("running");
+		},
+		10.0));
+	ADD_LATENT_AUTOMATION_COMMAND(FFunctionLatentCommand([this, S, Cleanup]()
+	{
+		TestEqual(TEXT("editor_batch {lease_id, steps:[ping]} succeeded"), S->Status, FString(TEXT("succeeded")));
+		Cleanup();
+		return true;
+	}));
 	return true;
 }
 

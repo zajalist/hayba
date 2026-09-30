@@ -1,8 +1,10 @@
 // HaybaMCPLeaseHandler.h - multi-agent leases (lease_acquire / renew / release / status).
 //
 // A thin command facade over FHaybaMCPLeaseManager's pure table. Nothing here
-// blocks: lease_acquire answers granted (token) or queued (ticket, position,
-// holder, ETA) and the caller polls with its ticket. See docs/adr/0010.
+// blocks: lease_acquire answers granted (lease_id) or queued (ticket,
+// position, holder, ETA) and the caller polls with its ticket. The handle is
+// never named `token` on output: both redaction layers erase values under
+// secret-shaped keys (docs/adr/0010, "Lease ids").
 
 #pragma once
 #include "IHaybaMCPHandler.h"

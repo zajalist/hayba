@@ -2,6 +2,7 @@
 #include "HaybaMCPAccessPolicy.h"
 #include "HaybaMCPCommandHandler.h"
 #include "HaybaMCPDeveloperSettings.h"
+#include "HaybaMCPWarningLimiter.h"
 #include "handlers/HaybaMCPPythonHandler.h"
 #include "Editor.h"
 #include "Engine/World.h"
@@ -164,6 +165,17 @@ void FHaybaMCPLeaseManager::OnConnectionClosed(int32 ConnId)
 	}
 }
 
+void FHaybaMCPLeaseManager::NoteDeprecatedParam(const FString& Cmd, const FString& Param, const FString& Owner)
+{
+	const FString Collapsed = FWarningLimiter::CollapseOwner(Owner);
+	if (!DeprecatedParamNotes.First(Cmd + TEXT("|") + Param + TEXT("|") + Collapsed))
+	{
+		return;
+	}
+	UE_LOG(LogHaybaMCPLease, Warning, TEXT("%s: deprecated param '%s' from owner '%s'; send lease_id"),
+		*Cmd, *Param, *Collapsed);
+}
+
 bool FHaybaMCPLeaseManager::CallerHoldsExclusiveOnCurrentWorld()
 {
 	const FString World = CurrentWorldPackage();
@@ -223,16 +235,28 @@ FHaybaMCPLeaseManager::FVerdict FHaybaMCPLeaseManager::CheckCommand(
 	const FString World = CurrentWorldPackage();
 	const TArray<HaybaMCPAccess::FLock> Required = HaybaMCPAccess::RequiredLocks(Class.Class, Declared, World);
 
-	FString TokenProblem;
-	if (CurrentContext && !CurrentContext->LeaseToken.IsEmpty() && !LeaseTable.FindLease(CurrentContext->LeaseToken))
+	// The envelope's lease: a marker (the handle was redacted on its way to
+	// the client) or an id this session never issued / already dropped.
+	FString LeaseIdError;
+	FString LeaseIdProblem;
+	if (CurrentContext && !CurrentContext->LeaseToken.IsEmpty())
 	{
-		TokenProblem = TEXT("the envelope's lease token is unknown or expired");
+		if (HaybaMCPLease::IsRedactionMarker(CurrentContext->LeaseToken))
+		{
+			LeaseIdError = TEXT("redaction_marker");
+			LeaseIdProblem = TEXT("the envelope's lease is a redaction marker, not a lease_id; run lease_acquire again and send the lease_id it returns");
+		}
+		else if (!LeaseTable.FindLease(CurrentContext->LeaseToken))
+		{
+			LeaseIdError = TEXT("unknown_or_expired");
+			LeaseIdProblem = TEXT("the envelope's lease_id is unknown or expired");
+		}
 	}
 
 	FString ConflictDetail;
 	const FString Owner = EffectiveOwner();
 	const HaybaMCPLease::FLease* Holder = LeaseTable.FindConflictingHolder(Owner, Required, &ConflictDetail);
-	if (!Holder && TokenProblem.IsEmpty())
+	if (!Holder && LeaseIdProblem.IsEmpty())
 	{
 		return Verdict;
 	}
@@ -248,16 +272,16 @@ FHaybaMCPLeaseManager::FVerdict FHaybaMCPLeaseManager::CheckCommand(
 	}
 	if (Holder)
 	{
-		// Never the holder's token: a token in the envelope acts as its owner.
+		// Never the holder's lease_id: a lease_id in the envelope acts as its owner.
 		Detail->SetStringField(TEXT("holder_owner"), Holder->Owner);
 		if (!Holder->Label.IsEmpty()) Detail->SetStringField(TEXT("holder_label"), Holder->Label);
 		Detail->SetNumberField(TEXT("holder_expires_in_s"),
 			FMath::Max(0.0, Holder->ExpiresAt - FPlatformTime::Seconds()));
 		Detail->SetStringField(TEXT("conflict"), ConflictDetail);
 	}
-	if (!TokenProblem.IsEmpty())
+	if (!LeaseIdError.IsEmpty())
 	{
-		Detail->SetStringField(TEXT("lease_token"), TokenProblem);
+		Detail->SetStringField(TEXT("lease_id_error"), LeaseIdError);
 	}
 	Detail->SetStringField(TEXT("hint"),
 		TEXT("Call lease_acquire for the resources this command needs; it answers granted or queued (with position and ETA) "
@@ -267,7 +291,7 @@ FHaybaMCPLeaseManager::FVerdict FHaybaMCPLeaseManager::CheckCommand(
 	Verdict.Message = Holder
 		? FString::Printf(TEXT("lease_conflict: '%s' (%s) conflicts with a lease held by '%s' (%s)"),
 			*Cmd, HaybaMCPAccess::LexAccessClass(Class.Class), *Holder->Owner, *ConflictDetail)
-		: FString::Printf(TEXT("lease_conflict: '%s': %s"), *Cmd, *TokenProblem);
+		: FString::Printf(TEXT("lease_conflict: '%s': %s"), *Cmd, *LeaseIdProblem);
 	if (Mode == EHaybaMCPLeaseEnforcement::Enforced)
 	{
 		Verdict.bRefuse = true;

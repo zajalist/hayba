@@ -153,6 +153,9 @@ FHaybaHandlerResult FHaybaMCPLegacyHandler::Cmd_Ping(const TSharedPtr<FJsonObjec
 		// as editor_gate.py switch from a file lock to lease_acquire when
 		// lease_manager is true, and fall back to the file lock when absent.
 		Caps->SetBoolField(TEXT("lease_manager"), true);
+		// Lease handles are named lease_id and survive redaction (T4). Host
+		// tools use leases only when both lease_manager and lease_id are set.
+		Caps->SetBoolField(TEXT("lease_id"), true);
 		Caps->SetBoolField(TEXT("editor_batch"), true);
 		Caps->SetBoolField(TEXT("wp_region_steps"), true);
 		// Sticky editor_unsafe (ADR-0011): health fields below; refusals carry editor_health.

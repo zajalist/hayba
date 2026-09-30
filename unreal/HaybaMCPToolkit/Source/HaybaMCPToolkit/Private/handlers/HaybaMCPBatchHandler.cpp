@@ -760,22 +760,39 @@ FHaybaHandlerResult FHaybaMCPBatchHandler::Handle(const FString& Command, const 
 FHaybaHandlerResult FHaybaMCPBatchHandler::Start(const TSharedPtr<FJsonObject>& P)
 {
 	FHaybaMCPLeaseManager& Leases = FHaybaMCPLeaseManager::Get();
-	FString Token;
-	if (!P->TryGetStringField(TEXT("lease"), Token) || Token.IsEmpty())
+	FString Canonical;
+	FString Alias;
+	P->TryGetStringField(TEXT("lease_id"), Canonical);
+	P->TryGetStringField(TEXT("lease"), Alias);   // permanent: `lease` is not secret-shaped
+	HaybaMCPLease::FIdParam Id = HaybaMCPLease::ResolveIdParam(Canonical, Alias);
+	if (Id.Kind == HaybaMCPLease::EIdParam::None)
 	{
-		// Fall back to the envelope's lease token.
-		if (const FHaybaMCPRequestContext* Context = Leases.Current()) Token = Context->LeaseToken;
+		// Fall back to the envelope's lease.
+		if (const FHaybaMCPRequestContext* Context = Leases.Current())
+		{
+			Id = HaybaMCPLease::ResolveIdParam(Context->LeaseToken, FString());
+		}
 	}
-	if (Token.IsEmpty())
+	switch (Id.Kind)
 	{
+	case HaybaMCPLease::EIdParam::None:
 		return FHaybaHandlerResult::Err(TEXT(
-			"editor_batch: lease is required. lease_acquire the resources the steps touch (e.g. world:/Game/Maps/Valley), "
-			"then pass its token as lease."));
+			"editor_batch [lease_id_required]: lease_id is required. lease_acquire the resources the steps touch "
+			"(e.g. world:/Game/Maps/Valley), then pass its lease_id."));
+	case HaybaMCPLease::EIdParam::Ambiguous:
+		return FHaybaHandlerResult::Err(TEXT("editor_batch [lease_id_ambiguous]: lease_id and lease name different leases; pass one"));
+	case HaybaMCPLease::EIdParam::RedactionMarker:
+		return FHaybaHandlerResult::Err(TEXT(
+			"editor_batch [lease_id_redacted]: the lease is a redaction marker, not a lease_id; run lease_acquire again "
+			"and pass the lease_id it returns"));
+	case HaybaMCPLease::EIdParam::Value:
+		break;
 	}
-	const HaybaMCPLease::FLease* Lease = Leases.Table().FindLease(Token);
+	const FString LeaseId = Id.Value;
+	const HaybaMCPLease::FLease* Lease = Leases.Table().FindLease(LeaseId);
 	if (!Lease)
 	{
-		return FHaybaHandlerResult::Err(TEXT("editor_batch: the lease is unknown or expired"));
+		return FHaybaHandlerResult::Err(TEXT("editor_batch [lease_id_unknown]: the lease is unknown or expired"));
 	}
 	const FString Caller = Leases.EffectiveOwner();
 	if (Lease->Owner != Caller)
@@ -854,7 +871,7 @@ FHaybaHandlerResult FHaybaMCPBatchHandler::Start(const TSharedPtr<FJsonObject>& 
 	TSharedRef<FBatchState> S = MakeShared<FBatchState>();
 	S->JobId = FHaybaMCPJobRegistry::Get().AllocateJob(TEXT("editor_batch"));
 	S->Owner = Lease->Owner;
-	S->LeaseToken = Token;
+	S->LeaseToken = LeaseId;
 	S->WorldPackage = FHaybaMCPLeaseManager::CurrentWorldPackage();
 	S->OnErrorText = OnErrorText;
 	// This command already passed the Plan gate (it is plan-gated): with Plan
@@ -866,12 +883,12 @@ FHaybaHandlerResult FHaybaMCPBatchHandler::Start(const TSharedPtr<FJsonObject>& 
 	S->Machine = MakeUnique<FMachine>(MoveTemp(Specs), OnError, Tuning);
 	S->StartedAt = FPlatformTime::Seconds();
 
-	Leases.Table().SetYieldable(Token, true);
+	Leases.Table().SetYieldable(LeaseId, true);
 	S->TickHandle = FTSTicker::GetCoreTicker().AddTicker(
 		FTickerDelegate::CreateLambda([S](float Dt) { return Pump(Dt, S); }));
 	if (!S->TickHandle.IsValid())
 	{
-		Leases.Table().SetYieldable(Token, false);
+		Leases.Table().SetYieldable(LeaseId, false);
 		FHaybaMCPJobRegistry::Get().SetDone(S->JobId, 1, TEXT("{\"status\":\"failed\",\"error\":\"failed to register the batch ticker\"}"));
 		S->bFinalized = true;
 		return FHaybaHandlerResult::Err(TEXT("editor_batch: failed to register the batch ticker"));
