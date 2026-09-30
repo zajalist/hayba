@@ -220,13 +220,37 @@ bool FHaybaMCPLeaseProcessingLogOwnerTest::RunTest(const FString& Parameters)
 	const FString HolderLease = AcquireId(*R, 900654, Holder,
 		TEXT("{\"resources\":[\"global\"],\"bind_connection\":false,\"label\":\"log-owner\"}"));
 	TestFalse(TEXT("holder lease granted"), HolderLease.IsEmpty());
+	FLogCapture InvalidLeaseLog(TEXT("LogHaybaMCPLease"));
+	auto WarningRepeats = [this](const TSharedPtr<FJsonObject>& Reply)
+	{
+		const TSharedPtr<FJsonObject>* Warning = nullptr;
+		double Repeats = -1.0;
+		if (!TestTrue(TEXT("the reply carries a lease warning"),
+			Reply.IsValid() && Reply->TryGetObjectField(TEXT("lease_warning"), Warning) && Warning && Warning->IsValid())
+			|| !TestTrue(TEXT("the warning carries its repeat count"),
+				(*Warning)->TryGetNumberField(TEXT("repeats_in_window"), Repeats)))
+		{
+			return -1;
+		}
+		return static_cast<int32>(Repeats);
+	};
 	{
 		FLogCapture Cmd(TEXT("LogHaybaMCPCmd"));
 		Send(*R, 900650, Caller, TEXT("ping"), nullptr);
 		Send(*R, 900651, FString(), TEXT("ping"), nullptr);
 		Send(*R, 0, FString(), TEXT("ping"), nullptr);
-		Send(*R, 900652, Caller, TEXT("ping"), nullptr, TEXT("[REDACTED:token]"));
-		Send(*R, 900653, Caller, TEXT("ping"), nullptr, TEXT("ls_999999_000000000000"));
+		const TSharedPtr<FJsonObject> MarkerFirst = Send(*R, 900652, Caller, TEXT("ping"), nullptr, TEXT("[REDACTED:token]"));
+		const TSharedPtr<FJsonObject> UnknownFirst = Send(*R, 900653, Caller, TEXT("ping"), nullptr, TEXT("ls_999999_000000000000"));
+		// Different diagnostics for the same owner/command are separate windows.
+		// Keep replies alive while extracting fields from their lease_warning.
+		TestEqual(TEXT("the marker starts its own warning window"), WarningRepeats(MarkerFirst), 1);
+		TestEqual(TEXT("the unknown handle starts its own warning window"), WarningRepeats(UnknownFirst), 1);
+		const TSharedPtr<FJsonObject> MarkerRepeat = Send(*R, 900657, Caller, TEXT("ping"), nullptr, TEXT("[REDACTED:token]"));
+		const TSharedPtr<FJsonObject> UnknownRepeat = Send(*R, 900658, Caller, TEXT("ping"), nullptr, TEXT("ls_999999_000000000000"));
+		const TSharedPtr<FJsonObject> UnknownAgain = Send(*R, 900659, Caller, TEXT("ping"), nullptr, TEXT("ls_999999_000000000000"));
+		TestEqual(TEXT("a marker repetition stays in its own window"), WarningRepeats(MarkerRepeat), 2);
+		TestEqual(TEXT("an unknown repetition stays in its own window"), WarningRepeats(UnknownRepeat), 2);
+		TestEqual(TEXT("a second unknown repetition leaves the marker count alone"), WarningRepeats(UnknownAgain), 3);
 		Send(*R, 900655, Caller, TEXT("ping"), nullptr, HolderLease);
 		Send(*R, 900656, Holder, TEXT("ping"), nullptr, HolderLease);
 		R->ProcessBatchStep(Envelope(Caller, TEXT("ping"), nullptr), TEXT("hayba-test-job-6f2a91c0"), true);
@@ -248,6 +272,12 @@ bool FHaybaMCPLeaseProcessingLogOwnerTest::RunTest(const FString& Parameters)
 		TestEqual(TEXT("the handle itself never reaches the log"),
 			Cmd.Count(HolderLease) + Cmd.Count(TEXT("ls_999999_000000000000")) + Cmd.Count(TEXT("[REDACTED:token]")), 0);
 	}
+
+	InvalidLeaseLog.Flush();
+	TestEqual(TEXT("the marker diagnostic logs its first occurrence only"),
+		InvalidLeaseLog.Count(TEXT("[advisory] lease_conflict: 'ping': the envelope's lease is a redaction marker"), ELogVerbosity::Warning), 1);
+	TestEqual(TEXT("the unknown diagnostic logs its first occurrence only"),
+		InvalidLeaseLog.Count(TEXT("[advisory] lease_conflict: 'ping': the envelope's lease_id is unknown or expired"), ELogVerbosity::Warning), 1);
 
 	// 2. 50 identical advisory conflicts from per-call connections: one Warning,
 	//    then one drained line with the other 49 (R-9, R-18).
@@ -294,6 +324,15 @@ bool FHaybaMCPLeaseProcessingLogOwnerTest::RunTest(const FString& Parameters)
 				TEXT("[advisory] lease_conflict/held repeated 49 more times in 30 s: owner='conn:*' cmd='blueprint_add_node' holder='%s'"),
 				*Holder), ELogVerbosity::Warning), 1);
 	}
+	InvalidLeaseLog.Flush();
+	TestEqual(TEXT("the marker drains its own suppressed repetition"),
+		InvalidLeaseLog.Count(FString::Printf(
+			TEXT("[advisory] lease_conflict/lease_handle_redacted repeated 1 more times in 30 s: owner='%s' cmd='ping' holder='' conflict=''"),
+			*Caller), ELogVerbosity::Warning), 1);
+	TestEqual(TEXT("the unknown handle drains its own suppressed repetitions"),
+		InvalidLeaseLog.Count(FString::Printf(
+			TEXT("[advisory] lease_conflict/lease_unknown repeated 2 more times in 30 s: owner='%s' cmd='ping' holder='' conflict=''"),
+			*Caller), ELogVerbosity::Warning), 1);
 	return true;
 }
 

@@ -450,8 +450,10 @@ FHaybaMCPLeaseManager::FVerdict FHaybaMCPLeaseManager::CheckCommand(
 	{
 		// One Warning per (reason, owner, command, holder) per 30 s; the reply
 		// still carries its own lease_warning, now with repeats_in_window.
+		const TCHAR* WarningReason = Holder ? TEXT("held")
+			: LeaseIdError == TEXT("redaction_marker") ? TEXT("lease_handle_redacted") : TEXT("lease_unknown");
 		const FWarningLimiter::FHit Hit = NoteLeaseWarning(TEXT("advisory"), TEXT("lease_conflict"),
-			Holder ? TEXT("held") : TEXT("lease_unknown"), Owner, Cmd,
+			WarningReason, Owner, Cmd,
 			Holder ? Holder->Owner : FString(), ConflictDetail, Verdict.Message);
 		Detail->SetNumberField(TEXT("repeats_in_window"), Hit.RepeatsInWindow);
 		CurrentContext->LeaseWarning = Detail;
