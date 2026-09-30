@@ -100,3 +100,29 @@ unverified, because the toolkit does not build on 5.7 today.
 - Asset builds (`asset_busy`) and the user's Play during another owner's
   build (D7) extend this design; the build veto is recorded in an addendum
   when it lands.
+
+## asset_busy (P0 T3)
+
+A build marks its assets busy by holding `asset:<path>` exclusive leases
+(D5). The router checks this in slot 3, after `pie_active` and before the
+lease gate, so a PIE start against another owner's build answers
+`asset_busy`, not `lease_conflict` (R10).
+
+- `AnyBusyCommands` (`editor_start_pie`, `editor_save_all_and_quit`) are
+  refused while **any** owner holds an asset X lock, the caller included, in
+  every `LeaseEnforcement` mode except Off. A lane's helpers share one owner,
+  so excluding the caller would let a lane play its own half-built Blueprint
+  (I-6). A tool releases its build leases before it starts PIE.
+- `AssetBusyTargets` (the compile and save commands of one asset) are
+  refused while **another** owner holds X on that asset, under a refusing mode.
+  Under Advisory they run, and the reply carries
+  `state_warning {code: "asset_busy", busy}`. A build compiles its own assets.
+- The refusal carries `busy {command, caller_owner, assets[]}` and never a
+  lease handle. Its Warning line goes through the gate limiter.
+  `editor_get_state.building` lists every asset X lock, whatever its label.
+- Limits:
+  - Before T7, a build lease bound to a socket dies when the server drops that
+    socket after 5 s idle, so the builder pings at least every 2 s.
+  - After T7, an orphaned build lease keeps `asset_busy` (and refuses
+    `editor_start_pie`) for up to 60 s after the builder dies.
+- The user's Play button is covered separately (D7, T10).

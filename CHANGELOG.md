@@ -39,6 +39,16 @@ All notable changes to Hayba MCP Toolkit are documented here. Format based on [K
   `wp_region_steps`, so host scripts can switch from a file lock to leases.
 - A proposed lease-based `editor_gate.py` for the first consumer project,
   with tests and a patch, kept with that project's host tools.
+- `asset_busy` (P0). While any owner holds an `asset:<path>` exclusive lease
+  (a build), `editor_start_pie` and `editor_save_all_and_quit` are refused with
+  `code: "asset_busy"` and a `busy` detail naming the asset, owner, label and
+  age; the caller's own build counts. Compiling or saving that asset
+  (`blueprint_compile`, `ui_compile_widget`, `ui_save_widget`,
+  `material_compile`, `bt_compile`, `anim_blueprint_compile`,
+  `audio_asset_save`) is refused for other owners under `Enforced` and runs
+  with a `state_warning` under `Advisory`. `editor_get_state.building` lists
+  every asset build. Blueprint and widget authoring commands lock the asset
+  they name.
 
 ### Changed
 - Plan-Mode approval is per owner: only the agent that proposed a plan can
