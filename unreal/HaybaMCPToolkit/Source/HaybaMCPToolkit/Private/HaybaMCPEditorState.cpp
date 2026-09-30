@@ -193,7 +193,7 @@ TArray<HaybaMCPState::FBusyAsset> FHaybaMCPEditorState::BuildingAssets() const
 	// FindAssetHolders expires first. Its lease pointers are copied before any
 	// other table call can move them.
 	HaybaMCPLease::FTable& Table = FHaybaMCPLeaseManager::Get().Table();
-	return HaybaMCPState::MakeBusyAssets(Table.FindAssetHolders(FString()), FPlatformTime::Seconds(), FDateTime::UtcNow());
+	return HaybaMCPState::MakeBusyAssets(Table.FindAssetHolders(FString()), FHaybaMCPLeaseManager::Get().Now(), FDateTime::UtcNow());
 }
 
 TArray<HaybaMCPState::FBusyAsset> FHaybaMCPEditorState::BusyAssetsFor(const TArray<FString>& AssetKeys, const FString& ExcludeOwner) const
@@ -202,7 +202,7 @@ TArray<HaybaMCPState::FBusyAsset> FHaybaMCPEditorState::BusyAssetsFor(const TArr
 	TArray<HaybaMCPState::FBusyAsset> Out;
 	for (const FString& Key : AssetKeys)
 	{
-		Out.Append(HaybaMCPState::MakeBusyAssets(Table.FindAssetHolders(ExcludeOwner, Key), FPlatformTime::Seconds(), FDateTime::UtcNow()));
+		Out.Append(HaybaMCPState::MakeBusyAssets(Table.FindAssetHolders(ExcludeOwner, Key), FHaybaMCPLeaseManager::Get().Now(), FDateTime::UtcNow()));
 	}
 	return Out;
 }

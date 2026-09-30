@@ -166,7 +166,7 @@ FHaybaHandlerResult FHaybaMCPLeaseHandler::Acquire(const TSharedPtr<FJsonObject>
 		const FLease* Lease = Manager.Table().FindLease(Result.Token);
 		Out->SetStringField(TEXT("status"), TEXT("granted"));
 		Out->SetStringField(TEXT("lease_id"), Result.Token);
-		Out->SetNumberField(TEXT("expires_in_s"), FMath::Max(0.0, Result.ExpiresAt - FPlatformTime::Seconds()));
+		Out->SetNumberField(TEXT("expires_in_s"), FMath::Max(0.0, Result.ExpiresAt - FHaybaMCPLeaseManager::Get().Now()));
 		Out->SetBoolField(TEXT("bound_to_connection"), Request.ConnId != 0);
 		if (Lease)
 		{
@@ -233,7 +233,7 @@ FHaybaHandlerResult FHaybaMCPLeaseHandler::Renew(const TSharedPtr<FJsonObject>& 
 	TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
 	Out->SetStringField(TEXT("lease_id"), Id.Value);
 	Out->SetBoolField(TEXT("renewed"), true);
-	Out->SetNumberField(TEXT("expires_in_s"), FMath::Max(0.0, ExpiresAt - FPlatformTime::Seconds()));
+	Out->SetNumberField(TEXT("expires_in_s"), FMath::Max(0.0, ExpiresAt - FHaybaMCPLeaseManager::Get().Now()));
 	if (Id.bFromAlias)
 	{
 		Out->SetStringField(TEXT("deprecation"), TokenDeprecation);
@@ -315,7 +315,7 @@ FHaybaHandlerResult FHaybaMCPLeaseHandler::Status(const TSharedPtr<FJsonObject>&
 {
 	FTable& Table = FHaybaMCPLeaseManager::Get().Table();
 	Table.Expire();
-	const double Now = FPlatformTime::Seconds();
+	const double Now = FHaybaMCPLeaseManager::Get().Now();
 	const FString Caller = CallerOwner();
 
 	TArray<TSharedPtr<FJsonValue>> LeasesJson;

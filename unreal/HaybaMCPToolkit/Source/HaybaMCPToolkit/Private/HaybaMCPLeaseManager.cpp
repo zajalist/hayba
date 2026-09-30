@@ -14,8 +14,6 @@ DEFINE_LOG_CATEGORY_STATIC(LogHaybaMCPLease, Log, All);
 
 namespace
 {
-	constexpr int32 MaxOwnerChars = 128;
-
 	FString MakeTokenSalt()
 	{
 		// The HMAC key for lease ids (ls_<seq>_<mac12>). Ids are coordination
@@ -34,24 +32,175 @@ FHaybaMCPLeaseManager& FHaybaMCPLeaseManager::Get()
 }
 
 FHaybaMCPLeaseManager::FHaybaMCPLeaseManager()
-	: LeaseTable([]() { return FPlatformTime::Seconds(); }, HaybaMCPLease::FTuning(), MakeTokenSalt())
+	: LeaseTable([this]() { return Now(); }, HaybaMCPLease::FTuning(), MakeTokenSalt())
+	, LeaseWarningLimiter([this]() { return Now(); })
+	, Presence([this]() { return Now(); })
 {
 }
 
-FString FHaybaMCPLeaseManager::ResolveOwner(const TSharedPtr<FJsonObject>& Envelope, int32 ConnId)
+FString FHaybaMCPLeaseManager::ResolveOwner(const TSharedPtr<FJsonObject>& Envelope, int32 ConnId, bool* bOutFromEnvelope)
 {
+	if (bOutFromEnvelope)
+	{
+		*bOutFromEnvelope = false;
+	}
 	FString Owner;
 	if (Envelope.IsValid() && Envelope->TryGetStringField(TEXT("owner"), Owner))
 	{
-		Owner.TrimStartAndEndInline();
-		Owner = Owner.Left(MaxOwnerChars);
+		Owner = HaybaMCPEnforcement::SanitizeOwner(Owner);
 	}
 	if (!Owner.IsEmpty())
 	{
+		if (bOutFromEnvelope)
+		{
+			*bOutFromEnvelope = true;
+		}
 		return Owner;
 	}
 	return ConnId > 0 ? FString::Printf(TEXT("conn:%d"), ConnId) : FString(TEXT("local"));
 }
+
+FHaybaMCPLeaseManager::EEnvelopeLease FHaybaMCPLeaseManager::ClassifyEnvelopeLease(const FString& LeaseValue)
+{
+	if (LeaseValue.IsEmpty())
+	{
+		return EEnvelopeLease::None;
+	}
+	if (HaybaMCPLease::IsRedactionMarker(LeaseValue))
+	{
+		return EEnvelopeLease::Redacted;
+	}
+	return LeaseTable.FindLease(LeaseValue) ? EEnvelopeLease::Valid : EEnvelopeLease::Unknown;
+}
+
+const TCHAR* FHaybaMCPLeaseManager::LexEnvelopeLease(EEnvelopeLease State)
+{
+	switch (State)
+	{
+	case EEnvelopeLease::None:     return TEXT("none");
+	case EEnvelopeLease::Valid:    return TEXT("valid");
+	case EEnvelopeLease::Unknown:  return TEXT("unknown");
+	case EEnvelopeLease::Redacted: return TEXT("redacted");
+	}
+	return TEXT("none");
+}
+
+void FHaybaMCPLeaseManager::NoteAuthenticatedCaller(const FString& Owner, int32 ConnId, bool bIdentified)
+{
+	// conn:<n> and local are synthetic; only a named owner (or, from T8, a
+	// valid lease handle) proves an agent is present.
+	if (bIdentified)
+	{
+		Presence.Note(Owner, ConnId);
+	}
+}
+
+FWarningLimiter::FHit FHaybaMCPLeaseManager::NoteLeaseWarning(
+	const FString& ModeName, const FString& Code, const FString& Reason, const FString& Owner,
+	const FString& Cmd, const FString& HolderOwner, const FString& Conflict, const FString& Message)
+{
+	DrainLeaseWarnings();
+	const FString Key = FWarningLimiter::MakeKey(TEXT("lease"), Code + TEXT("/") + Reason, Owner, Cmd, HolderOwner);
+	const FWarningLimiter::FHit Hit = LeaseWarningLimiter.Note(Key);
+	FLeaseWarningText* Text = LeaseWarningText.Find(Key);
+	if (!Text && LeaseWarningText.Num() < FWarningLimiter::DefaultMaxKeys)
+	{
+		Text = &LeaseWarningText.Add(Key);
+		Text->Head = FString::Printf(TEXT("[%s] %s/%s"), *ModeName, *Code, *Reason);
+		Text->Tail = FString::Printf(TEXT("owner='%s' cmd='%s' holder='%s' conflict='%s'"),
+			*FWarningLimiter::CollapseOwner(Owner), *Cmd, *HolderOwner, *Conflict);
+	}
+	if (Text)
+	{
+		Text->LastAt = Now();
+	}
+	if (Hit.bLog)
+	{
+		if (Hit.SuppressedInPreviousWindow > 0)
+		{
+			UE_LOG(LogHaybaMCPLease, Warning, TEXT("[%s] %s (+%d identical in the previous 30 s)"),
+				*ModeName, *Message, Hit.SuppressedInPreviousWindow);
+		}
+		else
+		{
+			UE_LOG(LogHaybaMCPLease, Warning, TEXT("[%s] %s"), *ModeName, *Message);
+		}
+	}
+	return Hit;
+}
+
+void FHaybaMCPLeaseManager::DrainLeaseWarnings()
+{
+	const double NowSeconds = Now();
+	for (const FWarningLimiter::FDrained& Drained : LeaseWarningLimiter.DrainExpired())
+	{
+		if (const FLeaseWarningText* Text = LeaseWarningText.Find(Drained.Key))
+		{
+			UE_LOG(LogHaybaMCPLease, Warning, TEXT("%s repeated %d more times in 30 s: %s"),
+				*Text->Head, Drained.Suppressed, *Text->Tail);
+		}
+		else
+		{
+			UE_LOG(LogHaybaMCPLease, Warning, TEXT("[lease] %s repeated %d more times in 30 s"),
+				*Drained.Key, Drained.Suppressed);
+		}
+		LeaseWarningText.Remove(Drained.Key);
+	}
+	// A window that closed with nothing suppressed is never drained; forget its
+	// text after two windows so the map stays bounded.
+	for (auto It = LeaseWarningText.CreateIterator(); It; ++It)
+	{
+		if (NowSeconds - It.Value().LastAt > 2.0 * FWarningLimiter::DefaultWindowSeconds)
+		{
+			It.RemoveCurrent();
+		}
+	}
+}
+
+void FHaybaMCPLeaseManager::StartWarningDrain()
+{
+	if (WarningDrainHandle.IsValid())
+	{
+		return;
+	}
+	WarningDrainHandle = FTSTicker::GetCoreTicker().AddTicker(
+		FTickerDelegate::CreateLambda([](float)
+		{
+			FHaybaMCPLeaseManager::Get().DrainLeaseWarnings();
+			return true;
+		}),
+		static_cast<float>(FWarningLimiter::DefaultWindowSeconds));
+}
+
+void FHaybaMCPLeaseManager::StopWarningDrain()
+{
+	if (WarningDrainHandle.IsValid())
+	{
+		FTSTicker::GetCoreTicker().RemoveTicker(WarningDrainHandle);
+		WarningDrainHandle.Reset();
+	}
+}
+
+#if WITH_DEV_AUTOMATION_TESTS
+void FHaybaMCPLeaseManager::ForgetOwnerForTests(const FString& Owner)
+{
+	TArray<FString> Handles;
+	for (const HaybaMCPLease::FLease& Lease : LeaseTable.GetLeases())
+	{
+		if (Lease.Owner == Owner) Handles.Add(Lease.Token);
+	}
+	for (const HaybaMCPLease::FWaiter& Waiter : LeaseTable.GetWaiters())
+	{
+		if (Waiter.Request.Owner == Owner) Handles.Add(Waiter.Ticket);
+	}
+	FString Ignored;
+	for (const FString& Handle : Handles)
+	{
+		LeaseTable.Release(Handle, Owner, Ignored);
+	}
+	Presence.Forget(Owner);
+}
+#endif
 
 FString FHaybaMCPLeaseManager::CurrentWorldPackage()
 {
@@ -157,6 +306,7 @@ FString FHaybaMCPLeaseManager::EffectiveOwner()
 
 void FHaybaMCPLeaseManager::OnConnectionClosed(int32 ConnId)
 {
+	Presence.OnConnectionClosed(ConnId);
 	const int32 Released = LeaseTable.ReleaseConnection(ConnId);
 	if (Released > 0)
 	{
@@ -276,7 +426,7 @@ FHaybaMCPLeaseManager::FVerdict FHaybaMCPLeaseManager::CheckCommand(
 		Detail->SetStringField(TEXT("holder_owner"), Holder->Owner);
 		if (!Holder->Label.IsEmpty()) Detail->SetStringField(TEXT("holder_label"), Holder->Label);
 		Detail->SetNumberField(TEXT("holder_expires_in_s"),
-			FMath::Max(0.0, Holder->ExpiresAt - FPlatformTime::Seconds()));
+			FMath::Max(0.0, Holder->ExpiresAt - Now()));
 		Detail->SetStringField(TEXT("conflict"), ConflictDetail);
 	}
 	if (!LeaseIdError.IsEmpty())
@@ -298,8 +448,13 @@ FHaybaMCPLeaseManager::FVerdict FHaybaMCPLeaseManager::CheckCommand(
 	}
 	else if (CurrentContext)
 	{
+		// One Warning per (reason, owner, command, holder) per 30 s; the reply
+		// still carries its own lease_warning, now with repeats_in_window.
+		const FWarningLimiter::FHit Hit = NoteLeaseWarning(TEXT("advisory"), TEXT("lease_conflict"),
+			Holder ? TEXT("held") : TEXT("lease_unknown"), Owner, Cmd,
+			Holder ? Holder->Owner : FString(), ConflictDetail, Verdict.Message);
+		Detail->SetNumberField(TEXT("repeats_in_window"), Hit.RepeatsInWindow);
 		CurrentContext->LeaseWarning = Detail;
-		UE_LOG(LogHaybaMCPLease, Warning, TEXT("[advisory] %s"), *Verdict.Message);
 	}
 	return Verdict;
 }

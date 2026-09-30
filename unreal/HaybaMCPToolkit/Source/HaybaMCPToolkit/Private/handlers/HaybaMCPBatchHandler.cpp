@@ -680,7 +680,7 @@ namespace
 		if (In.bLeaseValid)
 		{
 			In.bLeaseAllowsGc = LeaseAllowsGc(Lease->Locks);
-			if (Lease->ExpiresAt - In.Now < LeaseKeepAliveBelowSeconds)
+			if (Lease->ExpiresAt - FHaybaMCPLeaseManager::Get().Now() < LeaseKeepAliveBelowSeconds)
 			{
 				double Ignored = 0.0;
 				FString Error;

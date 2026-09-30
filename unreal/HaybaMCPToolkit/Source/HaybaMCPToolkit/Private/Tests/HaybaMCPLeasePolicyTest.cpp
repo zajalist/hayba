@@ -586,6 +586,23 @@ bool FHaybaMCPLeaseEnvelopeTest::RunTest(const FString& Parameters)
 	Envelope->SetStringField(TEXT("owner"), FString::ChrN(500, TEXT('a')));
 	TestEqual(TEXT("owner is bounded"), FHaybaMCPLeaseManager::ResolveOwner(Envelope, 12).Len(), 128);
 
+	// T6: owners are sanitized and say where they came from.
+	bool bFromEnvelope = true;
+	TSharedPtr<FJsonObject> Bare = MakeShared<FJsonObject>();
+	TestEqual(TEXT("no owner: per connection"),
+		FHaybaMCPLeaseManager::ResolveOwner(Bare, 12, &bFromEnvelope), FString(TEXT("conn:12")));
+	TestFalse(TEXT("a synthetic owner is not from the envelope"), bFromEnvelope);
+	Bare->SetStringField(TEXT("owner"), TEXT("  lane\n3\x01  "));
+	TestEqual(TEXT("control characters become '?'"),
+		FHaybaMCPLeaseManager::ResolveOwner(Bare, 12, &bFromEnvelope), FString(TEXT("lane?3?")));
+	TestTrue(TEXT("an envelope owner says so"), bFromEnvelope);
+	Bare->SetStringField(TEXT("owner"), TEXT("   "));
+	TestEqual(TEXT("a blank owner falls back to the connection"),
+		FHaybaMCPLeaseManager::ResolveOwner(Bare, 12, &bFromEnvelope), FString(TEXT("conn:12")));
+	TestFalse(TEXT("and is not from the envelope"), bFromEnvelope);
+	TestEqual(TEXT("the default argument still compiles"),
+		FHaybaMCPLeaseManager::ResolveOwner(Bare, 0), FString(TEXT("local")));
+
 	TSharedPtr<FJsonObject> Params = MakeShared<FJsonObject>();
 	TArray<HaybaMCPAccess::FClaim> Claims;
 	FString Error;

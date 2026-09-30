@@ -21,6 +21,7 @@
 #include "Widgets/Notifications/SNotificationList.h"
 #include "HaybaMCPTcpServer.h"
 #include "HaybaMCPCommandHandler.h"
+#include "HaybaMCPLeaseManager.h"
 #include "HaybaMCPEditorHealth.h"
 #include "IHaybaMCPHandler.h"
 #include "handlers/HaybaMCPLegacyHandler.h"
@@ -217,6 +218,10 @@ void FHaybaMCPModule::StartupModule()
     // never start a server. Editor state must depend on neither (docs/adr/0012).
     FHaybaMCPEditorState::Get().Startup();
 
+    // Lease-warning drain (T6, R-18): a closed 30 s window's "repeated N more
+    // times" line is logged even when no further warning arrives.
+    FHaybaMCPLeaseManager::Get().StartWarningDrain();
+
     // Optional-capability check: warn (log + editor notification) for any
     // satellite plugin that is disabled, so the user understands why a command
     // domain is missing. IPluginManager knows enablement even before the
@@ -379,6 +384,8 @@ void FHaybaMCPModule::ShutdownModule()
         GEditor->GetTimerManager()->ClearTimer(AutoOpenTimerHandle);
     }
     AutoOpenTimerHandle.Invalidate();
+
+    FHaybaMCPLeaseManager::Get().StopWarningDrain();
     if (OpenToolkitConsoleCommand)
     {
         IConsoleManager::Get().UnregisterConsoleObject(OpenToolkitConsoleCommand, false);

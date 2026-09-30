@@ -483,6 +483,40 @@ bool FHaybaLeaseWarningLimiterTest::RunTest(const FString&)
 	const TArray<FWarningLimiter::FDrained> Overflowed = Small.DrainExpired();
 	TestTrue(TEXT("the overflow window drains with its count"),
 		Overflowed.ContainsByPredicate([](const FWarningLimiter::FDrained& D) { return D.Key == TEXT("<overflow>") && D.Suppressed == 1; }));
+	// T6: lease keys. Per-call connections collapse into one key; a different
+	// holder is a different key; the 49 repeats drain as one count.
+	{
+		double LeaseNow = 5000.0;
+		FWarningLimiter LeaseLimiter([&LeaseNow]() { return LeaseNow; });
+		const FString PerCall1 = FWarningLimiter::MakeKey(TEXT("lease"), TEXT("lease_conflict/held"),
+			TEXT("conn:900001"), TEXT("blueprint_add_node"), TEXT("holder-a"));
+		const FString PerCall2 = FWarningLimiter::MakeKey(TEXT("lease"), TEXT("lease_conflict/held"),
+			TEXT("conn:900002"), TEXT("blueprint_add_node"), TEXT("holder-a"));
+		TestEqual(TEXT("per-call connections share one lease key"), PerCall1, PerCall2);
+		TestNotEqual(TEXT("a different holder is a different key"), PerCall1,
+			FWarningLimiter::MakeKey(TEXT("lease"), TEXT("lease_conflict/held"),
+				TEXT("conn:900001"), TEXT("blueprint_add_node"), TEXT("holder-b")));
+		TestNotEqual(TEXT("a named owner is not collapsed"), PerCall1,
+			FWarningLimiter::MakeKey(TEXT("lease"), TEXT("lease_conflict/held"),
+				TEXT("lane-3"), TEXT("blueprint_add_node"), TEXT("holder-a")));
+
+		const FWarningLimiter::FHit LeaseFirst = LeaseLimiter.Note(PerCall1);
+		TestTrue(TEXT("the first lease warning logs"), LeaseFirst.bLog);
+		FWarningLimiter::FHit Last = LeaseFirst;
+		for (int32 I = 0; I < 49; ++I)
+		{
+			Last = LeaseLimiter.Note(PerCall2);
+			TestFalse(TEXT("repeats inside the window are suppressed"), Last.bLog);
+		}
+		TestEqual(TEXT("repeats_in_window counts every hit"), Last.RepeatsInWindow - LeaseFirst.RepeatsInWindow, 49);
+		LeaseNow += 31.0;
+		const TArray<FWarningLimiter::FDrained> LeaseDrained = LeaseLimiter.DrainExpired();
+		if (TestEqual(TEXT("one closed lease window"), LeaseDrained.Num(), 1))
+		{
+			TestEqual(TEXT("it reports the 49 suppressed hits"), LeaseDrained[0].Suppressed, 49);
+			TestEqual(TEXT("under the shared key"), LeaseDrained[0].Key, PerCall1);
+		}
+	}
 	return true;
 }
 

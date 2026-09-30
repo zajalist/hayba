@@ -1,8 +1,12 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Containers/Ticker.h"
 #include "Dom/JsonObject.h"
+#include "HAL/PlatformTime.h"
+#include "HaybaMCPEnforcementPolicy.h"
 #include "HaybaMCPLeasePolicy.h"
+#include "HaybaMCPWarningLimiter.h"
 
 /**
  * Who sent the command being processed. Set by FHaybaMCPCommandHandler for
@@ -16,6 +20,8 @@ struct FHaybaMCPRequestContext
 	FString Owner;
 	/** TCP connection the command arrived on; 0 for in-process callers. */
 	int32 ConnId = 0;
+	/** The owner came from the envelope `owner` field (not conn:<n> / local). */
+	bool bOwnerFromEnvelope = false;
 	/** Envelope `lease`: the lease_id the caller named (may be a redaction marker). */
 	FString LeaseToken;
 	/** Set by the Advisory check; merged into the response as `lease_warning`. */
@@ -42,8 +48,41 @@ public:
 
 	HaybaMCPLease::FTable& Table() { return LeaseTable; }
 
-	/** Owner string for an envelope: `owner` if present, else per connection. */
-	static FString ResolveOwner(const TSharedPtr<FJsonObject>& Envelope, int32 ConnId);
+	/** Owner string for an envelope: the sanitized `owner` if present, else
+	 *  per connection. `bOutFromEnvelope` says which (T6). */
+	static FString ResolveOwner(const TSharedPtr<FJsonObject>& Envelope, int32 ConnId, bool* bOutFromEnvelope = nullptr);
+
+	/** What the envelope `lease` names. Only ever classified; never logged. */
+	enum class EEnvelopeLease : uint8
+	{
+		None,
+		Valid,
+		Unknown,
+		Redacted,
+	};
+	EEnvelopeLease ClassifyEnvelopeLease(const FString& LeaseValue);
+	static const TCHAR* LexEnvelopeLease(EEnvelopeLease State);
+
+	/** Presence for owner_required (T6/T8): an identified caller got past auth.
+	 *  Never refuses, never extends a lease. */
+	void NoteAuthenticatedCaller(const FString& Owner, int32 ConnId, bool bIdentified);
+
+	/** Log the "repeated N more times" line of every closed warning window. */
+	void DrainLeaseWarnings();
+	/** A 30 s core-ticker drain (R-18); the module starts and stops it. */
+	void StartWarningDrain();
+	void StopWarningDrain();
+
+	/** The manager clock: the table, the warning limiter and presence share it. */
+	double Now() const { return FPlatformTime::Seconds() + ClockOffsetSeconds; }
+
+#if WITH_DEV_AUTOMATION_TESTS
+	void AdvanceClockForTests(double Seconds) { ClockOffsetSeconds += Seconds; }
+	/** Release every lease and ticket of Owner and drop its presence. */
+	void ForgetOwnerForTests(const FString& Owner);
+	/** Forget every owner's presence. Leases are not touched. */
+	void ResetPresenceForTests() { Presence.Reset(); }
+#endif
 
 	/**
 	 * Parse `resources`: an array of resource strings, or of
@@ -111,7 +150,25 @@ public:
 private:
 	FHaybaMCPLeaseManager();
 
+	/** Rate-limit one lease warning (T6): log the first per key per 30 s. */
+	FWarningLimiter::FHit NoteLeaseWarning(const FString& ModeName, const FString& Code, const FString& Reason,
+		const FString& Owner, const FString& Cmd, const FString& HolderOwner, const FString& Conflict,
+		const FString& Message);
+
+	struct FLeaseWarningText
+	{
+		FString Head;
+		FString Tail;
+		double LastAt = 0.0;
+	};
+
 	HaybaMCPLease::FTable LeaseTable;
 	FHaybaMCPRequestContext* CurrentContext = nullptr;
+	FWarningLimiter LeaseWarningLimiter;
+	HaybaMCPEnforcement::FOwnerPresence Presence;
+	/** Drain-line text per limiter key; at most FWarningLimiter::DefaultMaxKeys. */
+	TMap<FString, FLeaseWarningText> LeaseWarningText;
+	FTSTicker::FDelegateHandle WarningDrainHandle;
+	double ClockOffsetSeconds = 0.0;
 	HaybaMCPLease::FOncePerKey DeprecatedParamNotes{ 512 };
 };

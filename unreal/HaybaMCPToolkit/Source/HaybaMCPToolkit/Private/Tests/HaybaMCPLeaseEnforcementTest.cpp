@@ -2,6 +2,10 @@
 // log case; T8 the router cases). See docs/adr/0010.
 #include "Misc/AutomationTest.h"
 #include "HaybaMCPEnforcementPolicy.h"
+#include "HaybaMCPLeaseManager.h"
+#include "HaybaMCPDeveloperSettings.h"
+#include "Tests/HaybaMCPLeaseTestUtil.h"
+#include "Misc/ScopeExit.h"
 
 #if WITH_DEV_AUTOMATION_TESTS
 
@@ -182,6 +186,114 @@ bool FHaybaMCPLeaseOwnerPresenceTest::RunTest(const FString& Parameters)
 	Presence.Reset();
 	TestEqual(TEXT("Reset forgets everyone"), Presence.NumTracked(), 0);
 	TestEqual(TEXT("and nobody is active"), Presence.ActiveOwners().Num(), 0);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FHaybaMCPLeaseProcessingLogOwnerTest,
+	"Hayba.MCP.Lease.ProcessingLogOwner",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FHaybaMCPLeaseProcessingLogOwnerTest::RunTest(const FString& Parameters)
+{
+	using namespace HaybaMCPLeaseTest;
+	FScopedCleanPresence CleanPresence;
+	const TSharedPtr<FHaybaMCPCommandHandler> R = Router();
+	if (!TestTrue(TEXT("command router exists"), R.IsValid())) return false;
+	FHaybaMCPLeaseManager& Leases = FHaybaMCPLeaseManager::Get();
+	UHaybaMCPDeveloperSettings* Dev = GetMutableDefault<UHaybaMCPDeveloperSettings>();
+	const EHaybaMCPLeaseEnforcement ModeWas = Dev->LeaseEnforcement;
+	const FString Holder = UniqueOwner(TEXT("holder"));
+	const FString Caller = UniqueOwner(TEXT("caller"));
+	double Advanced = 0.0;
+	ON_SCOPE_EXIT
+	{
+		Leases.AdvanceClockForTests(-Advanced);
+		Dev->LeaseEnforcement = ModeWas;
+		Leases.ForgetOwnerForTests(Holder);
+		Leases.ForgetOwnerForTests(Caller);
+		for (int32 Conn = 900600; Conn <= 900660; ++Conn) R->NotifyConnectionClosed(Conn);
+	};
+	Dev->LeaseEnforcement = EHaybaMCPLeaseEnforcement::Advisory;
+
+	// 1. The Processing command line names the caller and classifies the handle.
+	const FString HolderLease = AcquireId(*R, 900654, Holder,
+		TEXT("{\"resources\":[\"global\"],\"bind_connection\":false,\"label\":\"log-owner\"}"));
+	TestFalse(TEXT("holder lease granted"), HolderLease.IsEmpty());
+	{
+		FLogCapture Cmd(TEXT("LogHaybaMCPCmd"));
+		Send(*R, 900650, Caller, TEXT("ping"), nullptr);
+		Send(*R, 900651, FString(), TEXT("ping"), nullptr);
+		Send(*R, 0, FString(), TEXT("ping"), nullptr);
+		Send(*R, 900652, Caller, TEXT("ping"), nullptr, TEXT("[REDACTED:token]"));
+		Send(*R, 900653, Caller, TEXT("ping"), nullptr, TEXT("ls_999999_000000000000"));
+		Send(*R, 900655, Caller, TEXT("ping"), nullptr, HolderLease);
+		Send(*R, 900656, Holder, TEXT("ping"), nullptr, HolderLease);
+		R->ProcessBatchStep(Envelope(Caller, TEXT("ping"), nullptr), TEXT("hayba-test-job-6f2a91c0"), true);
+		Cmd.Flush();
+
+		TestEqual(TEXT("an envelope owner"),
+			Cmd.Count(FString::Printf(TEXT("owner: %s, via: envelope, conn: 900650, lease: none)"), *Caller)), 1);
+		TestEqual(TEXT("a per-connection owner"),
+			Cmd.Count(TEXT("owner: conn:900651, via: conn, conn: 900651, lease: none)")), 1);
+		TestEqual(TEXT("an in-process owner"),
+			Cmd.Count(TEXT("owner: local, via: local, conn: 0, lease: none)")), 1);
+		TestEqual(TEXT("a marker is classified, not printed"), Cmd.Count(TEXT("conn: 900652, lease: redacted)")), 1);
+		TestEqual(TEXT("an unknown handle"), Cmd.Count(TEXT("conn: 900653, lease: unknown)")), 1);
+		TestEqual(TEXT("a valid handle acts as its lease's owner"),
+			Cmd.Count(FString::Printf(TEXT("owner: %s, via: lease, conn: 900655, lease: valid)"), *Holder)), 1);
+		TestEqual(TEXT("a valid handle still supplies an identical envelope owner"),
+			Cmd.Count(FString::Printf(TEXT("owner: %s, via: lease, conn: 900656, lease: valid)"), *Holder)), 1);
+		TestEqual(TEXT("a batch step names its job"), Cmd.Count(TEXT(", batch: hayba-te)")), 1);
+		TestEqual(TEXT("the handle itself never reaches the log"),
+			Cmd.Count(HolderLease) + Cmd.Count(TEXT("ls_999999_000000000000")) + Cmd.Count(TEXT("[REDACTED:token]")), 0);
+	}
+
+	// 2. 50 identical advisory conflicts from per-call connections: one Warning,
+	//    then one drained line with the other 49 (R-9, R-18).
+	{
+		FLogCapture LeaseLog(TEXT("LogHaybaMCPLease"));
+		const TSharedPtr<FJsonObject> Params = Json(
+			TEXT("{\"path\":\"/Game/__HaybaTest__/BP_LogOwner\",\"node_type\":\"call_function\",\"function_name\":\"PrintString\"}"));
+		int32 FirstRepeats = -1;
+		int32 LastRepeats = -1;
+		for (int32 I = 0; I < 50; ++I)
+		{
+			FHaybaMCPRequestContext Ctx;
+			Ctx.ConnId = 900600 + I;
+			Ctx.Owner = FString::Printf(TEXT("conn:%d"), Ctx.ConnId);
+			// Named per-call owners. The conn:* collapse is what is under test,
+			// and a named owner keeps the reason "held" once T8's owner_required
+			// rule exists (an unnamed one would be owner_missing while Holder and
+			// Caller are present).
+			Ctx.bOwnerFromEnvelope = true;
+			FHaybaMCPLeaseManager::FScope Scope(Ctx);
+			const FHaybaMCPLeaseManager::FVerdict Verdict = Leases.CheckCommand(TEXT("blueprint_add_node"), Params);
+			TestFalse(TEXT("advisory never refuses"), Verdict.bRefuse);
+			double Repeats = -1.0;
+			if (TestTrue(TEXT("the warning rides on the context"), Ctx.LeaseWarning.IsValid())
+				&& Ctx.LeaseWarning->TryGetNumberField(TEXT("repeats_in_window"), Repeats))
+			{
+				if (I == 0) FirstRepeats = static_cast<int32>(Repeats);
+				LastRepeats = static_cast<int32>(Repeats);
+			}
+		}
+		LeaseLog.Flush();
+		TestEqual(TEXT("50 identical conflicts log one Warning"),
+			LeaseLog.Count(FString::Printf(
+				TEXT("[advisory] lease_conflict: 'blueprint_add_node' (write_scoped) conflicts with a lease held by '%s'"),
+				*Holder), ELogVerbosity::Warning), 1);
+		TestEqual(TEXT("repeats_in_window counts every hit"), LastRepeats - FirstRepeats, 49);
+
+		Leases.AdvanceClockForTests(31.0);
+		Advanced += 31.0;
+		Leases.DrainLeaseWarnings();
+		LeaseLog.Flush();
+		TestEqual(TEXT("the closed window is drained with its count"),
+			LeaseLog.Count(FString::Printf(
+				TEXT("[advisory] lease_conflict/held repeated 49 more times in 30 s: owner='conn:*' cmd='blueprint_add_node' holder='%s'"),
+				*Holder), ELogVerbosity::Warning), 1);
+	}
 	return true;
 }
 

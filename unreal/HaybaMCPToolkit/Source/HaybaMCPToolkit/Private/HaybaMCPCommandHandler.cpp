@@ -18,6 +18,7 @@
 #include "HaybaMCPDiffPanel.h"
 #include "HaybaMCPAccessPolicy.h"
 #include "HaybaMCPLeaseManager.h"
+#include "HaybaMCPEnforcementPolicy.h"
 #include "HaybaMCPEditorHealth.h"
 #include "HaybaMCPHealthPolicy.h"
 #include "HaybaMCPCommandSets.h"
@@ -1497,17 +1498,44 @@ FString FHaybaMCPCommandHandler::ProcessCommandInContext(const FString& CommandJ
     FHaybaMCPLeaseManager& Leases = FHaybaMCPLeaseManager::Get();
     if (FHaybaMCPRequestContext* Context = Leases.Current())
     {
-        Context->Owner = FHaybaMCPLeaseManager::ResolveOwner(Parsed, Context->ConnId);
+        Context->Owner = FHaybaMCPLeaseManager::ResolveOwner(Parsed, Context->ConnId, &Context->bOwnerFromEnvelope);
         Parsed->TryGetStringField(TEXT("lease"), Context->LeaseToken);
     }
 
-    UE_LOG(LogHaybaMCPCmd, Log, TEXT("Processing command: %s (id: %s)"), *Cmd, *Id);
+    // T6: who is acting, and how we know. The lease handle is classified, never
+    // printed. The prefix is unchanged for audit-crash-threat-model.mjs.
+    {
+        const FHaybaMCPRequestContext* LogContext = Leases.Current();
+        const FString LogOwner = Leases.EffectiveOwner();
+        const int32 LogConn = LogContext ? LogContext->ConnId : 0;
+        const FHaybaMCPLeaseManager::EEnvelopeLease LeaseState = LogContext
+            ? Leases.ClassifyEnvelopeLease(LogContext->LeaseToken)
+            : FHaybaMCPLeaseManager::EEnvelopeLease::None;
+        const TCHAR* Via = (LeaseState == FHaybaMCPLeaseManager::EEnvelopeLease::Valid) ? TEXT("lease")
+            : (LogContext && LogContext->bOwnerFromEnvelope) ? TEXT("envelope")
+            : (LogConn > 0 ? TEXT("conn") : TEXT("local"));
+        const FString BatchPart = (LogContext && !LogContext->BatchJobId.IsEmpty())
+            ? FString::Printf(TEXT(", batch: %s"), *LogContext->BatchJobId.Left(8))
+            : FString();
+        UE_LOG(LogHaybaMCPCmd, Log, TEXT("Processing command: %s (id: %s, owner: %s, via: %s, conn: %d, lease: %s%s)"),
+            *Cmd, *Id, *LogOwner, Via, LogConn, FHaybaMCPLeaseManager::LexEnvelopeLease(LeaseState), *BatchPart);
+    }
 
     // Auth gate
     FString AuthReason;
     if (!FHaybaMCPSecurityManager::Get().ValidateRequest(Parsed, AuthReason))
     {
         return MakeErrorResponse(Id, AuthReason, Cmd, false, true);
+    }
+
+    // Presence (T6; T8 widens who counts): an identified caller counts as an
+    // active owner for owner_required. It runs in every mode, before any gate
+    // can refuse, so even a refused command proves its owner is connected.
+    // Never refuses; never extends a lease.
+    if (const FHaybaMCPRequestContext* PresenceContext = Leases.Current())
+    {
+        Leases.NoteAuthenticatedCaller(Leases.EffectiveOwner(), PresenceContext->ConnId,
+            /*bIdentified=*/PresenceContext->bOwnerFromEnvelope);
     }
 
     // Slot 1 (ADR-0011): a contained native fault left this process unsafe.
