@@ -1,6 +1,8 @@
 param(
     [Parameter(Mandatory=$true)]
-    [string]$HarnessPath
+    [string]$HarnessPath,
+    [Parameter(Mandatory=$true)]
+    [string]$InvokerPath
 )
 
 $ErrorActionPreference = 'Stop'
@@ -15,6 +17,15 @@ foreach ($name in @('Get-BigEndianHeader', 'Read-BoundedExact', 'Wait-RawTask', 
         $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name
     }, $true))
     if ($definitions.Count -ne 1) { throw "Expected exactly one helper: $name" }
+    . ([scriptblock]::Create($definitions[0].Extent.Text))
+}
+$ast = [Management.Automation.Language.Parser]::ParseFile($InvokerPath, [ref]$tokens, [ref]$parseErrors)
+if ($parseErrors.Count) { throw 'Command invoker did not parse' }
+foreach ($name in @('Read-ExactAsync', 'Wait-IoTask', 'Get-RemainingTimeoutMs')) {
+    $definitions = @($ast.FindAll({ param($node)
+        $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name
+    }, $true))
+    if ($definitions.Count -ne 1) { throw "Expected exactly one invoker helper: $name" }
     . ([scriptblock]::Create($definitions[0].Extent.Text))
 }
 
@@ -50,7 +61,9 @@ try {
 catch { $endianPassed = $false }
 $results.Add([pscustomobject]@{ name='endian_boundaries'; passed=$endianPassed })
 
-foreach ($scenario in @('fragmented_read', 'early_eof', 'stalled_deadline')) {
+foreach ($scenario in @('fragmented_read', 'early_eof', 'stalled_deadline', 'invoker_fragmented_read', 'invoker_early_eof', 'invoker_stalled_deadline')) {
+    $isInvoker = $scenario.StartsWith('invoker_')
+    $behavior = $scenario -replace '^invoker_', ''
     $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
     $client = [Net.Sockets.TcpClient]::new()
     $peer = $null
@@ -64,26 +77,32 @@ foreach ($scenario in @('fragmented_read', 'early_eof', 'stalled_deadline')) {
         $peer = $accept.GetAwaiter().GetResult()
         $writer = $peer.GetStream()
         $writer.Write([byte[]]@(0x41), 0, 1)
-        if ($scenario -ceq 'fragmented_read') {
+        if ($behavior -ceq 'fragmented_read') {
             $writeRest = [HaybaSurvivalRawFixture]::WriteRestAsync($writer)
         }
-        elseif ($scenario -ceq 'early_eof') {
+        elseif ($behavior -ceq 'early_eof') {
             $peer.Client.Shutdown([Net.Sockets.SocketShutdown]::Send)
         }
-        $buffer = [byte[]]::new(4)
-        $timeoutMs = if ($scenario -ceq 'stalled_deadline') { 250 } else { 1000 }
+        [byte[]]$buffer = if ($isInvoker) { [byte[]]@(238,0,0,0,0,238) } else { [byte[]]::new(4) }
+        $timeoutMs = if ($behavior -ceq 'stalled_deadline') { 250 } else { 1000 }
         $CaseDeadline = [DateTime]::UtcNow.AddMilliseconds($timeoutMs)
-        $clock = [Diagnostics.Stopwatch]::StartNew()
+        $Clock = [Diagnostics.Stopwatch]::StartNew()
+        $caseTimer = [Diagnostics.Stopwatch]::StartNew()
         try {
-            Read-BoundedExact $client.GetStream() $buffer 4 $scenario
-            $elapsed = $clock.ElapsedMilliseconds
-            $passed = $scenario -ceq 'fragmented_read' -and ($buffer -join ',') -ceq '65,66,67,68' -and $elapsed -ge 100 -and $elapsed -lt 1000
+            if ($isInvoker) { Read-ExactAsync $client.GetStream() $buffer 1 4 $scenario }
+            else { Read-BoundedExact $client.GetStream() $buffer 4 $scenario }
+            $elapsed = $caseTimer.ElapsedMilliseconds
+            $expectedBytes = if ($isInvoker) { '238,65,66,67,68,238' } else { '65,66,67,68' }
+            $passed = $behavior -ceq 'fragmented_read' -and ($buffer -join ',') -ceq $expectedBytes -and $elapsed -ge 100 -and $elapsed -lt 1000
         }
         catch {
-            $elapsed = $clock.ElapsedMilliseconds
-            $passed = ($scenario -ceq 'early_eof' -and $_.Exception.Message -ceq 'connection closed before early_eof') -or
-                ($scenario -ceq 'stalled_deadline' -and $_.Exception.Message -ceq 'stalled_deadline exceeded the absolute case deadline' -and $elapsed -ge 150 -and $elapsed -lt 1000)
+            $elapsed = $caseTimer.ElapsedMilliseconds
+            $expectedEof = if ($isInvoker) { "Connection closed before $scenario completed" } else { 'connection closed before early_eof' }
+            $expectedDeadline = if ($isInvoker) { "$scenario exceeded the absolute ${timeoutMs}ms command deadline" } else { 'stalled_deadline exceeded the absolute case deadline' }
+            $passed = ($behavior -ceq 'early_eof' -and $_.Exception.Message -ceq $expectedEof) -or
+                ($behavior -ceq 'stalled_deadline' -and $_.Exception.Message -ceq $expectedDeadline -and $elapsed -ge 150 -and $elapsed -lt 1000)
         }
+        if ($isInvoker -and ($buffer[0] -ne 238 -or $buffer[5] -ne 238)) { $passed = $false }
         if ($null -ne $writeRest) {
             if (-not $writeRest.Wait(1000)) { throw 'Loopback writer exceeded its bounded deadline' }
             $writeRest.GetAwaiter().GetResult() | Out-Null

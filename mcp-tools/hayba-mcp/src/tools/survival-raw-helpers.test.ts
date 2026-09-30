@@ -7,23 +7,33 @@ const scripts = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'scrip
 
 describe('survival harness raw transport helpers', () => {
   let results: Array<{ name: string; passed: boolean; elapsed_ms?: number }>;
+  let exitStatus: number | null;
+  let diagnostics: string;
 
   beforeAll(() => {
     const run = spawnSync('pwsh', [
       '-NoProfile', '-NonInteractive', '-File', join(scripts, 'test-survival-raw-helpers.ps1'),
       '-HarnessPath', join(scripts, 'test-editor-survival.ps1'),
+      '-InvokerPath', join(scripts, 'invoke-tcp-command.ps1'),
     ], { encoding: 'utf8', timeout: 10_000, windowsHide: true });
     if (run.error) throw run.error;
     if (!run.stdout.trim()) throw new Error(`PowerShell helper tests produced no result: ${run.stderr}`);
     results = JSON.parse(run.stdout);
-    expect(results).toHaveLength(4);
+    exitStatus = run.status;
+    diagnostics = run.stderr;
+    expect(results).toHaveLength(7);
   }, 15_000);
 
-  for (const scenario of ['endian_boundaries', 'fragmented_read', 'early_eof', 'stalled_deadline']) {
+  for (const scenario of ['endian_boundaries', 'fragmented_read', 'early_eof', 'stalled_deadline',
+    'invoker_fragmented_read', 'invoker_early_eof', 'invoker_stalled_deadline']) {
     it(scenario, () => {
       const result = results.find((item) => item.name === scenario);
       expect(result, scenario).toBeDefined();
       expect(result?.passed, JSON.stringify(result)).toBe(true);
     });
   }
+  it('completes the subprocess successfully without unexpected diagnostics', () => {
+    expect(exitStatus, diagnostics).toBe(0);
+    expect(diagnostics).toBe('');
+  });
 });

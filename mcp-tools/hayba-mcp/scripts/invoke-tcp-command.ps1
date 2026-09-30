@@ -63,9 +63,9 @@ function Read-ExactAsync(
     $read = 0
     while ($read -lt $Count) {
         $task = $Stream.ReadAsync($Buffer, $Offset + $read, $Count - $read)
-        $count = Wait-IoTask $task $Operation
-        if ($count -le 0) { throw "Connection closed before $Operation completed" }
-        $read += $count
+        $bytesRead = Wait-IoTask $task $Operation
+        if ($bytesRead -le 0) { throw "Connection closed before $Operation completed" }
+        $read += $bytesRead
     }
 }
 

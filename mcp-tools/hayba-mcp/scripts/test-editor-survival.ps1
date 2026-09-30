@@ -12,8 +12,9 @@
 
   Every case verifies all of these before and after the hostile action: the
   exact executable/start-time/command-line identity is unchanged, the expected
-  PID still owns the listener, a request-id-correlated ping and benign Python
-  nonce succeed, PIE/map/dirty/filesystem state matches the baseline, and no
+  PID still owns the listener, request-id-correlated ping and native state
+  reads succeed, Python executes a nonce outside PIE or proves the exact PIE
+  admission refusal, PIE/map/dirty/filesystem state matches the baseline, and no
   crash signature or critical log line appeared. A safe `ok:false` rejection
   passes; a timeout, listener handoff, crash artifact, or process exit fails.
 
@@ -820,20 +821,32 @@ function Get-EditorState {
 }
 
 function Test-BenignPythonNonce {
+    param([bool]$ExpectPolicyRefusal = $false)
     $nonce = [guid]::NewGuid().ToString('N')
     $marker = "__HAYBA_NONCE__$nonce"
     $response = Invoke-HaybaCommand -Command 'python_run' -Params @{ script = "print('$marker')" }
+    if ($ExpectPolicyRefusal) {
+        if ($response.ok -isnot [bool] -or $response.ok -ne $false -or
+            $response.code -isnot [string] -or $response.code -cne 'pie_active' -or
+            -not [string]::IsNullOrEmpty([string]$response.data.stdout) -or
+            -not [string]::IsNullOrEmpty([string]$response.stdout) -or
+            ($response | ConvertTo-Json -Compress -Depth 30).Contains($marker, [StringComparison]::Ordinal)) {
+            throw 'PIE Python admission probe did not prove the exact unexecuted pie_active refusal'
+        }
+        return [pscustomobject]@{ executed = $false; nonce_ok = $null; nonce_sha256 = $null; policy_refusal_ok = $true }
+    }
     if ($response.ok -ne $true) { throw "benign Python nonce failed: $($response.error)" }
     if (-not ([string]$response.data.stdout).Contains($marker, [StringComparison]::Ordinal)) {
         throw 'benign Python nonce response did not correlate to the generated nonce'
     }
-    return Get-SanitizedHash $nonce
+    return [pscustomobject]@{ executed = $true; nonce_ok = $true; nonce_sha256 = Get-SanitizedHash $nonce; policy_refusal_ok = $false }
 }
 
 function Assert-CaseTarget([object]$ExpectedPieRunning = $null) {
     # Use the same complete health proof both before and after every case. This
     # prevents a previous case's delayed failure from being attributed to the
-    # next hostile input and gives each result nonce-correlated pre/post proof.
+    # next hostile input and gives each result correlated native pre/post proof
+    # plus nonce execution outside PIE or exact admission refusal during PIE.
     return Assert-EditorHealthy -ExpectedPieRunning $ExpectedPieRunning
 }
 
@@ -846,8 +859,6 @@ function Assert-EditorHealthy {
     }
     $ping = Invoke-HaybaCommand -Command 'ping'
     if ($ping.ok -ne $true) { throw "fresh correlated ping failed: $($ping | ConvertTo-Json -Compress)" }
-    $pythonNonceHash = Test-BenignPythonNonce
-
     $state = Get-EditorState
     $expectedPie = if ($null -eq $ExpectedPieRunning) { $InitialEditorState.pie_running } else { [bool]$ExpectedPieRunning }
     if ($state.map -cne $InitialEditorState.map -or $state.pie_running -ne $expectedPie) {
@@ -860,6 +871,9 @@ function Assert-EditorHealthy {
     if ($addedDirty.Count -gt 0 -or $removedDirty.Count -gt 0) {
         throw "dirty-package baseline changed (added: $($addedDirty -join ', '); removed: $($removedDirty -join ', '))"
     }
+    # An unexpected PIE state is fatal before selecting the Python admission
+    # expectation. The successful native read is correlated by the invoker.
+    $pythonProof = Test-BenignPythonNonce -ExpectPolicyRefusal $expectedPie
     $crash = Assert-CrashEvidenceUnchanged
     $filesystem = Assert-ProjectFilesystemUnchanged
     $log = Read-NewCriticalLogEvidence
@@ -871,8 +885,11 @@ function Assert-EditorHealthy {
         exact_identity = $true
         listener_owner = $owner
         nonce_correlated_ping_ok = $true
-        python_nonce_ok = $true
-        python_nonce_sha256 = $pythonNonceHash
+        native_state_request_id_correlated = $true
+        python_nonce_executed = $pythonProof.executed
+        python_nonce_ok = $pythonProof.nonce_ok
+        python_nonce_sha256 = $pythonProof.nonce_sha256
+        python_policy_refusal_ok = $pythonProof.policy_refusal_ok
         pie_state_expected = $expectedPie
         map_baseline_unchanged = $true
         crash_artifact_delta = $crash.artifact_count - $InitialCrashEvidence.artifact_count
@@ -1553,7 +1570,7 @@ p.write_text('this line must never execute', encoding='utf-8')
     }
     $failed = @($Results | Where-Object { -not $_.passed })
     $report = [pscustomobject]@{
-        schema_version = 3
+        schema_version = 4
         mode = $CanaryKill ? 'canary' : 'survival'
         editor_pid = $EditorPid
         port = $Port
@@ -1616,7 +1633,7 @@ catch {
     }
     $failedCases = @($Results | Where-Object { -not $_.passed })
     $failedReport = [pscustomobject]@{
-        schema_version = 3
+        schema_version = 4
         mode = $CanaryKill ? 'canary' : 'survival'
         editor_pid = $EditorPid
         port = $Port
