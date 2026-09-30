@@ -170,6 +170,14 @@ describe('TCP crash-resilience contract', () => {
     expect(survivalHarness).not.toContain('$Value | ConvertTo-Json -Compress -Depth 30');
   });
 
+  it('keeps the environment probe compatible with native exception/deadline policy', () => {
+    const scripts = [...survivalHarness.matchAll(/\$environmentScript = @'\r?\n([\s\S]*?)\r?\n'@/g)];
+    expect(scripts).toHaveLength(1);
+    // Native preflight refuses exception/context handlers because they can
+    // continue after a trace exception disables the cooperative deadline.
+    expect(scripts[0][1]).not.toMatch(/^\s*(?:try|except|finally|with)\b/m);
+  });
+
   it('attests exact clean source and loaded plugin artifacts before accepting evidence', () => {
     for (const marker of [
       '[string]$ExpectedSourceCommit',

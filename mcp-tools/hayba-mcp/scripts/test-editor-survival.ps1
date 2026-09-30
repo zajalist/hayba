@@ -581,13 +581,12 @@ function Get-RequiredTransportLimit([object]$Limits, [string]$Name, [int]$Minimu
 
 function Get-EnvironmentEvidence([object]$PingResponse) {
     $marker = '__HAYBA_ENV__'
+    # Native Python policy refuses try/except to protect the cooperative
+    # deadline. Metadata API failures must fail setup rather than be hidden.
     $environmentScript = @'
 import json, unreal
 def cv(name):
-    try:
-        return str(unreal.SystemLibrary.get_console_variable_string_value(name))
-    except Exception:
-        return ""
+    return str(unreal.SystemLibrary.get_console_variable_string_value(name))
 meta = {
     "engine_version": str(unreal.SystemLibrary.get_engine_version()),
     "project_file_path": str(unreal.Paths.get_project_file_path()),
