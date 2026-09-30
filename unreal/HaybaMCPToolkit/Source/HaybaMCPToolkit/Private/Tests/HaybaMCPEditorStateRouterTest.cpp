@@ -1,6 +1,7 @@
 #include "Misc/AutomationTest.h"
 #include "HaybaMCPCommandHandler.h"
 #include "HaybaMCPAccessPolicy.h"
+#include "HaybaMCPCommandSets.h"
 #include "HaybaMCPDeveloperSettings.h"
 #include "HaybaMCPEditorState.h"
 #include "HaybaMCPEditorStatePolicy.h"
@@ -531,6 +532,136 @@ bool FHaybaMCPStateGetStateShapeTest::RunTest(const FString& Parameters)
 		TestTrue(TEXT("the default still walks dirty packages"), Data.IsValid() && Data->HasField(TEXT("dirty_packages")));
 		TestTrue(TEXT("with a count"), Data.IsValid() && Data->HasField(TEXT("dirty_count")));
 	}
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FHaybaMCPStatePieSafeDriftTest,
+	"Hayba.MCP.State.PieSafeDrift",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FHaybaMCPStatePieSafeDriftTest::RunTest(const FString& Parameters)
+{
+	using namespace HaybaMCPState;
+	const TSharedPtr<FHaybaMCPCommandHandler> Router = GetRouter(*this);
+	if (!Router.IsValid()) return false;
+	const TSet<FString> Registered(Router->GetAllCommands());
+	TestTrue(TEXT("a plausible command surface is registered"), Registered.Num() > 100);
+
+	// Spec T2 design 1, plus asset_browse and test_cancel (ledger C15) and the 18 R-12 reads
+	// (spec, Maintainer decisions 2026-09-28).
+	// lease_* is left out: those are PIE-safe by prefix, whatever set lists them.
+	static const TCHAR* const ExpectedSafe[] = {
+		TEXT("ping"), TEXT("editor_get_state"), TEXT("get_setting"), TEXT("copilot_key_status"), TEXT("batch_status"),
+		TEXT("hayba_propose_plan"), TEXT("ui_memory_set"), TEXT("ui_tool_stream"), TEXT("ui_tool_stream_new_turn"),
+		TEXT("editor_get_output_log"), TEXT("editor_stream_log"), TEXT("editor_get_performance_stats"), TEXT("editor_get_perf_stats"),
+		TEXT("test_cancel"),
+		TEXT("editor_pie_assert"), TEXT("editor_pie_wait_for"), TEXT("editor_pie_screenshot"), TEXT("editor_pie_widget_tree"),
+		TEXT("editor_pie_actor_list"), TEXT("editor_pie_actor_inspect"), TEXT("editor_pie_project_world"),
+		TEXT("docs_search"), TEXT("docs_lookup_api"), TEXT("docs_lookup_class"), TEXT("asset_search"), TEXT("asset_registry_query"),
+		TEXT("asset_get_info"), TEXT("asset_get_dependencies"), TEXT("asset_get_referencers"), TEXT("asset_get_references"), TEXT("asset_browse"),
+		TEXT("actor_list"), TEXT("actor_get_properties"), TEXT("actor_get_components"), TEXT("object_get_property"),
+		TEXT("blueprint_get_info"), TEXT("blueprint_inspect_graph"), TEXT("anim_blueprint_get_info"), TEXT("bt_get_info"),
+		TEXT("material_get_info"), TEXT("material_list"), TEXT("data_get"), TEXT("level_get_info"), TEXT("level_list"),
+		TEXT("level_get_spatial_index"), TEXT("scene_get_actor_relations"), TEXT("spline_get_info"), TEXT("texture_get_info"),
+		TEXT("texture_list"), TEXT("mesh_get_info"), TEXT("mesh_list"), TEXT("ui_query"), TEXT("ui_list_widget_types"),
+		TEXT("ui_list_widget_blueprints"), TEXT("ui_report_findings"), TEXT("audio_list"), TEXT("audio_active_sounds"),
+		TEXT("audio_asset_inspect"), TEXT("audio_meter_read"), TEXT("wp_get_cells"), TEXT("wp_get_streaming_state"),
+		TEXT("project_get_info"), TEXT("project_get_settings"), TEXT("project_list_plugins"), TEXT("test_list"), TEXT("test_get_log"),
+		TEXT("build_status"), TEXT("foliage_list_types"), TEXT("pcg_list_assets"), TEXT("list_pcg_assets"), TEXT("pcg_list_node_classes"),
+		TEXT("list_node_classes"), TEXT("pcg_get_node_details"), TEXT("get_node_details"),
+		TEXT("wait_for_idle"), TEXT("wait_for_shaders"), TEXT("asset_validate"), TEXT("material_validate"),
+		TEXT("mesh_audit"), TEXT("mesh_list_dynamic"), TEXT("mesh_topology_stats"), TEXT("metasound_inspect"),
+		TEXT("metasound_list"), TEXT("pcg_export_graph"), TEXT("pcg_read_node_output"), TEXT("pcg_validate_graph"),
+		TEXT("placement_validate"), TEXT("scene_export"), TEXT("scene_validate_physics"), TEXT("texture_audit"),
+		TEXT("ui_measure_text"), TEXT("copilot_get_key"),
+	};
+	TSet<FString> Expected;
+	for (const TCHAR* Name : ExpectedSafe) Expected.Add(Name);
+	TSet<FString> Actual;
+	Actual.Append(HaybaMCPCommandSets::ControlPlaneCommands());
+	Actual.Append(HaybaMCPCommandSets::PieObservationCommands());
+	Actual.Append(HaybaMCPCommandSets::ReadCommands());
+	TSet<FString> ActualNonLease;
+	for (const FString& Cmd : Actual)
+	{
+		if (!Cmd.StartsWith(TEXT("lease_"))) ActualNonLease.Add(Cmd);
+	}
+	for (const FString& Cmd : Expected.Difference(ActualNonLease))
+	{
+		AddError(FString::Printf(TEXT("the PIE-safe sets are missing %s"), *Cmd));
+	}
+	for (const FString& Cmd : ActualNonLease.Difference(Expected))
+	{
+		AddError(FString::Printf(TEXT("the PIE-safe sets gained %s without review"), *Cmd));
+	}
+
+	for (const FString& Cmd : Actual)
+	{
+		TestTrue(*FString::Printf(TEXT("PIE-safe %s is registered or router-inline"), *Cmd),
+			Registered.Contains(Cmd) || HaybaMCPCommandSets::RouterInlineCommands().Contains(Cmd));
+		TestEqual(*FString::Printf(TEXT("%s rules Safe"), *Cmd), PieRuleFor(Cmd), EPieRule::Safe);
+	}
+	for (const FString& Cmd : PieOwnerCommands())
+	{
+		TestTrue(*FString::Printf(TEXT("PIE-owner %s is registered"), *Cmd), Registered.Contains(Cmd));
+		TestFalse(*FString::Printf(TEXT("PIE-owner %s is in no safe set"), *Cmd), Actual.Contains(Cmd));
+	}
+	TArray<FString> RefusedByDefault;
+	for (const FString& Cmd : Registered)
+	{
+		if (Cmd.StartsWith(TEXT("editor_pie_")))
+		{
+			TestTrue(*FString::Printf(TEXT("%s has a deliberate PIE rule"), *Cmd),
+				HaybaMCPCommandSets::PieObservationCommands().Contains(Cmd) || PieOwnerCommands().Contains(Cmd));
+		}
+		if (Cmd.StartsWith(TEXT("lease_")))
+		{
+			TestEqual(*FString::Printf(TEXT("%s is PIE-safe"), *Cmd), PieRuleFor(Cmd), EPieRule::Safe);
+		}
+		if (PieRuleFor(Cmd) == EPieRule::Refuse)
+		{
+			RefusedByDefault.Add(Cmd);
+		}
+	}
+	TestFalse(TEXT("wp_region_load is a batch step, never a PIE-safe command"), Actual.Contains(TEXT("wp_region_load")));
+	TestFalse(TEXT("wp_region_unload is a batch step, never a PIE-safe command"), Actual.Contains(TEXT("wp_region_unload")));
+	for (const TCHAR* Writer : { TEXT("blueprint_add_node"), TEXT("python_run"), TEXT("editor_start_pie"), TEXT("editor_batch"),
+		TEXT("level_save"), TEXT("material_set_param"), TEXT("asset_delete") })
+	{
+		TestEqual(*FString::Printf(TEXT("%s stays refused"), Writer), PieRuleFor(Writer), EPieRule::Refuse);
+	}
+	// Printed so a reviewer sees what is still refused during PIE by default. None of the
+	// 18 R-12 reads may be in it.
+	for (const TCHAR* Read : { TEXT("wait_for_idle"), TEXT("wait_for_shaders"), TEXT("asset_validate"), TEXT("material_validate"), TEXT("mesh_audit"), TEXT("mesh_list_dynamic"),
+		TEXT("mesh_topology_stats"), TEXT("metasound_inspect"), TEXT("metasound_list"), TEXT("pcg_export_graph"), TEXT("pcg_read_node_output"), TEXT("pcg_validate_graph"),
+		TEXT("placement_validate"), TEXT("scene_export"), TEXT("scene_validate_physics"), TEXT("texture_audit"), TEXT("ui_measure_text"), TEXT("copilot_get_key") })
+	{
+		TestEqual(*FString::Printf(TEXT("R-12 read %s is allowed during PIE"), Read), PieRuleFor(Read), EPieRule::Safe);
+		TestFalse(*FString::Printf(TEXT("R-12 read %s is not refused by default"), Read), RefusedByDefault.Contains(Read));
+	}
+	// The same decision through the router: during a user PIE two of the 18 pass
+	// slot 2 and reach their handler. Without parameters the handler answers a
+	// missing-parameter error, which is enough here: pie_active did not refuse.
+	if (NoRealPie(*this))
+	{
+		FHaybaMCPEditorState::FScopedPieOverride Forced(MakePie(HaybaMCPState::EPieKind::User, HaybaMCPState::EPiePhase::Running));
+		const FString ReadOwner = MakeTestOwner();
+		for (const TCHAR* Read : { TEXT("material_validate"), TEXT("ui_measure_text") })
+		{
+			const TSharedPtr<FJsonObject> Reply = Send(*Router, 900190, ReadOwner, Read);
+			TestTrue(*FString::Printf(TEXT("R-12 read %s answers during a user PIE"), Read), Reply.IsValid());
+			TestNotEqual(*FString::Printf(TEXT("R-12 read %s passes slot 2 during a user PIE"), Read),
+				CodeOf(Reply), FString(TEXT("pie_active")));
+		}
+	}
+	RefusedByDefault.Sort();
+	AddInfo(FString::Printf(TEXT("refused during PIE by default (%d): %s"), RefusedByDefault.Num(), *FString::Join(RefusedByDefault, TEXT(", "))));
+	// The complement, for the M5 recipe of the handoffs: a list of names, never a
+	// pattern. lease_* is left out because it is PIE-safe by prefix.
+	TArray<FString> SafeSorted = ActualNonLease.Array();
+	SafeSorted.Sort();
+	AddInfo(FString::Printf(TEXT("PIE-safe (%d): %s"), SafeSorted.Num(), *FString::Join(SafeSorted, TEXT(", "))));
 	return true;
 }
 

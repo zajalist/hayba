@@ -79,6 +79,15 @@ namespace HaybaMCPCommandSets
 			TEXT("project_list_plugins"), TEXT("test_list"), TEXT("test_get_log"), TEXT("build_status"),
 			TEXT("foliage_list_types"), TEXT("pcg_list_assets"), TEXT("list_pcg_assets"), TEXT("pcg_list_node_classes"),
 			TEXT("list_node_classes"), TEXT("pcg_get_node_details"), TEXT("get_node_details"),
+			// R-12 (decided 2026-09-28): read-like commands. They are allowed
+			// during PIE and are reads for leases. The unsafe allowlist does not
+			// use this set, so they stay refused after a contained fault.
+			TEXT("wait_for_idle"), TEXT("wait_for_shaders"), TEXT("asset_validate"),
+			TEXT("material_validate"), TEXT("mesh_audit"), TEXT("mesh_list_dynamic"),
+			TEXT("mesh_topology_stats"), TEXT("metasound_inspect"), TEXT("metasound_list"),
+			TEXT("pcg_export_graph"), TEXT("pcg_read_node_output"), TEXT("pcg_validate_graph"),
+			TEXT("placement_validate"), TEXT("scene_export"), TEXT("scene_validate_physics"),
+			TEXT("texture_audit"), TEXT("ui_measure_text"), TEXT("copilot_get_key"),
 		};
 		return Set;
 	}
