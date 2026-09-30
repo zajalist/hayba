@@ -380,3 +380,38 @@ describe('the crash classifier knows both SEH log forms (ADR-0007)', () => {
     expect(verdicts(evidence, oldLog, newLog, `${finder}\nProcessing command: ping`)).toEqual([true, true, false]);
   });
 });
+
+describe('editor_batch stops while unsafe (T1 design 13)', () => {
+  const batch = codeOnly(read(toolkitPrivate, 'handlers', 'HaybaMCPBatchHandler.cpp'));
+
+  it('checks IsUnsafe() before the lease keep-alive and before Machine->Tick', () => {
+    const [start, end] = bodyRange(batch, 'bool Pump(');
+    const body = batch.slice(start, end);
+    const unsafe = body.indexOf('FHaybaEditorHealth::IsUnsafe()');
+    expect(unsafe).toBeGreaterThan(-1);
+    expect(body.indexOf('Table.Renew(')).toBeGreaterThan(unsafe);
+    expect(body.indexOf('Machine->Tick(')).toBeGreaterThan(unsafe);
+  });
+
+  it('FinalizeUnsafe never runs a step, unloads, releases regions or collects garbage', () => {
+    const [start, end] = bodyRange(batch, 'void FinalizeUnsafe(');
+    const body = batch.slice(start, end);
+    for (const call of ['RunStep(', 'ReleaseAll(', 'UnloadAll', 'CollectGarbage(', 'ReleaseRegion(', 'ReleaseEditorLoaderAdapter(']) {
+      expect(body).not.toContain(call);
+    }
+    expect(body).toContain('.Release(S->LeaseToken');
+  });
+
+  it('region steps check IsUnsafe() first', () => {
+    for (const [signature, firstWork] of [
+      ['bool RunRegionLoad(', 'ParseBounds('],
+      ['bool RunRegionUnload(', 'P->TryGetStringField('],
+    ] as const) {
+      const [start, end] = bodyRange(batch, signature);
+      const body = batch.slice(start, end);
+      const unsafe = body.indexOf('FHaybaEditorHealth::IsUnsafe()');
+      expect(unsafe, signature).toBeGreaterThan(-1);
+      expect(unsafe, signature).toBeLessThan(body.indexOf(firstWork));
+    }
+  });
+});

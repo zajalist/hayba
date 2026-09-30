@@ -10,6 +10,7 @@
 #include "HaybaMCPAccessPolicy.h"
 #include "HaybaMCPBatchPolicy.h"
 #include "HaybaMCPCommandHandler.h"
+#include "HaybaMCPEditorHealth.h"
 #include "HaybaMCPJobRegistry.h"
 #include "HaybaMCPLeaseManager.h"
 #include "HaybaMCPModule.h"
@@ -29,11 +30,32 @@
 #include "Serialization/JsonWriter.h"
 #include "ShaderCompiler.h"
 #include "UObject/UObjectGlobals.h"
+#if WITH_DEV_AUTOMATION_TESTS
+#include "UObject/StrongObjectPtr.h"
+#endif
 #include "WorldPartition/LoaderAdapter/LoaderAdapterShape.h"
 #include "WorldPartition/WorldPartition.h"
 #include "WorldPartition/WorldPartitionEditorLoaderAdapter.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogHaybaMCPBatch, Log, All);
+
+#if WITH_DEV_AUTOMATION_TESTS
+namespace
+{
+	bool GRecordingBatchActions = false;
+	TArray<FString>& RecordedBatchActions()
+	{
+		static TArray<FString> Actions;
+		return Actions;
+	}
+}
+static void RecordBatchAction(const TCHAR* Action)
+{
+	if (GRecordingBatchActions) RecordedBatchActions().Add(Action);
+}
+#else
+static void RecordBatchAction(const TCHAR*) {}
+#endif
 
 namespace
 {
@@ -243,12 +265,18 @@ namespace
 		{
 			Loader->Unload();
 		}
+		RecordBatchAction(TEXT("ReleaseEditorLoaderAdapter"));
 		WP->ReleaseEditorLoaderAdapter(Adapter);
 		return true;
 	}
 
 	bool RunRegionLoad(FBatchState& S, const TSharedPtr<FJsonObject>& P, TSharedPtr<FJsonObject>& OutData, FString& Error)
 	{
+		if (FHaybaEditorHealth::IsUnsafe())
+		{
+			Error = TEXT("[editor_unsafe_restart_required] wp_region_load was not run: a native fault was contained, and no World Partition region loads until the editor restarts.");
+			return false;
+		}
 		double MinX = 0, MinY = 0, MaxX = 0, MaxY = 0;
 		if (!ParseBounds(P, MinX, MinY, MaxX, MaxY, Error))
 		{
@@ -325,6 +353,11 @@ namespace
 
 	bool RunRegionUnload(FBatchState& S, const TSharedPtr<FJsonObject>& P, TSharedPtr<FJsonObject>& OutData, FString& Error)
 	{
+		if (FHaybaEditorHealth::IsUnsafe())
+		{
+			Error = TEXT("[editor_unsafe_restart_required] wp_region_unload was not run: a native fault was contained; the restart discards loaded regions.");
+			return false;
+		}
 		FString Name;
 		P->TryGetStringField(TEXT("name"), Name);
 		TArray<TSharedPtr<FJsonValue>> Released;
@@ -350,6 +383,7 @@ namespace
 
 	TArray<FString> ReleaseAll(FBatchState& S)
 	{
+		RecordBatchAction(TEXT("ReleaseAll"));
 		TArray<FString> Notes;
 		for (FRegion& R : S.Regions)
 		{
@@ -367,6 +401,7 @@ namespace
 
 	void RunStep(FBatchState& S, int32 Index, bool& bOk, FString& Error)
 	{
+		RecordBatchAction(TEXT("RunStep"));
 		FStepRecord& Record = S.Records[Index];
 		const FString& Cmd = S.Machine->GetStep(Index).Cmd;
 		const double T0 = FPlatformTime::Seconds();
@@ -567,6 +602,44 @@ namespace
 		ActiveBatches().Remove(S->JobId);
 	}
 
+	/**
+	 * The editor went unsafe (a contained native fault, ADR-0011). Finish the job
+	 * as failed WITHOUT touching the engine: no RunStep, no UnloadAll/ReleaseAll
+	 * (World Partition unload), no CollectGarbage. The forced GC is exactly the
+	 * call that enters a damaged Python interpreter. Only lease-table work runs,
+	 * which is pure and allowed while unsafe like lease_release.
+	 */
+	void FinalizeUnsafe(const TSharedRef<FBatchState>& S)
+	{
+		S->FinishedAt = FPlatformTime::Seconds();
+		const int32 LeftLoaded = CountLoaded(*S);
+		UE_LOG(LogHaybaMCPBatch, Warning, TEXT("batch %s: editor unsafe; %d region(s) left loaded, the restart discards them"),
+			*S->JobId.Left(8), LeftLoaded);
+
+		HaybaMCPLease::FTable& Table = FHaybaMCPLeaseManager::Get().Table();
+		Table.EndYield(S->LeaseToken);
+		Table.SetYieldable(S->LeaseToken, false);
+		FString ReleaseError;
+		Table.Release(S->LeaseToken, S->Owner, ReleaseError);
+
+		const TSharedPtr<FJsonObject> Result = BuildStatus(*S);
+		Result->SetStringField(TEXT("status"), TEXT("failed"));
+		Result->SetStringField(TEXT("code"), TEXT("editor_unsafe_restart_required"));
+		Result->SetStringField(TEXT("error"), FString::Printf(
+			TEXT("[editor_unsafe_restart_required] batch stopped: a native fault was contained, so the batch ran no further step, ")
+			TEXT("cleanup or garbage collection. %d World Partition region(s) stay loaded until the editor restarts. ")
+			TEXT("Restart the editor before further work."), LeftLoaded));
+		Result->SetNumberField(TEXT("regions_left_loaded"), LeftLoaded);
+		FHaybaMCPJobRegistry::Get().SetDone(S->JobId, 1, JsonToCondensed(Result));
+		S->bFinalized = true;
+		if (S->TickHandle.IsValid())
+		{
+			FTSTicker::GetCoreTicker().RemoveTicker(S->TickHandle);
+			S->TickHandle.Reset();
+		}
+		ActiveBatches().Remove(S->JobId);
+	}
+
 	bool Pump(float /*Dt*/, const TSharedRef<FBatchState>& S)
 	{
 		if (S->bFinalized) return false;
@@ -574,6 +647,15 @@ namespace
 		// re-enter the batch.
 		if (S->bInPump) return true;
 		TGuardValue<bool> Guard(S->bInPump, true);
+
+		// Preamble, in this order (spec §3.0): unsafe stop (T1), lease keep-alive,
+		// PIE hold (T2), Machine->Tick. After a contained native fault the batch
+		// must not run a step, unload regions or force a GC in a damaged process.
+		if (FHaybaEditorHealth::IsUnsafe())
+		{
+			FinalizeUnsafe(S);
+			return false;
+		}
 
 		HaybaMCPLease::FTable& Table = FHaybaMCPLeaseManager::Get().Table();
 		FInputs In;
@@ -615,6 +697,7 @@ namespace
 			{
 				S->Records[S->Machine->GetStepIndex()].bGcRanAfter = true;
 			}
+			RecordBatchAction(TEXT("CollectGarbage"));
 			CollectGarbage(GARBAGE_COLLECTION_KEEPFLAGS, true);
 			break;
 		case EAction::BeginYield:
@@ -626,6 +709,7 @@ namespace
 			Table.EndYield(S->LeaseToken);
 			break;
 		case EAction::UnloadAll:
+			RecordBatchAction(TEXT("UnloadAll"));
 			for (const FString& Note : ReleaseAll(*S))
 			{
 				UE_LOG(LogHaybaMCPBatch, Log, TEXT("batch %s: %s"), *S->JobId.Left(8), *Note);
@@ -816,3 +900,73 @@ FHaybaHandlerResult FHaybaMCPBatchHandler::Status(const TSharedPtr<FJsonObject>&
 	}
 	return FHaybaHandlerResult::Ok(Out);
 }
+
+#if WITH_DEV_AUTOMATION_TESTS
+namespace HaybaMCPBatchTestHooks
+{
+	void BeginRecording()
+	{
+		RecordedBatchActions().Reset();
+		GRecordingBatchActions = true;
+	}
+
+	TArray<FString> EndRecording()
+	{
+		GRecordingBatchActions = false;
+		TArray<FString> Out = MoveTemp(RecordedBatchActions());
+		RecordedBatchActions().Reset();
+		return Out;
+	}
+
+	bool PumpOnceForTests(const FString& JobId)
+	{
+		const TSharedPtr<FBatchState>* Found = ActiveBatches().Find(JobId);
+		if (!Found || !Found->IsValid()) return false;
+		const TSharedRef<FBatchState> S = Found->ToSharedRef();
+		Pump(0.0f, S);
+		return true;
+	}
+
+	FString RunRegionStepForTests(const FString& Cmd, const TSharedPtr<FJsonObject>& Params)
+	{
+		FBatchState S;   // no job id: nothing to report, nothing to finalize
+		TSharedPtr<FJsonObject> Data;
+		FString Error;
+		const TSharedPtr<FJsonObject> P = Params.IsValid() ? Params : MakeShared<FJsonObject>();
+		const bool bOk = Cmd == TEXT("wp_region_load")
+			? RunRegionLoad(S, P, Data, Error)
+			: RunRegionUnload(S, P, Data, Error);
+		return bOk ? FString() : Error;
+	}
+
+	/** Strong references to the fake adapters, so a GC cannot make a fake region look unloaded.
+	 *  Leaked on purpose: the array must outlive static destruction; tests empty it. */
+	static TArray<TStrongObjectPtr<UWorldPartitionEditorLoaderAdapter>>& FakeAdapters()
+	{
+		static TArray<TStrongObjectPtr<UWorldPartitionEditorLoaderAdapter>>* Adapters =
+			new TArray<TStrongObjectPtr<UWorldPartitionEditorLoaderAdapter>>();
+		return *Adapters;
+	}
+
+	bool InjectFakeLoadedRegion(const FString& JobId, const FString& Name)
+	{
+		const TSharedPtr<FBatchState>* Found = ActiveBatches().Find(JobId);
+		if (!Found || !Found->IsValid()) return false;
+		// Created as UWorldPartition::CreateEditorLoaderAdapter creates it, but
+		// registered nowhere and with no loader: CountLoaded sees a valid adapter,
+		// and ReleaseRegion (WorldPartition is null) would only reset the pointer.
+		UWorldPartitionEditorLoaderAdapter* Adapter = NewObject<UWorldPartitionEditorLoaderAdapter>(GetTransientPackage());
+		FakeAdapters().Emplace(Adapter);
+		FRegion Region;
+		Region.Name = Name;
+		Region.Adapter = Adapter;
+		(*Found)->Regions.Add(Region);
+		return true;
+	}
+
+	void ReleaseFakeLoadedRegions()
+	{
+		FakeAdapters().Reset();
+	}
+}
+#endif

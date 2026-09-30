@@ -15,6 +15,8 @@
 #include "Misc/App.h"
 #include "UObject/UObjectGlobals.h"
 #include "HaybaMCPLeaseManager.h"
+#include "HaybaMCPLeasePolicy.h"
+#include "handlers/HaybaMCPBatchHandler.h"
 #include "HaybaMCPSettings.h"
 #include "Editor.h"
 #include "Misc/Guid.h"
@@ -816,6 +818,161 @@ bool FHaybaHealthPythonGuardFaultTest::RunTest(const FString&)
 		TestEqual(TEXT("matched rule"), Str(Obj(Corrupt, TEXT("data")), TEXT("matched_rule")), FString(TEXT("cpython_corruption_marker")));
 		TestTrue(TEXT("the marker path sets python_unhealthy"), FHaybaEditorHealth::IsPythonUnhealthy());
 		TestEqual(TEXT("no SEH exception code"), static_cast<int64>(FHaybaEditorHealth::Snapshot().ExceptionCode), static_cast<int64>(0));
+	}
+	TestFalse(TEXT("the real editor health is untouched (R-7)"), FHaybaEditorHealth::IsUnsafe());
+	return true;
+}
+
+namespace HaybaHealthTest
+{
+	/** A global X lease for Owner, straight from the table (release it in ON_SCOPE_EXIT). */
+	FString AcquireGlobalLease(FAutomationTestBase& Test, const FString& Owner)
+	{
+		HaybaMCPLease::FRequest Request;
+		Request.Owner = Owner;
+		HaybaMCPAccess::FClaim Claim;
+		FString Error;
+		Test.TestTrue(TEXT("'global' parses"), HaybaMCPAccess::ParseResource(TEXT("global"), Claim.Resource, Error));
+		Claim.bExclusive = true;
+		Request.Claims.Add(Claim);
+		Request.TtlSeconds = 60.0;
+		Request.Label = TEXT("hayba-test batch");
+		const HaybaMCPLease::FAcquireResult Result = FHaybaMCPLeaseManager::Get().Table().Acquire(Request);
+		Test.TestTrue(TEXT("the test lease is granted"), Result.Status == HaybaMCPLease::EStatus::Granted);
+		return Result.Token;
+	}
+
+	TSharedPtr<FJsonObject> Step(const TCHAR* Cmd, const TCHAR* Fence, const TSharedPtr<FJsonObject>& StepParams = nullptr)
+	{
+		TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
+		Out->SetStringField(TEXT("cmd"), Cmd);
+		Out->SetStringField(TEXT("fence_after"), Fence);
+		if (StepParams.IsValid()) Out->SetObjectField(TEXT("params"), StepParams.ToSharedRef());
+		return Out;
+	}
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FHaybaHealthBatchStepRefusedTest,
+	"Hayba.MCP.Health.BatchStepRefusedWhileUnsafe",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FHaybaHealthBatchStepRefusedTest::RunTest(const FString&)
+{
+	using namespace HaybaHealthTest;
+	const TSharedPtr<FHaybaMCPCommandHandler> R = Router(*this);
+	if (!R.IsValid()) return false;
+	AddExpectedErrorPlain(TEXT("editor_unsafe: native fault"), EAutomationExpectedErrorFlags::Contains, 1);
+	AddExpectedErrorPlain(TEXT("first refusal since the native fault"), EAutomationExpectedErrorFlags::Contains, 1);
+	{
+		FHaybaEditorHealth::FScopedOverrideForTests Override;
+		const FString Owner = TestOwner();
+		Send(*R, TEXT("test_inject_native_fault"), Owner, Fault(TEXT("access_violation"), TEXT("dispatch")));
+		TestTrue(TEXT("the editor is unsafe"), FHaybaEditorHealth::IsUnsafe());
+
+		// A new batch never starts.
+		TSharedPtr<FJsonObject> BatchParams = MakeShared<FJsonObject>();
+		BatchParams->SetStringField(TEXT("lease"), TEXT("ls_1"));
+		BatchParams->SetArrayField(TEXT("steps"), { MakeShared<FJsonValueObject>(Step(TEXT("ping"), TEXT("none"))) });
+		TestEqual(TEXT("editor_batch is refused"), Str(Send(*R, TEXT("editor_batch"), Owner, BatchParams), TEXT("code")),
+			FString(TEXT("editor_unsafe_restart_required")));
+
+		// A routed batch step takes slot 1 like any other request.
+		const TSharedPtr<FJsonObject> Routed = Parse(R->ProcessBatchStep(
+			Envelope(TEXT("python_run"), Owner, Params(TEXT("script"), TEXT("print(1)"))), TEXT("job-health-test"), false));
+		TestEqual(TEXT("a routed python_run step is refused"), Str(Routed, TEXT("code")), FString(TEXT("editor_unsafe_restart_required")));
+
+		// The native region steps check IsUnsafe() before anything else (defence in depth).
+		TSharedPtr<FJsonObject> Bounds = MakeShared<FJsonObject>();
+		Bounds->SetNumberField(TEXT("min_x"), 0); Bounds->SetNumberField(TEXT("min_y"), 0);
+		Bounds->SetNumberField(TEXT("max_x"), 100); Bounds->SetNumberField(TEXT("max_y"), 100);
+		TestTrue(TEXT("wp_region_load refuses while unsafe"),
+			HaybaMCPBatchTestHooks::RunRegionStepForTests(TEXT("wp_region_load"), Bounds)
+				.StartsWith(TEXT("[editor_unsafe_restart_required] wp_region_load was not run")));
+		TestTrue(TEXT("wp_region_unload refuses while unsafe"),
+			HaybaMCPBatchTestHooks::RunRegionStepForTests(TEXT("wp_region_unload"), MakeShared<FJsonObject>())
+				.StartsWith(TEXT("[editor_unsafe_restart_required] wp_region_unload was not run")));
+	}
+	TestFalse(TEXT("the real editor health is untouched (R-7)"), FHaybaEditorHealth::IsUnsafe());
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FHaybaHealthBatchPumpStopsTest,
+	"Hayba.MCP.Health.BatchPumpStopsWhileUnsafe",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FHaybaHealthBatchPumpStopsTest::RunTest(const FString&)
+{
+	using namespace HaybaHealthTest;
+	const TSharedPtr<FHaybaMCPCommandHandler> R = Router(*this);
+	if (!R.IsValid()) return false;
+	AddExpectedErrorPlain(TEXT("editor_unsafe: native fault"), EAutomationExpectedErrorFlags::Contains, 1);
+	// The Warning FinalizeUnsafe logs. It must count the region the batch still holds.
+	AddExpectedErrorPlain(TEXT("editor unsafe; 1 region(s) left loaded, the restart discards them"), EAutomationExpectedErrorFlags::Contains, 1);
+	TGuardValue<bool> PlanOff(FHaybaMCPSettings::Get().bPlanModeEnabled, false);   // editor_batch is Plan-gated
+	{
+		FHaybaEditorHealth::FScopedOverrideForTests Override;
+		const FString Owner = TestOwner();
+		const FString Token = AcquireGlobalLease(*this, Owner);
+		FString JobId;
+		ON_SCOPE_EXIT
+		{
+			// Never leave a registered pump behind a failed assertion.
+			for (int32 I = 0; I < 8 && !JobId.IsEmpty() && HaybaMCPBatchTestHooks::PumpOnceForTests(JobId); ++I) {}
+			HaybaMCPBatchTestHooks::ReleaseFakeLoadedRegions();
+			FString Ignored;
+			FHaybaMCPLeaseManager::Get().Table().Release(Token, Owner, Ignored);
+		};
+
+		// The spec's shape, [region load, faulting step, region unload] with a gc fence.
+		// The region is injected instead of loaded (see the Decision above).
+		TSharedPtr<FJsonObject> UnloadParams = MakeShared<FJsonObject>();
+		UnloadParams->SetStringField(TEXT("name"), TEXT("fake_region"));
+		TSharedPtr<FJsonObject> BatchParams = MakeShared<FJsonObject>();
+		BatchParams->SetStringField(TEXT("lease"), Token);
+		BatchParams->SetArrayField(TEXT("steps"), {
+			MakeShared<FJsonValueObject>(Step(TEXT("ping"), TEXT("none"))),
+			MakeShared<FJsonValueObject>(Step(TEXT("test_inject_native_fault"), TEXT("gc"), Fault(TEXT("access_violation"), TEXT("dispatch")))),
+			MakeShared<FJsonValueObject>(Step(TEXT("wp_region_unload"), TEXT("gc"), UnloadParams)) });
+		const TSharedPtr<FJsonObject> Started = Send(*R, TEXT("editor_batch"), Owner, BatchParams);
+		JobId = Str(Obj(Started, TEXT("data")), TEXT("job_id"));
+		if (!TestFalse(TEXT("the batch started"), JobId.IsEmpty())) return false;
+		if (!TestTrue(TEXT("the batch holds one region that counts as loaded"),
+			HaybaMCPBatchTestHooks::InjectFakeLoadedRegion(JobId, TEXT("fake_region")))) return false;
+
+		HaybaMCPBatchTestHooks::BeginRecording();
+		for (int32 I = 0; I < 10 && !FHaybaEditorHealth::IsUnsafe(); ++I)
+		{
+			TestTrue(TEXT("the job is pumped"), HaybaMCPBatchTestHooks::PumpOnceForTests(JobId));
+		}
+		TestTrue(TEXT("the injected step faulted"), FHaybaEditorHealth::IsUnsafe());
+		TestEqual(TEXT("R-8: the fault is blamed on the step, not on editor_batch"),
+			FHaybaEditorHealth::Snapshot().FaultedCommand, FString(TEXT("test_inject_native_fault")));
+		TestTrue(TEXT("the next pump finds the job and finalizes it"), HaybaMCPBatchTestHooks::PumpOnceForTests(JobId));
+		TestFalse(TEXT("the job is no longer active"), HaybaMCPBatchTestHooks::PumpOnceForTests(JobId));
+		const TArray<FString> Actions = HaybaMCPBatchTestHooks::EndRecording();
+
+		TestEqual(TEXT("exactly the two steps before the fault ran; wp_region_unload never did"),
+			Actions.FilterByPredicate([](const FString& A) { return A == TEXT("RunStep"); }).Num(), 2);
+		// These can fail: with a loaded region, a pump without the unsafe preamble
+		// goes to cleanup and records UnloadAll and ReleaseAll, and the cleanup
+		// fence that follows an unload records CollectGarbage.
+		for (const TCHAR* Forbidden : { TEXT("CollectGarbage"), TEXT("UnloadAll"), TEXT("ReleaseAll"), TEXT("ReleaseEditorLoaderAdapter") })
+		{
+			TestFalse(*FString::Printf(TEXT("no %s after the fault"), Forbidden), Actions.Contains(Forbidden));
+		}
+
+		TSharedPtr<FJsonObject> StatusParams = MakeShared<FJsonObject>();
+		StatusParams->SetStringField(TEXT("job_id"), JobId);
+		const TSharedPtr<FJsonObject> Status = Obj(Send(*R, TEXT("batch_status"), Owner, StatusParams), TEXT("data"));
+		TestEqual(TEXT("the job failed"), Str(Status, TEXT("status")), FString(TEXT("failed")));
+		TestEqual(TEXT("with the unsafe code"), Str(Status, TEXT("code")), FString(TEXT("editor_unsafe_restart_required")));
+		double LeftLoaded = -1.0;
+		Status->TryGetNumberField(TEXT("regions_left_loaded"), LeftLoaded);
+		TestEqual(TEXT("the region was left loaded for the restart to discard"), static_cast<int32>(LeftLoaded), 1);
+		TestTrue(TEXT("the error says so"), Str(Status, TEXT("error")).Contains(TEXT("1 World Partition region(s) stay loaded")));
+		TestNull(TEXT("the batch's lease-table entry was released"), FHaybaMCPLeaseManager::Get().Table().FindLease(Token));
 	}
 	TestFalse(TEXT("the real editor health is untouched (R-7)"), FHaybaEditorHealth::IsUnsafe());
 	return true;

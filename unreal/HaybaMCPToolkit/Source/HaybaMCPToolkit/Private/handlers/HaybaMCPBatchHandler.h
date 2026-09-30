@@ -25,3 +25,23 @@ private:
 	FHaybaHandlerResult Start(const TSharedPtr<FJsonObject>& Params);
 	FHaybaHandlerResult Status(const TSharedPtr<FJsonObject>& Params);
 };
+
+#if WITH_DEV_AUTOMATION_TESTS
+/** Test-only seams for Hayba.MCP.Health.Batch* (free functions: the class layout does not change). */
+namespace HaybaMCPBatchTestHooks
+{
+	/** Start recording "RunStep", "CollectGarbage", "UnloadAll", "ReleaseEditorLoaderAdapter", "ReleaseAll". */
+	void BeginRecording();
+	/** Stop recording and return what the pump did since BeginRecording. */
+	TArray<FString> EndRecording();
+	/** Run one pump of an active job now. False when the job is not active. */
+	bool PumpOnceForTests(const FString& JobId);
+	/** Run wp_region_load / wp_region_unload against a throwaway batch state; returns the error ("" on success). */
+	FString RunRegionStepForTests(const FString& Cmd, const TSharedPtr<FJsonObject>& Params);
+	/** Give an active job one region that counts as loaded: a transient loader adapter that belongs to no
+	 *  World Partition and has no loader, so releasing it would only reset the pointer. False when the job is not active. */
+	bool InjectFakeLoadedRegion(const FString& JobId, const FString& Name);
+	/** Drop the strong references InjectFakeLoadedRegion holds. Call it in ON_SCOPE_EXIT. */
+	void ReleaseFakeLoadedRegions();
+}
+#endif

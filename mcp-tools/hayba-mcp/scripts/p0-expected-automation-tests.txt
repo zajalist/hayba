@@ -25,3 +25,5 @@ Hayba.MCP.Health.DispatchFaultIsSticky
 Hayba.MCP.Health.InnerGuardOkResultIsForcedToFault
 Hayba.MCP.Health.FaultInjectionIsGuarded
 Hayba.MCP.Health.PythonGuardFaultSetsPythonUnhealthy
+Hayba.MCP.Health.BatchStepRefusedWhileUnsafe
+Hayba.MCP.Health.BatchPumpStopsWhileUnsafe
