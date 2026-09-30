@@ -7,8 +7,8 @@ For the consumer's session, to act on in its own closed-editor window. Hayba nev
 | | |
 |---|---|
 | Tag | `p0-deploy-a` (and `v0.4.0-rc.1`, see `docs/VERSIONING.md`) → `e3ca9b62` on `fix/p0-safety-public` |
-| Deploy branch | `<deploy-branch>` at `<MERGE_A>`. **Do not deploy while this cell still reads `<MERGE_A>`.** |
-| Node | `mcp-tools/hayba-mcp/dist` built from `<MERGE_A>` (§4 step 4) |
+| Deploy branch | `<deploy-branch>` at `1cdf1f2c`. |
+| Node | `mcp-tools/hayba-mcp/dist` built from `1cdf1f2c` (§4 step 4) |
 | Gate evidence | BuildPlugin, host build twice, 42 exact test names (R0+34), RealPIE, TS suite, live ladder A1–A8 |
 
 - **Sticky `editor_unsafe` (T1).** After a contained native fault, Hayba refuses writes, Python, saves, compiles and PIE with `editor_unsafe_restart_required` until the editor restarts. Reads still answer. After an engine fatal during a save (`HCR-NATIVE-004`), only status commands answer: `ping`, `editor_get_state`, `lease_status`, `lease_release`, `batch_status` and the logs. The person at the editor gets a persistent notification within one frame, and the Play button is refused until the restart.
@@ -86,10 +86,10 @@ The gate itself uses 0, 1, 2 and 4.
 1. Announce the window to every lane.
 2. `python Tools/GameFlow/editor_gate.py acquire --owner deploy` (global). Every lane stops at the gate.
 3. The user saves and closes the consumer's editor.
-4. Build through the existing deploy-branch path, at exactly `<MERGE_A>`:
+4. Build through the existing deploy-branch path, at exactly `1cdf1f2c`:
    ```powershell
    git -C <deploy-worktree> fetch
-   git -C <deploy-worktree> rev-parse --short HEAD   # must print <MERGE_A>
+   git -C <deploy-worktree> rev-parse --short HEAD   # must print 1cdf1f2c
    Set-Location <deploy-worktree>\mcp-tools\hayba-mcp
    npm run build:server                                            # Node dist from the same commit
    ```
