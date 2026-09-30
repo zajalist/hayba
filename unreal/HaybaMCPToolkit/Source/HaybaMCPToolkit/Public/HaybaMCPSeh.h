@@ -16,6 +16,24 @@
 // (which converts to a function pointer). TFunctionRef cannot be used: MSVC
 // C2712 forbids C++ object unwinding across __try, and even a TFunctionRef
 // parameter trips it on the 14.50 toolchain. Non-Windows runs the thunk directly.
+
+/**
+ * Where a caught native fault happened (ADR-0011). Global scope on purpose:
+ * the source form `RunGuardedAt(EHaybaFaultSite::Python` is what the
+ * editor-health and save-site contract tests match (review item R-20).
+ */
+enum class EHaybaFaultSite : uint8
+{
+    /** The router's guard around IHaybaMCPHandler::Handle. */
+    Dispatch,
+    /** python_run's guard around each FPythonCommandEx. */
+    Python,
+    /** A handler guarding its own crash-prone call (HaybaSeh::RunGuarded). */
+    HandlerInner,
+    /** Reserved for test-only callers; classified like HandlerInner. */
+    TestInjection,
+};
+
 namespace HaybaSeh
 {
     void RunGuarded(void (*Thunk)(void*), void* Context, bool& bOutCrashed);

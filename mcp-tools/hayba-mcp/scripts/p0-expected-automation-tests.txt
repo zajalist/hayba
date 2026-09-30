@@ -12,3 +12,10 @@ Hayba.MCP.Lease.ClassificationDrift
 Hayba.MCP.Lease.Envelope
 Hayba.MCP.Lease.Table
 Hayba.MCP.Seh.WorldSwitchDriftClassification
+
+# T1
+Hayba.MCP.Health.ClassifyCaughtFault
+Hayba.MCP.Health.UnsafeGatePolicy
+Hayba.MCP.Health.AllowlistDrift
+Hayba.MCP.Health.EngineAssertCodeIsEngineFatal
+Hayba.MCP.Lease.WarningLimiter
