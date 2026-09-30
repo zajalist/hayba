@@ -380,6 +380,17 @@ namespace HaybaMCPAdvisory
             break;
         }
 
+        // A contained native fault (ADR-0011): whatever the state, the only
+        // recovery is a restart, and nothing is retryable until then.
+        if (Signals.bEditorUnsafe)
+        {
+            static const TCHAR* const RestartLine = TEXT("Fault contained; restart the editor before further work.");
+            Result.SessionHealth = EHaybaMCPSessionHealth::RestartRequired;
+            Result.bRetryable = false;
+            Result.NextAction = RestartLine;
+            AddUniqueNonEmpty(Result.MandatoryRecovery, RestartLine);
+        }
+
         return Result;
     }
 

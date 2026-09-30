@@ -5,6 +5,7 @@
 #include "HaybaMCPCommandHandler.h"
 #include "HaybaMCPModule.h"
 #include "HaybaMCPSettings.h"
+#include "HaybaMCPEditorHealth.h"
 #include "HaybaMCPLandscapeImporter.h"
 #include "Interfaces/IPluginManager.h"
 #include "Runtime/Launch/Resources/Version.h"
@@ -154,7 +155,10 @@ FHaybaHandlerResult FHaybaMCPLegacyHandler::Cmd_Ping(const TSharedPtr<FJsonObjec
 		Caps->SetBoolField(TEXT("lease_manager"), true);
 		Caps->SetBoolField(TEXT("editor_batch"), true);
 		Caps->SetBoolField(TEXT("wp_region_steps"), true);
+		// Sticky editor_unsafe (ADR-0011): health fields below; refusals carry editor_health.
+		Caps->SetBoolField(TEXT("editor_health"), true);
 		Data->SetObjectField(TEXT("capabilities"), Caps);
+		FHaybaEditorHealth::WriteJson(Data.ToSharedRef());
 	}
 
     // Report the immutable snapshot from the active server, not the mutable

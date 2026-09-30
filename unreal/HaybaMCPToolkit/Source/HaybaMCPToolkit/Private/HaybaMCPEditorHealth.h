@@ -110,6 +110,8 @@ private:
 	static FState* ActiveOverride;
 	static FState& Active();
 	static void RecordFault(EHaybaFaultSite Site, uint32 ExceptionCode, bool bWorldSwitchRepaired, const FString& Marker);
-	/** THE only place a notification is posted: a one-shot core-ticker delegate. */
-	static bool DeliverUserNotification(float DeltaSeconds);
+	/** THE only place a notification is posted: a one-shot core-ticker delegate.
+	 *  It is bound to the state that scheduled it, never to whichever state is
+	 *  active when it fires, so a real fault never delivers to a test override. */
+	static bool DeliverUserNotification(float DeltaSeconds, FState* State);
 };

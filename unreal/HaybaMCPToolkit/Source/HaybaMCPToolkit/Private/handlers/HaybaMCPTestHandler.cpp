@@ -24,6 +24,67 @@
 #include "Policies/CondensedJsonPrintPolicy.h"
 #endif
 
+#if WITH_DEV_AUTOMATION_TESTS && PLATFORM_WINDOWS
+#include "HaybaMCPEditorHealth.h"
+#include "HaybaMCPHealthPolicy.h"
+#include "HaybaMCPLeaseManager.h"
+#include "HaybaMCPSeh.h"
+#include "Windows/WindowsHWrapper.h"
+
+// test_inject_native_fault (ADR-0011): raises a real SEH exception at a chosen
+// guard so Hayba.MCP.Health.* can prove the sticky state end to end. Refused
+// unless a health override is active, the caller is in-process (ConnId 0) and
+// an automation test is running. Not in sidecar.json, not agent-callable, no
+// TS wrapper.
+namespace HaybaMCPFaultInjection
+{
+	/** The guards call this thunk. The context carries the exception code, not a pointer. */
+	void RaiseInjectedFault(void* Context)
+	{
+		::RaiseException(static_cast<DWORD>(reinterpret_cast<UPTRINT>(Context)), 0, 0, nullptr);
+	}
+
+	FHaybaHandlerResult Run(const TSharedPtr<FJsonObject>& Params)
+	{
+		const FHaybaMCPRequestContext* Context = FHaybaMCPLeaseManager::Get().Current();
+		const int32 ConnId = Context ? Context->ConnId : -1;
+		if (!HaybaMCPHealth::IsNativeFaultInjectionAllowed(FHaybaEditorHealth::IsTestOverrideActive(), ConnId, GIsAutomationTesting))
+		{
+			return FHaybaHandlerResult::Err(TEXT(
+				"test_inject_native_fault is refused: it runs only in-process (connection 0), inside a running automation test "
+				"that holds FHaybaEditorHealth::FScopedOverrideForTests. Nothing was injected."));
+		}
+		FString Kind, Site;
+		Params->TryGetStringField(TEXT("kind"), Kind);
+		Params->TryGetStringField(TEXT("site"), Site);
+		uint32 Code = 0;
+		if (Kind == TEXT("access_violation")) Code = 0xC0000005u;
+		else if (Kind == TEXT("engine_assert")) Code = 0x4000u;   // appError's AssertExceptionCode
+		else return FHaybaHandlerResult::Err(TEXT("test_inject_native_fault: kind must be access_violation or engine_assert"));
+		void* const FaultContext = reinterpret_cast<void*>(static_cast<UPTRINT>(Code));
+
+		if (Site == TEXT("dispatch"))
+		{
+			// Unguarded here on purpose: the router's RunGuardedAt(Dispatch) catches it.
+			RaiseInjectedFault(FaultContext);
+			return FHaybaHandlerResult::Err(TEXT("test_inject_native_fault: the dispatch fault did not raise"));
+		}
+		bool bCaught = false;
+		if (Site == TEXT("python")) HaybaSeh::RunGuardedAt(EHaybaFaultSite::Python, &RaiseInjectedFault, FaultContext, bCaught);
+		else if (Site == TEXT("handler_inner")) HaybaSeh::RunGuarded(&RaiseInjectedFault, FaultContext, bCaught);
+		else return FHaybaHandlerResult::Err(TEXT("test_inject_native_fault: site must be dispatch, python or handler_inner"));
+
+		// Deliberately report success: the router must still answer native_fault_contained.
+		TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
+		Out->SetBoolField(TEXT("ok"), true);
+		Out->SetBoolField(TEXT("injected"), true);
+		Out->SetBoolField(TEXT("inner_guard_caught"), bCaught);
+		Out->SetBoolField(TEXT("handler_returned_ok"), true);
+		return FHaybaHandlerResult::Ok(Out);
+	}
+}
+#endif
+
 namespace
 {
 #if WITH_EDITOR
@@ -1349,12 +1410,17 @@ namespace
 
 TArray<FString> FHaybaMCPTestHandler::GetCommands() const
 {
-    return {
+    TArray<FString> Commands = {
         TEXT("test_list"),
         TEXT("test_run"),
         TEXT("test_cancel"),
         TEXT("test_get_log")
     };
+#if WITH_DEV_AUTOMATION_TESTS && PLATFORM_WINDOWS
+    // Test-only fault injection (ADR-0011): not in sidecar.json, not agent-callable, no TS wrapper.
+    Commands.Add(TEXT("test_inject_native_fault"));
+#endif
+    return Commands;
 }
 
 FHaybaHandlerResult FHaybaMCPTestHandler::Handle(const FString& Cmd, const TSharedPtr<FJsonObject>& Params)
@@ -1364,6 +1430,9 @@ FHaybaHandlerResult FHaybaMCPTestHandler::Handle(const FString& Cmd, const TShar
     if (Cmd == TEXT("test_run"))     return Cmd_TestRun(Params);
     if (Cmd == TEXT("test_cancel"))  return Cmd_TestCancel(Params);
     if (Cmd == TEXT("test_get_log")) return Cmd_TestGetLog(Params);
+#if WITH_DEV_AUTOMATION_TESTS && PLATFORM_WINDOWS
+    if (Cmd == TEXT("test_inject_native_fault")) return HaybaMCPFaultInjection::Run(Params);
+#endif
     return FHaybaHandlerResult::Err(FString::Printf(TEXT("Unknown test command: %s"), *Cmd));
 #else
     auto Out = MakeShared<FJsonObject>();

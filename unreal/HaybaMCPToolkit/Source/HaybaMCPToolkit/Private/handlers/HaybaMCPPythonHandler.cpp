@@ -7,6 +7,8 @@
 #include "HaybaMCPAccessPolicy.h"
 #include "HaybaMCPDeveloperSettings.h"
 #include "HaybaMCPLeaseManager.h"
+#include "HaybaMCPEditorHealth.h"
+#include "HaybaMCPHealthPolicy.h"
 
 namespace
 {
@@ -1790,6 +1792,47 @@ static bool RunPythonCommandGuarded(IPythonScriptPlugin* Plugin, FPythonCommandE
     return !bOutCrashed && Run.bResult;
 }
 
+// The five native-fault replies of python_run (and the marker path). The
+// router answers native_fault_contained for them because FaultSequence moved;
+// this data travels along as `data`. None of them claims the editor is
+// healthy: after any of them the editor is unsafe until restart.
+static FHaybaHandlerResult MakeNativeFaultResult(const TCHAR* MatchedRule, bool bPostExecution)
+{
+    const FString Rule(MatchedRule);
+    const TCHAR* What = Rule == TEXT("cpython_corruption_marker")
+        ? TEXT("CPython reported internal corruption without a caught fault.")
+        : bPostExecution
+            ? TEXT("The interpreter faulted after the user script, while Hayba read its results.")
+            : TEXT("The script dereferenced an invalid object (a stale or destroyed actor or component handle, a garbage-collected UObject held across calls, or a re-entrant editor mutation).");
+    TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
+    Out->SetBoolField(TEXT("ok"), false);
+    Out->SetStringField(TEXT("policy_code"), TEXT("HCR-NATIVE-002"));
+    Out->SetStringField(TEXT("matched_rule"), Rule);
+    Out->SetStringField(TEXT("execution_phase"), bPostExecution ? TEXT("post_execution") : TEXT("execution"));
+    Out->SetStringField(TEXT("phase"), TEXT("execute"));
+    Out->SetStringField(TEXT("mutation_status"), TEXT("unknown"));
+    Out->SetBoolField(TEXT("may_have_executed"), true);
+    Out->SetBoolField(TEXT("session_suspect"), true);
+    Out->SetStringField(TEXT("error"), FString::Printf(
+        TEXT("python_run native_fault_contained [HCR-NATIVE-002]: matched '%s'. %s Its outcome is unknown and the script may have run. ")
+        TEXT("Fault contained; restart the editor before further work. Retry unchanged: forbidden."),
+        MatchedRule, What));
+    return FHaybaHandlerResult::Ok(Out);
+}
+
+// CPython-internal failures are visible as LogPython Error lines, as the
+// failure text of one of Hayba's own commands, or as the exact-type SystemError
+// text the wrapper hands over in _hayba_corruption. The user's stdout/stderr
+// capture is never scanned: a script can print anything (R-15).
+static void CollectInterpreterErrors(const FPythonCommandEx& Command, bool bCommandFailed, TArray<FString>& Out)
+{
+    for (const FPythonLogOutputEntry& Entry : Command.LogOutput)
+    {
+        if (Entry.Type == EPythonLogOutputType::Error) Out.Add(Entry.Output);
+    }
+    if (bCommandFailed && !Command.CommandResult.IsEmpty()) Out.Add(Command.CommandResult);
+}
+
 TArray<FString> FHaybaMCPPythonHandler::GetCommands() const
 {
     return { TEXT("python_run") };
@@ -2062,8 +2105,11 @@ FHaybaHandlerResult FHaybaMCPPythonHandler::Run(const TSharedPtr<FJsonObject>& P
     Wrapper += TEXT("_hb_trusted_gettrace = _hb_sys.gettrace\n");
     Wrapper += TEXT("_hb_trusted_monotonic = _hb_time.monotonic\n");
     Wrapper += TEXT("_hb_trusted_gc_collect = _hb_gc.collect\n");
-    Wrapper += TEXT("def _hb_execute_user(_hb_user_source, _hb_user_globals, _hb_set_trace, _hb_get_trace, _hb_now, _hb_collect, _hb_system):\n");
-    Wrapper += TEXT("    _hb_ok = True; _hb_timed_out = False; _hb_trace_events = 0\n");
+    // The built-in SystemError, saved before user code runs: the except block
+    // compares types against it, never against a name the script could shadow.
+    Wrapper += TEXT("_hb_trusted_system_error = SystemError\n");
+    Wrapper += TEXT("def _hb_execute_user(_hb_user_source, _hb_user_globals, _hb_set_trace, _hb_get_trace, _hb_now, _hb_collect, _hb_system, _hb_system_error):\n");
+    Wrapper += TEXT("    _hb_ok = True; _hb_timed_out = False; _hb_trace_events = 0; _hb_corruption = ''\n");
     Wrapper += FString::Printf(TEXT("    _hb_deadline = _hb_now() + %.3f\n"), MaxPythonExecutionSeconds);
     Wrapper += TEXT("    class _HaybaDeadlineExceeded(BaseException):\n");
     Wrapper += TEXT("        pass\n");
@@ -2101,6 +2147,15 @@ FHaybaHandlerResult FHaybaMCPPythonHandler::Run(const TSharedPtr<FJsonObject>& P
     // Python object. Do not touch .args or call str(exception): both can invoke
     // attacker-controlled/native code while reporting the original failure.
     Wrapper += TEXT("        _hb_err.write('<exception arguments omitted by bounded capture>\\n')\n");
+    // CPython-internal corruption surfaces as the exact built-in SystemError
+    // (I-6: "SystemError: unknown opcode"), and this except block would
+    // otherwise swallow it as an ordinary script error. Only that exact type is
+    // read, only its first argument, only when it is a str, and at most 240
+    // characters of it. The text goes to a Hayba-owned builtin, never to stderr.
+    Wrapper += TEXT("        if type(_hb_exception) is _hb_system_error:\n");
+    Wrapper += TEXT("            _hb_args = BaseException.__getattribute__(_hb_exception, 'args')\n");
+    Wrapper += TEXT("            if type(_hb_args) is tuple and len(_hb_args) > 0 and type(_hb_args[0]) is str:\n");
+    Wrapper += TEXT("                _hb_corruption = 'SystemError: ' + _hb_args[0][:240]\n");
     // CPython disables tracing if the trace callback itself raises. Reinstall
     // the trusted trace before dropping request globals so hostile __del__ code
     // remains deadline-bounded. Restore any host trace only after clear/GC and
@@ -2122,7 +2177,7 @@ FHaybaHandlerResult FHaybaMCPPythonHandler::Run(const TSharedPtr<FJsonObject>& P
     Wrapper += TEXT("                _hb_system.stdout = _hb_previous_stdout; _hb_system.stderr = _hb_previous_stderr\n");
     Wrapper += TEXT("            finally:\n");
     Wrapper += TEXT("                _hb_set_trace(_hb_previous_trace)\n");
-    Wrapper += TEXT("    return _hb_ok, _hb_timed_out\n");
+    Wrapper += TEXT("    return _hb_ok, _hb_timed_out, _hb_corruption\n");
     // Give user code a private globals dictionary and a private copy of the
     // builtin-name mapping. Importing the process-global builtins module is
     // rejected lexically above, so simple assignments cannot poison readback
@@ -2132,12 +2187,13 @@ FHaybaHandlerResult FHaybaMCPPythonHandler::Run(const TSharedPtr<FJsonObject>& P
     // process built-in, which would invoke arbitrary object __str__/__repr__.
     Wrapper += TEXT("_hb_user_builtins['print'] = _hb_print\n");
     Wrapper += TEXT("_hb_g = {'print': _hb_print, '__name__': '__hayba_user__', '__builtins__': _hb_user_builtins}\n");
-    Wrapper += TEXT("_hb_ok, _hb_timed_out = _hb_execute_user(_hb_src, _hb_g, _hb_trusted_settrace, _hb_trusted_gettrace, _hb_trusted_monotonic, _hb_trusted_gc_collect, _hb_sys)\n");
+    Wrapper += TEXT("_hb_ok, _hb_timed_out, _hb_corruption = _hb_execute_user(_hb_src, _hb_g, _hb_trusted_settrace, _hb_trusted_gettrace, _hb_trusted_monotonic, _hb_trusted_gc_collect, _hb_sys, _hb_trusted_system_error)\n");
     Wrapper += TEXT("_hb_b._hayba_out = _hb_out.getvalue()\n");
     Wrapper += TEXT("_hb_b._hayba_err = _hb_err.getvalue()\n");
     Wrapper += TEXT("_hb_b._hayba_capture_meta = '%d,%d,%d,%d' % (int(_hb_out._hb_dropped > 0), int(_hb_err._hb_dropped > 0), _hb_out._hb_dropped, _hb_err._hb_dropped)\n");
     Wrapper += TEXT("_hb_b._hayba_ok = _hb_ok\n");
     Wrapper += TEXT("_hb_b._hayba_timed_out = _hb_timed_out\n");
+    Wrapper += TEXT("_hb_b._hayba_corruption = _hb_corruption\n");
     // The execution function already dropped the script namespace and forced a
     // CPython collection while its trusted trace remained active and while
     // still inside the SEH-guarded ExecPythonCommandEx below. This targets
@@ -2169,21 +2225,15 @@ FHaybaHandlerResult FHaybaMCPPythonHandler::Run(const TSharedPtr<FJsonObject>& P
     const bool bExecOk = RunPythonCommandGuarded(PythonPlugin, &RunCmd, bRunCrashed);
     if (bRunCrashed)
     {
-        return FHaybaHandlerResult::Err(TEXT(
-            "python_run fatal_error [HCR-NATIVE-002]: matched 'native_access_violation'. The script "
-            "dereferenced an invalid object — typically a stale/destroyed actor or "
-            "component handle, a garbage-collected UObject held across ticks, or a "
-            "re-entrant editor mutation. The editor was kept alive by the SEH guard; "
-            "safe alternative: re-acquire handles fresh inside the run (do not cache UObject "
-            "references between python_run calls) and avoid mutating the level while iterating it. "
-            "Retry unchanged: forbidden; verify editor health before any further mutation."));
+        return MakeNativeFaultResult(TEXT("native_access_violation"), false);
     }
+    TArray<FString> InterpreterErrors;
+    CollectInterpreterErrors(RunCmd, !bExecOk, InterpreterErrors);
 
     // Evaluate a base64 expression and decode the result back to a string.
-    // Guarded by SEH too: the user script may have left the interpreter in a
-    // degraded state, so even this trivial readback can fault — better to lose
-    // the captured stdout than to take down the editor.
-    auto EvalB64 = [PythonPlugin](const FString& Attr, bool& bOutCrashed) -> FString
+    // Guarded too: the user script may have left the interpreter degraded, so
+    // even this trivial readback can fault.
+    auto EvalB64 = [PythonPlugin, &InterpreterErrors](const FString& Attr, bool& bOutCrashed) -> FString
     {
         bOutCrashed = false;
         FPythonCommandEx E;
@@ -2191,8 +2241,9 @@ FHaybaHandlerResult FHaybaMCPPythonHandler::Run(const TSharedPtr<FJsonObject>& P
             TEXT("__import__('base64').b64encode((getattr(__import__('builtins'),'%s','') or '').encode('utf-8')).decode('ascii')"),
             *Attr);
         E.ExecutionMode = EPythonCommandExecutionMode::EvaluateStatement;
-        RunPythonCommandGuarded(PythonPlugin, &E, bOutCrashed);
+        const bool bEvalOk = RunPythonCommandGuarded(PythonPlugin, &E, bOutCrashed);
         if (bOutCrashed) return FString();
+        CollectInterpreterErrors(E, !bEvalOk, InterpreterErrors);
         FString R = E.CommandResult.TrimStartAndEnd();
         if (R.Len() >= 2 && (R.StartsWith(TEXT("'")) || R.StartsWith(TEXT("\""))))
         {
@@ -2207,63 +2258,67 @@ FHaybaHandlerResult FHaybaMCPPythonHandler::Run(const TSharedPtr<FJsonObject>& P
     bool bStdOutReadCrashed = false;
     bool bStdErrReadCrashed = false;
     bool bCaptureMetaReadCrashed = false;
+    bool bCorruptionReadCrashed = false;
     const FString StdOut = EvalB64(TEXT("_hayba_out"), bStdOutReadCrashed);
     const FString StdErr = EvalB64(TEXT("_hayba_err"), bStdErrReadCrashed);
     const FString CaptureMeta = EvalB64(TEXT("_hayba_capture_meta"), bCaptureMetaReadCrashed);
-    if (bStdOutReadCrashed || bStdErrReadCrashed || bCaptureMetaReadCrashed)
+    const FString CorruptionText = EvalB64(TEXT("_hayba_corruption"), bCorruptionReadCrashed);
+    if (bStdOutReadCrashed || bStdErrReadCrashed || bCaptureMetaReadCrashed || bCorruptionReadCrashed)
     {
-        return FHaybaHandlerResult::Err(TEXT(
-            "python_run fatal_error [HCR-NATIVE-002]: matched 'post_execution_readback_access_violation'. "
-            "The interpreter faulted while reading captured output after the user script. Safe alternative: "
-            "restart the disposable editor before retrying, then remove stale UObject references and split the "
-            "script into smaller typed operations. Retry unchanged: forbidden; editor session health is suspect."));
+        return MakeNativeFaultResult(TEXT("post_execution_readback_access_violation"), true);
     }
+    // The exact-type SystemError text, when the user script ended in one.
+    if (!CorruptionText.IsEmpty()) InterpreterErrors.Add(CorruptionText);
 
     FPythonCommandEx OkCmd;
     OkCmd.Command = TEXT("repr(getattr(__import__('builtins'),'_hayba_ok',True))");
     OkCmd.ExecutionMode = EPythonCommandExecutionMode::EvaluateStatement;
     bool bOkReadCrashed = false;
-    RunPythonCommandGuarded(PythonPlugin, &OkCmd, bOkReadCrashed);
+    const bool bOkRead = RunPythonCommandGuarded(PythonPlugin, &OkCmd, bOkReadCrashed);
     if (bOkReadCrashed)
     {
-        return FHaybaHandlerResult::Err(TEXT(
-            "python_run fatal_error [HCR-NATIVE-002]: matched 'post_execution_status_access_violation'. "
-            "The interpreter faulted while reading completion state. Safe alternative: restart the disposable "
-            "editor before retrying and replace stale UObject access with a typed handler. Retry unchanged: forbidden; "
-            "editor session health is suspect."));
+        return MakeNativeFaultResult(TEXT("post_execution_status_access_violation"), true);
     }
-    const bool bUserOk = !bOkReadCrashed && !OkCmd.CommandResult.Contains(TEXT("False"));
+    CollectInterpreterErrors(OkCmd, !bOkRead, InterpreterErrors);
+    const bool bUserOk = !OkCmd.CommandResult.Contains(TEXT("False"));
 
     FPythonCommandEx TimeoutCmd;
     TimeoutCmd.Command = TEXT("repr(getattr(__import__('builtins'),'_hayba_timed_out',False))");
     TimeoutCmd.ExecutionMode = EPythonCommandExecutionMode::EvaluateStatement;
     bool bTimeoutReadCrashed = false;
-    RunPythonCommandGuarded(PythonPlugin, &TimeoutCmd, bTimeoutReadCrashed);
+    const bool bTimeoutRead = RunPythonCommandGuarded(PythonPlugin, &TimeoutCmd, bTimeoutReadCrashed);
     if (bTimeoutReadCrashed)
     {
-        return FHaybaHandlerResult::Err(TEXT(
-            "python_run fatal_error [HCR-NATIVE-002]: matched 'post_execution_deadline_readback_access_violation'. "
-            "The interpreter faulted while reading deadline state. Safe alternative: restart the disposable editor "
-            "before retrying and split the script into bounded typed operations. Retry unchanged: forbidden; editor "
-            "session health is suspect."));
+        return MakeNativeFaultResult(TEXT("post_execution_deadline_readback_access_violation"), true);
     }
-    const bool bTimedOut = !bTimeoutReadCrashed && TimeoutCmd.CommandResult.Contains(TEXT("True"));
+    CollectInterpreterErrors(TimeoutCmd, !bTimeoutRead, InterpreterErrors);
+    const bool bTimedOut = TimeoutCmd.CommandResult.Contains(TEXT("True"));
 
     FPythonCommandEx CleanupCmd;
     CleanupCmd.Command = TEXT(
         "import builtins as _hb_cleanup_b\n"
-        "for _hb_cleanup_name in ('_hayba_out','_hayba_err','_hayba_capture_meta','_hayba_ok','_hayba_timed_out'):\n"
+        "for _hb_cleanup_name in ('_hayba_out','_hayba_err','_hayba_capture_meta','_hayba_ok','_hayba_timed_out','_hayba_corruption'):\n"
         "    if hasattr(_hb_cleanup_b, _hb_cleanup_name): delattr(_hb_cleanup_b, _hb_cleanup_name)\n");
     CleanupCmd.ExecutionMode = EPythonCommandExecutionMode::ExecuteFile;
     bool bCleanupCrashed = false;
-    RunPythonCommandGuarded(PythonPlugin, &CleanupCmd, bCleanupCrashed);
+    const bool bCleanupOk = RunPythonCommandGuarded(PythonPlugin, &CleanupCmd, bCleanupCrashed);
     if (bCleanupCrashed)
     {
-        return FHaybaHandlerResult::Err(TEXT(
-            "python_run fatal_error [HCR-NATIVE-002]: matched 'post_execution_cleanup_access_violation'. "
-            "The interpreter faulted while releasing bounded capture state. Safe alternative: restart the disposable "
-            "editor before retrying and use typed handlers for native objects. Retry unchanged: forbidden; editor "
-            "session health is suspect."));
+        return MakeNativeFaultResult(TEXT("post_execution_cleanup_access_violation"), true);
+    }
+    CollectInterpreterErrors(CleanupCmd, !bCleanupOk, InterpreterErrors);
+
+    // Corruption without a caught fault (ADR-0011 design 7): the interpreter is
+    // damaged and later scripts fail inside CPython itself. InterpreterErrors
+    // holds LogPython Error lines, the failure text of Hayba's own commands and
+    // the exact-type SystemError text; never stdout or stderr.
+    for (const FString& Line : InterpreterErrors)
+    {
+        if (const TCHAR* Marker = HaybaMCPHealth::FindPythonCorruptionMarker(Line))
+        {
+            FHaybaEditorHealth::RecordPythonCorruption(Marker);
+            return MakeNativeFaultResult(TEXT("cpython_corruption_marker"), true);
+        }
     }
 
     if (bTimedOut)

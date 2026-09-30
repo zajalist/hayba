@@ -57,7 +57,7 @@ const RULES = [
           evidence,
         ) &&
         /FObjectFinders can't be used outside of constructors/.test(incidentLog) &&
-        /SEH guard caught a structured exception in handler for command 'level_load'[\s\S]*Processing command: ping/.test(
+        /(?:SEH guard caught a structured exception in handler for command 'level_load'|\[HCR-NATIVE-00[234]\] editor_unsafe: native fault 0x[0-9A-F]{8} contained in 'level_load')[\s\S]*Processing command: ping/.test(
           incidentLog,
         )),
   },

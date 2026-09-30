@@ -21,3 +21,7 @@ Hayba.MCP.Health.EngineAssertCodeIsEngineFatal
 Hayba.MCP.Lease.WarningLimiter
 Hayba.MCP.Health.UserNotifiedOnce
 Hayba.MCP.Health.PythonFaultUnhooksPreGc
+Hayba.MCP.Health.DispatchFaultIsSticky
+Hayba.MCP.Health.InnerGuardOkResultIsForcedToFault
+Hayba.MCP.Health.FaultInjectionIsGuarded
+Hayba.MCP.Health.PythonGuardFaultSetsPythonUnhealthy

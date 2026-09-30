@@ -191,6 +191,13 @@ namespace HaybaMCPHealth
 			FaultCodeFor(Cause), *Cmd, ExceptionCode, LexCause(Cause));
 	}
 
+	/** test_inject_native_fault runs only in-process (ConnId 0), inside a running
+	 *  automation test that holds FHaybaEditorHealth::FScopedOverrideForTests. */
+	inline bool IsNativeFaultInjectionAllowed(bool bOverrideActive, int32 ConnId, bool bAutomationTesting)
+	{
+		return bOverrideActive && ConnId == 0 && bAutomationTesting;
+	}
+
 	/** The persistent editor notification (plan A.2.10). */
 	inline FString NotificationTextFor(ECause Cause, const FString& Cmd)
 	{

@@ -25,6 +25,8 @@ struct FHaybaEditorHealth::FState
 	FTSTicker::FDelegateHandle PendingNotification;
 	bool bNotificationScheduled = false;
 	bool bGcUnhooked = false;
+	/** Set only by FScopedOverrideForTests: its notification goes to the counters below. */
+	bool bTestOverride = false;
 	// Test-override counters (cheap enough to keep in every build).
 	int32 NotificationCount = 0;
 	FString LastNotificationText;
@@ -159,20 +161,20 @@ void FHaybaEditorHealth::RecordFault(EHaybaFaultSite Site, uint32 ExceptionCode,
 	{
 		S.bNotificationScheduled = true;
 		S.PendingNotification = FTSTicker::GetCoreTicker().AddTicker(
-			FTickerDelegate::CreateStatic(&FHaybaEditorHealth::DeliverUserNotification), 0.0f);
+			FTickerDelegate::CreateStatic(&FHaybaEditorHealth::DeliverUserNotification, &S), 0.0f);
 	}
 }
 
-bool FHaybaEditorHealth::DeliverUserNotification(float /*DeltaSeconds*/)
+bool FHaybaEditorHealth::DeliverUserNotification(float /*DeltaSeconds*/, FState* State)
 {
 	using namespace HaybaMCPHealth;
-	FState& S = Active();
+	FState& S = *State;
 	S.PendingNotification.Reset();
 	const ECause Cause = S.Record.Cause;
 	const FString Text = NotificationTextFor(Cause, S.Record.FaultedCommand);
 
 	const TCHAR* Channel = TEXT("notification");
-	if (ActiveOverride)
+	if (S.bTestOverride)
 	{
 		// R-4: the test seam comes BEFORE the unattended skip, so headless runs reach it.
 		++S.NotificationCount;
@@ -275,6 +277,7 @@ FHaybaEditorHealth::FScopedOverrideForTests::FScopedOverrideForTests()
 	: Owned(new FState())
 	, Previous(FHaybaEditorHealth::ActiveOverride)
 {
+	Owned->bTestOverride = true;
 	FHaybaEditorHealth::ActiveOverride = Owned;
 }
 
@@ -298,7 +301,7 @@ bool FHaybaEditorHealth::FScopedOverrideForTests::FlushPendingNotification()
 {
 	if (!Owned->PendingNotification.IsValid()) return false;
 	FTSTicker::GetCoreTicker().RemoveTicker(Owned->PendingNotification);
-	FHaybaEditorHealth::DeliverUserNotification(0.0f);
+	FHaybaEditorHealth::DeliverUserNotification(0.0f, Owned);
 	return true;
 }
 

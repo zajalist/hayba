@@ -18,6 +18,10 @@
 #include "HaybaMCPDiffPanel.h"
 #include "HaybaMCPAccessPolicy.h"
 #include "HaybaMCPLeaseManager.h"
+#include "HaybaMCPEditorHealth.h"
+#include "HaybaMCPHealthPolicy.h"
+#include "HaybaMCPCommandSets.h"
+#include "HaybaMCPWarningLimiter.h"
 #include "Json.h"
 #include "Editor.h"
 #include "EngineUtils.h"
@@ -335,8 +339,11 @@ namespace
             : EHaybaMCPMutationStatus::Unknown;
 
         const FString Lower = Error.ToLower();
-        if (bSessionSuspect || Lower.Contains(TEXT("structured exception"))
-            || Lower.Contains(TEXT("session as suspect")) || Lower.Contains(TEXT("seh")))
+        // Only a bracketed native-fault code or the explicit flag makes a
+        // command suspect; no prose ("seh" in "BaseHealth") ever does.
+        const bool bNativeFaultCode = Lower.Contains(TEXT("[hcr-native-002]"))
+            || Lower.Contains(TEXT("[hcr-native-003]")) || Lower.Contains(TEXT("[hcr-native-004]"));
+        if (bSessionSuspect || bNativeFaultCode)
         {
             Signals.bStructuredException = true;
             Signals.FailureKind = EHaybaMCPFailureKind::SessionSuspect;
@@ -344,7 +351,7 @@ namespace
             Signals.Phase = EHaybaMCPCommandPhase::Execute;
             Signals.MutationStatus = EHaybaMCPMutationStatus::Unknown;
         }
-        else if (Lower.Contains(TEXT("hcr-")) || (bKnownPreflight && (
+        else if ((Lower.Contains(TEXT("hcr-")) && !bNativeFaultCode) || (bKnownPreflight && (
             Lower.Contains(TEXT("policy_blocked")) || Lower.Contains(TEXT("blocked permanently"))
             || Lower.Contains(TEXT("not permitted")) || Lower.Contains(TEXT("forbidden"))
             || Lower.Contains(TEXT("approval")) || Lower.Contains(TEXT("plan mode"))
@@ -354,9 +361,8 @@ namespace
                 || Lower.Contains(TEXT("crash")) || Lower.Contains(TEXT("deadlock"));
             Signals.FailureKind = EHaybaMCPFailureKind::PolicyBlocked;
             Signals.Code = Signals.bCrashGuardRejected ? TEXT("crash_guard_blocked") : TEXT("policy_blocked");
-            // Stable HCR codes are emitted only by guards that reject before
-            // Execute. Generic handler prose is never allowed to make this
-            // claim, but a named crash guard is an authoritative phase fact.
+            // Stable HCR codes other than HCR-NATIVE-* are emitted only by
+            // guards that reject before Execute.
             Signals.Phase = EHaybaMCPCommandPhase::Preflight;
             Signals.MutationStatus = EHaybaMCPMutationStatus::NotStarted;
         }
@@ -1077,6 +1083,145 @@ static FString JsonToString(const TSharedRef<FJsonObject>& Obj)
     return Output;
 }
 
+// One refusal builder for every router gate (spec R2, §4.1). Explicit advisory
+// signals, never SignalsForError: no refusal is classified by its words.
+struct FGateRefusal
+{
+    FString Code;                        // top-level `code`
+    FString Message;                     // `error`
+    FString DetailKey;                   // "editor_health" | "pie" | "busy" | "lease"
+    TSharedPtr<FJsonObject> Detail;
+    EHaybaMCPFailureKind FailureKind = EHaybaMCPFailureKind::PolicyBlocked;
+    bool bRetryUnchangedSafe = false;
+    bool bEditorUnsafe = false;
+    TArray<FString> MandatoryRecovery;   // phase is always Preflight, mutation NotStarted
+};
+
+static FString MakeGateRefusal(const FString& Id, const FString& Cmd, const FGateRefusal& Refusal)
+{
+    TSharedRef<FJsonObject> Response = MakeShared<FJsonObject>();
+    Response->SetStringField(TEXT("id"), Id);
+    Response->SetBoolField(TEXT("ok"), false);
+    Response->SetStringField(TEXT("code"), Refusal.Code);
+    Response->SetStringField(TEXT("error"), Refusal.Message);
+    if (!Refusal.DetailKey.IsEmpty() && Refusal.Detail.IsValid())
+    {
+        Response->SetObjectField(Refusal.DetailKey, Refusal.Detail.ToSharedRef());
+    }
+    FHaybaMCPAdvisorySignals Signals;
+    Signals.Operation = Cmd;
+    Signals.bOperationSucceeded = false;
+    Signals.Error = Refusal.Message;
+    Signals.Code = Refusal.Code;
+    Signals.FailureKind = Refusal.FailureKind;
+    Signals.Phase = EHaybaMCPCommandPhase::Preflight;
+    Signals.MutationStatus = EHaybaMCPMutationStatus::NotStarted;
+    Signals.bRetryUnchangedSafe = Refusal.bRetryUnchangedSafe;
+    Signals.bEditorUnsafe = Refusal.bEditorUnsafe;
+    Signals.MandatoryRecovery = Refusal.MandatoryRecovery;
+    HaybaMCPAdvisory::ApplyToResponse(Response, Signals, FHaybaMCPSettings::Get().AdvisoryVerbosity);
+    return JsonToString(Response);
+}
+
+/** Slots 1-3 refusal Warnings: at most once per key every 30 s, with the suppressed count. */
+static FWarningLimiter& GateRefusalLimiter()
+{
+    static FWarningLimiter* Limiter = new FWarningLimiter([]() { return FPlatformTime::Seconds(); });
+    return *Limiter;
+}
+
+/** Print every closed window's swallowed count. Call before each Note (R-18). */
+static void LogDrainedGateRefusals()
+{
+    for (const FWarningLimiter::FDrained& Drained : GateRefusalLimiter().DrainExpired())
+    {
+        TArray<FString> Parts;
+        Drained.Key.ParseIntoArray(Parts, TEXT("|"), false);
+        UE_LOG(LogHaybaMCPCmd, Warning, TEXT("[%s] %s%s: owner='%s' cmd='%s'"),
+            Parts.IsValidIndex(0) ? *Parts[0] : TEXT("gate"),
+            Parts.IsValidIndex(1) ? *Parts[1] : *Drained.Key,
+            *FWarningLimiter::RepeatedMoreTimes(Drained.Suppressed),
+            Parts.IsValidIndex(2) ? *Parts[2] : TEXT(""),
+            Parts.IsValidIndex(3) ? *Parts[3] : TEXT(""));
+    }
+}
+
+/** Slot 1 (ADR-0011): the editor is unsafe and Cmd is not in CommandsAllowedWhileUnsafe(GateCause). */
+static FString RefuseWhileUnsafe(const FString& Id, const FString& Cmd, const FString& Owner, HaybaMCPHealth::ECause GateCause)
+{
+    FHaybaEditorHealth::NoteRefusal();
+    const FHaybaEditorHealth::FSnapshot Health = FHaybaEditorHealth::Snapshot();
+
+    FGateRefusal Refusal;
+    Refusal.Code = TEXT("editor_unsafe_restart_required");
+    Refusal.Message = HaybaMCPHealth::UnsafeRefusalMessage(Cmd, Health.FaultedAtUtc, Health.FaultedCommand, Health.Cause, GateCause);
+    Refusal.DetailKey = TEXT("editor_health");
+    Refusal.Detail = FHaybaEditorHealth::MakeHealthJson();
+    Refusal.FailureKind = EHaybaMCPFailureKind::PolicyBlocked;
+    Refusal.bEditorUnsafe = true;
+    Refusal.MandatoryRecovery.Add(TEXT("Fault contained; restart the editor before further work."));
+
+    if (Health.RefusedCount == 1)
+    {
+        UE_LOG(LogHaybaMCPHealth, Error,
+            TEXT("editor_unsafe_restart_required: refused '%s' (id %s, owner %s); first refusal since the native fault. Later refusals log at Warning, at most once per command every 30 s."),
+            *Cmd, *Id, *Owner);
+    }
+    else
+    {
+        LogDrainedGateRefusals();
+        const FWarningLimiter::FHit Hit = GateRefusalLimiter().Note(
+            FWarningLimiter::MakeKey(TEXT("gate"), Refusal.Code, FString(), Cmd));
+        if (Hit.bLog)
+        {
+            UE_LOG(LogHaybaMCPHealth, Warning, TEXT("editor_unsafe_restart_required: refused '%s' (id %s, owner %s)%s"),
+                *Cmd, *Id, *Owner, *FWarningLimiter::PreviousWindowSuffix(Hit.SuppressedInPreviousWindow));
+        }
+    }
+    return MakeGateRefusal(Id, Cmd, Refusal);
+}
+
+/** The command that faulted (or whose own guard caught a fault) answers this, and nothing else runs. */
+static FString MakeNativeFaultContained(const FString& Id, const FString& Cmd, const FString& Message, const TSharedPtr<FJsonObject>& Data)
+{
+    const FHaybaEditorHealth::FSnapshot Health = FHaybaEditorHealth::Snapshot();
+    TSharedRef<FJsonObject> Response = MakeShared<FJsonObject>();
+    Response->SetStringField(TEXT("id"), Id);
+    Response->SetBoolField(TEXT("ok"), false);
+    Response->SetStringField(TEXT("code"), TEXT("native_fault_contained"));
+    Response->SetStringField(TEXT("error"), Message);
+    Response->SetObjectField(TEXT("editor_health"), FHaybaEditorHealth::MakeHealthJson());
+    // data is always present (spec 4.2: the fault code is in the error text and
+    // in data.policy_code). It starts as a copy of what the handler returned, so
+    // the handler's own fields survive; the fault facts are written last, so a
+    // handler that returned ok:true after its own guard caught a fault is overruled.
+    TSharedRef<FJsonObject> FaultData = MakeShared<FJsonObject>();
+    if (Data.IsValid())
+    {
+        for (const auto& Field : Data->Values)
+        {
+            FaultData->SetField(FString(*Field.Key), Field.Value);
+        }
+    }
+    FaultData->SetBoolField(TEXT("ok"), false);
+    FaultData->SetStringField(TEXT("policy_code"), HaybaMCPHealth::FaultCodeFor(Health.LastCause));
+    FaultData->SetStringField(TEXT("mutation_status"), TEXT("unknown"));
+    FaultData->SetBoolField(TEXT("may_have_executed"), true);
+    Response->SetObjectField(TEXT("data"), FaultData);
+    FHaybaMCPAdvisorySignals Signals;
+    Signals.Operation = Cmd;
+    Signals.bOperationSucceeded = false;
+    Signals.Error = Message;
+    Signals.Code = TEXT("native_fault_contained");
+    Signals.FailureKind = EHaybaMCPFailureKind::SessionSuspect;
+    Signals.bStructuredException = true;
+    Signals.Phase = EHaybaMCPCommandPhase::Execute;
+    Signals.MutationStatus = EHaybaMCPMutationStatus::Unknown;
+    Signals.bEditorUnsafe = true;
+    HaybaMCPAdvisory::ApplyToResponse(Response, Signals, FHaybaMCPSettings::Get().AdvisoryVerbosity);
+    return JsonToString(Response);
+}
+
 // ProcessCommand can be called directly by tests or future integrations, but
 // all editor-facing dispatch must stay on the game thread. This response is
 // intentionally a fixed literal: the refusal must not parse caller-controlled
@@ -1297,6 +1442,21 @@ FString FHaybaMCPCommandHandler::ProcessCommandInContext(const FString& CommandJ
     if (!FHaybaMCPSecurityManager::Get().ValidateRequest(Parsed, AuthReason))
     {
         return MakeErrorResponse(Id, AuthReason, Cmd, false, true);
+    }
+
+    // Slot 1 (ADR-0011): a contained native fault left this process unsafe.
+    // Everything outside CommandsAllowedWhileUnsafe(most severe cause so far)
+    // is refused; only an editor restart clears it. Before the lease gate, so
+    // the refusal never depends on who holds what. Batch steps and in-process
+    // callers come through here too.
+    if (FHaybaEditorHealth::IsUnsafe())
+    {
+        const HaybaMCPHealth::ECause GateCause = FHaybaEditorHealth::GateCause();
+        if (!HaybaMCPHealth::IsCommandAllowedWhileUnsafe(Cmd, GateCause))
+        {
+            const FHaybaMCPRequestContext* GateContext = Leases.Current();
+            return RefuseWhileUnsafe(Id, Cmd, GateContext ? GateContext->Owner : FString(TEXT("local")), GateCause);
+        }
     }
 
     // Lease gate (after auth, before anything runs). Never blocks: Advisory
@@ -1529,24 +1689,25 @@ FString FHaybaMCPCommandHandler::ProcessCommandInContext(const FString& CommandJ
     const FString ParamsHash = FHaybaMCPSecurityManager::HashParams(Params);
     const double Start = FPlatformTime::Seconds();
 
-    // SEH-guard the handler-dispatch seam so a NATIVE structured exception
-    // (access violation, etc.) inside ANY of the registered handlers is converted
-    // into a recoverable error envelope instead of taking down the whole editor.
-    // Previously only the python and material handlers self-guarded their
-    // crash-prone calls (ExecPythonGuarded / HaybaSeh::RunGuarded), leaving the
-    // other ~31 handlers unrecoverable; wrapping this single dispatch point makes
-    // the entire handler surface recoverable in one place. Those per-handler
-    // guards are KEPT (a caught fault there yields a clean FHaybaHandlerResult, so
-    // this outer guard never sees it — no double-fault, no behaviour change).
+    // SEH-guard the handler-dispatch seam (ADR-0011). A native structured
+    // exception inside ANY handler is caught by HaybaSeh::RunGuardedAt, which
+    // repairs a stranded play-world switch and records the fault: the editor is
+    // sticky-unsafe until restart. The per-handler guards (python, material)
+    // record through the same path, so a handler that caught its own fault and
+    // still returned Ok is detected by FaultSequence moving.
     //
     // The thunk MUST be a captureless lambda (-> function pointer) and the result
     // is written back through a pointer in the context struct, because MSVC forbids
-    // C++ object unwinding across __try (C2712) — RunGuarded isolates the __try in
-    // its own translation unit and only ever invokes a function pointer. Mirrors
-    // the FStatsCtx usage in HaybaMCPMaterialHandler.cpp.
+    // C++ object unwinding across __try (C2712); RunGuardedAt isolates the __try in
+    // its own translation unit and only ever invokes a function pointer.
+    const uint64 FaultSequenceBefore = FHaybaEditorHealth::FaultSequence();
     FHaybaHandlerResult Result;
     bool bHandlerCrashed = false;
     {
+        static const FString LocalOwner(TEXT("local"));
+        const FHaybaMCPRequestContext* DispatchContext = Leases.Current();
+        FHaybaEditorHealth::FScopedDispatchNote DispatchNote(Cmd, Id, DispatchContext ? DispatchContext->Owner : LocalOwner);
+
         struct FDispatchCtx
         {
             IHaybaMCPHandler* Handler;
@@ -1555,43 +1716,31 @@ FString FHaybaMCPCommandHandler::ProcessCommandInContext(const FString& CommandJ
             FHaybaHandlerResult* Out;
         } Ctx{ &Found->Get(), &Cmd, &Params, &Result };
 
-        HaybaSeh::RunGuarded(+[](void* P)
+        HaybaSeh::RunGuardedAt(EHaybaFaultSite::Dispatch, +[](void* P)
         {
             FDispatchCtx* C = static_cast<FDispatchCtx*>(P);
             *C->Out = C->Handler->Handle(*C->Cmd, *C->Params);
         }, &Ctx, bHandlerCrashed);
-
-        if (bHandlerCrashed)
-        {
-            UE_LOG(LogHaybaMCPCmd, Error,
-                TEXT("SEH guard caught a structured exception in handler for command '%s' (id: %s) — skipping post-processing"),
-                *Cmd, *Id);
-            Result = FHaybaHandlerResult::Err(FString::Printf(
-                TEXT("handler crashed (SEH): command '%s' faulted with a structured exception ")
-                TEXT("(e.g. a null/stale UObject in the handler, or a stale Python-registered editor delegate ")
-                TEXT("firing on a GC'd target). Post-processing was skipped; completion cannot be proven and the outcome is unknown. ")
-                TEXT("Treat the editor session as suspect and restart it before mutating more state."),
-                *Cmd));
-        }
     }
+    const bool bInnerFaultCaught = FHaybaEditorHealth::FaultSequence() != FaultSequenceBefore;
 
     const int64 DurMs = (int64)((FPlatformTime::Seconds() - Start) * 1000.0);
 
-    if (bHandlerCrashed)
+    if (bHandlerCrashed || bInnerFaultCaught)
     {
         // Never continue through transaction completion, diff capture, panel
         // dispatch, response trimming, or a second params serialization after
         // a native fault. The 2026-08-09 test_run incident proved that the old
-        // "keep going" path could immediately double-fault in HashParams and
-        // terminate UE despite the SEH guard's recovery claim.
+        // "keep going" path could immediately double-fault in HashParams.
         if (bCreateEditorTransaction && GEditor && !bInPIE)
         {
             GEditor->CancelTransaction(0);
         }
-        FHaybaJournalEntry CrashEntry{
-            FDateTime::UtcNow(), Cmd, ParamsHash, DurMs, false, Result.ErrorMessage };
+        const FHaybaEditorHealth::FSnapshot Health = FHaybaEditorHealth::Snapshot();
+        const FString FaultMessage = HaybaMCPHealth::NativeFaultContainedMessage(Cmd, Health.LastCause, Health.LastExceptionCode);
+        FHaybaJournalEntry CrashEntry{ FDateTime::UtcNow(), Cmd, ParamsHash, DurMs, false, FaultMessage };
         FHaybaMCPSecurityManager::Get().Journal(CrashEntry);
-        return MakeErrorResponse(Id, Result.ErrorMessage, Cmd, /*bSessionSuspect=*/true);
+        return MakeNativeFaultContained(Id, Cmd, FaultMessage, bHandlerCrashed ? nullptr : Result.Data);
     }
 
     // Classify the handler's complete typed result before ANY success-dependent

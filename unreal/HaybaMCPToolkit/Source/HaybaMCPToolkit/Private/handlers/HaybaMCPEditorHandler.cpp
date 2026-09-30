@@ -2,6 +2,8 @@
 #include "HaybaEditorOps.h"
 #include "HaybaMCPCaptureActor.h"
 #include "HaybaMCPRenderSafety.h"
+#include "HaybaMCPEditorHealth.h"
+#include "HaybaMCPHealthPolicy.h"
 #include "Editor.h"
 #include "EngineUtils.h"
 #include "Engine/Engine.h"
@@ -199,14 +201,24 @@ FHaybaHandlerResult FHaybaMCPEditorHandler::GetState(const TSharedPtr<FJsonObjec
     if (!GEditor)
         return FHaybaHandlerResult::Err(TEXT("editor_get_state: GEditor is not available"));
 
-    UWorld* World = GEditor->GetEditorWorldContext().World();
-    const TArray<FString> DirtyPackages = CollectSaveableDirtyPackageNames();
-
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
+    // Health first (ADR-0011). After a stranded save or a swallowed engine
+    // fatal, object lookups are themselves fatal, so the package walk is skipped.
+    FHaybaEditorHealth::WriteJson(Out.ToSharedRef());
+    const bool bSkipDirtyWalk = FHaybaEditorHealth::IsUnsafe()
+        && HaybaMCPHealth::IsStatusOnlyCause(FHaybaEditorHealth::GateCause());
+
+    UWorld* World = GEditor->GetEditorWorldContext().World();
     Out->SetBoolField(TEXT("ok"), true);
     Out->SetStringField(TEXT("map"), World ? World->GetPathName() : FString());
     Out->SetBoolField(TEXT("pie_running"), GEditor->IsPlaySessionInProgress());
     Out->SetNumberField(TEXT("selection_count"), GEditor->GetSelectedActorCount());
+    if (bSkipDirtyWalk)
+    {
+        Out->SetStringField(TEXT("dirty_packages_skipped"), TEXT("editor_unsafe"));
+        return FHaybaHandlerResult::Ok(Out);
+    }
+    const TArray<FString> DirtyPackages = CollectSaveableDirtyPackageNames();
     TArray<TSharedPtr<FJsonValue>> DirtyValues;
     DirtyValues.Reserve(DirtyPackages.Num());
     for (const FString& PackageName : DirtyPackages)

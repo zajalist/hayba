@@ -14,6 +14,15 @@
 #include "IPythonScriptPlugin.h"
 #include "Misc/App.h"
 #include "UObject/UObjectGlobals.h"
+#include "HaybaMCPLeaseManager.h"
+#include "HaybaMCPSettings.h"
+#include "Editor.h"
+#include "Misc/Guid.h"
+#include "Misc/ScopeExit.h"
+#include "Policies/CondensedJsonPrintPolicy.h"
+#include "Serialization/JsonReader.h"
+#include "Serialization/JsonSerializer.h"
+#include "Serialization/JsonWriter.h"
 #include "HaybaMCPCommandHandler.h"
 #include "HaybaMCPModule.h"
 #include "Modules/ModuleManager.h"
@@ -26,6 +35,89 @@ namespace
 
 	// TestEqual has no enum-class overload, and "3 != 1" names no rule.
 	FString CauseName(HaybaMCPHealth::ECause Cause) { return HaybaMCPHealth::LexCause(Cause); }
+}
+
+namespace HaybaHealthTest
+{
+	TSharedPtr<FHaybaMCPCommandHandler> Router(FAutomationTestBase& Test)
+	{
+		FHaybaMCPModule* Module = FModuleManager::GetModulePtr<FHaybaMCPModule>(TEXT("HaybaMCPToolkit"));
+		if (!Test.TestNotNull(TEXT("toolkit module is loaded"), Module)) return nullptr;
+		return Module->GetCommandHandler();
+	}
+
+	FString TestOwner()
+	{
+		return FString::Printf(TEXT("hayba-test-%s"), *FGuid::NewGuid().ToString(EGuidFormats::Digits).Left(8).ToLower());
+	}
+
+	/** A params object with one string field. */
+	TSharedPtr<FJsonObject> Params(const TCHAR* Key, const FString& Value)
+	{
+		TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
+		Out->SetStringField(Key, Value);
+		return Out;
+	}
+
+	/** test_inject_native_fault params. */
+	TSharedPtr<FJsonObject> Fault(const TCHAR* Kind, const TCHAR* Site)
+	{
+		TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
+		Out->SetStringField(TEXT("kind"), Kind);
+		Out->SetStringField(TEXT("site"), Site);
+		return Out;
+	}
+
+	FString Envelope(const FString& Cmd, const FString& Owner, const TSharedPtr<FJsonObject>& InParams)
+	{
+		static int32 Seq = 0;
+		TSharedRef<FJsonObject> E = MakeShared<FJsonObject>();
+		E->SetStringField(TEXT("id"), FString::Printf(TEXT("health-%d"), ++Seq));
+		E->SetStringField(TEXT("cmd"), Cmd);
+		E->SetStringField(TEXT("owner"), Owner);
+		E->SetObjectField(TEXT("params"), InParams.IsValid() ? InParams.ToSharedRef() : MakeShared<FJsonObject>());
+		const FString& Auth = FHaybaMCPSettings::Get().CapabilityToken;
+		if (!Auth.IsEmpty()) E->SetStringField(TEXT("auth"), Auth);
+		FString Out;
+		const TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer =
+			TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&Out);
+		FJsonSerializer::Serialize(E, Writer);
+		return Out;
+	}
+
+	TSharedPtr<FJsonObject> Parse(const FString& Text)
+	{
+		TSharedPtr<FJsonObject> Out;
+		const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(Text);
+		FJsonSerializer::Deserialize(Reader, Out);
+		return Out.IsValid() ? Out : MakeShared<FJsonObject>();
+	}
+
+	TSharedPtr<FJsonObject> Send(FHaybaMCPCommandHandler& R, const FString& Cmd, const FString& Owner,
+		const TSharedPtr<FJsonObject>& InParams = nullptr, int32 ConnId = 0)
+	{
+		const FString Json = Envelope(Cmd, Owner, InParams);
+		return Parse(ConnId == 0 ? R.ProcessCommand(Json) : R.ProcessCommand(Json, ConnId));
+	}
+
+	FString Str(const TSharedPtr<FJsonObject>& Obj, const TCHAR* Field)
+	{
+		FString Out;
+		if (Obj.IsValid()) Obj->TryGetStringField(Field, Out);
+		return Out;
+	}
+
+	TSharedPtr<FJsonObject> Obj(const TSharedPtr<FJsonObject>& Parent, const TCHAR* Field)
+	{
+		const TSharedPtr<FJsonObject>* Out = nullptr;
+		return Parent.IsValid() && Parent->TryGetObjectField(Field, Out) && Out ? *Out : MakeShared<FJsonObject>();
+	}
+
+	bool Bool(const TSharedPtr<FJsonObject>& Parent, const TCHAR* Field)
+	{
+		bool bOut = false;
+		return Parent.IsValid() && Parent->TryGetBoolField(Field, bOut) && bOut;
+	}
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
@@ -278,6 +370,42 @@ bool FHaybaHealthEngineAssertCodeTest::RunTest(const FString&)
 		Allowed.Num() == HaybaMCPCommandSets::StatusOnlyCommands().Num()
 		&& Allowed.Includes(HaybaMCPCommandSets::StatusOnlyCommands()));
 	TestFalse(TEXT("engine fatal refuses blueprint_get_info"), Allowed.Contains(TEXT("blueprint_get_info")));
+
+	// Router part (T1.3): an injected 0x4000 narrows the gate to status commands.
+	using namespace HaybaHealthTest;
+	const TSharedPtr<FHaybaMCPCommandHandler> R = Router(*this);
+	if (!R.IsValid()) return false;
+	AddExpectedErrorPlain(TEXT("editor_unsafe: native fault"), EAutomationExpectedErrorFlags::Contains, 1);
+	AddExpectedErrorPlain(TEXT("first refusal since the native fault"), EAutomationExpectedErrorFlags::Contains, 1);
+	// Later refusals are Warnings through the process-wide 30 s limiter; their
+	// count depends on earlier tests, so they are ignored rather than counted.
+	AddExpectedMessagePlain(TEXT("editor_unsafe_restart_required: refused '"), ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, -1);
+	{
+		FHaybaEditorHealth::FScopedOverrideForTests Override;
+		const FString Owner = TestOwner();
+		const TSharedPtr<FJsonObject> Faulted = Send(*R, TEXT("test_inject_native_fault"), Owner, Fault(TEXT("engine_assert"), TEXT("handler_inner")));
+		TestEqual(TEXT("an injected engine assert answers native_fault_contained"), Str(Faulted, TEXT("code")), FString(TEXT("native_fault_contained")));
+		TestTrue(TEXT("it names HCR-NATIVE-004"), Str(Faulted, TEXT("error")).Contains(TEXT("[HCR-NATIVE-004]")));
+		TestEqual(TEXT("cause engine_fatal_swallowed"), Str(Obj(Faulted, TEXT("editor_health")), TEXT("cause")), FString(TEXT("engine_fatal_swallowed")));
+		TestEqual(TEXT("exception code 0x00004000"), Str(Obj(Faulted, TEXT("editor_health")), TEXT("exception_code")), FString(TEXT("0x00004000")));
+		TestEqual(TEXT("data.policy_code is HCR-NATIVE-004 (spec 4.2)"), Str(Obj(Faulted, TEXT("data")), TEXT("policy_code")), FString(TEXT("HCR-NATIVE-004")));
+		TestTrue(TEXT("the handler's own data survives next to the policy code"), Bool(Obj(Faulted, TEXT("data")), TEXT("inner_guard_caught")));
+		for (const TCHAR* Cmd : { TEXT("blueprint_get_info"), TEXT("asset_get_info"), TEXT("object_get_property"), TEXT("test_list") })
+		{
+			const TSharedPtr<FJsonObject> Reply = Send(*R, Cmd, Owner);
+			TestEqual(*FString::Printf(TEXT("%s is refused after an engine fatal"), Cmd), Str(Reply, TEXT("code")), FString(TEXT("editor_unsafe_restart_required")));
+			TestTrue(*FString::Printf(TEXT("%s names the status-only tail"), Cmd),
+				Str(Reply, TEXT("error")).EndsWith(TEXT("Only status commands such as editor_get_state, ping and lease_status answer.")));
+		}
+		TestTrue(TEXT("ping still answers"), Bool(Send(*R, TEXT("ping"), Owner), TEXT("ok")));
+		const TSharedPtr<FJsonObject> State = Send(*R, TEXT("editor_get_state"), Owner);
+		TestTrue(TEXT("editor_get_state still answers"), Bool(State, TEXT("ok")));
+		TestEqual(TEXT("the dirty walk is skipped"), Str(Obj(State, TEXT("data")), TEXT("dirty_packages_skipped")), FString(TEXT("editor_unsafe")));
+		TestFalse(TEXT("no dirty package list after a status-only cause"), Obj(State, TEXT("data"))->HasField(TEXT("dirty_packages")));
+		TestTrue(TEXT("the notification was scheduled"), Override.FlushPendingNotification());
+		TestTrue(TEXT("it tells the user not to save"), Override.LastNotificationText().Contains(TEXT("Do not save; restart the editor now.")));
+	}
+	TestFalse(TEXT("the real editor health is untouched (R-7)"), FHaybaEditorHealth::IsUnsafe());
 	return true;
 }
 
@@ -366,6 +494,8 @@ bool FHaybaHealthUserNotifiedOnceTest::RunTest(const FString&)
 	// The "editor_unsafe: user notified … frame <n>" line is Log verbosity, which the
 	// automation framework does not capture; Step 12 greps the log for it instead (M8).
 	AddExpectedErrorPlain(TEXT("editor_unsafe: native fault"), EAutomationExpectedErrorFlags::Contains, 3);
+	// The pre-GC unhook Warning logs under the override too: one python fault.
+	AddExpectedMessagePlain(TEXT("editor_unsafe: Python unhooked from the pre-GC delegate"), ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 1);
 	{
 		FHaybaEditorHealth::FScopedOverrideForTests Override;
 		const FString Cmd = TEXT("python_run"), Id = TEXT("notify-1"), Owner = TEXT("hayba-test-notify");
@@ -405,6 +535,8 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FHaybaHealthPythonFaultUnhooksPreGcTest::RunTest(const FString&)
 {
 	AddExpectedErrorPlain(TEXT("editor_unsafe: native fault"), EAutomationExpectedErrorFlags::Contains, 4);
+	// One unhook Warning per override that saw a python fault (blocks 1 and 3).
+	AddExpectedMessagePlain(TEXT("editor_unsafe: Python unhooked from the pre-GC delegate"), ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 2);
 	{
 		FHaybaEditorHealth::FScopedOverrideForTests Override;
 		FHaybaEditorHealth::RecordCaughtFault(EHaybaFaultSite::Python, AccessViolation);
@@ -433,6 +565,257 @@ bool FHaybaHealthPythonFaultUnhooksPreGcTest::RunTest(const FString&)
 	{
 		TestTrue(TEXT("the seam never touched the real pre-GC binding"),
 			FCoreUObjectDelegates::GetPreGarbageCollectDelegate().IsBoundToObject(Python));
+	}
+	TestFalse(TEXT("the real editor health is untouched (R-7)"), FHaybaEditorHealth::IsUnsafe());
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FHaybaHealthDispatchFaultIsStickyTest,
+	"Hayba.MCP.Health.DispatchFaultIsSticky",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FHaybaHealthDispatchFaultIsStickyTest::RunTest(const FString&)
+{
+	using namespace HaybaHealthTest;
+	const TSharedPtr<FHaybaMCPCommandHandler> R = Router(*this);
+	if (!R.IsValid()) return false;
+	// 1 injected fault + 2 nested-note faults below; one first-refusal Error line.
+	AddExpectedErrorPlain(TEXT("editor_unsafe: native fault"), EAutomationExpectedErrorFlags::Contains, 3);
+	AddExpectedErrorPlain(TEXT("first refusal since the native fault"), EAutomationExpectedErrorFlags::Contains, 1);
+	// Later refusals are Warnings through the process-wide 30 s limiter; their
+	// count depends on earlier tests, so they are ignored rather than counted.
+	AddExpectedMessagePlain(TEXT("editor_unsafe_restart_required: refused '"), ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, -1);
+	{
+		FHaybaEditorHealth::FScopedOverrideForTests Override;
+		const FString Owner = TestOwner();
+
+		const TSharedPtr<FJsonObject> Faulted = Send(*R, TEXT("test_inject_native_fault"), Owner, Fault(TEXT("access_violation"), TEXT("dispatch")));
+		TestEqual(TEXT("the faulting command answers native_fault_contained"), Str(Faulted, TEXT("code")), FString(TEXT("native_fault_contained")));
+		TestTrue(TEXT("it names HCR-NATIVE-003"), Str(Faulted, TEXT("error")).Contains(TEXT("[HCR-NATIVE-003]")));
+		TestEqual(TEXT("its advisory requires a restart"), Str(Obj(Faulted, TEXT("advisory")), TEXT("session_health")), FString(TEXT("restart_required")));
+		TestEqual(TEXT("its outcome is unknown"), Str(Obj(Faulted, TEXT("advisory")), TEXT("mutation_status")), FString(TEXT("unknown")));
+		// The handler never returned, so the router builds data itself (spec 4.2).
+		TestEqual(TEXT("data.policy_code is HCR-NATIVE-003"), Str(Obj(Faulted, TEXT("data")), TEXT("policy_code")), FString(TEXT("HCR-NATIVE-003")));
+		TestEqual(TEXT("data.mutation_status is unknown"), Str(Obj(Faulted, TEXT("data")), TEXT("mutation_status")), FString(TEXT("unknown")));
+		TestTrue(TEXT("data.may_have_executed is true"), Bool(Obj(Faulted, TEXT("data")), TEXT("may_have_executed")));
+		TestFalse(TEXT("data.ok is false"), Bool(Obj(Faulted, TEXT("data")), TEXT("ok")));
+		TestTrue(TEXT("the editor is unsafe"), FHaybaEditorHealth::IsUnsafe());
+		TestFalse(TEXT("a dispatch fault is not a python fault"), FHaybaEditorHealth::IsPythonUnhealthy());
+		TestEqual(TEXT("exactly one Error line for the fault"), Override.FaultErrorLineCount(), 1);
+		const FHaybaEditorHealth::FSnapshot H = FHaybaEditorHealth::Snapshot();
+		TestEqual(TEXT("the record names the command"), H.FaultedCommand, FString(TEXT("test_inject_native_fault")));
+		TestEqual(TEXT("the record names the owner"), H.FaultedOwner, Owner);
+		TestEqual(TEXT("HCR-NATIVE-003"), H.FaultCode, FString(TEXT("HCR-NATIVE-003")));
+		TestEqual(TEXT("site dispatch"), FString(HaybaMCPHealth::LexSite(H.Site)), FString(TEXT("dispatch")));
+		TestEqual(TEXT("exception code"), static_cast<int64>(H.ExceptionCode), static_cast<int64>(AccessViolation));
+
+		const TCHAR* Refused[] = { TEXT("python_run"), TEXT("editor_start_pie"), TEXT("blueprint_compile"), TEXT("ui_save_widget"),
+			TEXT("audio_asset_save"), TEXT("level_save"), TEXT("editor_batch"), TEXT("lease_acquire") };
+		for (const TCHAR* Cmd : Refused)
+		{
+			const TSharedPtr<FJsonObject> Reply = Send(*R, Cmd, Owner);
+			const FString Error = Str(Reply, TEXT("error"));
+			const TSharedPtr<FJsonObject> Advisory = Obj(Reply, TEXT("advisory"));
+			TestEqual(*FString::Printf(TEXT("%s is refused while unsafe"), Cmd), Str(Reply, TEXT("code")), FString(TEXT("editor_unsafe_restart_required")));
+			TestTrue(*FString::Printf(TEXT("%s: says it was not run"), Cmd), Error.Contains(FString::Printf(TEXT("'%s' was not run"), Cmd)));
+			TestTrue(*FString::Printf(TEXT("%s: reads still answer"), Cmd), Error.EndsWith(TEXT("Reads such as editor_get_state, ping and lease_status still answer.")));
+			TestFalse(*FString::Printf(TEXT("%s: no refusal text says token"), Cmd), Error.Contains(TEXT("token")));
+			TestEqual(*FString::Printf(TEXT("%s: policy_blocked"), Cmd), Str(Advisory, TEXT("state")), FString(TEXT("policy_blocked")));
+			TestEqual(*FString::Printf(TEXT("%s: not_started"), Cmd), Str(Advisory, TEXT("mutation_status")), FString(TEXT("not_started")));
+			TestEqual(*FString::Printf(TEXT("%s: restart_required"), Cmd), Str(Advisory, TEXT("session_health")), FString(TEXT("restart_required")));
+			TestTrue(*FString::Printf(TEXT("%s: carries editor_health"), Cmd), Bool(Obj(Reply, TEXT("editor_health")), TEXT("editor_unsafe")));
+		}
+		TestFalse(TEXT("the refused editor_start_pie queued no PIE request"), GEditor && GEditor->IsPlaySessionRequestQueued());
+		TestEqual(TEXT("every refusal is counted"), FHaybaEditorHealth::Snapshot().RefusedCount, 8);
+
+		const TSharedPtr<FJsonObject> Ping = Send(*R, TEXT("ping"), Owner);
+		TestTrue(TEXT("ping answers"), Bool(Ping, TEXT("ok")));
+		TestTrue(TEXT("ping reports editor_unsafe"), Bool(Obj(Ping, TEXT("data")), TEXT("editor_unsafe")));
+		TestTrue(TEXT("ping advertises the capability"), Bool(Obj(Obj(Ping, TEXT("data")), TEXT("capabilities")), TEXT("editor_health")));
+		TestEqual(TEXT("ping health names the cause"), Str(Obj(Obj(Ping, TEXT("data")), TEXT("health")), TEXT("cause")), FString(TEXT("native_fault")));
+		const TSharedPtr<FJsonObject> State = Send(*R, TEXT("editor_get_state"), Owner);
+		TestTrue(TEXT("editor_get_state answers"), Bool(State, TEXT("ok")));
+		TestTrue(TEXT("editor_get_state reports editor_unsafe"), Bool(Obj(State, TEXT("data")), TEXT("editor_unsafe")));
+		TestTrue(TEXT("a native fault keeps the dirty walk"), Obj(State, TEXT("data"))->HasField(TEXT("dirty_packages")));
+		TestTrue(TEXT("lease_status answers"), Bool(Send(*R, TEXT("lease_status"), Owner), TEXT("ok")));
+	}
+	{
+		// R-8: a fault under nested dispatch notes is blamed on the innermost command…
+		FHaybaEditorHealth::FScopedOverrideForTests Nested;
+		const FString Outer = TEXT("outer_cmd"), Inner = TEXT("inner_cmd"), Id = TEXT("nested-1"), Owner = TEXT("hayba-test-nested");
+		FHaybaEditorHealth::FScopedDispatchNote OuterNote(Outer, Id, Owner);
+		{
+			FHaybaEditorHealth::FScopedDispatchNote InnerNote(Inner, Id, Owner);
+			FHaybaEditorHealth::RecordCaughtFault(EHaybaFaultSite::HandlerInner, AccessViolation);
+		}
+		TestEqual(TEXT("the inner command is blamed"), FHaybaEditorHealth::Snapshot().FaultedCommand, Inner);
+	}
+	{
+		// …and a closed inner note restores the outer one.
+		FHaybaEditorHealth::FScopedOverrideForTests Restored;
+		const FString Outer = TEXT("outer_cmd"), Inner = TEXT("inner_cmd"), Id = TEXT("nested-2"), Owner = TEXT("hayba-test-nested");
+		FHaybaEditorHealth::FScopedDispatchNote OuterNote(Outer, Id, Owner);
+		{
+			FHaybaEditorHealth::FScopedDispatchNote InnerNote(Inner, Id, Owner);
+		}
+		FHaybaEditorHealth::RecordCaughtFault(EHaybaFaultSite::HandlerInner, AccessViolation);
+		TestEqual(TEXT("the outer command is blamed once the inner note closed"), FHaybaEditorHealth::Snapshot().FaultedCommand, Outer);
+	}
+	TestFalse(TEXT("the real editor health is untouched (R-7)"), FHaybaEditorHealth::IsUnsafe());
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FHaybaHealthInnerGuardOkResultTest,
+	"Hayba.MCP.Health.InnerGuardOkResultIsForcedToFault",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FHaybaHealthInnerGuardOkResultTest::RunTest(const FString&)
+{
+	using namespace HaybaHealthTest;
+	const TSharedPtr<FHaybaMCPCommandHandler> R = Router(*this);
+	if (!R.IsValid()) return false;
+	AddExpectedErrorPlain(TEXT("editor_unsafe: native fault"), EAutomationExpectedErrorFlags::Contains, 1);
+	{
+		FHaybaEditorHealth::FScopedOverrideForTests Override;
+		// The handler catches its own fault (HaybaSeh::RunGuarded, like material_compile) and still returns Ok.
+		const TSharedPtr<FJsonObject> Reply = Send(*R, TEXT("test_inject_native_fault"), TestOwner(), Fault(TEXT("access_violation"), TEXT("handler_inner")));
+		TestFalse(TEXT("an Ok result after an inner fault is not ok"), Bool(Reply, TEXT("ok")));
+		TestEqual(TEXT("it is forced to native_fault_contained"), Str(Reply, TEXT("code")), FString(TEXT("native_fault_contained")));
+		const TSharedPtr<FJsonObject> Data = Obj(Reply, TEXT("data"));
+		TestTrue(TEXT("the handler's data survives"), Bool(Data, TEXT("inner_guard_caught")) && Bool(Data, TEXT("handler_returned_ok")));
+		TestFalse(TEXT("but its ok:true is overruled"), Bool(Data, TEXT("ok")));
+		TestEqual(TEXT("data.policy_code is HCR-NATIVE-003"), Str(Data, TEXT("policy_code")), FString(TEXT("HCR-NATIVE-003")));
+		TestEqual(TEXT("site handler_inner"), Str(Obj(Reply, TEXT("editor_health")), TEXT("site")), FString(TEXT("handler_inner")));
+		TestEqual(TEXT("cause native_fault"), Str(Obj(Reply, TEXT("editor_health")), TEXT("cause")), FString(TEXT("native_fault")));
+		TestEqual(TEXT("session_suspect"), Str(Obj(Reply, TEXT("advisory")), TEXT("state")), FString(TEXT("session_suspect")));
+		TestEqual(TEXT("restart_required"), Str(Obj(Reply, TEXT("advisory")), TEXT("session_health")), FString(TEXT("restart_required")));
+		TestTrue(TEXT("may have mutated"), Bool(Obj(Reply, TEXT("advisory")), TEXT("may_have_mutated")));
+		TestTrue(TEXT("the editor is unsafe"), FHaybaEditorHealth::IsUnsafe());
+		TestEqual(TEXT("one fault recorded"), FHaybaEditorHealth::Snapshot().FaultCount, 1);
+	}
+	TestFalse(TEXT("the real editor health is untouched (R-7)"), FHaybaEditorHealth::IsUnsafe());
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FHaybaHealthFaultInjectionIsGuardedTest,
+	"Hayba.MCP.Health.FaultInjectionIsGuarded",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FHaybaHealthFaultInjectionIsGuardedTest::RunTest(const FString&)
+{
+	using namespace HaybaHealthTest;
+	using HaybaMCPHealth::IsNativeFaultInjectionAllowed;
+
+	// The no-override refusal is proven on the pure guard, never by a real injection
+	// attempt: if that guard were broken the whole headless run would be poisoned (R-7).
+	TestFalse(TEXT("refused without the health override"), IsNativeFaultInjectionAllowed(false, 0, true));
+	TestFalse(TEXT("refused from a TCP connection"), IsNativeFaultInjectionAllowed(true, 900001, true));
+	TestFalse(TEXT("refused outside automation"), IsNativeFaultInjectionAllowed(true, 0, false));
+	TestFalse(TEXT("refused with no request context"), IsNativeFaultInjectionAllowed(true, -1, true));
+	TestTrue(TEXT("allowed only when all three hold"), IsNativeFaultInjectionAllowed(true, 0, true));
+
+	const TSharedPtr<FHaybaMCPCommandHandler> R = Router(*this);
+	if (!R.IsValid()) return false;
+	AddExpectedErrorPlain(TEXT("editor_unsafe: native fault"), EAutomationExpectedErrorFlags::Contains, 1);
+	{
+		FHaybaEditorHealth::FScopedOverrideForTests Override;
+		const FString Owner = TestOwner();
+		const TSharedPtr<FJsonObject> FromTcp = Send(*R, TEXT("test_inject_native_fault"), Owner, Fault(TEXT("access_violation"), TEXT("dispatch")), 900001);
+		TestFalse(TEXT("a TCP connection cannot inject"), Bool(FromTcp, TEXT("ok")));
+		TestTrue(TEXT("the refusal says nothing was injected"), Str(FromTcp, TEXT("error")).Contains(TEXT("Nothing was injected")));
+		TestFalse(TEXT("still healthy after the TCP attempt"), FHaybaEditorHealth::IsUnsafe());
+		{
+			TGuardValue<bool> NotTesting(GIsAutomationTesting, false);
+			const TSharedPtr<FJsonObject> Outside = Send(*R, TEXT("test_inject_native_fault"), Owner, Fault(TEXT("access_violation"), TEXT("dispatch")));
+			TestFalse(TEXT("outside an automation run cannot inject"), Bool(Outside, TEXT("ok")));
+		}
+		TestFalse(TEXT("still healthy outside automation"), FHaybaEditorHealth::IsUnsafe());
+		const TSharedPtr<FJsonObject> Bad = Send(*R, TEXT("test_inject_native_fault"), Owner, Fault(TEXT("stack_overflow"), TEXT("dispatch")));
+		TestFalse(TEXT("an unknown kind is rejected"), Bool(Bad, TEXT("ok")));
+		// Positive control: the refusals above are not vacuous.
+		const TSharedPtr<FJsonObject> Allowed = Send(*R, TEXT("test_inject_native_fault"), Owner, Fault(TEXT("access_violation"), TEXT("dispatch")));
+		TestEqual(TEXT("with all guards the fault is injected"), Str(Allowed, TEXT("code")), FString(TEXT("native_fault_contained")));
+	}
+	TestFalse(TEXT("the real editor health is untouched (R-7)"), FHaybaEditorHealth::IsUnsafe());
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FHaybaHealthPythonGuardFaultTest,
+	"Hayba.MCP.Health.PythonGuardFaultSetsPythonUnhealthy",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FHaybaHealthPythonGuardFaultTest::RunTest(const FString&)
+{
+	using namespace HaybaHealthTest;
+	const TSharedPtr<FHaybaMCPCommandHandler> R = Router(*this);
+	if (!R.IsValid()) return false;
+	// Three faults: the injected Python-site fault, the raised SystemError and the LogPython marker.
+	AddExpectedErrorPlain(TEXT("editor_unsafe: native fault"), EAutomationExpectedErrorFlags::Contains, 3);
+	// The LogPython Error line the script emits on purpose, and our Error lines that name the marker.
+	AddExpectedErrorPlain(TEXT("SystemError: unknown opcode"), EAutomationExpectedErrorFlags::Contains, 0);
+	// Each of the three overrides unhooks Python from pre-GC once, at Warning.
+	AddExpectedMessagePlain(TEXT("editor_unsafe: Python unhooked from the pre-GC delegate"), ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 3);
+	// python_run is Plan-gated; the gate is not what this test is about.
+	TGuardValue<bool> PlanOff(FHaybaMCPSettings::Get().bPlanModeEnabled, false);
+	{
+		FHaybaEditorHealth::FScopedOverrideForTests Override;
+		const TSharedPtr<FJsonObject> Reply = Send(*R, TEXT("test_inject_native_fault"), TestOwner(), Fault(TEXT("access_violation"), TEXT("python")));
+		TestEqual(TEXT("a Python-site fault answers native_fault_contained"), Str(Reply, TEXT("code")), FString(TEXT("native_fault_contained")));
+		TestTrue(TEXT("it names HCR-NATIVE-002"), Str(Reply, TEXT("error")).Contains(TEXT("[HCR-NATIVE-002]")));
+		TestTrue(TEXT("python is unhealthy"), FHaybaEditorHealth::IsPythonUnhealthy());
+		TestEqual(TEXT("cause python_native_fault"), Str(Obj(Reply, TEXT("editor_health")), TEXT("cause")), FString(TEXT("python_native_fault")));
+		TestEqual(TEXT("site python"), Str(Obj(Reply, TEXT("editor_health")), TEXT("site")), FString(TEXT("python")));
+		TestEqual(TEXT("Python was unhooked from pre-GC once"), Override.PreGcUnhookCount(), 1);
+		TestEqual(TEXT("data.policy_code is HCR-NATIVE-002"), Str(Obj(Reply, TEXT("data")), TEXT("policy_code")), FString(TEXT("HCR-NATIVE-002")));
+	}
+	{
+		// R-15: what a script can write or subclass never counts. None of these marks the editor unsafe.
+		FHaybaEditorHealth::FScopedOverrideForTests Override;
+		const FString Owner = TestOwner();
+		const TSharedPtr<FJsonObject> Printed = Send(*R, TEXT("python_run"), Owner, Params(TEXT("script"), TEXT("print('SystemError: unknown opcode')")));
+		TestTrue(TEXT("a marker on stdout is just output"), Bool(Printed, TEXT("ok")));
+		TestFalse(TEXT("stdout never marks the editor unsafe"), FHaybaEditorHealth::IsUnsafe());
+		// A subclass can override attribute access, so its arguments are never read.
+		const TSharedPtr<FJsonObject> Subclass = Send(*R, TEXT("python_run"), Owner, Params(TEXT("script"),
+			TEXT("class Fake(SystemError):\n    pass\nraise Fake('unknown opcode')")));
+		TestNotEqual(TEXT("a subclass of SystemError is an ordinary script error"), Str(Subclass, TEXT("code")), FString(TEXT("native_fault_contained")));
+		TestFalse(TEXT("a subclass never marks the editor unsafe"), FHaybaEditorHealth::IsUnsafe());
+		const TSharedPtr<FJsonObject> OtherType = Send(*R, TEXT("python_run"), Owner, Params(TEXT("script"),
+			TEXT("raise RuntimeError('SystemError: unknown opcode')")));
+		TestNotEqual(TEXT("another exception type that quotes a marker is ordinary"), Str(OtherType, TEXT("code")), FString(TEXT("native_fault_contained")));
+		const TSharedPtr<FJsonObject> Plain = Send(*R, TEXT("python_run"), Owner, Params(TEXT("script"), TEXT("raise SystemError('boom')")));
+		TestNotEqual(TEXT("a SystemError without a marker is ordinary"), Str(Plain, TEXT("code")), FString(TEXT("native_fault_contained")));
+		TestFalse(TEXT("the bounded traceback never marks the editor unsafe"), FHaybaEditorHealth::IsUnsafe());
+		TestEqual(TEXT("no fault was recorded"), FHaybaEditorHealth::Snapshot().FaultCount, 0);
+	}
+	{
+		// The I-6 signature: CPython raises the exact built-in SystemError while the
+		// user script runs, and the wrapper's except block catches it. No SEH catch.
+		FHaybaEditorHealth::FScopedOverrideForTests Override;
+		const TSharedPtr<FJsonObject> Raised = Send(*R, TEXT("python_run"), TestOwner(), Params(TEXT("script"), TEXT("raise SystemError('unknown opcode')")));
+		TestEqual(TEXT("an exact SystemError with a marker answers native_fault_contained"), Str(Raised, TEXT("code")), FString(TEXT("native_fault_contained")));
+		TestTrue(TEXT("it names HCR-NATIVE-002"), Str(Raised, TEXT("error")).Contains(TEXT("[HCR-NATIVE-002]")));
+		TestEqual(TEXT("matched rule"), Str(Obj(Raised, TEXT("data")), TEXT("matched_rule")), FString(TEXT("cpython_corruption_marker")));
+		TestEqual(TEXT("data.policy_code is HCR-NATIVE-002"), Str(Obj(Raised, TEXT("data")), TEXT("policy_code")), FString(TEXT("HCR-NATIVE-002")));
+		TestTrue(TEXT("the exception path sets python_unhealthy"), FHaybaEditorHealth::IsPythonUnhealthy());
+		TestEqual(TEXT("no SEH exception code"), static_cast<int64>(FHaybaEditorHealth::Snapshot().ExceptionCode), static_cast<int64>(0));
+		TestEqual(TEXT("Python was unhooked from pre-GC once"), Override.PreGcUnhookCount(), 1);
+	}
+	{
+		FHaybaEditorHealth::FScopedOverrideForTests Override;
+		const FString Owner = TestOwner();
+		// A LogPython Error line with a marker, and no SEH catch.
+		const TSharedPtr<FJsonObject> Corrupt = Send(*R, TEXT("python_run"), Owner,
+			Params(TEXT("script"), TEXT("import unreal\nunreal.log_error('SystemError: unknown opcode')")));
+		TestEqual(TEXT("a corruption marker answers native_fault_contained"), Str(Corrupt, TEXT("code")), FString(TEXT("native_fault_contained")));
+		TestTrue(TEXT("it names HCR-NATIVE-002"), Str(Corrupt, TEXT("error")).Contains(TEXT("[HCR-NATIVE-002]")));
+		TestEqual(TEXT("matched rule"), Str(Obj(Corrupt, TEXT("data")), TEXT("matched_rule")), FString(TEXT("cpython_corruption_marker")));
+		TestTrue(TEXT("the marker path sets python_unhealthy"), FHaybaEditorHealth::IsPythonUnhealthy());
+		TestEqual(TEXT("no SEH exception code"), static_cast<int64>(FHaybaEditorHealth::Snapshot().ExceptionCode), static_cast<int64>(0));
 	}
 	TestFalse(TEXT("the real editor health is untouched (R-7)"), FHaybaEditorHealth::IsUnsafe());
 	return true;
