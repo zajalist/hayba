@@ -1645,6 +1645,24 @@ namespace
         return false;
     }
 
+    // The `importlib.` rule is lexical-only, so a string or comment that names
+    // it passes. Alias expansion records only dotted paths that end in a name,
+    // so a bare `importlib.` attribute access never reaches it; the policy
+    // tokens (which exclude strings and comments) show it directly.
+    bool HasExecutableImportlibAttribute(const FString& Code)
+    {
+        const TArray<FPythonPolicyToken> Tokens = LexPythonPolicySource(Code);
+        for (int32 Index = 0; Index + 1 < Tokens.Num(); ++Index)
+        {
+            if (TokenIsIdentifier(Tokens, Index, TEXT("importlib"))
+                && Tokens[Index + 1].Kind == EPythonPolicyTokenKind::Dot)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
     bool FindFatalPythonPattern(
         const FString& Code,
         FString& OutPattern,
@@ -1710,7 +1728,8 @@ namespace
             const bool bLexicalOnlyDynamicImport = FCString::Strcmp(Rule.Pattern, TEXT("importlib.")) == 0;
             if ((!bDeadlineRule && !bLexicalOnlyDynamicImport
                     && CompactContainsPolicyPattern(Compact, Rule.Pattern))
-                || CompactContainsPolicyPattern(AliasExpandedCalls, Rule.Pattern))
+                || CompactContainsPolicyPattern(AliasExpandedCalls, Rule.Pattern)
+                || (bLexicalOnlyDynamicImport && HasExecutableImportlibAttribute(Code)))
             {
                 OutPattern = Rule.Pattern;
                 OutPolicyCode = Rule.PolicyCode;
