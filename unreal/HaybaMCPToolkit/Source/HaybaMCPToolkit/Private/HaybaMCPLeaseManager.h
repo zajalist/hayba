@@ -20,6 +20,9 @@ struct FHaybaMCPRequestContext
 	FString LeaseToken;
 	/** Set by the Advisory check; merged into the response as `lease_warning`. */
 	TSharedPtr<FJsonObject> LeaseWarning;
+	/** Set by the router's asset_busy slot under Advisory. Merged into the
+	 *  response as `state_warning`, after `lease_warning` (P0 T3). */
+	TSharedPtr<FJsonObject> StateWarning;
 	/** A step of this editor_batch job (empty for an ordinary request). */
 	FString BatchJobId;
 	/** The batch itself passed the Plan-Mode gate, so its steps are covered

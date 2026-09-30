@@ -50,3 +50,5 @@ Hayba.MCP.State.BatchHoldsDuringPIE
 Hayba.MCP.Lease.AssetWrites
 Hayba.MCP.Lease.AssetHolders
 Hayba.MCP.State.AssetBusyTargets
+Hayba.MCP.State.RouterAssetBusyStartPie
+Hayba.MCP.State.RouterAssetBusyCompile

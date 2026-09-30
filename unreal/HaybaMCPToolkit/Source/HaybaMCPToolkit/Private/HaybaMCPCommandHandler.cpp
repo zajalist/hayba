@@ -1166,6 +1166,32 @@ static void LogPieActiveRefusal(const FString& Cmd, const FString& Caller, const
         *FWarningLimiter::PreviousWindowSuffix(Hit.SuppressedInPreviousWindow));
 }
 
+/** LeaseEnforcement as slot 3 reads it: Off, Advisory, or anything stronger
+ *  (Enforced; EnforcedForWrites once T8 adds it), which refuses. Keyed on
+ *  the two weak values, so a mode inserted later refuses without an edit here. */
+static HaybaMCPState::EBusyMode CurrentAssetBusyMode()
+{
+    const UHaybaMCPDeveloperSettings* Settings = GetDefault<UHaybaMCPDeveloperSettings>();
+    const EHaybaMCPLeaseEnforcement Mode = Settings ? Settings->LeaseEnforcement : EHaybaMCPLeaseEnforcement::Advisory;
+    if (Mode == EHaybaMCPLeaseEnforcement::Off) return HaybaMCPState::EBusyMode::Off;
+    if (Mode == EHaybaMCPLeaseEnforcement::Advisory) return HaybaMCPState::EBusyMode::Advisory;
+    return HaybaMCPState::EBusyMode::Refusing;
+}
+
+/** Slot 3's Warning lines go through the shared gate limiter: at most one line
+ *  per key per 30 s window. Every call first drains closed windows through
+ *  T1.3's LogDrainedGateRefusals(), so the "repeated N more times" line is
+ *  not lost when a storm stops (R-18) and every gate shares one format. */
+static void LogAssetBusy(const FString& Key, const FString& Line)
+{
+    LogDrainedGateRefusals();
+    const FWarningLimiter::FHit Hit = GateRefusalLimiter().Note(Key);
+    if (Hit.bLog)
+    {
+        UE_LOG(LogHaybaMCPCmd, Warning, TEXT("%s%s"), *Line, *FWarningLimiter::PreviousWindowSuffix(Hit.SuppressedInPreviousWindow));
+    }
+}
+
 /** Slot 1 (ADR-0011): the editor is unsafe and Cmd is not in CommandsAllowedWhileUnsafe(GateCause). */
 static FString RefuseWhileUnsafe(const FString& Id, const FString& Cmd, const FString& Owner, HaybaMCPHealth::ECause GateCause)
 {
@@ -1406,12 +1432,15 @@ FString FHaybaMCPCommandHandler::ProcessWithContext(const FString& CommandJson, 
         FHaybaMCPLeaseManager::FScope Scope(Context);
         Response = ProcessCommandInContext(CommandJson);
     }
-    if (Context.LeaseWarning.IsValid())
+    if (Context.LeaseWarning.IsValid() || Context.StateWarning.IsValid())
     {
-        const TSharedPtr<FJsonObject> Warning = Context.LeaseWarning;
-        Response = AddEnvelopeFields(Response, [&Warning](FJsonObject& Envelope)
+        // One re-parse for both warnings. lease_warning first, then state_warning (P0 T3).
+        const TSharedPtr<FJsonObject> LeaseWarning = Context.LeaseWarning;
+        const TSharedPtr<FJsonObject> StateWarning = Context.StateWarning;
+        Response = AddEnvelopeFields(Response, [&LeaseWarning, &StateWarning](FJsonObject& Envelope)
         {
-            Envelope.SetObjectField(TEXT("lease_warning"), Warning);
+            if (LeaseWarning.IsValid()) Envelope.SetObjectField(TEXT("lease_warning"), LeaseWarning);
+            if (StateWarning.IsValid()) Envelope.SetObjectField(TEXT("state_warning"), StateWarning);
         });
     }
     return Response;
@@ -1534,6 +1563,56 @@ FString FHaybaMCPCommandHandler::ProcessCommandInContext(const FString& CommandJ
             if (PieVerdict.bNonOwnerStop)
             {
                 UE_LOG(LogHaybaMCPCmd, Warning, TEXT("editor_stop_pie: '%s' stopped an agent PIE owned by '%s'"), *Caller, *Pie.Owner);
+            }
+        }
+    }
+
+    // Slot 3: asset_busy (P0 T3; R10: before the lease gate). A build marks
+    // its assets busy by holding asset:<path> X leases (D5).
+    //  - editor_start_pie / editor_save_all_and_quit are refused while ANY
+    //    owner holds one, the caller included, in every mode except Off.
+    //  - Compile/save of one asset is refused while ANOTHER owner holds X on
+    //    it, under a refusing LeaseEnforcement. Under Advisory it runs and
+    //    the reply carries state_warning.
+    {
+        const HaybaMCPState::FBusyQuery BusyQuery = HaybaMCPState::BusyQueryFor(Cmd, Params);
+        const HaybaMCPState::EBusyMode BusyMode = CurrentAssetBusyMode();
+        if (!BusyQuery.IsEmpty() && BusyMode != HaybaMCPState::EBusyMode::Off)
+        {
+            const FString BusyCaller = Leases.EffectiveOwner();
+            const TArray<HaybaMCPState::FBusyAsset> BusyAssets = BusyQuery.bAnyBusy
+                ? FHaybaMCPEditorState::Get().BuildingAssets()
+                : FHaybaMCPEditorState::Get().BusyAssetsFor(BusyQuery.AssetKeys, BusyCaller);
+            const HaybaMCPState::EBusyGate BusyGate =
+                HaybaMCPState::DecideAssetBusy(BusyQuery, BusyAssets.Num(), BusyMode);
+            if (BusyGate != HaybaMCPState::EBusyGate::Pass)
+            {
+                const HaybaMCPState::FBusyAsset& First = BusyAssets[0];
+                const TSharedRef<FJsonObject> BusyDetail = HaybaMCPState::MakeBusyDetail(Cmd, BusyCaller, BusyAssets);
+                const FString BusyKey = FWarningLimiter::MakeKey(TEXT("gate"), TEXT("asset_busy"), BusyCaller, Cmd, First.Owner);
+                if (BusyGate == HaybaMCPState::EBusyGate::Refuse)
+                {
+                    LogAssetBusy(BusyKey, FString::Printf(
+                        TEXT("asset_busy: refused '%s' from '%s': %s is being built by '%s' (label %s)"),
+                        *Cmd, *BusyCaller, *First.Asset, *First.Owner, *HaybaMCPState::LabelOrNone(First.Label)));
+                    FGateRefusal Refusal;
+                    Refusal.Code = TEXT("asset_busy");
+                    Refusal.Message = HaybaMCPState::MakeBusyMessage(Cmd, First);
+                    Refusal.DetailKey = TEXT("busy");
+                    Refusal.Detail = BusyDetail;
+                    Refusal.FailureKind = EHaybaMCPFailureKind::Retryable;
+                    return MakeGateRefusal(Id, Cmd, Refusal);
+                }
+                LogAssetBusy(BusyKey, FString::Printf(
+                    TEXT("[advisory] asset_busy: '%s' from '%s' runs while %s is being built by '%s' (label %s)"),
+                    *Cmd, *BusyCaller, *First.Asset, *First.Owner, *HaybaMCPState::LabelOrNone(First.Label)));
+                if (FHaybaMCPRequestContext* BusyContext = Leases.Current())
+                {
+                    const TSharedRef<FJsonObject> StateWarning = MakeShared<FJsonObject>();
+                    StateWarning->SetStringField(TEXT("code"), TEXT("asset_busy"));
+                    StateWarning->SetObjectField(TEXT("busy"), BusyDetail);
+                    BusyContext->StateWarning = StateWarning;
+                }
             }
         }
     }

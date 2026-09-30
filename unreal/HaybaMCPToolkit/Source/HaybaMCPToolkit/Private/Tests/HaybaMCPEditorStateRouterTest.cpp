@@ -3,6 +3,7 @@
 #include "HaybaMCPAccessPolicy.h"
 #include "HaybaMCPCommandSets.h"
 #include "HaybaMCPDeveloperSettings.h"
+#include "HaybaMCPEditorHealth.h"
 #include "HaybaMCPEditorState.h"
 #include "HaybaMCPEditorStatePolicy.h"
 #include "HaybaMCPLeaseManager.h"
@@ -919,6 +920,333 @@ bool FHaybaMCPStateRealPIETest::RunTest(const FString& Parameters)
 		TestEqual(TEXT("one session, one end"), FHaybaMCPEditorState::Get().PieEndSerial() - EndSerialBefore, 1);
 		return true;
 	}));
+	return true;
+}
+
+// ---------------------------------------------------------------------------
+// T3: asset_busy (router slot 3) through the real router. Owners are unique
+// per run, ConnIds are fake (>= 900000), and assets do not exist.
+// ---------------------------------------------------------------------------
+namespace HaybaAssetBusyRouterTest
+{
+	FString NewTag()
+	{
+		return FGuid::NewGuid().ToString(EGuidFormats::Digits).Left(8).ToLower();
+	}
+
+	TSharedPtr<FJsonObject> Parse(const FString& Text)
+	{
+		TSharedPtr<FJsonObject> Out;
+		const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(Text);
+		FJsonSerializer::Deserialize(Reader, Out);
+		return Out;
+	}
+
+	FString StringOr(const TSharedPtr<FJsonObject>& Obj, const TCHAR* Field)
+	{
+		FString Out;
+		if (Obj.IsValid())
+		{
+			Obj->TryGetStringField(Field, Out);
+		}
+		return Out;
+	}
+
+	TSharedPtr<FHaybaMCPCommandHandler> RouterOrNull(FAutomationTestBase& Test)
+	{
+		FHaybaMCPModule* Module = FModuleManager::GetModulePtr<FHaybaMCPModule>(TEXT("HaybaMCPToolkit"));
+		if (!Test.TestNotNull(TEXT("toolkit module is loaded"), Module))
+		{
+			return nullptr;
+		}
+		return Module->GetCommandHandler();
+	}
+
+	FString Send(FHaybaMCPCommandHandler& Router, const FString& Cmd, const FString& Owner, int32 ConnId, const TSharedRef<FJsonObject>& Params)
+	{
+		const TSharedRef<FJsonObject> Envelope = MakeShared<FJsonObject>();
+		Envelope->SetStringField(TEXT("id"), TEXT("busy-") + NewTag());
+		Envelope->SetStringField(TEXT("cmd"), Cmd);
+		Envelope->SetStringField(TEXT("owner"), Owner);
+		Envelope->SetObjectField(TEXT("params"), Params);
+		FString Json;
+		const TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&Json);
+		FJsonSerializer::Serialize(Envelope, Writer);
+		return Router.ProcessCommand(Json, ConnId);
+	}
+
+	/** busy.assets[0] of a reply or of a state_warning, or null. */
+	TSharedPtr<FJsonObject> FirstBusyAsset(const TSharedPtr<FJsonObject>& Holder)
+	{
+		const TSharedPtr<FJsonObject>* Busy = nullptr;
+		const TArray<TSharedPtr<FJsonValue>>* Assets = nullptr;
+		if (!Holder.IsValid() || !Holder->TryGetObjectField(TEXT("busy"), Busy) || !Busy
+			|| !(*Busy)->TryGetArrayField(TEXT("assets"), Assets) || !Assets || Assets->Num() == 0)
+		{
+			return nullptr;
+		}
+		return (*Assets)[0]->AsObject();
+	}
+
+	void ExpectRetryablePreflight(FAutomationTestBase& Test, const FString& What, const TSharedPtr<FJsonObject>& Reply)
+	{
+		const TSharedPtr<FJsonObject>* Advisory = nullptr;
+		if (Test.TestTrue(What + TEXT(" carries an advisory"), Reply.IsValid() && Reply->TryGetObjectField(TEXT("advisory"), Advisory) && Advisory))
+		{
+			Test.TestEqual(What + TEXT(" is retryable_failure"), StringOr(*Advisory, TEXT("state")), FString(TEXT("retryable_failure")));
+			Test.TestEqual(What + TEXT(" ran nothing"), StringOr(*Advisory, TEXT("mutation_status")), FString(TEXT("not_started")));
+		}
+	}
+
+	/** Holds asset:<AssetPath> X for Owner in the live lease table. Released
+	 *  on destruction. Unbound (ConnId 0), long lane, 120 s. */
+	struct FScopedAssetLease
+	{
+		FString Token;
+		FString Owner;
+
+		FScopedAssetLease(const FString& InOwner, const FString& AssetPath, const FString& Label)
+			: Owner(InOwner)
+		{
+			HaybaMCPLease::FRequest Request;
+			Request.Owner = Owner;
+			Request.Label = Label;
+			Request.Lane = HaybaMCPLease::ELane::Long;
+			Request.TtlSeconds = 120.0;
+			HaybaMCPAccess::FClaim Claim;
+			FString Error;
+			if (HaybaMCPAccess::ParseResource(TEXT("asset:") + AssetPath, Claim.Resource, Error))
+			{
+				Claim.bExclusive = true;
+				Request.Claims.Add(Claim);
+				const HaybaMCPLease::FAcquireResult Result = FHaybaMCPLeaseManager::Get().Table().Acquire(Request);
+				if (Result.Status == HaybaMCPLease::EStatus::Granted)
+				{
+					Token = Result.Token;
+				}
+			}
+		}
+
+		~FScopedAssetLease()
+		{
+			FString Error;
+			if (!Token.IsEmpty())
+			{
+				FHaybaMCPLeaseManager::Get().Table().Release(Token, Owner, Error);
+			}
+		}
+	};
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FHaybaMCPStateRouterAssetBusyStartPieTest,
+	"Hayba.MCP.State.RouterAssetBusyStartPie",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FHaybaMCPStateRouterAssetBusyStartPieTest::RunTest(const FString& Parameters)
+{
+	using namespace HaybaAssetBusyRouterTest;
+	const TSharedPtr<FHaybaMCPCommandHandler> Router = RouterOrNull(*this);
+	if (!TestTrue(TEXT("router exists"), Router.IsValid()) || !TestNotNull(TEXT("GEditor"), GEditor))
+	{
+		return false;
+	}
+
+	// A stray real fault must not turn every reply into editor_unsafe (R-7).
+	// No PIE, so slot 2 passes.
+	FHaybaEditorHealth::FScopedOverrideForTests Health;
+	FHaybaMCPEditorState::FScopedPieOverride NoPie{ HaybaMCPState::FPieState{} };
+	UHaybaMCPDeveloperSettings* Settings = GetMutableDefault<UHaybaMCPDeveloperSettings>();
+	const EHaybaMCPLeaseEnforcement SavedMode = Settings->LeaseEnforcement;
+	ON_SCOPE_EXIT
+	{
+		Settings->LeaseEnforcement = SavedMode;
+		// Safety net only: a refused editor_start_pie queues nothing.
+		if (GEditor && GEditor->IsPlaySessionRequestQueued())
+		{
+			GEditor->CancelRequestPlaySession();
+		}
+	};
+
+	const FString Tag = NewTag();
+	const FString Builder = TEXT("hayba-test-") + Tag + TEXT("-builder");
+	const FString Lane5 = TEXT("hayba-test-") + Tag + TEXT("-lane5");
+	const FString Package = TEXT("/Game/__HaybaTest__/BP_Busy_") + Tag;
+
+	// Each (caller, cmd, holder) logs at most one Warning per 30 s window, not one
+	// per call. The limiter is process-wide, so the count is -1 (any number).
+	AddExpectedMessagePlain(FString::Printf(TEXT("asset_busy: refused 'editor_start_pie' from '%s'"), *Lane5),
+		ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, -1);
+	AddExpectedMessagePlain(FString::Printf(TEXT("asset_busy: refused 'editor_start_pie' from '%s'"), *Builder),
+		ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, -1);
+
+	{
+		FScopedAssetLease Build(Builder, Package, TEXT("build:test"));
+		if (!TestFalse(TEXT("builder holds the asset lease"), Build.Token.IsEmpty()))
+		{
+			return false;
+		}
+
+		for (const EHaybaMCPLeaseEnforcement Mode : { EHaybaMCPLeaseEnforcement::Advisory, EHaybaMCPLeaseEnforcement::Enforced })
+		{
+			Settings->LeaseEnforcement = Mode;
+			// The builder's own editor_start_pie is refused too (R-23): the
+			// caller's own build counts.
+			for (const FString& Caller : { Lane5, Builder })
+			{
+				const FString What = FString::Printf(TEXT("[%s as %s]"),
+					Mode == EHaybaMCPLeaseEnforcement::Advisory ? TEXT("advisory") : TEXT("enforced"), *Caller);
+				const TSharedPtr<FJsonObject> Reply = Parse(Send(*Router, TEXT("editor_start_pie"), Caller, 900301, MakeShared<FJsonObject>()));
+				if (!TestTrue(What + TEXT(" reply parses"), Reply.IsValid()))
+				{
+					continue;
+				}
+				TestFalse(What + TEXT(" is refused"), Reply->GetBoolField(TEXT("ok")));
+				TestEqual(What + TEXT(" code"), StringOr(Reply, TEXT("code")), FString(TEXT("asset_busy")));
+				TestTrue(What + TEXT(" message"), StringOr(Reply, TEXT("error")).StartsWith(TEXT("asset_busy: 'editor_start_pie' is refused: ")));
+				const TSharedPtr<FJsonObject>* Busy = nullptr;
+				if (TestTrue(What + TEXT(" busy detail"), Reply->TryGetObjectField(TEXT("busy"), Busy) && Busy))
+				{
+					TestEqual(What + TEXT(" busy.command"), StringOr(*Busy, TEXT("command")), FString(TEXT("editor_start_pie")));
+					TestEqual(What + TEXT(" busy.caller_owner"), StringOr(*Busy, TEXT("caller_owner")), Caller);
+				}
+				const TSharedPtr<FJsonObject> First = FirstBusyAsset(Reply);
+				if (TestTrue(What + TEXT(" busy.assets[0]"), First.IsValid()))
+				{
+					TestEqual(What + TEXT(" holder"), StringOr(First, TEXT("owner")), Builder);
+					TestEqual(What + TEXT(" asset"), StringOr(First, TEXT("asset")), Package.ToLower());
+					TestEqual(What + TEXT(" label"), StringOr(First, TEXT("label")), FString(TEXT("build:test")));
+					TestEqual(What + TEXT(" lane"), StringOr(First, TEXT("lane")), FString(TEXT("long")));
+					TestFalse(What + TEXT(" never a lease handle"), First->HasField(TEXT("lease_id")) || First->HasField(TEXT("token")));
+				}
+				ExpectRetryablePreflight(*this, What, Reply);
+				TestFalse(What + TEXT(" no PIE request was queued"), GEditor->IsPlaySessionRequestQueued());
+				TestNull(What + TEXT(" no play world"), GEditor->PlayWorld.Get());
+			}
+		}
+
+		// Reads answer during a build, and building lists it without a handle.
+		Settings->LeaseEnforcement = EHaybaMCPLeaseEnforcement::Enforced;
+		const TSharedRef<FJsonObject> StateParams = MakeShared<FJsonObject>();
+		StateParams->SetBoolField(TEXT("include_dirty"), false);
+		const TSharedPtr<FJsonObject> State = Parse(Send(*Router, TEXT("editor_get_state"), Lane5, 900302, StateParams));
+		const TSharedPtr<FJsonObject>* Data = nullptr;
+		const TArray<TSharedPtr<FJsonValue>>* Building = nullptr;
+		if (TestTrue(TEXT("editor_get_state answers during a build"),
+			State.IsValid() && State->GetBoolField(TEXT("ok")) && State->TryGetObjectField(TEXT("data"), Data) && Data
+			&& (*Data)->TryGetArrayField(TEXT("building"), Building) && Building))
+		{
+			TSharedPtr<FJsonObject> Mine;
+			for (const TSharedPtr<FJsonValue>& Item : *Building)
+			{
+				const TSharedPtr<FJsonObject> Obj = Item.IsValid() ? Item->AsObject() : nullptr;
+				if (Obj.IsValid() && StringOr(Obj, TEXT("owner")) == Builder)
+				{
+					Mine = Obj;
+				}
+			}
+			if (TestTrue(TEXT("building lists the builder's asset"), Mine.IsValid()))
+			{
+				TestEqual(TEXT("building names the asset"), StringOr(Mine, TEXT("asset")), Package.ToLower());
+				TestEqual(TEXT("building names the label"), StringOr(Mine, TEXT("label")), FString(TEXT("build:test")));
+				TestTrue(TEXT("building dates it"), Mine->HasField(TEXT("since")) && Mine->HasField(TEXT("held_s")) && Mine->HasField(TEXT("expires_in_s")));
+				TestFalse(TEXT("building never carries a lease handle"), Mine->HasField(TEXT("lease_id")) || Mine->HasField(TEXT("token")));
+			}
+		}
+	}
+
+	// The build lease is released: building no longer lists it.
+	const TArray<HaybaMCPState::FBusyAsset> After = FHaybaMCPEditorState::Get().BuildingAssets();
+	TestFalse(TEXT("a released build is no longer busy"),
+		After.ContainsByPredicate([&Builder](const HaybaMCPState::FBusyAsset& A) { return A.Owner == Builder; }));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FHaybaMCPStateRouterAssetBusyCompileTest,
+	"Hayba.MCP.State.RouterAssetBusyCompile",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FHaybaMCPStateRouterAssetBusyCompileTest::RunTest(const FString& Parameters)
+{
+	using namespace HaybaAssetBusyRouterTest;
+	const TSharedPtr<FHaybaMCPCommandHandler> Router = RouterOrNull(*this);
+	if (!TestTrue(TEXT("router exists"), Router.IsValid()))
+	{
+		return false;
+	}
+
+	FHaybaEditorHealth::FScopedOverrideForTests Health;
+	FHaybaMCPEditorState::FScopedPieOverride NoPie{ HaybaMCPState::FPieState{} };
+	UHaybaMCPDeveloperSettings* Settings = GetMutableDefault<UHaybaMCPDeveloperSettings>();
+	const EHaybaMCPLeaseEnforcement SavedMode = Settings->LeaseEnforcement;
+	ON_SCOPE_EXIT { Settings->LeaseEnforcement = SavedMode; };
+	// The Advisory and Off runs dispatch to a handler that cannot find the test
+	// asset, and the lease gate logs its own [advisory] line.
+	AddExpectedMessagePlain(TEXT("Failed to find object"), ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, -1);
+	AddExpectedMessagePlain(TEXT("[advisory]"), ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, -1);
+	// The Enforced runs are refused at slot 3 and log through the gate limiter.
+	AddExpectedMessagePlain(TEXT("asset_busy: refused '"), ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, -1);
+
+	const FString Tag = NewTag();
+	const FString Builder = TEXT("hayba-test-") + Tag + TEXT("-builder");
+	const FString Lane5 = TEXT("hayba-test-") + Tag + TEXT("-lane5");
+	const FString Package = TEXT("/Game/__HaybaTest__/BP_Compile_") + Tag;
+	const FString ObjectPath = Package + TEXT(".BP_Compile_") + Tag;   // another spelling of the same asset
+	FScopedAssetLease Build(Builder, Package, TEXT("build:test"));
+	if (!TestFalse(TEXT("builder holds the asset lease"), Build.Token.IsEmpty()))
+	{
+		return false;
+	}
+	const TSharedRef<FJsonObject> CompileParams = MakeShared<FJsonObject>();
+	CompileParams->SetStringField(TEXT("path"), ObjectPath);
+
+	// Enforced: refused at slot 3. The lease gate (slot 4) would also object,
+	// but asset_busy comes first (R10).
+	Settings->LeaseEnforcement = EHaybaMCPLeaseEnforcement::Enforced;
+	{
+		const TSharedPtr<FJsonObject> Reply = Parse(Send(*Router, TEXT("blueprint_compile"), Lane5, 900311, CompileParams));
+		TestEqual(TEXT("[enforced] another owner's compile is asset_busy, not lease_conflict"),
+			StringOr(Reply, TEXT("code")), FString(TEXT("asset_busy")));
+		const TSharedPtr<FJsonObject> First = FirstBusyAsset(Reply);
+		if (TestTrue(TEXT("[enforced] busy.assets[0]"), First.IsValid()))
+		{
+			TestEqual(TEXT("[enforced] holder"), StringOr(First, TEXT("owner")), Builder);
+			TestEqual(TEXT("[enforced] the object path resolved to the package"), StringOr(First, TEXT("asset")), Package.ToLower());
+		}
+		ExpectRetryablePreflight(*this, TEXT("[enforced] blueprint_compile"), Reply);
+	}
+	{
+		const TSharedRef<FJsonObject> FunctionParams = MakeShared<FJsonObject>();
+		FunctionParams->SetStringField(TEXT("function_path"), Package);
+		const TSharedPtr<FJsonObject> Reply = Parse(Send(*Router, TEXT("material_compile"), Lane5, 900312, FunctionParams));
+		TestEqual(TEXT("[enforced] material_compile by function_path is asset_busy"), StringOr(Reply, TEXT("code")), FString(TEXT("asset_busy")));
+	}
+	// For targets, slot 3 excludes the caller: a build compiles its own assets.
+	const TArray<FString> Keys = { TEXT("asset:") + Package.ToLower() };
+	TestEqual(TEXT("the builder's own compile sees no other holder"), FHaybaMCPEditorState::Get().BusyAssetsFor(Keys, Builder).Num(), 0);
+	TestEqual(TEXT("another caller sees the builder"), FHaybaMCPEditorState::Get().BusyAssetsFor(Keys, Lane5).Num(), 1);
+
+	// Advisory: the command runs, and the reply carries state_warning.
+	Settings->LeaseEnforcement = EHaybaMCPLeaseEnforcement::Advisory;
+	{
+		const TSharedPtr<FJsonObject> Reply = Parse(Send(*Router, TEXT("blueprint_compile"), Lane5, 900313, CompileParams));
+		TestNotEqual(TEXT("[advisory] not refused by slot 3"), StringOr(Reply, TEXT("code")), FString(TEXT("asset_busy")));
+		const TSharedPtr<FJsonObject>* Warning = nullptr;
+		if (TestTrue(TEXT("[advisory] state_warning is attached"), Reply.IsValid() && Reply->TryGetObjectField(TEXT("state_warning"), Warning) && Warning))
+		{
+			TestEqual(TEXT("[advisory] state_warning.code"), StringOr(*Warning, TEXT("code")), FString(TEXT("asset_busy")));
+			TestEqual(TEXT("[advisory] state_warning names the holder"), StringOr(FirstBusyAsset(*Warning), TEXT("owner")), Builder);
+		}
+	}
+
+	// Off: slot 3 does nothing.
+	Settings->LeaseEnforcement = EHaybaMCPLeaseEnforcement::Off;
+	{
+		const TSharedPtr<FJsonObject> Reply = Parse(Send(*Router, TEXT("blueprint_compile"), Lane5, 900314, CompileParams));
+		TestNotEqual(TEXT("[off] not refused by slot 3"), StringOr(Reply, TEXT("code")), FString(TEXT("asset_busy")));
+		TestFalse(TEXT("[off] no state_warning"), Reply.IsValid() && Reply->HasField(TEXT("state_warning")));
+	}
 	return true;
 }
 

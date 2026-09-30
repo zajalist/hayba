@@ -3,6 +3,7 @@
 #include "HaybaMCPEditorState.h"
 
 #include "HaybaMCPEditorHealth.h"
+#include "HaybaMCPLeaseManager.h"
 #include "Editor.h"
 #include "Editor/EditorEngine.h"
 #include "Features/IModularFeatures.h"
@@ -185,6 +186,30 @@ void FHaybaMCPEditorState::WritePieJson(const TSharedRef<FJsonObject>& Out) cons
 	Out->SetStringField(TEXT("pie_phase"), HaybaMCPState::LexPiePhase(Pie.Phase));
 	Out->SetNumberField(TEXT("pie_since_s"), bActive ? FMath::Max(0.0, FPlatformTime::Seconds() - Pie.Since) : 0.0);
 	Out->SetBoolField(TEXT("pie_simulating"), Pie.bSimulating);
+}
+
+TArray<HaybaMCPState::FBusyAsset> FHaybaMCPEditorState::BuildingAssets() const
+{
+	// FindAssetHolders expires first. Its lease pointers are copied before any
+	// other table call can move them.
+	HaybaMCPLease::FTable& Table = FHaybaMCPLeaseManager::Get().Table();
+	return HaybaMCPState::MakeBusyAssets(Table.FindAssetHolders(FString()), FPlatformTime::Seconds(), FDateTime::UtcNow());
+}
+
+TArray<HaybaMCPState::FBusyAsset> FHaybaMCPEditorState::BusyAssetsFor(const TArray<FString>& AssetKeys, const FString& ExcludeOwner) const
+{
+	HaybaMCPLease::FTable& Table = FHaybaMCPLeaseManager::Get().Table();
+	TArray<HaybaMCPState::FBusyAsset> Out;
+	for (const FString& Key : AssetKeys)
+	{
+		Out.Append(HaybaMCPState::MakeBusyAssets(Table.FindAssetHolders(ExcludeOwner, Key), FPlatformTime::Seconds(), FDateTime::UtcNow()));
+	}
+	return Out;
+}
+
+void FHaybaMCPEditorState::WriteBuildingJson(const TSharedRef<FJsonObject>& Out) const
+{
+	Out->SetArrayField(TEXT("building"), HaybaMCPState::BusyAssetsToJson(BuildingAssets()));
 }
 
 HaybaMCPState::FPlayDecision FHaybaMCPEditorState::EvaluateUserPlayRequest(double Now)

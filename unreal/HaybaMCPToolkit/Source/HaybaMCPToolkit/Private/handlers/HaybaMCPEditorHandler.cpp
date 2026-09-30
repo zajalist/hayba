@@ -315,8 +315,9 @@ FHaybaHandlerResult FHaybaMCPEditorHandler::GetState(const TSharedPtr<FJsonObjec
     Out->SetNumberField(TEXT("shader_jobs"), GShaderCompilingManager ? GShaderCompilingManager->GetNumRemainingJobs() : 0);
     // Normally false at a request boundary; true means a save scope was stranded.
     Out->SetBoolField(TEXT("saving"), UE::IsSavingPackage(nullptr));
-    // Asset build leases; T3 fills this from the lease table.
-    Out->SetArrayField(TEXT("building"), TArray<TSharedPtr<FJsonValue>>());
+    // Every asset build (P0 T3). Lease-table data only, so it is safe even
+    // after an HCR-NATIVE-004 fault, where the dirty walk is skipped.
+    FHaybaMCPEditorState::Get().WriteBuildingJson(Out);
 
     // After a stranded save or a swallowed engine fatal, object lookups are
     // themselves fatal, so the package walk is skipped (ADR-0011).

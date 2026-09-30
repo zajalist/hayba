@@ -36,6 +36,19 @@ public:
 	/** pie, pie_running, pie_phase, pie_since_s, pie_simulating. */
 	void WritePieJson(const TSharedRef<FJsonObject>& Out) const;
 
+	/** Every asset: X lock held by any owner (D5). Used by
+	 *  editor_get_state.building, and by slot 3 for editor_start_pie and
+	 *  editor_save_all_and_quit. Reads Hayba's own lease table only, never a
+	 *  UObject, so it is safe while editor_unsafe. */
+	TArray<HaybaMCPState::FBusyAsset> BuildingAssets() const;
+
+	/** X locks on these lower-cased asset keys held by owners other than
+	 *  ExcludeOwner (slot 3 for AssetBusyTargets). */
+	TArray<HaybaMCPState::FBusyAsset> BusyAssetsFor(const TArray<FString>& AssetKeys, const FString& ExcludeOwner) const;
+
+	/** Writes `building`. It is always an array, [] when nothing is built. */
+	void WriteBuildingJson(const TSharedRef<FJsonObject>& Out) const;
+
 	/** The Play authorizer's whole decision for one request made at Now. Non-const:
 	 *  IPIEAuthorizer's methods are const (C19), so T10.1 keeps its double-press
 	 *  state on this object and fills in the build branch here. */
