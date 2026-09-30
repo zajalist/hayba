@@ -767,8 +767,10 @@ FHaybaHandlerResult FHaybaMCPBatchHandler::Start(const TSharedPtr<FJsonObject>& 
 	HaybaMCPLease::FIdParam Id = HaybaMCPLease::ResolveIdParam(Canonical, Alias);
 	if (Id.Kind == HaybaMCPLease::EIdParam::None)
 	{
-		// Fall back to the envelope's lease.
-		if (const FHaybaMCPRequestContext* Context = Leases.Current())
+		// Fall back to the envelope's lease. A redaction marker there counts
+		// as absent (R5): it answers lease_id_required, never lease_id_redacted.
+		const FHaybaMCPRequestContext* Context = Leases.Current();
+		if (Context && !HaybaMCPLease::IsRedactionMarker(Context->LeaseToken))
 		{
 			Id = HaybaMCPLease::ResolveIdParam(Context->LeaseToken, FString());
 		}

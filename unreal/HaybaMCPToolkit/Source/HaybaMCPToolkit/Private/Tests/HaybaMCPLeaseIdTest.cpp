@@ -543,6 +543,32 @@ bool FHaybaMCPBatchWireRoundTripTest::RunTest(const FString& Parameters)
 		return false;
 	}
 
+	// A marker is refused only where the command's own lease_id param holds
+	// it; in the envelope it counts as absent (R5).
+	{
+		UHaybaMCPDeveloperSettings* Dev = GetMutableDefault<UHaybaMCPDeveloperSettings>();
+		const EHaybaMCPLeaseEnforcement WasMode = Dev->LeaseEnforcement;
+		Dev->LeaseEnforcement = EHaybaMCPLeaseEnforcement::Advisory;   // the envelope marker reaches the handler
+		ON_SCOPE_EXIT { Dev->LeaseEnforcement = WasMode; };
+		AddExpectedMessagePlain(
+			TEXT("[advisory] lease_conflict: 'editor_batch': the envelope's lease is a redaction marker, not a lease_id"),
+			ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 1);
+		const TCHAR* const Steps = TEXT(R"("steps":[{"cmd":"ping","fence_after":"none"}])");
+		auto ExpectRefused = [this](const TCHAR* What, const TSharedPtr<FJsonObject>& Reply, const TCHAR* Code)
+		{
+			TestFalse(*FString::Printf(TEXT("%s: refused"), What), W::Bool(Reply, TEXT("ok")));
+			const FString Error = W::Str(Reply, TEXT("error"));
+			TestTrue(*FString::Printf(TEXT("%s: %s in '%s'"), What, Code, *Error), Error.Contains(Code));
+			TestFalse(*FString::Printf(TEXT("%s: no refusal text contains token"), What), Error.Contains(TEXT("token")));
+		};
+		ExpectRefused(TEXT("editor_batch with only an envelope marker answers as if no lease were sent"),
+			W::Send(*R, S->Owner, TEXT("editor_batch"), FString::Printf(TEXT("{%s}"), Steps), TEXT("[REDACTED:token]")),
+			TEXT("[lease_id_required]"));
+		ExpectRefused(TEXT("editor_batch with a marker in its lease_id param"),
+			W::Send(*R, S->Owner, TEXT("editor_batch"), FString::Printf(TEXT(R"({"lease_id":"[REDACTED:token]",%s})"), Steps)),
+			TEXT("[lease_id_redacted]"));
+	}
+
 	// The exact call refused at 01:25:52 in I-5, now with the lease's id.
 	const TSharedPtr<FJsonObject> Started = W::Send(*R, S->Owner, TEXT("editor_batch"),
 		FString::Printf(TEXT(R"({"lease_id":"%s","steps":[{"cmd":"ping","fence_after":"none"}]})"), *S->LeaseId));
