@@ -49,10 +49,18 @@ All notable changes to Hayba MCP Toolkit are documented here. Format based on [K
   with a `state_warning` under `Advisory`. `editor_get_state.building` lists
   every asset build. Blueprint and widget authoring commands lock the asset
   they name.
+- `ping` reports `capabilities.lease_id`.
 
 ### Changed
 - Plan-Mode approval is per owner: only the agent that proposed a plan can
   spend its Approve.
+- Lease handles are `lease_id` (`ls_<seq>_<mac12>`) on every lease reply and
+  in `lease_status`, and `editor_batch` takes `lease_id` (`lease` still works).
+  `token` is never emitted; it is accepted as a deprecated input on
+  `lease_renew` / `lease_release`, and the reply says so in `deprecation`. The
+  Node server seeds its envelope lease only from `HAYBA_LEASE_ID`, ignores
+  `HAYBA_LEASE` and `HAYBA_LEASE_TOKEN`, and drops an env lease the editor no
+  longer knows.
 
 ### Removed
 - The four Fab tools (`hayba_fab_login_status`, `hayba_fab_library_list`,
@@ -84,6 +92,8 @@ All notable changes to Hayba MCP Toolkit are documented here. Format based on [K
   ScrollBox axis so cross-axis failures remain visible, and empty text is
   ignored only when its effective visibility is `Collapsed` (not `Hidden`).
 - `asset_registry_query` now uses a native, read-only AssetRegistry handler instead of blocked dynamic Python reflection, with deterministic bounded pagination, strict input checks, and fail-closed response validation.
+- Lease handles no longer reach clients as `[REDACTED:token]`: the handle's
+  key is no longer secret-shaped, so renew, release and `editor_batch` work.
 
 ### Added
 - `editor_pie_click_actor` performs exact OS-input-free world interaction

@@ -39,7 +39,7 @@ The TCP envelope gains two optional fields, both back-compatible:
 - `owner` — which agent is calling. The Node client sends `HAYBA_AGENT_ID`, or
   a per-process id. An envelope without one gets `conn:<id>` (one owner per
   connection); an in-process call gets `local`.
-- `lease` — a held lease token. The command then acts as that lease's owner,
+- `lease` — a held `lease_id`. The command then acts as that lease's owner,
   so a lease can be handed to a helper process.
 
 Each connection has a `ConnId`, carried with every pending command. Reader
@@ -92,7 +92,7 @@ build marks its assets busy (`asset_busy`, ADR-0012).
 `HaybaMCPLeasePolicy.h` is a pure table with an injected clock.
 `lease_acquire` answers either:
 
-- **granted** — a token, the expiry, the resources; or
+- **granted** — a `lease_id`, the expiry, the resources; or
 - **queued** — a ticket, the position, the blocking holder's owner, an ETA
   (the blocking holders' remaining TTL) and a poll hint.
 
@@ -106,6 +106,38 @@ The queue has two lanes. **Interactive** requests overtake **long** ones, but
 a long waiter that has been overtaken K times (3) or has waited T seconds (60)
 is aged, and nothing that arrives after it may overtake it any more. An owner
 never conflicts with itself.
+
+### Lease ids
+
+A lease is named by its `lease_id`: `ls_<seq>_<mac12>`, and a queued request
+by its ticket, `lq_<seq>_<mac12>`. `mac12` is the first 12 lowercase hex
+characters of HMAC-SHA1, keyed by a 32-hex salt drawn once per editor session,
+over `"<prefix>:<seq>"`. The salt never appears in an id, so one holder cannot
+derive another's. The table lives in memory, so ids never outlive the session.
+
+The name is the fix, not an allowlist. The handle used to be called `token`,
+and both redaction layers (the editor's `RedactFinalEnvelope` and the Node
+server's MCP-result redaction) erase any value under a secret-shaped key, so
+every client received `[REDACTED:token]` and every renew, release and batch
+failed. The redaction code is unchanged. The lease and batch protocol follows
+three rules instead, pinned by `Hayba.MCP.Lease.IdSurvivesRedaction`,
+`secret-redaction.test.ts` and `lease-wire.test.ts`:
+
+- no lease or batch protocol key ends in a secret word (token, secret,
+  password, passwd, pwd, credential, cookie, authorization, or a `*key`
+  compound);
+- lease and ticket ids use only `[a-z0-9_]`;
+- no hint or `next` text contains `token:` or `token=`.
+
+`token` survives only as a deprecated **input** alias on `lease_renew` and
+`lease_release`. The reply then carries `deprecation`, and the editor logs one
+Warning per command, param and owner (`lease_renew: deprecated param 'token'
+from owner 'X'; send lease_id`); that line is the removal metric. A redaction
+marker under `lease_id` is refused with `[lease_id_redacted]`. `editor_batch`
+takes `lease_id`, or `lease`, which is permanent because it is not
+secret-shaped. `ping` reports `capabilities.lease_id: true`; host tools use
+leases only when it is set. The Node server seeds its envelope lease only from
+`HAYBA_LEASE_ID` and ignores `HAYBA_LEASE` and `HAYBA_LEASE_TOKEN`.
 
 ### Enforcement is a setting, advisory by default
 
