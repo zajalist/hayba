@@ -152,6 +152,8 @@ private:
 	void HandleClientConnection(FHaybaMCPClientConnectionPtr Conn);
 	void HandleClientWrites(FHaybaMCPClientConnectionPtr Conn);
 	void CompleteClientWorker(const FHaybaMCPClientConnectionPtr& Conn, const TCHAR* WorkerName);
+	bool StartClientWriter(const FHaybaMCPClientConnectionPtr& Conn,
+		TUniquePtr<FHaybaMCPJoinableWorker>&& Writer, const TCHAR* WorkerName);
 	void CloseClientConnection(const FHaybaMCPClientConnectionPtr& Conn);
 	enum class EReceiveResult { Progress, WouldBlock, InputEnded };
 	static EReceiveResult ReceiveAvailable(FSocket& Socket, uint8* Destination, int32 NumBytes, int32& BytesRead);

@@ -23,7 +23,8 @@ struct FHaybaMCPNativeTransportTestAccess
 			Server.MaxOutboundMemoryBytesPerClient);
 	}
 	static void Start(const TSharedRef<FHaybaMCPTcpServer, ESPMode::ThreadSafe>& Server,
-		const FHaybaMCPClientConnectionPtr& Conn, FThreadSafeCounter& Readers, FThreadSafeCounter& Writers)
+		const FHaybaMCPClientConnectionPtr& Conn, FThreadSafeCounter& Readers, FThreadSafeCounter& Writers,
+		bool bStartWriter = true)
 	{
 		auto Launch = [&](bool bReader, FThreadSafeCounter& Completed)
 		{
@@ -44,7 +45,22 @@ struct FHaybaMCPNativeTransportTestAccess
 			Server->RetainWorker(MoveTemp(Worker));
 		};
 		Launch(true, Readers);
-		Launch(false, Writers);
+		if (bStartWriter) Launch(false, Writers);
+	}
+	static bool RejectWriterStart(FHaybaMCPTcpServer& Server, const FHaybaMCPClientConnectionPtr& Conn)
+	{
+		// A worker without a callable deterministically fails its actual Start.
+		// Use the listener's production start/failure path, not copied cleanup.
+		auto Writer = MakeUnique<FHaybaMCPJoinableWorker>(TUniqueFunction<void()>());
+		return Server.StartClientWriter(Conn, MoveTemp(Writer), TEXT("HaybaNativeRejectedWriter"));
+	}
+	static int32 CountClosedNotifications(FHaybaMCPTcpServer& Server)
+	{
+		TArray<int32> Ids;
+		int32 Id = 0;
+		while (Server.ClosedConnections.Dequeue(Id)) Ids.Add(Id);
+		for (const int32 Queued : Ids) Server.ClosedConnections.Enqueue(Queued);
+		return Ids.Num();
 	}
 	static void Drain(FHaybaMCPTcpServer& Server) { Server.DrainPendingCommands(0.0f); }
 	static int32 Pending(const FHaybaMCPTcpServer& Server) { return Server.PendingCommandCount.GetValue(); }
@@ -69,7 +85,7 @@ struct FHaybaMCPNativeTransportTestAccess
 
 namespace
 {
-	enum class EScenario { Incomplete, HalfClose, WouldBlock, Reset, Shutdown, PartialNext };
+	enum class EScenario { Incomplete, HalfClose, WouldBlock, Reset, Shutdown, PartialNext, WriterStartFailure };
 
 	class FNativeTransportCommand : public IAutomationLatentCommand
 	{
@@ -94,6 +110,36 @@ namespace
 				Test->AddError(TEXT("native transport scenario exceeded its 4 s cap (frame timeout remains 5 s)"));
 				Cleanup();
 				return true;
+			}
+			if (Scenario == EScenario::WriterStartFailure)
+			{
+				if (Readers.GetValue() != 1 || Conn->ResponsesPending.GetValue() != 1) return false;
+				Test->TestTrue(TEXT("real reader retired on boundary FIN before writer startup"), static_cast<bool>(Conn->bInputEnded));
+				Test->TestEqual(TEXT("missing writer still owns its client slot"), Server->GetClientCount(), 1);
+				Test->TestEqual(TEXT("writer has not completed before startup rejection"), Writers.GetValue(), 0);
+				FHaybaMCPNativeTransportTestAccess::Drain(*Server);
+				FString LeaseId;
+				for (const HaybaMCPLease::FLease& Lease : FHaybaMCPLeaseManager::Get().Table().GetLeases())
+				{
+					if (Lease.Owner == Owner)
+					{
+						LeaseId = Lease.Token;
+						Test->TestEqual(TEXT("actual accepted request acquired a connection-bound lease"), Lease.ConnId, Conn->ConnId);
+						Test->TestFalse(TEXT("lease is live before writer startup rejection"), Lease.IsOrphaned());
+					}
+				}
+				Test->TestFalse(TEXT("actual lease command dispatched before writer rejection"), LeaseId.IsEmpty());
+				Test->TestFalse(TEXT("production writer startup failure path runs"), FHaybaMCPNativeTransportTestAccess::RejectWriterStart(*Server, Conn));
+				Writers.Increment(); // the production failure path completed its missing-worker placeholder
+				Test->TestEqual(TEXT("reader plus failed writer release exactly one client reservation"), Server->GetClientCount(), 0);
+				Test->TestFalse(TEXT("startup rejection cancels unsendable work"), static_cast<bool>(Conn->bAlive));
+				Test->TestEqual(TEXT("production startup failure queues exactly one close notification"), FHaybaMCPNativeTransportTestAccess::CountClosedNotifications(*Server), 1);
+				FHaybaMCPNativeTransportTestAccess::Drain(*Server);
+				const HaybaMCPLease::FLease* Lease = FHaybaMCPLeaseManager::Get().Table().FindLease(LeaseId);
+				Test->TestTrue(TEXT("production close drain orphans the bound lease"), Lease && Lease->IsOrphaned() && Lease->ConnId == 0);
+				Test->TestEqual(TEXT("production close drain consumes its one notification"), FHaybaMCPNativeTransportTestAccess::CountClosedNotifications(*Server), 0);
+				bNotificationObserved = true;
+				Cleanup(); return true;
 			}
 			if (Scenario == EScenario::Incomplete || Scenario == EScenario::PartialNext)
 			{
@@ -232,7 +278,9 @@ namespace
 				Test->TestEqual(TEXT("actual would-block returns zero bytes"), Bytes, 0);
 				Test->TestTrue(TEXT("production receive seam preserves actual would-block"), FHaybaMCPNativeTransportTestAccess::WouldBlock(*Accepted));
 			}
-			const FString Request = FString::Printf(TEXT("{\"id\":\"%s\",\"cmd\":\"ping\",\"owner\":\"%s\",\"params\":{}}"), *Id, *Owner);
+			const FString Request = Scenario == EScenario::WriterStartFailure
+				? FString::Printf(TEXT("{\"id\":\"%s\",\"cmd\":\"lease_acquire\",\"owner\":\"%s\",\"params\":{\"resources\":[\"asset:/Game/__HaybaTest__/NativeEOF_%s\"],\"ttl_s\":60,\"bind_connection\":true}}"), *Id, *Owner, *Id)
+				: FString::Printf(TEXT("{\"id\":\"%s\",\"cmd\":\"ping\",\"owner\":\"%s\",\"params\":{}}"), *Id, *Owner);
 			FTCHARToUTF8 Utf8(*Request);
 			const uint32 Length = Utf8.Length();
 			TArray<uint8> Frame{ uint8(Length >> 24), uint8(Length >> 16), uint8(Length >> 8), uint8(Length) };
@@ -247,7 +295,7 @@ namespace
 			if (Scenario != EScenario::WouldBlock && Scenario != EScenario::Reset)
 				if (!Test->TestTrue(TEXT("orderly peer send-half close"), Peer->Shutdown(ESocketShutdownMode::Write))) return false;
 			if (!Test->TestTrue(TEXT("peer reads nonblocking"), Peer->SetNonBlocking(true))) return false;
-			FHaybaMCPNativeTransportTestAccess::Start(Server, Conn, Readers, Writers);
+			FHaybaMCPNativeTransportTestAccess::Start(Server, Conn, Readers, Writers, Scenario != EScenario::WriterStartFailure);
 			return true;
 		}
 		void Cleanup()
@@ -256,7 +304,7 @@ namespace
 			bCleaned = true;
 			// Shutdown deliberately discards the close-notification queue. Inspect
 			// normal worker closure before that lifecycle boundary, on game thread.
-			if (Conn.IsValid() && Readers.GetValue() == 1 && Writers.GetValue() == 1)
+			if (!bNotificationObserved && Conn.IsValid() && Readers.GetValue() == 1 && Writers.GetValue() == 1)
 				Test->TestEqual(TEXT("reader/writer closure notifies connection exactly once"), FHaybaMCPNativeTransportTestAccess::ClosedNotifications(*Server), 1);
 			Server->Shutdown();
 			Server->Shutdown();
@@ -284,7 +332,7 @@ namespace
 		FString Owner, Id, Child;
 		TArray<uint8> Reply;
 		double StartedAt = 0.0, AcceptedAt = 0.0, DispatchedAt = 0.0;
-		bool bStarted = false, bAccepted = false, bDispatched = false, bReplyChecked = false, bPeerEnded = false, bCleaned = false;
+		bool bStarted = false, bAccepted = false, bDispatched = false, bReplyChecked = false, bPeerEnded = false, bCleaned = false, bNotificationObserved = false;
 	};
 	FThreadSafeCounter FNativeTransportCommand::ConnectionSerial;
 
@@ -307,5 +355,11 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FHaybaNativeShutdownPendingTest, "Hayba.MCP.Tra
 bool FHaybaNativeShutdownPendingTest::RunTest(const FString&) { return RunScenario(this, EScenario::Shutdown); }
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FHaybaNativePartialNextFINTest, "Hayba.MCP.Transport.NativePartialNextFIN", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 bool FHaybaNativePartialNextFINTest::RunTest(const FString&) { return RunScenario(this, EScenario::PartialNext); }
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FHaybaNativeWriterStartFailureTest, "Hayba.MCP.Transport.NativeWriterStartFailure", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FHaybaNativeWriterStartFailureTest::RunTest(const FString&)
+{
+	AddExpectedError(TEXT("Could not create client writer thread"), EAutomationExpectedErrorFlags::Contains, 1);
+	return RunScenario(this, EScenario::WriterStartFailure);
+}
 
 #endif

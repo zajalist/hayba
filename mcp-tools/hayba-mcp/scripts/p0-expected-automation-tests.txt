@@ -97,3 +97,4 @@ Hayba.MCP.Transport.NativeWouldBlock
 Hayba.MCP.Transport.NativeResetDrain
 Hayba.MCP.Transport.NativeShutdownPending
 Hayba.MCP.Transport.NativePartialNextFIN
+Hayba.MCP.Transport.NativeWriterStartFailure

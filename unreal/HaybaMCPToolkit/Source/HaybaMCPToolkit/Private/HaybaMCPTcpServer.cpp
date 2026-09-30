@@ -414,22 +414,30 @@ uint32 FHaybaMCPTcpServer::Run()
 					});
 				const FString WriterName = FString::Printf(
 					TEXT("HaybaMCPClientWriter_%d"), ClientWorkerSerial.Increment());
-				if (!Writer->Start(*WriterName))
+				if (!StartClientWriter(Conn, MoveTemp(Writer), *WriterName))
 				{
-					Conn->bAlive = false;
-					if (Conn->Socket)
-					{
-						Conn->Socket->Shutdown(ESocketShutdownMode::ReadWrite);
-					}
-					CompleteClientWorker(Conn, TEXT("writer-start-failed"));
-					UE_LOG(LogHaybaMCPTCP, Error, TEXT("Could not create client writer thread"));
 					continue;
 				}
-				RetainWorker(MoveTemp(Writer));
             }
         }
     }
     return 0;
+}
+
+bool FHaybaMCPTcpServer::StartClientWriter(const FHaybaMCPClientConnectionPtr& Conn,
+	TUniquePtr<FHaybaMCPJoinableWorker>&& Writer, const TCHAR* WorkerName)
+{
+	if (!Writer->Start(WorkerName))
+	{
+		// The reader may already have retired on boundary FIN, leaving no
+		// worker to notify closure when writer startup fails.
+		CloseClientConnection(Conn);
+		CompleteClientWorker(Conn, TEXT("writer-start-failed"));
+		UE_LOG(LogHaybaMCPTCP, Error, TEXT("Could not create client writer thread"));
+		return false;
+	}
+	RetainWorker(MoveTemp(Writer));
+	return true;
 }
 
 void FHaybaMCPTcpServer::HandleClientConnection(FHaybaMCPClientConnectionPtr Conn)
