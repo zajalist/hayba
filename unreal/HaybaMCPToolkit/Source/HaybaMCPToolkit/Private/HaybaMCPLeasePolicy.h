@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "HaybaMCPAccessPolicy.h"
+#include "Misc/SecureHash.h"
 
 /**
  * Pure lease table: who holds which resources, who is waiting, and in what
@@ -9,7 +10,7 @@
  * injected, so every expiry, aging and fairness edge case is deterministic
  * in Hayba.MCP.Lease.* tests.
  *
- * The table never blocks. Acquire answers "granted" (with a token) or
+ * The table never blocks. Acquire answers "granted" (with a lease_id) or
  * "queued" (with a ticket, position, the blocking holder and an ETA); the
  * caller polls by calling Acquire again with its ticket. The game thread is
  * never parked waiting for a lease. See docs/adr/0010.
@@ -138,6 +139,86 @@ namespace HaybaMCPLease
 		return bApproved && (PlanOwner.IsEmpty() || PlanOwner == CallerOwner);
 	}
 
+	/** A value one of the redaction layers wrote in place of a secret-shaped
+	 *  one, e.g. "[REDACTED:token]". It can never name a lease. */
+	inline bool IsRedactionMarker(const FString& Value)
+	{
+		return Value.StartsWith(TEXT("[REDACTED:"), ESearchCase::CaseSensitive);
+	}
+
+	/** How a request named a lease: under its canonical param (lease_id)
+	 *  and/or an alias (lease_renew's deprecated `token`, editor_batch's `lease`). */
+	enum class EIdParam : uint8
+	{
+		None,
+		Value,
+		Ambiguous,
+		RedactionMarker,
+	};
+
+	struct FIdParam
+	{
+		EIdParam Kind = EIdParam::None;
+		FString Value;
+		/** The value came from the alias because the canonical param was empty. */
+		bool bFromAlias = false;
+	};
+
+	/** The canonical value wins; the alias fills an empty canonical. Two
+	 *  different non-empty values are Ambiguous; a marker is RedactionMarker
+	 *  (Value and bFromAlias still say where it came from). */
+	inline FIdParam ResolveIdParam(const FString& Canonical, const FString& Alias)
+	{
+		const FString C = Canonical.TrimStartAndEnd();
+		const FString A = Alias.TrimStartAndEnd();
+		FIdParam Out;
+		if (C.IsEmpty() && A.IsEmpty())
+		{
+			return Out;
+		}
+		if (!C.IsEmpty() && !A.IsEmpty() && C != A)
+		{
+			Out.Kind = EIdParam::Ambiguous;
+			return Out;
+		}
+		Out.bFromAlias = C.IsEmpty();
+		Out.Value = Out.bFromAlias ? A : C;
+		Out.Kind = IsRedactionMarker(Out.Value) ? EIdParam::RedactionMarker : EIdParam::Value;
+		return Out;
+	}
+
+	/**
+	 * Remembers which keys already happened once, up to MaxKeys. Used for
+	 * once-per-session log lines whose key includes a caller-controlled owner:
+	 * raw per-call clients get a new conn:<n> on every call, so the set must be
+	 * bounded (R-9). Once full, nothing new is reported.
+	 */
+	class FOncePerKey
+	{
+	public:
+		explicit FOncePerKey(int32 InMaxKeys = 512)
+			: MaxKeys(InMaxKeys)
+		{
+		}
+
+		/** True the first time a key is seen while there is room. */
+		bool First(const FString& Key)
+		{
+			if (Seen.Contains(Key) || Seen.Num() >= MaxKeys)
+			{
+				return false;
+			}
+			Seen.Add(Key);
+			return true;
+		}
+
+		int32 Num() const { return Seen.Num(); }
+
+	private:
+		int32 MaxKeys;
+		TSet<FString> Seen;
+	};
+
 	class FTable
 	{
 	public:
@@ -215,7 +296,7 @@ namespace HaybaMCPLease
 				}
 				FWaiter Waiter;
 				Waiter.Seq = ++Sequence;
-				Waiter.Ticket = MakeId(TEXT("q"), Waiter.Seq);
+				Waiter.Ticket = MakeId(TEXT("lq"), Waiter.Seq);
 				Waiter.Request = Request;
 				Waiter.Locks = HaybaMCPAccess::ExpandClaims(Request.Claims);
 				Waiter.EnqueuedAt = Now;
@@ -561,7 +642,7 @@ namespace HaybaMCPLease
 			}
 
 			FLease Lease;
-			Lease.Token = MakeId(TEXT("lease"), Waiter.Seq);
+			Lease.Token = MakeId(TEXT("ls"), Waiter.Seq);
 			Lease.Owner = Waiter.Request.Owner;
 			Lease.Label = Waiter.Request.Label;
 			Lease.Claims = Waiter.Request.Claims;
@@ -584,11 +665,25 @@ namespace HaybaMCPLease
 			return Result;
 		}
 
+		/**
+		 * ls_<seq>_<mac12> for leases, lq_<seq>_<mac12> for tickets. mac12 is the
+		 * first 12 lower hex of HMAC-SHA1(key = session salt, "<prefix>:<seq>"),
+		 * so an id reveals neither the salt nor any other holder's id. Only
+		 * [a-z0-9_]: no redaction rule in either layer matches it (ADR-0010,
+		 * "Lease ids"). An empty salt (pure tests) gives <prefix>_<seq>.
+		 */
 		FString MakeId(const TCHAR* Prefix, int64 Seq) const
 		{
-			return TokenSalt.IsEmpty()
-				? FString::Printf(TEXT("%s-%lld"), Prefix, Seq)
-				: FString::Printf(TEXT("%s-%s-%lld"), Prefix, *TokenSalt, Seq);
+			if (TokenSalt.IsEmpty())
+			{
+				return FString::Printf(TEXT("%s_%lld"), Prefix, Seq);
+			}
+			const FString Message = FString::Printf(TEXT("%s:%lld"), Prefix, Seq);
+			const FTCHARToUTF8 Key(*TokenSalt);
+			const FTCHARToUTF8 Data(*Message);
+			uint8 Hash[FSHA1::DigestSize];
+			FSHA1::HMACBuffer(Key.Get(), Key.Length(), Data.Get(), Data.Length(), Hash);
+			return FString::Printf(TEXT("%s_%lld_%s"), Prefix, Seq, *BytesToHexLower(Hash, 6));
 		}
 
 		TFunction<double()> Clock;

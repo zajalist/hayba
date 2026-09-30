@@ -17,11 +17,12 @@ namespace
 
 	FString MakeTokenSalt()
 	{
-		// Tokens are coordination handles, not credentials (the capability
-		// token is the auth boundary), but they should not be guessable
-		// sequence numbers either: the envelope `lease` field acts as the
-		// lease's owner.
-		return FGuid::NewGuid().ToString(EGuidFormats::Digits).Left(12).ToLower();
+		// The HMAC key for lease ids (ls_<seq>_<mac12>). Ids are coordination
+		// handles, not credentials (the capability token is the auth
+		// boundary), but a lease id in the envelope acts as its owner, so one
+		// holder must not be able to derive another's. The salt itself never
+		// appears in an id.
+		return FGuid::NewGuid().ToString(EGuidFormats::Digits).ToLower();
 	}
 }
 

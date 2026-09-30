@@ -52,3 +52,8 @@ Hayba.MCP.Lease.AssetHolders
 Hayba.MCP.State.AssetBusyTargets
 Hayba.MCP.State.RouterAssetBusyStartPie
 Hayba.MCP.State.RouterAssetBusyCompile
+
+# T4
+Hayba.MCP.Lease.IdFormat
+Hayba.MCP.Lease.IdParam
+Hayba.MCP.Lease.IdSurvivesRedaction
