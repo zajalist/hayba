@@ -1336,6 +1336,15 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatSetParam(const TSharedPtr<FJson
     TSharedPtr<FJsonValue> Val = P->TryGetField(TEXT("value"));
     if (!Val.IsValid()) return FHaybaHandlerResult::Err(TEXT("material_set_param: missing value"));
 
+    // Before the first MIC->Modify() below.
+    {
+        FHaybaHandlerResult ReadOnly;
+        if (HaybaSaveVerify::RefuseIfReadOnly(TEXT("material_set_param"), MIC->GetOutermost()->GetName(), ReadOnly))
+        {
+            return ReadOnly;
+        }
+    }
+
     FName PName(*ParamName);
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
     Out->SetStringField(TEXT("param"), ParamName);
@@ -3062,6 +3071,15 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatCompile(const TSharedPtr<FJsonO
         UMaterialFunction* Fn = LoadObject<UMaterialFunction>(nullptr, *FuncPath);
         if (!Fn) return FHaybaHandlerResult::Err(TEXT("material_compile: function not found"));
 
+        // Before UpdateMaterialFunction: the compile writes the function.
+        {
+            FHaybaHandlerResult ReadOnly;
+            if (HaybaSaveVerify::RefuseIfReadOnly(TEXT("material_compile"), Fn->GetOutermost()->GetName(), ReadOnly))
+            {
+                return ReadOnly;
+            }
+        }
+
         // Refuse to translate a crash-prone graph (uncatchable translator assert).
         TArray<FString> Problems;
         CollectMaterialGraphProblems(Fn->GetExpressions(), {}, Problems);
@@ -3117,6 +3135,15 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatCompile(const TSharedPtr<FJsonO
 
     UMaterial* Mat = LoadObject<UMaterial>(nullptr, *MatPath);
     if (!Mat) return FHaybaHandlerResult::Err(TEXT("material_compile: material not found"));
+
+    // Before RecompileMaterial: material_compile is the translate-and-save boundary.
+    {
+        FHaybaHandlerResult ReadOnly;
+        if (HaybaSaveVerify::RefuseIfReadOnly(TEXT("material_compile"), Mat->GetOutermost()->GetName(), ReadOnly))
+        {
+            return ReadOnly;
+        }
+    }
 
     // Refuse to translate a crash-prone graph: RecompileMaterial below runs the
     // HLSL translator, whose 'Default != nullptr' assert is uncatchable and kills

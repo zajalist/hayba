@@ -1,4 +1,5 @@
 #include "HaybaMCPPythonHandler.h"
+#include "HaybaMCPUnattendedProbe.h"
 #include "IPythonScriptPlugin.h"
 #include "PythonScriptTypes.h"
 #include "Misc/Base64.h"
@@ -2219,9 +2220,15 @@ FHaybaHandlerResult FHaybaMCPPythonHandler::Run(const TSharedPtr<FJsonObject>& P
     // uses 'single' mode and rejects our multi-line wrapper with
     // "SyntaxError: multiple statements found while compiling a single statement".
     RunCmd.ExecutionMode = EPythonCommandExecutionMode::ExecuteFile;
+
+    // PythonScriptPlugin scopes GIsRunningUnattendedScript for this flag, so
+    // saves and deliberate dialogs return their default instead of blocking
+    // the game thread on a modal. Apply it to every readback and cleanup too.
+    RunCmd.Flags |= EPythonCommandFlags::Unattended;
     // Guard the user-script execution against native access violations so a bad
     // script returns an error instead of crashing the editor.
     bool bRunCrashed = false;
+    HAYBA_UNATTENDED_PROBE("python_run", EnumHasAnyFlags(RunCmd.Flags, EPythonCommandFlags::Unattended));
     const bool bExecOk = RunPythonCommandGuarded(PythonPlugin, &RunCmd, bRunCrashed);
     if (bRunCrashed)
     {
@@ -2241,6 +2248,9 @@ FHaybaHandlerResult FHaybaMCPPythonHandler::Run(const TSharedPtr<FJsonObject>& P
             TEXT("__import__('base64').b64encode((getattr(__import__('builtins'),'%s','') or '').encode('utf-8')).decode('ascii')"),
             *Attr);
         E.ExecutionMode = EPythonCommandExecutionMode::EvaluateStatement;
+
+        E.Flags |= EPythonCommandFlags::Unattended;
+        HAYBA_UNATTENDED_PROBE("python_run", EnumHasAnyFlags(E.Flags, EPythonCommandFlags::Unattended));
         const bool bEvalOk = RunPythonCommandGuarded(PythonPlugin, &E, bOutCrashed);
         if (bOutCrashed) return FString();
         CollectInterpreterErrors(E, !bEvalOk, InterpreterErrors);
@@ -2273,7 +2283,10 @@ FHaybaHandlerResult FHaybaMCPPythonHandler::Run(const TSharedPtr<FJsonObject>& P
     FPythonCommandEx OkCmd;
     OkCmd.Command = TEXT("repr(getattr(__import__('builtins'),'_hayba_ok',True))");
     OkCmd.ExecutionMode = EPythonCommandExecutionMode::EvaluateStatement;
+
+    OkCmd.Flags |= EPythonCommandFlags::Unattended;
     bool bOkReadCrashed = false;
+    HAYBA_UNATTENDED_PROBE("python_run", EnumHasAnyFlags(OkCmd.Flags, EPythonCommandFlags::Unattended));
     const bool bOkRead = RunPythonCommandGuarded(PythonPlugin, &OkCmd, bOkReadCrashed);
     if (bOkReadCrashed)
     {
@@ -2285,7 +2298,10 @@ FHaybaHandlerResult FHaybaMCPPythonHandler::Run(const TSharedPtr<FJsonObject>& P
     FPythonCommandEx TimeoutCmd;
     TimeoutCmd.Command = TEXT("repr(getattr(__import__('builtins'),'_hayba_timed_out',False))");
     TimeoutCmd.ExecutionMode = EPythonCommandExecutionMode::EvaluateStatement;
+
+    TimeoutCmd.Flags |= EPythonCommandFlags::Unattended;
     bool bTimeoutReadCrashed = false;
+    HAYBA_UNATTENDED_PROBE("python_run", EnumHasAnyFlags(TimeoutCmd.Flags, EPythonCommandFlags::Unattended));
     const bool bTimeoutRead = RunPythonCommandGuarded(PythonPlugin, &TimeoutCmd, bTimeoutReadCrashed);
     if (bTimeoutReadCrashed)
     {
@@ -2300,7 +2316,10 @@ FHaybaHandlerResult FHaybaMCPPythonHandler::Run(const TSharedPtr<FJsonObject>& P
         "for _hb_cleanup_name in ('_hayba_out','_hayba_err','_hayba_capture_meta','_hayba_ok','_hayba_timed_out','_hayba_corruption'):\n"
         "    if hasattr(_hb_cleanup_b, _hb_cleanup_name): delattr(_hb_cleanup_b, _hb_cleanup_name)\n");
     CleanupCmd.ExecutionMode = EPythonCommandExecutionMode::ExecuteFile;
+
+    CleanupCmd.Flags |= EPythonCommandFlags::Unattended;
     bool bCleanupCrashed = false;
+    HAYBA_UNATTENDED_PROBE("python_run", EnumHasAnyFlags(CleanupCmd.Flags, EPythonCommandFlags::Unattended));
     const bool bCleanupOk = RunPythonCommandGuarded(PythonPlugin, &CleanupCmd, bCleanupCrashed);
     if (bCleanupCrashed)
     {

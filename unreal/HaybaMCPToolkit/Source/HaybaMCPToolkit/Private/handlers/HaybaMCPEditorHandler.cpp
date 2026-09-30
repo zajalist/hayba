@@ -1,4 +1,7 @@
 #include "HaybaMCPEditorHandler.h"
+#include "HaybaMCPSaveVerify.h"
+#include "CoreGlobals.h"
+#include "HaybaMCPUnattendedProbe.h"
 #include "HaybaEditorOps.h"
 #include "HaybaMCPCaptureActor.h"
 #include "HaybaMCPRenderSafety.h"
@@ -354,9 +357,26 @@ FHaybaHandlerResult FHaybaMCPEditorHandler::SaveAllAndQuit(const TSharedPtr<FJso
     if (P.IsValid()) P->TryGetBoolField(TEXT("quit"), bQuit);
 
     const TArray<FString> DirtyBefore = CollectSaveableDirtyPackageNames();
-    const bool bSaved = UEditorLoadingAndSavingUtils::SaveDirtyPackages(
-        /*bSaveMapPackages=*/true,
-        /*bSaveContentPackages=*/true);
+
+    // Any read-only file among the packages about to be saved: save nothing,
+    // keep the editor open, schedule no exit.
+    for (const FString& PackageName : DirtyBefore)
+    {
+        FHaybaHandlerResult ReadOnly;
+        if (HaybaSaveVerify::RefuseIfReadOnly(TEXT("editor_save_all_and_quit"), PackageName, ReadOnly,
+                TEXT("Nothing was saved and the editor stays open.")))
+        {
+            return ReadOnly;
+        }
+    }
+    bool bSaved = false;
+    {
+        TGuardValue<bool> UnattendedSave(GIsRunningUnattendedScript, true);
+        HAYBA_UNATTENDED_PROBE("editor_save_all_and_quit", GIsRunningUnattendedScript);
+        bSaved = UEditorLoadingAndSavingUtils::SaveDirtyPackages(
+            /*bSaveMapPackages=*/true,
+            /*bSaveContentPackages=*/true);
+    }
     const TArray<FString> DirtyAfter = CollectSaveableDirtyPackageNames();
 
     if (!bSaved || !DirtyAfter.IsEmpty())

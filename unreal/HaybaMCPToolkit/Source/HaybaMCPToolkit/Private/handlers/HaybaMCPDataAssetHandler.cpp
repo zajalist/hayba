@@ -1,4 +1,6 @@
 #include "HaybaMCPDataAssetHandler.h"
+#include "CoreGlobals.h"
+#include "HaybaMCPUnattendedProbe.h"
 
 #include "Json.h"
 #include "Engine/DataAsset.h"
@@ -1380,6 +1382,10 @@ FHaybaHandlerResult FHaybaMCPDataAssetHandler::Handle(const FString& Cmd, const 
                     | CLASS_Transient))
             {
                 bPreSaveReResolved = true;
+                // Keep this scope inside the existing identity checks: callbacks
+                // still require the post-save re-resolution below.
+                TGuardValue<bool> UnattendedSave(GIsRunningUnattendedScript, true);
+                HAYBA_UNATTENDED_PROBE("data_create", GIsRunningUnattendedScript);
                 bSaveAttempted = true;
                 bSaved = UEditorAssetLibrary::SaveLoadedAsset(
                     SaveTarget, /*bOnlyIfDirty*/false);

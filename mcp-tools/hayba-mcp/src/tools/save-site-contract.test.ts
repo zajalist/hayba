@@ -108,7 +108,7 @@ function at(path: string) {
 }
 
 /** Minimum RefuseIfReadOnly(TEXT("<cmd>") call sites in the tree. */
-const MIN_REFUSE_SITES = 3;
+const MIN_REFUSE_SITES = 11;
 
 /** Each command's preflights, in order, each before the mutation token it guards. */
 const SITES: Array<{ cmd: string; file: string; anchor: string; preflights: number; mutations: string[] }> = [
@@ -132,6 +132,55 @@ const SITES: Array<{ cmd: string; file: string; anchor: string; preflights: numb
     anchor: 'static FHaybaHandlerResult MSCompile(',
     preflights: 1,
     mutations: ['AttachBuilder('],
+  },
+  {
+    cmd: 'ui_save_widget',
+    file: `${TOOLKIT}/Private/handlers/HaybaMCPUIHandler.cpp`,
+    anchor: 'FHaybaHandlerResult FHaybaMCPUIHandler::HandleSave(',
+    preflights: 1,
+    mutations: ['ReconcileWidgetVariableGuids('],
+  },
+  {
+    cmd: 'ui_compile_widget',
+    file: `${TOOLKIT}/Private/handlers/HaybaMCPUIHandler.cpp`,
+    anchor: 'FHaybaHandlerResult FHaybaMCPUIHandler::HandleCompile(',
+    preflights: 1,
+    mutations: ['CompileWidgetBlueprint('],
+  },
+  {
+    cmd: 'material_set_param',
+    file: `${TOOLKIT}/Private/handlers/HaybaMCPMaterialHandler.cpp`,
+    anchor: 'FHaybaHandlerResult FHaybaMCPMaterialHandler::MatSetParam(',
+    preflights: 1,
+    mutations: ['->Modify()'],
+  },
+  {
+    cmd: 'material_compile',
+    file: `${TOOLKIT}/Private/handlers/HaybaMCPMaterialHandler.cpp`,
+    anchor: 'FHaybaHandlerResult FHaybaMCPMaterialHandler::MatCompile(',
+    preflights: 2,
+    mutations: ['UpdateMaterialFunction(', 'RecompileMaterial('],
+  },
+  {
+    cmd: 'audio_asset_save',
+    file: `${TOOLKIT}/Private/handlers/HaybaMCPAudioHandler.cpp`,
+    anchor: 'FHaybaHandlerResult AudioAssetSave(',
+    preflights: 1,
+    mutations: ['SaveLoadedAsset('],
+  },
+  {
+    cmd: 'level_save',
+    file: `${TOOLKIT}/Private/handlers/HaybaMCPLevelHandler.cpp`,
+    anchor: 'FHaybaHandlerResult FHaybaMCPLevelHandler::LevelSave(',
+    preflights: 2,
+    mutations: ['SanitizeTransientStaticMeshRefs('],
+  },
+  {
+    cmd: 'editor_save_all_and_quit',
+    file: `${TOOLKIT}/Private/handlers/HaybaMCPEditorHandler.cpp`,
+    anchor: 'FHaybaHandlerResult FHaybaMCPEditorHandler::SaveAllAndQuit(',
+    preflights: 1,
+    mutations: ['SaveDirtyPackages('],
   },
 ];
 
@@ -183,4 +232,58 @@ describe('save-site contract', () => {
     }
     expect(Math.max(...guards), `${cmd}: every preflight precedes the last mutation`).toBeLessThan(previous);
   });
+});
+
+function indexAfter(text: string, pattern: RegExp, from: number): number {
+  const re = new RegExp(pattern.source, 'g');
+  re.lastIndex = from;
+  const m = re.exec(text);
+  return m ? m.index : -1;
+}
+
+describe('no save or Python site can open a modal on the game thread', () => {
+  it('level_save runs SaveCurrentLevel with GIsRunningUnattendedScript set', () => {
+    const body = functionBody(at(`${TOOLKIT}/Private/handlers/HaybaMCPLevelHandler.cpp`), 'FHaybaHandlerResult FHaybaMCPLevelHandler::LevelSave(');
+    const guard = body.indexOf('TGuardValue<bool> UnattendedSave(GIsRunningUnattendedScript, true)');
+    expect(guard).toBeGreaterThan(-1);
+    expect(guard).toBeLessThan(body.indexOf('SaveCurrentLevel('));
+  });
+
+  it('python_run sets EPythonCommandFlags::Unattended on every FPythonCommandEx before it runs', () => {
+    const { code } = at(`${TOOLKIT}/Private/handlers/HaybaMCPPythonHandler.cpp`);
+    expect(code).toContain('RunGuardedAt(EHaybaFaultSite::Python');
+    const decls = [...code.matchAll(/FPythonCommandEx\s+(\w+)\s*;/g)];
+    expect(decls.map((m) => m[1])).toEqual(['RunCmd', 'E', 'OkCmd', 'TimeoutCmd', 'CleanupCmd']);
+    for (const decl of decls) {
+      const name = decl[1]!;
+      const from = decl.index!;
+      const flag = code.indexOf(`${name}.Flags |= EPythonCommandFlags::Unattended;`, from);
+      const runs = [indexAfter(code, new RegExp(`&${name}\\b`), from)]
+        .filter((i) => i !== -1);
+      expect(runs, `${name} has exactly one execution call`).toHaveLength(1);
+      expect(flag, `${name} gets the Unattended flag`).toBeGreaterThan(from);
+      expect(flag, `${name}: the flag is set before it runs`).toBeLessThan(Math.min(...runs));
+    }
+  });
+});
+
+// Engine helpers enter editor callbacks; preserve identity re-resolution while suppressing dialogs.
+describe('engine save helper unattended scopes', () => {
+  it.each([
+    ['HaybaMCPAudioHandler.cpp', 'FHaybaHandlerResult AudioAssetSave(', 'SaveLoadedAsset('],
+    ['HaybaMCPDataAssetHandler.cpp', 'FHaybaHandlerResult FHaybaMCPDataAssetHandler::Handle(', 'SaveLoadedAsset('],
+    ['HaybaMCPEditorHandler.cpp', 'FHaybaHandlerResult FHaybaMCPEditorHandler::SaveAllAndQuit(', 'SaveDirtyPackages('],
+    ['HaybaMCPLevelHandler.cpp', 'FHaybaHandlerResult FHaybaMCPLevelHandler::LevelCreate(', 'SaveLevel('],
+  ])('%s guards %s', (file, anchor, call) => {
+    const body = functionBody(at(`${TOOLKIT}/Private/handlers/${file}`), anchor!);
+    const guard = body.indexOf('TGuardValue<bool> UnattendedSave(GIsRunningUnattendedScript, true)');
+    expect(guard).toBeGreaterThan(-1);
+    expect(guard).toBeLessThan(body.indexOf(call!));
+  });
+});
+
+it('level_create resolves the package to a map filename before SaveLevel', () => {
+  const body = functionBody(at(`${TOOLKIT}/Private/handlers/HaybaMCPLevelHandler.cpp`), 'FHaybaHandlerResult FHaybaMCPLevelHandler::LevelCreate(');
+  expect(body).toMatch(/HaybaSaveVerify::PackageFilename\(Path,\s*true\)/);
+  expect(body).toContain('SaveLevel(World->GetCurrentLevel(), *MapFilename)');
 });

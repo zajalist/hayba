@@ -1,4 +1,7 @@
 #include "HaybaMCPAudioHandler.h"
+#include "HaybaMCPSaveVerify.h"
+#include "CoreGlobals.h"
+#include "HaybaMCPUnattendedProbe.h"
 
 #include "HaybaAudioOps.h"
 #include "HaybaMCPAssetGuard.h"
@@ -889,7 +892,20 @@ namespace
         if (TypeOf(Asset) == EAssetType::Unsupported)
             return FHaybaHandlerResult::Err(TEXT("audio_asset_save: target is not a supported audio settings asset"));
 
-        if (!UEditorAssetLibrary::SaveLoadedAsset(Asset, false))
+        {
+            FHaybaHandlerResult ReadOnly;
+            if (HaybaSaveVerify::RefuseIfReadOnly(TEXT("audio_asset_save"), Asset->GetOutermost()->GetName(), ReadOnly))
+            {
+                return ReadOnly;
+            }
+        }
+        bool bSaved = false;
+        {
+            TGuardValue<bool> UnattendedSave(GIsRunningUnattendedScript, true);
+            HAYBA_UNATTENDED_PROBE("audio_asset_save", GIsRunningUnattendedScript);
+            bSaved = UEditorAssetLibrary::SaveLoadedAsset(Asset, false);
+        }
+        if (!bSaved)
             return FHaybaHandlerResult::Err(FString::Printf(TEXT("audio_asset_save: SaveLoadedAsset failed for %s"), *Asset->GetPathName()));
 
         const FString PackageName = Asset->GetOutermost()->GetName();

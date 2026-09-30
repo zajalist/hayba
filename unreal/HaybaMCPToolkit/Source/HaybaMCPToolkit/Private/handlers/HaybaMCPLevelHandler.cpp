@@ -1,4 +1,7 @@
 #include "HaybaMCPLevelHandler.h"
+#include "HaybaMCPSaveVerify.h"
+#include "CoreGlobals.h"
+#include "HaybaMCPUnattendedProbe.h"
 #include "HaybaMCPParams.h"
 #include "Json.h"
 #include "Editor.h"
@@ -248,13 +251,43 @@ FHaybaHandlerResult FHaybaMCPLevelHandler::LevelSave(const TSharedPtr<FJsonObjec
     UPackage* LevelPackage = World->GetCurrentLevel()->GetOutermost();
     const bool bWasDirty = LevelPackage && LevelPackage->IsDirty();
 
+    // Refuse before the sanitizer touches anything. Check exactly what
+    // SaveCurrentLevel will write (FileHelpers.cpp): the map when it is dirty or
+    // new, and each external (one-file-per-actor) package that is dirty, new or
+    // empty. A clean read-only .umap does not block saving dirty actor files.
+    {
+        FHaybaHandlerResult ReadOnly;
+        if (LevelPackage && (LevelPackage->IsDirty() || LevelPackage->HasAnyPackageFlags(PKG_NewlyCreated))
+            && HaybaSaveVerify::RefuseIfReadOnly(TEXT("level_save"), LevelPackage->GetName(), ReadOnly))
+        {
+            return ReadOnly;
+        }
+        for (UPackage* External : World->GetCurrentLevel()->GetLoadedExternalObjectPackages())
+        {
+            if (External && FPackageName::IsValidLongPackageName(External->GetName())
+                && (External->IsDirty() || External->HasAnyPackageFlags(PKG_NewlyCreated) || UPackage::IsEmptyPackage(External))
+                && HaybaSaveVerify::RefuseIfReadOnly(TEXT("level_save"), External->GetName(), ReadOnly))
+            {
+                return ReadOnly;
+            }
+        }
+    }
+
     // Strip dangling transient mesh refs (stale HLOD proxies) that would
     // otherwise fail the save with "Illegal reference to private object".
     TArray<FString> Cleaned;
     TArray<FSanitizedStaticMeshRef> Restore;
     SanitizeTransientStaticMeshRefs(World, Cleaned, &Restore);
 
-    const bool bSaved = FEditorFileUtils::SaveCurrentLevel();
+    bool bSaved = false;
+    {
+        // SaveWorld answers a read-only file (or any other refusal) with a
+        // modal FMessageDialog on the game thread, which stalls every lane
+        // until a human clicks OK. Unattended, the dialog returns its default.
+        TGuardValue<bool> UnattendedSave(GIsRunningUnattendedScript, true);
+        HAYBA_UNATTENDED_PROBE("level_save", GIsRunningUnattendedScript);
+        bSaved = FEditorFileUtils::SaveCurrentLevel();
+    }
     if (!bSaved)
     {
         // The sanitizer is part of execute, not preflight. If persistence
@@ -316,6 +349,12 @@ FHaybaHandlerResult FHaybaMCPLevelHandler::LevelCreate(const TSharedPtr<FJsonObj
         }
     }
 
+    // SaveLevel accepts a filesystem filename. Passing the long package name
+    // writes an extensionless file outside project Content instead of a .umap.
+    const FString MapFilename = HaybaSaveVerify::PackageFilename(Path, /*bIsMap=*/true);
+    if (MapFilename.IsEmpty())
+        return FHaybaHandlerResult::Err(TEXT("level_create: target package has no map filename; nothing was changed."));
+
     GEditor->CreateNewMapForEditing(/*bPromptUserToSave=*/false);
     UWorld* World = GEditor->GetEditorWorldContext().World();
     if (!World)
@@ -326,7 +365,12 @@ FHaybaHandlerResult FHaybaMCPLevelHandler::LevelCreate(const TSharedPtr<FJsonObj
     TArray<FString> Cleaned;
     SanitizeTransientStaticMeshRefs(World, Cleaned);
 
-    const bool bSaved = FEditorFileUtils::SaveLevel(World->GetCurrentLevel(), *Path);
+    bool bSaved = false;
+    {
+        TGuardValue<bool> UnattendedSave(GIsRunningUnattendedScript, true);
+        HAYBA_UNATTENDED_PROBE("level_create", GIsRunningUnattendedScript);
+        bSaved = FEditorFileUtils::SaveLevel(World->GetCurrentLevel(), *MapFilename);
+    }
     if (!bSaved)
     {
         // CreateNewMapForEditing has already replaced the world. Returning a

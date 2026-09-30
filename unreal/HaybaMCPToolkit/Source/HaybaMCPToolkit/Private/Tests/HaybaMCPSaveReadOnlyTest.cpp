@@ -7,6 +7,32 @@
 #include "HaybaMCPSaveVerify.h"
 #include "handlers/HaybaMCPBlueprintHandler.h"
 #include "handlers/HaybaMCPLegacyHandler.h"
+#include "HaybaMCPUnattendedProbe.h"
+#include "HaybaMCPCommandHandler.h"
+#include "HaybaMCPModule.h"
+#include "HaybaMCPSettings.h"
+#include "handlers/HaybaMCPAudioHandler.h"
+#include "handlers/HaybaMCPDataAssetHandler.h"
+#include "handlers/HaybaMCPEditorHandler.h"
+#include "handlers/HaybaMCPLevelHandler.h"
+#include "handlers/HaybaMCPMaterialHandler.h"
+#include "handlers/HaybaMCPUIHandler.h"
+#include "Editor.h"
+#include "Engine/StaticMeshActor.h"
+#include "Engine/World.h"
+#include "Factories/MaterialFactoryNew.h"
+#include "Factories/MaterialFunctionFactoryNew.h"
+#include "FileHelpers.h"
+#include "Materials/Material.h"
+#include "Materials/MaterialFunction.h"
+#include "Materials/MaterialInstanceConstant.h"
+#include "Modules/ModuleManager.h"
+#include "Serialization/JsonReader.h"
+#include "Serialization/JsonSerializer.h"
+#include "Serialization/JsonWriter.h"
+#include "Sound/SoundAttenuation.h"
+#include "WidgetBlueprint.h"
+#include "Engine/Level.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "CoreGlobals.h"
 #include "Curves/CurveFloat.h"
@@ -158,6 +184,106 @@ namespace HaybaSaveReadOnlyTest
 		R.Data->TryGetBoolField(TEXT("save_attempted"), bAttempted);
 		Test.TestFalse(FString::Printf(TEXT("%s: save_attempted is false"), Cmd), bAttempted);
 	}
+	FString Str(const TSharedPtr<FJsonObject>& Object, const TCHAR* Field)
+	{
+		FString Value;
+		if (Object.IsValid()) Object->TryGetStringField(Field, Value);
+		return Value;
+	}
+
+	/** One request through the router (ProcessCommand), as a TCP client sends it. */
+	TSharedPtr<FJsonObject> SendCommand(FAutomationTestBase& Test, const FString& Cmd, const TSharedPtr<FJsonObject>& Params, int32 ConnId)
+	{
+		FHaybaMCPModule* Module = FModuleManager::GetModulePtr<FHaybaMCPModule>(TEXT("HaybaMCPToolkit"));
+		const TSharedPtr<FHaybaMCPCommandHandler> Router = Module ? Module->GetCommandHandler() : nullptr;
+		if (!Test.TestTrue(TEXT("the command router exists"), Router.IsValid())) return MakeShared<FJsonObject>();
+		TSharedPtr<FJsonObject> Envelope = MakeShared<FJsonObject>();
+		Envelope->SetStringField(TEXT("cmd"), Cmd);
+		Envelope->SetStringField(TEXT("id"), TEXT("save-ro-") + Guid8());
+		Envelope->SetStringField(TEXT("owner"), TEXT("hayba-test-") + Guid8());
+		Envelope->SetObjectField(TEXT("params"), Params);
+		const FString& Auth = FHaybaMCPSettings::Get().CapabilityToken;
+		if (!Auth.IsEmpty()) Envelope->SetStringField(TEXT("auth"), Auth);
+		FString Json;
+		const TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer =
+			TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&Json);
+		FJsonSerializer::Serialize(Envelope.ToSharedRef(), Writer);
+		TSharedPtr<FJsonObject> Reply;
+		const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(Router->ProcessCommand(Json, ConnId));
+		FJsonSerializer::Deserialize(Reader, Reply);
+		return Reply.IsValid() ? Reply : MakeShared<FJsonObject>();
+	}
+
+	/** Plan Mode off for the test (python_run and blueprint_compile are plan-gated). */
+	class FScopedPlanModeOff
+	{
+	public:
+		FScopedPlanModeOff() : bWas(FHaybaMCPSettings::Get().bPlanModeEnabled) { FHaybaMCPSettings::Get().bPlanModeEnabled = false; }
+		~FScopedPlanModeOff() { FHaybaMCPSettings::Get().bPlanModeEnabled = bWas; }
+
+	private:
+		bool bWas;
+	};
+
+	/**
+	 * A saved test map under <Root> with one external (one-file-per-actor)
+	 * actor, both on disk and clean. The destructor clears every read-only
+	 * flag, loads a blank map, and deletes the map and its external actors.
+	 */
+	class FScopedTestMap
+	{
+	public:
+		explicit FScopedTestMap(const TCHAR* Prefix)
+			: MapName(FString::Printf(TEXT("L_%s_%s"), Prefix, *Guid8()))
+			, MapPackage(FString::Printf(TEXT("%s/%s"), Root, *MapName))
+		{
+			TGuardValue<bool> Unattended(GIsRunningUnattendedScript, true);   // the fixture's own saves never prompt
+			UWorld* NewWorld = UEditorLoadingAndSavingUtils::NewBlankMap(/*bSaveExistingMap=*/false);
+			if (!NewWorld || !UEditorLoadingAndSavingUtils::SaveMap(NewWorld, MapPackage)) return;
+			UWorld* Saved = World();
+			Saved->PersistentLevel->SetUseExternalActors(true);
+			AStaticMeshActor* Spawned = Saved->SpawnActor<AStaticMeshActor>();
+			UPackage* External = Spawned ? Spawned->GetExternalPackage() : nullptr;
+			if (!External) return;
+			Actor = Spawned;
+			bReady = UEditorLoadingAndSavingUtils::SavePackages(TArray<UPackage*>{ External }, /*bOnlyDirty=*/false)
+				&& UEditorLoadingAndSavingUtils::SaveMap(Saved, MapPackage)
+				&& IFileManager::Get().FileExists(*MapFile())
+				&& IFileManager::Get().FileExists(*ExternalActorFile());
+		}
+
+		~FScopedTestMap()
+		{
+			SetReadOnly(MapFile(), false);
+			SetReadOnly(ExternalActorFile(), false);
+			UEditorLoadingAndSavingUtils::NewBlankMap(/*bSaveExistingMap=*/false);
+			UEditorAssetLibrary::DeleteAsset(MapPackage);
+			IFileManager::Get().Delete(*MapFile(), false, true, true);
+			IFileManager::Get().DeleteDirectory(*ExternalActorsDir(), false, true);
+		}
+
+		bool IsReady() const { return bReady; }
+		UWorld* World() const { return GEditor->GetEditorWorldContext().World(); }
+		AActor* GetActor() const { return Actor.Get(); }
+		FString MapFile() const { return HaybaSaveVerify::PackageFilename(MapPackage, /*bIsMap=*/true); }
+		FString ExternalActorFile() const
+		{
+			const UPackage* External = Actor.IsValid() ? Actor->GetExternalPackage() : nullptr;
+			return External ? HaybaSaveVerify::PackageFilename(External->GetName(), /*bIsMap=*/false) : FString();
+		}
+		FString ExternalActorsDir() const
+		{
+			return FPaths::ConvertRelativePathToFull(FPaths::ProjectContentDir() / TEXT("__ExternalActors__/__HaybaTest__/ReadOnly") / MapName);
+		}
+		void MarkMapDirty() const { World()->PersistentLevel->MarkPackageDirty(); }
+		void MarkMapClean() const { World()->PersistentLevel->GetOutermost()->SetDirtyFlag(false); }
+
+	private:
+		FString MapName;
+		FString MapPackage;
+		TWeakObjectPtr<AActor> Actor;
+		bool bReady = false;
+	};
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
@@ -351,6 +477,317 @@ bool FHaybaMCPSaveReadOnlyCreateGraphTest::RunTest(const FString& Parameters)
 	RO::ExpectRefusal(*this, TEXT("create_graph"), Handler.Handle(TEXT("create_graph"), Params));
 	TestTrue(TEXT("the existing graph is still the package's graph"), FindObject<UPCGGraph>(nullptr, *ObjectPath) == Original);
 	TestEqual(TEXT("... and was not renamed into the transient package"), Original->GetOutermost()->GetName(), PackageName);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FHaybaMCPSaveReadOnlyWidgetTest,
+	"Hayba.MCP.Save.ReadOnly.WidgetSaveAndCompileRefuse",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FHaybaMCPSaveReadOnlyWidgetTest::RunTest(const FString& Parameters)
+{
+	namespace RO = HaybaSaveReadOnlyTest;
+	FHaybaMCPUIHandler Handler;
+	TSharedPtr<FJsonObject> Create = MakeShared<FJsonObject>();
+	Create->SetStringField(TEXT("path"), RO::Root);
+	Create->SetStringField(TEXT("name"), FString::Printf(TEXT("WBP_RO_%s"), *RO::Guid8()));
+	Create->SetStringField(TEXT("parent_class"), TEXT("UserWidget"));
+	const FHaybaHandlerResult Created = Handler.Handle(TEXT("ui_create_widget"), Create);
+	const FString ObjectPath = RO::DataString(Created, TEXT("path"));
+	UWidgetBlueprint* WBP = ObjectPath.IsEmpty() ? nullptr : LoadObject<UWidgetBlueprint>(nullptr, *ObjectPath);
+	if (!TestNotNull(TEXT("the test widget blueprint exists"), WBP)) return false;
+	RO::FScopedReadOnlyPackage Fixture(WBP);
+	if (!TestTrue(TEXT("the fixture reached disk"), Fixture.WasSaved())) return false;
+	Fixture.MakeReadOnly();
+	const bool bDirtyBefore = WBP->GetOutermost()->IsDirty();
+	const int32 StatusBefore = static_cast<int32>(WBP->Status.GetValue());
+
+	TSharedPtr<FJsonObject> Save = MakeShared<FJsonObject>();
+	Save->SetStringField(TEXT("widget_blueprint_path"), ObjectPath);
+	RO::ExpectRefusal(*this, TEXT("ui_save_widget"), Handler.Handle(TEXT("ui_save_widget"), Save));
+	TestEqual(TEXT("ui_save_widget: nothing was reconciled or dirtied"), WBP->GetOutermost()->IsDirty(), bDirtyBefore);
+
+	TSharedPtr<FJsonObject> Compile = MakeShared<FJsonObject>();
+	Compile->SetStringField(TEXT("widget_blueprint_path"), ObjectPath);
+	Compile->SetBoolField(TEXT("save_on_success"), true);
+	const FHaybaHandlerResult Refused = Handler.Handle(TEXT("ui_compile_widget"), Compile);
+	RO::ExpectRefusal(*this, TEXT("ui_compile_widget"), Refused);
+	TestTrue(TEXT("ui_compile_widget: the hint offers save_on_success:false"),
+		RO::DataString(Refused, TEXT("make_writable_hint")).EndsWith(TEXT("Or pass save_on_success:false to compile without saving.")));
+	TestEqual(TEXT("ui_compile_widget: nothing was compiled"), static_cast<int32>(WBP->Status.GetValue()), StatusBefore);
+
+	Compile->SetBoolField(TEXT("save_on_success"), false);
+	TestTrue(TEXT("ui_compile_widget {save_on_success:false} still compiles a read-only widget"),
+		Handler.Handle(TEXT("ui_compile_widget"), Compile).bOk);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FHaybaMCPSaveReadOnlyMaterialTest,
+	"Hayba.MCP.Save.ReadOnly.MaterialRefusesBeforeEdit",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FHaybaMCPSaveReadOnlyMaterialTest::RunTest(const FString& Parameters)
+{
+	namespace RO = HaybaSaveReadOnlyTest;
+	auto NewPackage = [](const TCHAR* Prefix, FString& OutName) -> UPackage*
+	{
+		OutName = FString::Printf(TEXT("%s_%s"), Prefix, *RO::Guid8());
+		return CreatePackage(*FString::Printf(TEXT("%s/%s"), RO::Root, *OutName));
+	};
+
+	FString Name;
+	UPackage* MicPkg = NewPackage(TEXT("MI_RO"), Name);
+	UMaterialInstanceConstant* MIC = NewObject<UMaterialInstanceConstant>(MicPkg, *Name, RF_Public | RF_Standalone);
+	MIC->SetParentEditorOnly(UMaterial::GetDefaultMaterial(MD_Surface));
+	FAssetRegistryModule::AssetCreated(MIC);
+	UPackage* MatPkg = NewPackage(TEXT("M_RO"), Name);
+	UMaterial* Mat = Cast<UMaterial>(NewObject<UMaterialFactoryNew>()->FactoryCreateNew(
+		UMaterial::StaticClass(), MatPkg, *Name, RF_Public | RF_Standalone, nullptr, GWarn));
+	FAssetRegistryModule::AssetCreated(Mat);
+	UPackage* FnPkg = NewPackage(TEXT("MF_RO"), Name);
+	UMaterialFunction* Fn = Cast<UMaterialFunction>(NewObject<UMaterialFunctionFactoryNew>()->FactoryCreateNew(
+		UMaterialFunction::StaticClass(), FnPkg, *Name, RF_Public | RF_Standalone, nullptr, GWarn));
+	FAssetRegistryModule::AssetCreated(Fn);
+
+	RO::FScopedReadOnlyPackage MicFixture(MIC);
+	RO::FScopedReadOnlyPackage MatFixture(Mat);
+	RO::FScopedReadOnlyPackage FnFixture(Fn);
+	if (!TestTrue(TEXT("the fixtures reached disk"), MicFixture.WasSaved() && MatFixture.WasSaved() && FnFixture.WasSaved())) return false;
+	MicFixture.MakeReadOnly();
+	MatFixture.MakeReadOnly();
+	FnFixture.MakeReadOnly();
+
+	FHaybaMCPMaterialHandler Handler;
+	TSharedPtr<FJsonObject> SetParam = MakeShared<FJsonObject>();
+	SetParam->SetStringField(TEXT("instance_path"), MIC->GetPathName());
+	SetParam->SetStringField(TEXT("param_name"), TEXT("HaybaNoSuchParam"));
+	SetParam->SetNumberField(TEXT("value"), 0.5);
+	RO::ExpectRefusal(*this, TEXT("material_set_param"), Handler.Handle(TEXT("material_set_param"), SetParam));
+	TestFalse(TEXT("material_set_param: the refusal precedes MIC->Modify()"), MIC->GetOutermost()->IsDirty());
+
+	TSharedPtr<FJsonObject> CompileFn = MakeShared<FJsonObject>();
+	CompileFn->SetStringField(TEXT("function_path"), Fn->GetPathName());
+	RO::ExpectRefusal(*this, TEXT("material_compile"), Handler.Handle(TEXT("material_compile"), CompileFn));
+	TestFalse(TEXT("material_compile(function): refused before UpdateMaterialFunction"), Fn->GetOutermost()->IsDirty());
+
+	TSharedPtr<FJsonObject> CompileMat = MakeShared<FJsonObject>();
+	CompileMat->SetStringField(TEXT("material_path"), Mat->GetPathName());
+	RO::ExpectRefusal(*this, TEXT("material_compile"), Handler.Handle(TEXT("material_compile"), CompileMat));
+	TestFalse(TEXT("material_compile(material): refused before RecompileMaterial"), Mat->GetOutermost()->IsDirty());
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FHaybaMCPSaveReadOnlyAudioAndSaveAllTest,
+	"Hayba.MCP.Save.ReadOnly.AudioAndSaveAllRefuse",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FHaybaMCPSaveReadOnlyAudioAndSaveAllTest::RunTest(const FString& Parameters)
+{
+	namespace RO = HaybaSaveReadOnlyTest;
+	const FString AttName = FString::Printf(TEXT("ATT_RO_%s"), *RO::Guid8());
+	UPackage* AttPkg = CreatePackage(*FString::Printf(TEXT("%s/%s"), RO::Root, *AttName));
+	USoundAttenuation* Att = NewObject<USoundAttenuation>(AttPkg, *AttName, RF_Public | RF_Standalone);
+	FAssetRegistryModule::AssetCreated(Att);
+	RO::FScopedReadOnlyPackage AttFixture(Att);
+	UObject* Other = RO::NewCurve(TEXT("SaveAllOther"));
+	RO::FScopedReadOnlyPackage OtherFixture(Other);
+	if (!TestTrue(TEXT("the fixtures reached disk"), AttFixture.WasSaved() && OtherFixture.WasSaved())) return false;
+	AttFixture.MakeReadOnly();
+	Att->MarkPackageDirty();
+	Other->MarkPackageDirty();   // writable and dirty: save-all must not save it either
+
+	FHaybaMCPAudioHandler Audio;
+	TSharedPtr<FJsonObject> AudioSave = MakeShared<FJsonObject>();
+	AudioSave->SetStringField(TEXT("path"), Att->GetPathName());
+	RO::ExpectRefusal(*this, TEXT("audio_asset_save"), Audio.Handle(TEXT("audio_asset_save"), AudioSave));
+
+	FHaybaMCPEditorHandler Editor;
+	TSharedPtr<FJsonObject> SaveAll = MakeShared<FJsonObject>();
+	SaveAll->SetBoolField(TEXT("quit"), false);
+	RO::ExpectRefusal(*this, TEXT("editor_save_all_and_quit"), Editor.Handle(TEXT("editor_save_all_and_quit"), SaveAll));
+	TestTrue(TEXT("save-all: the read-only package is still dirty"), Att->GetOutermost()->IsDirty());
+	TestTrue(TEXT("save-all: nothing was saved, not even the writable package"), Other->GetOutermost()->IsDirty());
+
+	// Positive helper paths prove both the unattended scope and persistence.
+	RO::SetReadOnly(AttFixture.File(TEXT(".uasset")), false);
+	{
+		HaybaMCPUnattendedProbe::FScopedRecorder Probe;
+		const FHaybaHandlerResult Saved = Audio.Handle(TEXT("audio_asset_save"), AudioSave);
+		TestTrue(TEXT("writable audio saves"), Saved.bOk);
+		TestFalse(TEXT("audio package is clean after save"), AttPkg->IsDirty());
+		TestTrue(TEXT("audio helper ran unattended"), Probe.Records.Num() == 1
+			&& Probe.Records[0].Site == TEXT("audio_asset_save") && Probe.Records[0].bUnattended);
+	}
+	{
+		HaybaMCPUnattendedProbe::FScopedRecorder Probe;
+		const FHaybaHandlerResult Saved = Editor.Handle(TEXT("editor_save_all_and_quit"), SaveAll);
+		TestTrue(TEXT("writable save-all succeeds without scheduling quit"), Saved.bOk);
+		TestFalse(TEXT("save-all persisted the other package"), Other->GetOutermost()->IsDirty());
+		TestTrue(TEXT("save-all helper ran unattended"), Probe.Records.Num() == 1
+			&& Probe.Records[0].Site == TEXT("editor_save_all_and_quit") && Probe.Records[0].bUnattended);
+	}
+	{
+		const FString Name = TEXT("DA_Unattended_") + RO::Guid8();
+		const FString ObjectPath = FString(RO::Root) / Name + TEXT(".") + Name;
+		ON_SCOPE_EXIT { if (UEditorAssetLibrary::DoesAssetExist(ObjectPath)) UEditorAssetLibrary::DeleteAsset(ObjectPath); };
+		TSharedPtr<FJsonObject> Create = MakeShared<FJsonObject>();
+		Create->SetStringField(TEXT("path"), RO::Root);
+		Create->SetStringField(TEXT("name"), Name);
+		Create->SetStringField(TEXT("class_name"), TEXT("/Script/Engine.PrimaryAssetLabel"));
+		HaybaMCPUnattendedProbe::FScopedRecorder Probe;
+		FHaybaMCPDataAssetHandler Data;
+		const FHaybaHandlerResult Created = Data.Handle(TEXT("data_create"), Create);
+		UObject* Asset = LoadObject<UObject>(nullptr, *ObjectPath);
+		TestTrue(TEXT("data_create persists its new asset"), Created.bOk && Asset
+			&& !Asset->GetOutermost()->IsDirty() && FPackageName::DoesPackageExist(Asset->GetOutermost()->GetName()));
+		TestTrue(TEXT("data_create helper ran unattended"), Probe.Records.Num() == 1
+			&& Probe.Records[0].Site == TEXT("data_create") && Probe.Records[0].bUnattended);
+	}
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FHaybaMCPSaveReadOnlyLevelTest,
+	"Hayba.MCP.Save.ReadOnly.LevelSaveRefusesWithoutModal",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FHaybaMCPSaveReadOnlyLevelTest::RunTest(const FString& Parameters)
+{
+	namespace RO = HaybaSaveReadOnlyTest;
+	RO::FScopedTestMap Map(TEXT("Level"));
+	if (!TestTrue(TEXT("the test map and its external actor are on disk"), Map.IsReady())) return false;
+	FHaybaMCPLevelHandler Handler;
+	const TSharedPtr<FJsonObject> NoParams = MakeShared<FJsonObject>();
+
+	// (a) A dirty map whose .umap is read-only.
+	Map.MarkMapDirty();
+	RO::SetReadOnly(Map.MapFile(), true);
+	{
+		HaybaMCPUnattendedProbe::FScopedRecorder Probe;
+		const FHaybaHandlerResult R = Handler.Handle(TEXT("level_save"), NoParams);
+		RO::ExpectRefusal(*this, TEXT("level_save"), R);
+		TestTrue(TEXT("(a) read_only_files names the .umap"), RO::DataFiles(R).Contains(Map.MapFile()));
+		TestEqual(TEXT("(a) SaveCurrentLevel was never reached"), Probe.Records.Num(), 0);
+		TestTrue(TEXT("(a) the map is still dirty"), Map.World()->PersistentLevel->GetOutermost()->IsDirty());
+	}
+	RO::SetReadOnly(Map.MapFile(), false);
+
+	// (b) R-16: a clean map, and a dirty external actor package that is read-only.
+	Map.MarkMapClean();
+	Map.GetActor()->MarkPackageDirty();
+	RO::SetReadOnly(Map.ExternalActorFile(), true);
+	{
+		HaybaMCPUnattendedProbe::FScopedRecorder Probe;
+		const FHaybaHandlerResult R = Handler.Handle(TEXT("level_save"), NoParams);
+		RO::ExpectRefusal(*this, TEXT("level_save"), R);
+		TestTrue(TEXT("(b) read_only_files names the external actor package"), RO::DataFiles(R).Contains(Map.ExternalActorFile()));
+		TestEqual(TEXT("(b) SaveCurrentLevel was never reached"), Probe.Records.Num(), 0);
+	}
+	RO::SetReadOnly(Map.ExternalActorFile(), false);
+
+	// (c) Writable: the save runs, unattended. Under -unattended, SaveCurrentLevel
+	// without GIsRunningUnattendedScript answers PR_Cancelled (FileHelpers.cpp
+	// PromptForCheckoutAndSave), so this also fails when the guard is missing.
+	{
+		HaybaMCPUnattendedProbe::FScopedRecorder Probe;
+		const FHaybaHandlerResult R = Handler.Handle(TEXT("level_save"), NoParams);
+		TestTrue(FString::Printf(TEXT("(c) level_save on writable files succeeds (%s)"), *R.ErrorMessage), R.bOk);
+		TestTrue(TEXT("(c) SaveCurrentLevel ran once, with GIsRunningUnattendedScript set"),
+			Probe.Records.Num() == 1 && Probe.Records[0].Site == TEXT("level_save") && Probe.Records[0].bUnattended);
+		TestFalse(TEXT("(c) the external actor package was saved"), Map.GetActor()->GetExternalPackage()->IsDirty());
+	}
+
+	// (d) The deliberate departure from spec T5 Task B: a clean map whose .umap is
+	// read-only does not block a dirty, writable external actor package, because
+	// SaveCurrentLevel only writes a dirty or newly created level package
+	// (FileHelpers.cpp:4438).
+	Map.MarkMapClean();
+	Map.GetActor()->MarkPackageDirty();
+	RO::SetReadOnly(Map.MapFile(), true);
+	{
+		HaybaMCPUnattendedProbe::FScopedRecorder Probe;
+		const FDateTime MapStamp = IFileManager::Get().GetTimeStamp(*Map.MapFile());
+		const FHaybaHandlerResult R = Handler.Handle(TEXT("level_save"), NoParams);
+		TestTrue(FString::Printf(TEXT("(d) a clean read-only map does not refuse the save (%s)"), *R.ErrorMessage), R.bOk);
+		TestEqual(TEXT("(d) SaveCurrentLevel ran once"), Probe.Records.Num(), 1);
+		TestFalse(TEXT("(d) the external actor package was saved"), Map.GetActor()->GetExternalPackage()->IsDirty());
+		TestTrue(TEXT("(d) the read-only .umap was not rewritten"), IFileManager::Get().GetTimeStamp(*Map.MapFile()) == MapStamp);
+	}
+	RO::SetReadOnly(Map.MapFile(), false);
+	// SaveLevel expects a filesystem filename, not a long package name.
+	{
+		const FString Package = FString(RO::Root) / (TEXT("L_Create_") + RO::Guid8());
+		const FString File = HaybaSaveVerify::PackageFilename(Package, true);
+		ON_SCOPE_EXIT
+		{
+			UEditorLoadingAndSavingUtils::NewBlankMap(false);
+			if (UEditorAssetLibrary::DoesAssetExist(Package)) UEditorAssetLibrary::DeleteAsset(Package);
+			IFileManager::Get().Delete(*File, false, true, true);
+		};
+		TSharedPtr<FJsonObject> Create = MakeShared<FJsonObject>();
+		Create->SetStringField(TEXT("path"), Package);
+		HaybaMCPUnattendedProbe::FScopedRecorder Probe;
+		const FHaybaHandlerResult Created = Handler.Handle(TEXT("level_create"), Create);
+		TestTrue(TEXT("level_create persists its new map in project Content"), Created.bOk
+			&& IFileManager::Get().FileExists(*File) && FPackageName::DoesPackageExist(Package)
+			&& File.StartsWith(FPaths::ConvertRelativePathToFull(FPaths::ProjectContentDir())));
+		TestEqual(TEXT("level_create preserves the requested asset path"), RO::DataString(Created, TEXT("path")), Package);
+		TestTrue(TEXT("level_create helper ran unattended"), Probe.Records.Num() == 1
+			&& Probe.Records[0].Site == TEXT("level_create") && Probe.Records[0].bUnattended);
+	}
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FHaybaMCPSaveReadOnlyPythonTest,
+	"Hayba.MCP.Save.ReadOnly.PythonMapSaveReturnsWithoutModal",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FHaybaMCPSaveReadOnlyPythonTest::RunTest(const FString& Parameters)
+{
+	namespace RO = HaybaSaveReadOnlyTest;
+	RO::FScopedTestMap Map(TEXT("Py"));
+	if (!TestTrue(TEXT("the test map is on disk"), Map.IsReady())) return false;
+	RO::FScopedPlanModeOff PlanOff;
+	TSharedPtr<FJsonObject> Params = MakeShared<FJsonObject>();
+	Params->SetStringField(TEXT("script"),
+		TEXT("import unreal\nprint('saved=%s' % unreal.EditorLevelLibrary.save_current_level())"));
+
+	auto RunSave = [this, &Params](const TCHAR* What, const TCHAR* Expected)
+	{
+		HaybaMCPUnattendedProbe::FScopedRecorder Probe;
+		const TSharedPtr<FJsonObject> Reply = RO::SendCommand(*this, TEXT("python_run"), Params, 900502);
+		bool bOk = false;
+		Reply->TryGetBoolField(TEXT("ok"), bOk);
+		TestTrue(FString::Printf(TEXT("%s: python_run returned (%s)"), What, *RO::Str(Reply, TEXT("error"))), bOk);
+		const TSharedPtr<FJsonObject>* Data = nullptr;
+		const FString StdOut = Reply->TryGetObjectField(TEXT("data"), Data) && Data ? RO::Str(*Data, TEXT("stdout")) : FString();
+		TestTrue(FString::Printf(TEXT("%s: the script printed %s (stdout: %s)"), What, Expected, *StdOut), StdOut.Contains(Expected));
+		// RunCmd, four EvalB64 readbacks (out, err, capture meta, corruption), OkCmd, TimeoutCmd, CleanupCmd.
+		TestEqual(FString::Printf(TEXT("%s: the 8 Python commands of one python_run were all probed"), What), Probe.Records.Num(), 8);
+		bool bAllUnattended = Probe.Records.Num() > 0;
+		for (const HaybaMCPUnattendedProbe::FRecord& Record : Probe.Records)
+		{
+			bAllUnattended &= Record.bUnattended && Record.Site == TEXT("python_run");
+		}
+		TestTrue(FString::Printf(TEXT("%s: every FPythonCommandEx carried EPythonCommandFlags::Unattended"), What), bAllUnattended);
+	};
+
+	// A read-only map: the script gets False back, and no modal hangs the run (the watchdog would kill it).
+	Map.MarkMapDirty();
+	RO::SetReadOnly(Map.MapFile(), true);
+	const FDateTime Before = IFileManager::Get().GetTimeStamp(*Map.MapFile());
+	RunSave(TEXT("read-only map"), TEXT("saved=False"));
+	TestTrue(TEXT("read-only map: the .umap was not rewritten"), IFileManager::Get().GetTimeStamp(*Map.MapFile()) == Before);
+	RO::SetReadOnly(Map.MapFile(), false);
+
+	// A writable map saves. Under -unattended this proves the flag reached the
+	// engine: without it SaveCurrentLevel answers PR_Cancelled and prints False.
+	Map.MarkMapDirty();
+	RunSave(TEXT("writable map"), TEXT("saved=True"));
 	return true;
 }
 

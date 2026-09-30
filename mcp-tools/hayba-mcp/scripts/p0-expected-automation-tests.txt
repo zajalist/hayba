@@ -67,3 +67,8 @@ Hayba.MCP.Save.ReadOnly.NoErrorSaveSurvivesMissedPreflight
 Hayba.MCP.Save.ReadOnly.BlueprintCompileRefusesBeforeCompiling
 Hayba.MCP.Save.ReadOnly.CreateGraphKeepsExistingGraph
 Hayba.MCP.MetaSound.Compile.ReadOnlyRefusesBeforeConform
+Hayba.MCP.Save.ReadOnly.WidgetSaveAndCompileRefuse
+Hayba.MCP.Save.ReadOnly.MaterialRefusesBeforeEdit
+Hayba.MCP.Save.ReadOnly.AudioAndSaveAllRefuse
+Hayba.MCP.Save.ReadOnly.LevelSaveRefusesWithoutModal
+Hayba.MCP.Save.ReadOnly.PythonMapSaveReturnsWithoutModal
