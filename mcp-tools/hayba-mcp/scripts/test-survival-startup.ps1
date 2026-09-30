@@ -1,4 +1,4 @@
-param([Parameter(Mandatory=$true)][string]$HarnessPath)
+param([Parameter(Mandatory=$true)][string]$HarnessPath,[switch]$IdentityOnly)
 $ErrorActionPreference = 'Stop'
 $errors=$null; $tokens=$null
 $ast=[Management.Automation.Language.Parser]::ParseFile($HarnessPath,[ref]$tokens,[ref]$errors)
@@ -13,7 +13,7 @@ if($catalog.Count -ne 1){throw 'Expected one fatal case catalog'}
 $payload=($fatalCases|Where-Object Name -CEQ 'self_socket_deadlock').Script
 $results.Add([pscustomobject]@{name='owned_nondefault_self_socket';passed=$payload -ceq 'import socket; s=socket.socket(); s.connect(("127.0.0.1",52349))'})
 
-foreach($name in @('Get-SanitizedHash','Resolve-FullPath','Test-ExactCommandLineArgument','New-EditorIdentity','Assert-EditorIdentity','Find-OwnedMcpPort','Get-ListenerOwner','Get-RemainingCaseMs','Invoke-HaybaCommand','Get-RemainingStartupMs','Wait-EditorReady')){
+foreach($name in @('Get-SanitizedHash','Resolve-FullPath','Test-ExactCommandLineArgument','Get-EditorProcessRow','New-EditorIdentity','Assert-EditorIdentity','Find-OwnedMcpPort','Get-ListenerOwner','Get-RemainingCaseMs','Invoke-HaybaCommand','Get-RemainingStartupMs','Wait-EditorReady')){
     $definitions=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq $name},$true))
     if($definitions.Count -ne 1){
         $results.Add([pscustomobject]@{name='shared_startup_readiness';passed=$false;reason="Missing helper: $name"})
@@ -21,6 +21,78 @@ foreach($name in @('Get-SanitizedHash','Resolve-FullPath','Test-ExactCommandLine
         exit 1
     }
     . ([scriptblock]::Create($definitions[0].Extent.Text))
+}
+if($IdentityOnly){
+    # Keep the real process-row wrapper, parser and identity comparison. Only the
+    # CIM boundary is synthetic; no process is queried, launched or terminated.
+    function Get-CimInstance {
+        param($ClassName,$Filter,$ErrorAction)
+        $Queries.Add([pscustomobject]@{class=$ClassName;filter=$Filter;error_action=$ErrorAction})
+        if($Scenario -ceq 'query_error'){throw 'controlled CIM query error'}
+        if($Scenario -ceq 'missing_process'){return $null}
+        return $ProcessRow
+    }
+    $results.Clear()
+    $identityCases=@(
+        @{name='valid'},@{name='creation_changed';error='identity changed at creation_utc'},
+        @{name='pid_changed';error='identity changed at pid'},
+        @{name='wrong_executable';error='executable mismatch'},
+        @{name='session_missing';error='exact survival-session argument'},
+        @{name='session_deceptive';error='exact survival-session argument'},
+        @{name='project_missing';error='exact disposable project argument'},
+        @{name='project_deceptive';error='exact disposable project argument'},
+        @{name='command_line_changed';error='identity changed at command_line_sha256'},
+        @{name='baseline_executable_changed';error='identity changed at executable_path'},
+        @{name='baseline_session_changed';error='identity changed at session_token_sha256'},
+        @{name='baseline_project_changed';error='identity changed at project_path'},
+        @{name='missing_process';error='editor PID 42 does not exist'},
+        @{name='query_error';error='controlled CIM query error'},
+        @{name='uncaptured';error='editor identity was not captured'}
+    )
+    foreach($case in $identityCases){
+        $EditorPid=42; $EditorExe='C:/fake/UnrealEditor.exe'; $ProjectPath='C:/fake/Scratch.uproject'; $SessionToken='disposable_test_token'
+        $ProcessRow=[pscustomobject]@{ExecutablePath=$EditorExe;CreationDate=[datetime]'2026-01-01T00:00:00Z';CommandLine="`"$ProjectPath`" -HaybaSurvivalSession=$SessionToken"}
+        $Queries=[Collections.Generic.List[object]]::new()
+        $Scenario='baseline'
+        $EditorIdentity=New-EditorIdentity $EditorPid
+        $baselineJson=$EditorIdentity|ConvertTo-Json -Compress
+        $Queries.Clear()
+        $Scenario=$case.name
+        switch($Scenario){
+            'creation_changed' {$ProcessRow.CreationDate=$ProcessRow.CreationDate.AddSeconds(1)}
+            'pid_changed' {$EditorPid=43}
+            'wrong_executable' {$ProcessRow.ExecutablePath='C:/fake/Other.exe'}
+            'session_missing' {$ProcessRow.CommandLine="`"$ProjectPath`""}
+            'session_deceptive' {$ProcessRow.CommandLine="`"$ProjectPath`" -HaybaSurvivalSession=${SessionToken}_suffix"}
+            'project_missing' {$ProcessRow.CommandLine="-HaybaSurvivalSession=$SessionToken"}
+            'project_deceptive' {$ProcessRow.CommandLine="`"${ProjectPath}.backup`" -HaybaSurvivalSession=$SessionToken"}
+            'command_line_changed' {$ProcessRow.CommandLine+=' -Unattended'}
+            'baseline_executable_changed' {$EditorIdentity.executable_path='C:/fake/Other.exe'}
+            'baseline_session_changed' {$EditorIdentity.session_token_sha256='changed'}
+            'baseline_project_changed' {$EditorIdentity.project_path='C:/fake/Other.uproject'}
+            'uncaptured' {$EditorIdentity=$null}
+        }
+        $passed=$false; $reason=''
+        try{
+            $current=Assert-EditorIdentity
+            if($case.ContainsKey('error')){throw 'Expected identity rejection was admitted'}
+            if(($current|ConvertTo-Json -Compress) -cne $baselineJson){throw 'Validated identity fields were not retained'}
+            if(@($current.PSObject.Properties).Count -ne 6 -or $current.pid -ne 42 -or $current.creation_utc -cne '2026-01-01T00:00:00.0000000Z' -or $current.command_line_sha256 -cnotmatch '^[a-f0-9]{64}$' -or $current.session_token_sha256 -cnotmatch '^[a-f0-9]{64}$'){throw 'Identity proof fields were incomplete'}
+            $passed=$true
+        }catch{
+            $reason=$_.Exception.Message
+            $passed=$case.ContainsKey('error') -and $reason -match $case.error
+        }
+        $expectedQueries=if($Scenario -ceq 'uncaptured'){0}else{1}
+        if($Queries.Count -ne $expectedQueries){$passed=$false;$reason="Expected $expectedQueries fresh process query, got $($Queries.Count)"}
+        foreach($query in $Queries){
+            if($query.class -cne 'Win32_Process' -or $query.filter -cne "ProcessId = $EditorPid" -or $query.error_action -cne 'Stop'){$passed=$false;$reason='Process query lost its PID filter or error propagation'}
+        }
+        $results.Add([pscustomobject]@{name=$Scenario;passed=$passed;query_count=$Queries.Count;reason=$(if($passed){''}else{$reason})})
+    }
+    $results|ConvertTo-Json -Compress
+    if(@($results|Where-Object{-not $_.passed}).Count){exit 1}
+    exit 0
 }
 # Only OS/process/listener/time/transport boundaries are doubled. The source
 # owns identity comparison, port selection, deadline accounting and admission.

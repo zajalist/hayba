@@ -52,6 +52,27 @@ function invoke(port: number, structuredTimeout = false, timeout = 250) {
 }
 
 describe('survival startup readiness', () => {
+  it('validates fresh identity with one process query and refuses changed or missing proof', () => {
+    const run = spawnSync('pwsh', ['-NoProfile', '-NonInteractive', '-File',
+      join(scripts, 'test-survival-startup.ps1'), '-HarnessPath',
+      join(scripts, 'test-editor-survival.ps1'), '-IdentityOnly'], { encoding: 'utf8', timeout: 10_000, windowsHide: true });
+    if (run.error) throw run.error;
+    expect(run.stderr).toBe('');
+    const results = JSON.parse(run.stdout) as Array<{ name: string; passed: boolean; query_count: number; reason: string }>;
+    expect(results.filter((result) => !result.passed)).toEqual([]);
+    expect(results.map((result) => result.name)).toEqual([
+      'valid', 'creation_changed', 'pid_changed', 'wrong_executable',
+      'session_missing', 'session_deceptive', 'project_missing', 'project_deceptive',
+      'command_line_changed', 'baseline_executable_changed', 'baseline_session_changed',
+      'baseline_project_changed', 'missing_process', 'query_error', 'uncaptured',
+    ]);
+    for (const result of results) {
+      expect(result.query_count).toBe(result.name === 'uncaptured' ? 0 : 1);
+      expect(result.reason).toBe('');
+    }
+    expect(run.status).toBe(0);
+  });
+
   it('bounds owned readiness with one budget and retains short hostile deadlines', () => {
     const run = spawnSync('pwsh', ['-NoProfile', '-NonInteractive', '-File',
       join(scripts, 'test-survival-startup.ps1'), '-HarnessPath',

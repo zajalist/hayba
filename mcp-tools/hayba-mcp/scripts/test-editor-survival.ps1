@@ -355,7 +355,6 @@ function New-EditorIdentity([int]$ProcessId) {
 
 function Assert-EditorIdentity {
     if ($null -eq $EditorIdentity) { throw 'editor identity was not captured' }
-    $row = Get-EditorProcessRow $EditorPid
     $current = New-EditorIdentity $EditorPid
     foreach ($field in @('pid', 'executable_path', 'creation_utc', 'command_line_sha256', 'session_token_sha256', 'project_path')) {
         if ([string]$current.$field -cne [string]$EditorIdentity.$field) {
