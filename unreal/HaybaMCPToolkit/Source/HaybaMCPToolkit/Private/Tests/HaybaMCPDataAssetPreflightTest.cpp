@@ -194,8 +194,12 @@ bool FHaybaMCPDataAssetReadWritePreflightTest::RunTest(const FString& Parameters
         ExpectRefusal(TEXT("data_get traversal path"), TEXT("data_get"), Params);
     }
     {
+        // FString::AppendChar drops a NUL, so place it in the character array
+        // directly, and prove it is really there.
         FString EmbeddedNul = TEXT("/Game/Asset.Asset");
-        EmbeddedNul.AppendChar(TEXT('\0'));
+        EmbeddedNul.GetCharArray().Insert(TEXT('\0'), EmbeddedNul.Len());
+        TestEqual(TEXT("the probe path really holds an embedded NUL"),
+            EmbeddedNul.Len(), 18);
         TSharedPtr<FJsonObject> Params = MakeShared<FJsonObject>();
         Params->SetStringField(TEXT("path"), EmbeddedNul);
         ExpectRefusal(TEXT("data_get embedded NUL"), TEXT("data_get"), Params);
