@@ -27,6 +27,11 @@
 #include "HaybaMCPLeaseManager.h"
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "Settings/LevelEditorPlaySettings.h"
+#include "ShaderCompiler.h"
+#include "Modules/ModuleManager.h"
+#if WITH_LIVE_CODING
+#include "ILiveCodingModule.h"
+#endif
 // IHotReloadModule removed in UE 5.4+; LiveCoding replaces it
 
 DEFINE_LOG_CATEGORY_STATIC(LogHaybaMCPEditor, Log, All);
@@ -285,30 +290,56 @@ FHaybaHandlerResult FHaybaMCPEditorHandler::GetState(const TSharedPtr<FJsonObjec
     if (!GEditor)
         return FHaybaHandlerResult::Err(TEXT("editor_get_state: GEditor is not available"));
 
-    TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
-    // Health first (ADR-0011). After a stranded save or a swallowed engine
-    // fatal, object lookups are themselves fatal, so the package walk is skipped.
-    FHaybaEditorHealth::WriteJson(Out.ToSharedRef());
-    const bool bSkipDirtyWalk = FHaybaEditorHealth::IsUnsafe()
-        && HaybaMCPHealth::IsStatusOnlyCause(FHaybaEditorHealth::GateCause());
+    bool bIncludeDirty = true;
+    if (P.IsValid()) P->TryGetBoolField(TEXT("include_dirty"), bIncludeDirty);
+
+    TSharedRef<FJsonObject> Out = MakeShared<FJsonObject>();
+    Out->SetBoolField(TEXT("ok"), true);
+    // T1: health first: editor_unsafe, python_unhealthy, health{}.
+    FHaybaEditorHealth::WriteJson(Out);
 
     UWorld* World = GEditor->GetEditorWorldContext().World();
-    Out->SetBoolField(TEXT("ok"), true);
     Out->SetStringField(TEXT("map"), World ? World->GetPathName() : FString());
-    Out->SetBoolField(TEXT("pie_running"), GEditor->IsPlaySessionInProgress());
     Out->SetNumberField(TEXT("selection_count"), GEditor->GetSelectedActorCount());
-    if (bSkipDirtyWalk)
+    Out->SetStringField(TEXT("caller_owner"), FHaybaMCPLeaseManager::Get().EffectiveOwner());
+
+    // pie, pie_running, pie_phase, pie_since_s, pie_simulating, all from the resolved PIE state.
+    FHaybaMCPEditorState::Get().WritePieJson(Out);
+
+    bool bLiveCompiling = false;
+#if WITH_LIVE_CODING
+    if (ILiveCodingModule* LiveCoding = FModuleManager::GetModulePtr<ILiveCodingModule>(LIVE_CODING_MODULE_NAME))
+    {
+        bLiveCompiling = LiveCoding->IsCompiling();
+    }
+#endif
+    Out->SetBoolField(TEXT("compiling"), bLiveCompiling);
+    Out->SetNumberField(TEXT("shader_jobs"), GShaderCompilingManager ? GShaderCompilingManager->GetNumRemainingJobs() : 0);
+    // Normally false at a request boundary; true means a save scope was stranded.
+    Out->SetBoolField(TEXT("saving"), UE::IsSavingPackage(nullptr));
+    // Asset build leases; T3 fills this from the lease table.
+    Out->SetArrayField(TEXT("building"), TArray<TSharedPtr<FJsonValue>>());
+
+    // After a stranded save or a swallowed engine fatal, object lookups are
+    // themselves fatal, so the package walk is skipped (ADR-0011).
+    if (FHaybaEditorHealth::IsUnsafe() && HaybaMCPHealth::IsStatusOnlyCause(FHaybaEditorHealth::GateCause()))
     {
         Out->SetStringField(TEXT("dirty_packages_skipped"), TEXT("editor_unsafe"));
-        return FHaybaHandlerResult::Ok(Out);
     }
-    const TArray<FString> DirtyPackages = CollectSaveableDirtyPackageNames();
-    TArray<TSharedPtr<FJsonValue>> DirtyValues;
-    DirtyValues.Reserve(DirtyPackages.Num());
-    for (const FString& PackageName : DirtyPackages)
-        DirtyValues.Add(MakeShared<FJsonValueString>(PackageName));
-    Out->SetArrayField(TEXT("dirty_packages"), MoveTemp(DirtyValues));
-    Out->SetNumberField(TEXT("dirty_count"), DirtyPackages.Num());
+    else if (!bIncludeDirty)
+    {
+        Out->SetStringField(TEXT("dirty_packages_skipped"), TEXT("include_dirty"));
+    }
+    else
+    {
+        const TArray<FString> DirtyPackages = CollectSaveableDirtyPackageNames();
+        TArray<TSharedPtr<FJsonValue>> DirtyValues;
+        DirtyValues.Reserve(DirtyPackages.Num());
+        for (const FString& PackageName : DirtyPackages)
+            DirtyValues.Add(MakeShared<FJsonValueString>(PackageName));
+        Out->SetArrayField(TEXT("dirty_packages"), MoveTemp(DirtyValues));
+        Out->SetNumberField(TEXT("dirty_count"), DirtyPackages.Num());
+    }
     return FHaybaHandlerResult::Ok(Out);
 }
 

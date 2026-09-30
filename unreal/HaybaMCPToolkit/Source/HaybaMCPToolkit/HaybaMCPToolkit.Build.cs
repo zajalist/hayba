@@ -95,6 +95,9 @@ public class HaybaMCPToolkit : ModuleRules
         if (Target.Platform == UnrealTargetPlatform.Win64)
         {
             PublicSystemLibraries.Add("Crypt32.lib");
+            // editor_get_state.compiling asks ILiveCodingModule. Header only: the
+            // module is looked up by name at runtime, so there is no link dependency.
+            PrivateIncludePathModuleNames.Add("LiveCoding");
         }
     }
 }

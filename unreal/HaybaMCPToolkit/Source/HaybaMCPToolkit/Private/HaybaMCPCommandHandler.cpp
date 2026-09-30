@@ -1941,6 +1941,12 @@ FString FHaybaMCPCommandHandler::ProcessCommandInContext(const FString& CommandJ
             // are correctness, not presentation. Keep the full bounded object.
             Limits.MaxTopLevelFields = 32;
         }
+        else if (Cmd == TEXT("editor_get_state"))
+        {
+            // 18-19 top-level state facts after T1-T3 (R-21); the generic 20
+            // would drop the lexically last ones silently.
+            Limits.MaxTopLevelFields = 32;
+        }
         else if (Cmd == TEXT("python_run"))
         {
             // python_run's stdout carries the HAYBA_JSON result line for every

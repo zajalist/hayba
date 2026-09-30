@@ -41,3 +41,4 @@ Hayba.MCP.State.RouterRefusesMutationDuringPIE
 Hayba.MCP.State.RouterPieOwnerDrive
 Hayba.MCP.State.RouterStopAgentPieFromAnyCaller
 Hayba.MCP.State.StartPieBlockedByModal
+Hayba.MCP.State.GetStateShape

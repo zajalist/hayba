@@ -461,4 +461,77 @@ bool FHaybaMCPStateStartPieBlockedByModalTest::RunTest(const FString& Parameters
 	return true;
 }
 
+namespace HaybaMCPStateTest
+{
+	void ExpectNoSecretKeys(FAutomationTestBase& Test, const TSharedPtr<FJsonObject>& Obj, const FString& Where)
+	{
+		static const TCHAR* const SecretWords[] = { TEXT("token"), TEXT("secret"), TEXT("password"), TEXT("passwd"),
+			TEXT("pwd"), TEXT("credential"), TEXT("cookie"), TEXT("authorization"), TEXT("key") };
+		if (!Obj.IsValid()) return;
+		for (const TPair<FString, TSharedPtr<FJsonValue>>& Field : Obj->Values)
+		{
+			for (const TCHAR* Word : SecretWords)
+			{
+				Test.TestFalse(*FString::Printf(TEXT("%s.%s ends in a secret word"), *Where, *Field.Key), Field.Key.EndsWith(Word, ESearchCase::IgnoreCase));
+			}
+			const TSharedPtr<FJsonObject>* Child = nullptr;
+			if (Field.Value.IsValid() && Field.Value->TryGetObject(Child) && Child)
+			{
+				ExpectNoSecretKeys(Test, *Child, Where + TEXT(".") + Field.Key);
+			}
+		}
+	}
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FHaybaMCPStateGetStateShapeTest,
+	"Hayba.MCP.State.GetStateShape",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FHaybaMCPStateGetStateShapeTest::RunTest(const FString& Parameters)
+{
+	const TSharedPtr<FHaybaMCPCommandHandler> Router = GetRouter(*this);
+	if (!Router.IsValid()) return false;
+	const FString Owner = MakeTestOwner();
+
+	{
+		HaybaMCPState::FPieState AgentSession = MakePie(HaybaMCPState::EPieKind::Agent, HaybaMCPState::EPiePhase::Running, Owner);
+		AgentSession.Since = FPlatformTime::Seconds() - 3.0;
+		FHaybaMCPEditorState::FScopedPieOverride Forced(AgentSession);
+		TSharedPtr<FJsonObject> NoDirty = MakeShared<FJsonObject>();
+		NoDirty->SetBoolField(TEXT("include_dirty"), false);
+		const TSharedPtr<FJsonObject> Reply = Send(*Router, 900201, Owner, TEXT("editor_get_state"), NoDirty);
+		TestTrue(TEXT("editor_get_state answers"), BoolOf(Reply, TEXT("ok")));
+		const TSharedPtr<FJsonObject> Data = ObjectOf(Reply, TEXT("data"));
+		// Every field, through the router's response limits (R-21).
+		for (const TCHAR* Field : { TEXT("ok"), TEXT("map"), TEXT("selection_count"), TEXT("caller_owner"), TEXT("pie"),
+			TEXT("pie_running"), TEXT("pie_phase"), TEXT("pie_since_s"), TEXT("pie_simulating"), TEXT("compiling"),
+			TEXT("shader_jobs"), TEXT("saving"), TEXT("building"), TEXT("editor_unsafe"), TEXT("python_unhealthy"),
+			TEXT("health"), TEXT("dirty_packages_skipped") })
+		{
+			TestTrue(*FString::Printf(TEXT("editor_get_state reports %s"), Field), Data.IsValid() && Data->HasField(Field));
+		}
+		TestFalse(TEXT("include_dirty:false skips the package walk"), Data.IsValid() && Data->HasField(TEXT("dirty_packages")));
+		TestFalse(TEXT("and its count"), Data.IsValid() && Data->HasField(TEXT("dirty_count")));
+		TestEqual(TEXT("and says why"), StringOf(Data, TEXT("dirty_packages_skipped")), FString(TEXT("include_dirty")));
+		TestEqual(TEXT("pie names the agent"), StringOf(Data, TEXT("pie")), TEXT("agent:") + Owner);
+		TestEqual(TEXT("pie_phase"), StringOf(Data, TEXT("pie_phase")), FString(TEXT("running")));
+		TestTrue(TEXT("pie_running from the resolved state"), BoolOf(Data, TEXT("pie_running")));
+		TestTrue(TEXT("pie_since_s counts the session"), NumberOf(Data, TEXT("pie_since_s")) >= 2.0);
+		TestEqual(TEXT("caller_owner is the envelope owner"), StringOf(Data, TEXT("caller_owner")), Owner);
+		TestTrue(TEXT("health is an object"), ObjectOf(Data, TEXT("health")).IsValid());
+		ExpectNoSecretKeys(*this, Data, TEXT("data"));
+	}
+	{
+		FHaybaMCPEditorState::FScopedPieOverride NoSession(HaybaMCPState::FPieState{});
+		const TSharedPtr<FJsonObject> Data = ObjectOf(Send(*Router, 900201, Owner, TEXT("editor_get_state")), TEXT("data"));
+		TestEqual(TEXT("no PIE"), StringOf(Data, TEXT("pie")), FString(TEXT("none")));
+		TestEqual(TEXT("phase none"), StringOf(Data, TEXT("pie_phase")), FString(TEXT("none")));
+		TestFalse(TEXT("pie_running false"), BoolOf(Data, TEXT("pie_running")));
+		TestTrue(TEXT("the default still walks dirty packages"), Data.IsValid() && Data->HasField(TEXT("dirty_packages")));
+		TestTrue(TEXT("with a count"), Data.IsValid() && Data->HasField(TEXT("dirty_count")));
+	}
+	return true;
+}
+
 #endif // WITH_DEV_AUTOMATION_TESTS

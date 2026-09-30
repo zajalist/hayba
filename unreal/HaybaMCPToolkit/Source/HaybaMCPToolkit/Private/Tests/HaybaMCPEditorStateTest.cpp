@@ -23,6 +23,21 @@ bool FHaybaMCPEditorStateNativeTest::RunTest(const FString& Parameters)
         TestTrue(TEXT("state contains selection_count"), Result.Data->HasField(TEXT("selection_count")));
         TestTrue(TEXT("state contains dirty_packages"), Result.Data->HasField(TEXT("dirty_packages")));
         TestTrue(TEXT("state contains dirty_count"), Result.Data->HasField(TEXT("dirty_count")));
+        for (const TCHAR* Field : { TEXT("pie"), TEXT("pie_phase"), TEXT("pie_since_s"), TEXT("pie_simulating"),
+            TEXT("compiling"), TEXT("shader_jobs"), TEXT("saving"), TEXT("building"), TEXT("caller_owner") })
+        {
+            TestTrue(*FString::Printf(TEXT("state contains %s"), Field), Result.Data->HasField(Field));
+        }
+    }
+    TSharedPtr<FJsonObject> NoDirty = MakeShared<FJsonObject>();
+    NoDirty->SetBoolField(TEXT("include_dirty"), false);
+    const FHaybaHandlerResult Skipped = Handler.Handle(TEXT("editor_get_state"), NoDirty);
+    if (TestTrue(TEXT("include_dirty:false succeeds"), Skipped.bOk && Skipped.Data.IsValid()))
+    {
+        TestFalse(TEXT("include_dirty:false has no dirty_packages"), Skipped.Data->HasField(TEXT("dirty_packages")));
+        FString Why;
+        Skipped.Data->TryGetStringField(TEXT("dirty_packages_skipped"), Why);
+        TestEqual(TEXT("and names the switch"), Why, FString(TEXT("include_dirty")));
     }
     return true;
 }
