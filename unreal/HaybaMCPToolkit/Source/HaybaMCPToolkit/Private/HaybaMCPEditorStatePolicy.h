@@ -335,4 +335,64 @@ namespace HaybaMCPState
 		}
 		return D;
 	}
+
+	/** The loaded-Blueprint facts UE 5.8 PlayLevel.cpp ResolveDirtyBlueprints tests before play. */
+	struct FBlueprintPlayFacts
+	{
+		bool bUpToDate = false;
+		bool bForDiffing = false;
+		/** Status == BS_Dirty. */
+		bool bDirty = false;
+		bool bDataOnly = false;
+		/** Status == BS_Error. */
+		bool bError = false;
+		bool bDisplayCompilePIEWarning = false;
+	};
+
+	enum class EPlayModal : uint8
+	{
+		None,
+		/** ShowCompilationErrorsDialog (PlayLevel.cpp:1498). */
+		ErroredDialog,
+		/** The "compile them now?" prompt (PlayLevel.cpp:1313). */
+		RecompilePrompt,
+	};
+
+	/** Mirrors PlayLevel.cpp:1276-1300: a dirty code Blueprint prompts only when the editor
+	 *  asks before recompiling; otherwise an errored one with its PIE warning opens the dialog. */
+	inline EPlayModal PlayModalFor(const FBlueprintPlayFacts& F, bool bPromptForCompile)
+	{
+		if (F.bUpToDate || F.bForDiffing)
+		{
+			return EPlayModal::None;
+		}
+		if (F.bDirty && !F.bDataOnly)
+		{
+			return bPromptForCompile ? EPlayModal::RecompilePrompt : EPlayModal::None;
+		}
+		if (F.bError && F.bDisplayCompilePIEWarning)
+		{
+			return EPlayModal::ErroredDialog;
+		}
+		return EPlayModal::None;
+	}
+
+	inline const TCHAR* LexPlayModal(EPlayModal M)
+	{
+		switch (M)
+		{
+		case EPlayModal::ErroredDialog:   return TEXT("errored");
+		case EPlayModal::RecompilePrompt: return TEXT("dirty");
+		default:                          return TEXT("none");
+		}
+	}
+
+	constexpr int32 MaxBlockedAssetsListed = 16;
+
+	inline FString FormatPieBlockedMessage(int32 Count, const FString& FirstAsset, EPlayModal FirstModal)
+	{
+		return FString::Printf(
+			TEXT("pie_blocked: 'editor_start_pie' was not run: %d Blueprint(s) would open a modal dialog before play (%s is %s). Compile or fix them first."),
+			Count, *FirstAsset, LexPlayModal(FirstModal));
+	}
 }

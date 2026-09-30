@@ -9,15 +9,19 @@
 #include "HaybaMCPSettings.h"
 #include "Dom/JsonObject.h"
 #include "Editor.h"
+#include "Engine/Blueprint.h"
 #include "Editor/EditorEngine.h"
 #include "Features/IModularFeatures.h"
+#include "GameFramework/Actor.h"
 #include "IPIEAuthorizer.h"
+#include "Kismet2/KismetEditorUtilities.h"
 #include "Misc/Guid.h"
 #include "Misc/ScopeExit.h"
 #include "Modules/ModuleManager.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
+#include "UObject/Package.h"
 
 #if WITH_DEV_AUTOMATION_TESTS
 
@@ -298,6 +302,162 @@ bool FHaybaMCPStateRouterPieOwnerDriveTest::RunTest(const FString& Parameters)
 		FHaybaMCPEditorState::FScopedPieOverride NoSession(HaybaMCPState::FPieState{});
 		TestEqual(TEXT("without PIE authorization the lease gate refuses"), CodeOf(Send(*Router, 900111, OwnerA, TEXT("editor_stop_pie"))), FString(TEXT("lease_conflict")));
 	}
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FHaybaMCPStateRouterStopAgentPieFromAnyCallerTest,
+	"Hayba.MCP.State.RouterStopAgentPieFromAnyCaller",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FHaybaMCPStateRouterStopAgentPieFromAnyCallerTest::RunTest(const FString& Parameters)
+{
+	const TSharedPtr<FHaybaMCPCommandHandler> Router = GetRouter(*this);
+	if (!Router.IsValid() || !NoRealPie(*this)) return false;
+	ON_SCOPE_EXIT { CancelQueuedPie(); };
+
+	// The default advisory verbosity strips hint fields from data; ask for tips
+	// so the reply keeps editor_start_pie's hint.
+	FHaybaMCPSettings& Settings = FHaybaMCPSettings::Get();
+	const EHaybaMCPAdvisoryVerbosity PreviousVerbosity = Settings.AdvisoryVerbosity;
+	Settings.AdvisoryVerbosity = EHaybaMCPAdvisoryVerbosity::ErrorsWarningsAndTips;
+	ON_SCOPE_EXIT { FHaybaMCPSettings::Get().AdvisoryVerbosity = PreviousVerbosity; };
+	// Both refusals below come from conn:900002, which the process-wide gate
+	// limiter collapses to conn:*, so whether they log depends on earlier tests.
+	AddExpectedMessagePlain(TEXT("pie_active: refused 'editor_pie_press_key' from 'conn:900002'"),
+		ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, -1);
+	AddExpectedMessagePlain(TEXT("pie_active: refused 'editor_stop_pie' from 'conn:900002'"),
+		ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, -1);
+
+	// A real queued request from an owner-less raw connection; it never reaches a tick.
+	const TSharedPtr<FJsonObject> Start = Send(*Router, 900001, FString(), TEXT("editor_start_pie"));
+	if (CodeOf(Start) == TEXT("pie_blocked"))
+	{
+		AddError(FString::Printf(TEXT("a loaded Blueprint would open a modal before play, so this test cannot queue PIE: %s"),
+			*StringOf(Start, TEXT("error"))));
+		return false;
+	}
+	TestTrue(TEXT("editor_start_pie succeeds"), BoolOf(Start, TEXT("ok")));
+	const TSharedPtr<FJsonObject> Started = ObjectOf(Start, TEXT("data"));
+	TestTrue(TEXT("pie_requested"), BoolOf(Started, TEXT("pie_requested")));
+	TestTrue(TEXT("pie_started is kept for older clients"), BoolOf(Started, TEXT("pie_started")));
+	TestEqual(TEXT("pie_owner names the connection"), StringOf(Started, TEXT("pie_owner")), FString(TEXT("agent:conn:900001")));
+	TestFalse(TEXT("a hint says how to wait"), StringOf(Started, TEXT("hint")).IsEmpty());
+	TestTrue(TEXT("a request is queued"), GEditor && GEditor->IsPlaySessionRequestQueued());
+	const HaybaMCPState::FPieState Queued = FHaybaMCPEditorState::Get().CurrentPie();
+	TestEqual(TEXT("the queued session is the agent's"), Queued.Kind, HaybaMCPState::EPieKind::Agent);
+	TestEqual(TEXT("queued"), Queued.Phase, HaybaMCPState::EPiePhase::Queued);
+	TestEqual(TEXT("owned by conn:900001"), Queued.Owner, FString(TEXT("conn:900001")));
+
+	TSharedPtr<FJsonObject> Key = MakeShared<FJsonObject>();
+	Key->SetStringField(TEXT("key"), TEXT("SpaceBar"));
+	const TSharedPtr<FJsonObject> Drive = Send(*Router, 900002, FString(), TEXT("editor_pie_press_key"), Key);
+	TestEqual(TEXT("another connection does not drive it"), CodeOf(Drive), FString(TEXT("pie_active")));
+	TestEqual(TEXT("detail: queued agent session"), StringOf(ObjectOf(Drive, TEXT("pie")), TEXT("phase")), FString(TEXT("queued")));
+
+	AddExpectedMessagePlain(TEXT("editor_stop_pie: 'conn:900002' stopped an agent PIE owned by 'conn:900001'"),
+		ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 1);
+	const TSharedPtr<FJsonObject> Stop = Send(*Router, 900002, FString(), TEXT("editor_stop_pie"));
+	TestTrue(TEXT("any connection stops an agent PIE"), BoolOf(Stop, TEXT("ok")));
+	TestTrue(TEXT("pie_stopped"), BoolOf(ObjectOf(Stop, TEXT("data")), TEXT("pie_stopped")));
+	TestTrue(TEXT("a queued session is cancelled, not left to start"), BoolOf(ObjectOf(Stop, TEXT("data")), TEXT("cancelled_queued_request")));
+	TestFalse(TEXT("nothing is queued any more"), GEditor && GEditor->IsPlaySessionRequestQueued());
+	TestEqual(TEXT("no PIE"), FHaybaMCPEditorState::Get().CurrentPie().Kind, HaybaMCPState::EPieKind::None);
+
+	{
+		FHaybaMCPEditorState::FScopedPieOverride Forced(MakePie(HaybaMCPState::EPieKind::User, HaybaMCPState::EPiePhase::Running));
+		const TSharedPtr<FJsonObject> UserStop = Send(*Router, 900002, FString(), TEXT("editor_stop_pie"));
+		TestEqual(TEXT("nobody stops the user's PIE"), CodeOf(UserStop), FString(TEXT("pie_active")));
+		TestEqual(TEXT("detail: user"), StringOf(ObjectOf(UserStop, TEXT("pie")), TEXT("pie")), FString(TEXT("user")));
+	}
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FHaybaMCPStateStartPieBlockedByModalTest,
+	"Hayba.MCP.State.StartPieBlockedByModal",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FHaybaMCPStateStartPieBlockedByModalTest::RunTest(const FString& Parameters)
+{
+	// Pure: the engine's condition (PlayLevel.cpp:1276-1300).
+	{
+		using namespace HaybaMCPState;
+		FBlueprintPlayFacts Errored;
+		Errored.bError = true;
+		Errored.bDisplayCompilePIEWarning = true;
+		TestEqual(TEXT("an errored Blueprint opens the errors dialog"), PlayModalFor(Errored, false), EPlayModal::ErroredDialog);
+		FBlueprintPlayFacts Acknowledged = Errored;
+		Acknowledged.bDisplayCompilePIEWarning = false;
+		TestEqual(TEXT("an acknowledged error does not"), PlayModalFor(Acknowledged, false), EPlayModal::None);
+		FBlueprintPlayFacts Diffing = Errored;
+		Diffing.bForDiffing = true;
+		TestEqual(TEXT("a diff copy is ignored"), PlayModalFor(Diffing, false), EPlayModal::None);
+		FBlueprintPlayFacts DirtyCode;
+		DirtyCode.bDirty = true;
+		TestEqual(TEXT("a dirty Blueprint prompts when the editor asks first"), PlayModalFor(DirtyCode, true), EPlayModal::RecompilePrompt);
+		TestEqual(TEXT("auto-recompile opens no prompt"), PlayModalFor(DirtyCode, false), EPlayModal::None);
+		FBlueprintPlayFacts DirtyData = DirtyCode;
+		DirtyData.bDataOnly = true;
+		TestEqual(TEXT("a data-only Blueprint never prompts"), PlayModalFor(DirtyData, true), EPlayModal::None);
+		FBlueprintPlayFacts Fresh = Errored;
+		Fresh.bUpToDate = true;
+		TestEqual(TEXT("an up-to-date Blueprint is skipped"), PlayModalFor(Fresh, true), EPlayModal::None);
+		TestEqual(TEXT("the pie_blocked text"),
+			FormatPieBlockedMessage(2, TEXT("/Game/A/BP_A.BP_A"), EPlayModal::ErroredDialog),
+			FString(TEXT("pie_blocked: 'editor_start_pie' was not run: 2 Blueprint(s) would open a modal dialog before play (/Game/A/BP_A.BP_A is errored). Compile or fix them first.")));
+	}
+
+	const TSharedPtr<FHaybaMCPCommandHandler> Router = GetRouter(*this);
+	if (!Router.IsValid() || !NoRealPie(*this)) return false;
+	ON_SCOPE_EXIT { CancelQueuedPie(); };
+
+	const FString AssetName = TEXT("BP_PieBlocked_") + FGuid::NewGuid().ToString(EGuidFormats::Digits).Left(8);
+	UPackage* Package = CreatePackage(*(TEXT("/Game/__HaybaTest__/") + AssetName));
+	if (!TestNotNull(TEXT("scratch package"), Package)) return false;
+	Package->SetFlags(RF_Transient);
+	UBlueprint* Blueprint = FKismetEditorUtilities::CreateBlueprint(AActor::StaticClass(), Package, FName(*AssetName), BPTYPE_Normal);
+	if (!TestNotNull(TEXT("scratch Blueprint"), Blueprint)) return false;
+	ON_SCOPE_EXIT
+	{
+		Blueprint->Status = BS_UpToDate;
+		Blueprint->bDisplayCompilePIEWarning = false;
+		Package->SetDirtyFlag(false);
+		Blueprint->ClearFlags(RF_Public | RF_Standalone);
+		Blueprint->MarkAsGarbage();
+		Package->MarkAsGarbage();
+	};
+	Blueprint->Status = BS_Error;
+	Blueprint->bDisplayCompilePIEWarning = true;
+
+	const TSharedPtr<FJsonObject> Reply = Send(*Router, 900121, MakeTestOwner(), TEXT("editor_start_pie"));
+	TestFalse(TEXT("editor_start_pie is refused"), BoolOf(Reply, TEXT("ok")));
+	TestEqual(TEXT("with the promoted top-level code pie_blocked"), CodeOf(Reply), FString(TEXT("pie_blocked")));
+	TestTrue(TEXT("the error names the command"), StringOf(Reply, TEXT("error")).StartsWith(TEXT("pie_blocked: 'editor_start_pie' was not run: ")));
+	const TSharedPtr<FJsonObject> Advisory = ObjectOf(Reply, TEXT("advisory"));
+	TestEqual(TEXT("retryable"), StringOf(Advisory, TEXT("state")), FString(TEXT("retryable_failure")));
+	TestEqual(TEXT("nothing started"), StringOf(Advisory, TEXT("mutation_status")), FString(TEXT("not_started")));
+	const TSharedPtr<FJsonObject> Data = ObjectOf(Reply, TEXT("data"));
+	TestTrue(TEXT("blocked_count counts it"), NumberOf(Data, TEXT("blocked_count")) >= 1.0);
+	const TArray<TSharedPtr<FJsonValue>>* Blocked = nullptr;
+	bool bListed = false;
+	if (TestTrue(TEXT("blocked_assets is a list"), Data.IsValid() && Data->TryGetArrayField(TEXT("blocked_assets"), Blocked) && Blocked))
+	{
+		TestTrue(TEXT("at most 16 listed"), Blocked->Num() <= HaybaMCPState::MaxBlockedAssetsListed);
+		for (const TSharedPtr<FJsonValue>& Item : *Blocked)
+		{
+			const TSharedPtr<FJsonObject>* Entry = nullptr;
+			if (Item.IsValid() && Item->TryGetObject(Entry) && Entry
+				&& StringOf(*Entry, TEXT("asset")) == Blueprint->GetPathName()
+				&& StringOf(*Entry, TEXT("status")) == TEXT("errored"))
+			{
+				bListed = true;
+			}
+		}
+	}
+	TestTrue(TEXT("the errored scratch Blueprint is listed"), bListed);
+	TestFalse(TEXT("no PIE request was queued"), GEditor && GEditor->IsPlaySessionRequestQueued());
+	TestEqual(TEXT("no session was attributed"), FHaybaMCPEditorState::Get().CurrentPie().Kind, HaybaMCPState::EPieKind::None);
 	return true;
 }
 

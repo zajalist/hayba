@@ -1251,6 +1251,15 @@ static FString MakeOffGameThreadResponse()
     return TEXT("{\"id\":\"\",\"ok\":false,\"error\":\"Request rejected: Hayba command dispatch must run on the Unreal game thread; no operation was started.\",\"data\":{}}");
 }
 
+/** Handler refusal codes that travel as data.code and are promoted to the
+ *  top-level envelope code (R3: no new FHaybaHandlerResult field). T5 adds
+ *  package_read_only. */
+static bool IsWireRefusalCode(const FString& Code)
+{
+    static const TSet<FString> Codes = { TEXT("pie_blocked") };
+    return Codes.Contains(Code);
+}
+
 static FString ShapeOkResponse(
     const FString& Id,
     const TSharedPtr<FJsonObject>& Data,
@@ -1262,6 +1271,14 @@ static FString ShapeOkResponse(
     if (!Signals.bOperationSucceeded && !Signals.Error.IsEmpty())
     {
         Response->SetStringField(TEXT("error"), Signals.Error);
+    }
+    if (!Signals.bOperationSucceeded && Data.IsValid())
+    {
+        FString DataCode;
+        if (Data->TryGetStringField(TEXT("code"), DataCode) && IsWireRefusalCode(DataCode))
+        {
+            Response->SetStringField(TEXT("code"), DataCode);
+        }
     }
     Response->SetObjectField(TEXT("data"),
         Data.IsValid() ? Data.ToSharedRef() : MakeShared<FJsonObject>());

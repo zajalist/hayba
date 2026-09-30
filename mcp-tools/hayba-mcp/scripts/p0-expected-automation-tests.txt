@@ -39,3 +39,5 @@ Hayba.MCP.Batch.ValidateRejectsPieSteps
 Hayba.MCP.State.HooksBoundAtStartup
 Hayba.MCP.State.RouterRefusesMutationDuringPIE
 Hayba.MCP.State.RouterPieOwnerDrive
+Hayba.MCP.State.RouterStopAgentPieFromAnyCaller
+Hayba.MCP.State.StartPieBlockedByModal
