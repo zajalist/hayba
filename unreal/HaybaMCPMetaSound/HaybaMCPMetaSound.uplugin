@@ -1,6 +1,6 @@
 {
   "FileVersion": 3,
-  "Version": 1,
+  "Version": 2,
   "VersionName": "0.3.0",
   "FriendlyName": "Hayba MCP — MetaSound",
   "Description": "Optional MetaSound (metasound_*) command satellite for HaybaMCPToolkit. Auto-disabled by UE when Metasound is off, leaving the core plugin to load normally.",

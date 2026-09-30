@@ -65,7 +65,7 @@ async function main() {
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error(`Hayba MCP Toolkit v1.0.0 started on stdio`);
+  console.error(`Hayba MCP Toolkit v${HAYBA_VERSION} started on stdio`);
   console.error(`UE TCP target: ${config.ueTcpHost}:${config.ueTcpPort}`);
 
   // Probe visual sidecar in the background — populates the cache so subsequent

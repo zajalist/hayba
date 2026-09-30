@@ -4,177 +4,91 @@ All notable changes to Hayba MCP Toolkit are documented here. Format based on [K
 
 ## [Unreleased]
 
-### Deprecated
-- `hayba_import_landscape` and `import_landscape` remain callable for one release
-  as adapters to `world_ingest`. Responses include staged workflow results and
-  `deprecation` metadata; migrate legacy terrain fields using the
-  [MCP Tool Reference](docs/wiki/MCP-Tool-Reference.md#results-interruption-and-migration).
-
-### Fixed
-- Generalized world/asset workflows preserve Plan Mode approval pauses, validate
-  LOD readback and retain partial progress, report each unsupported preparation
-  capability, and guard saves by the actual affected level package. Partitioned
-  ingestion now refuses unsupported external-actor persistence before mutation.
-  Legacy landscape aliases keep import-only behavior. Strict eager/loaded-pack
-  schemas reject misplaced dry-run fields before execution. The existing
-  `asset_inspect` accepts optional preparation policies with explicit evidence.
-- `material_get_info` now reports each graph parameter's authored name, exact
-  parameter type, and typed default value, with explicit availability flags
-  for invalid/non-finite metadata instead of plausible omissions. Master
-  materials also expose every terminal material-property connection, including
-  its exact source node and output index/name. Mask-derived `R/G/B/A` pin names
-  round-trip through `material_connect_nodes`; truly unnamed pins are explicit
-  nulls with display-only labels and require an output index. In Use Material Attributes mode,
-  retained legacy property wires are explicitly marked compiler-inactive and
-  no longer create false reachability.
-- UI validation no longer mistakes ScrollBox content outside the viewport for
-  off-screen or parent-overflow defects. Native layout snapshots now expose the
-  ScrollBox axis so cross-axis failures remain visible, and empty text is
-  ignored only when its effective visibility is `Collapsed` (not `Hidden`).
-- `asset_registry_query` now uses a native, read-only AssetRegistry handler instead of blocked dynamic Python reflection, with deterministic bounded pagination, strict input checks, and fail-closed response validation.
+## [0.3.0] — 2026-09-30
 
 ### Added
-- Hayba Pro client. The chat panel can sign in to Hayba Pro (device-code sign-in;
-  the refresh token is stored with DPAPI) and route a chat through the hosted
-  service, which asks the sidecar to run editor tools. Every inbound tool call
-  passes a local guard first: it must be in the manifest this machine offered,
-  match the tool schema, respect the Explore read-only mode and the local
-  `python_run` permission, and destructive calls need a local approval.
-  Results are secret-redacted, capped at 32 KB and stripped of screenshots and
-  other binary payloads before they leave the machine. Sessions survive
-  dropped connections (resume with replay, keep-alive pings), and when Pro is
-  unavailable the chat falls back to Community (local/BYOK) per chat.
-  Bring-your-own-key Pro turns accept hosted providers only; local and custom
-  endpoints are refused before the key is sent.
-- `@hayba/brain-protocol`: versioned, strict Zod schemas for the Pro wire
-  frames and the shared activity-event vocabulary, with valid/invalid fixtures.
-- Generalized `world_inspect`, `world_ingest` and `asset_prepare` workflows,
-  alongside the existing `asset_inspect` metadata tool. World ingestion reports
+- **Hayba Pro client.** The chat panel signs in to Hayba Pro (device-code
+  sign-in; the refresh token is stored with DPAPI) and relays a chat through the
+  hosted service, which asks the local sidecar to run editor tools. Every inbound
+  tool call passes a local guard first (manifest check, approvals bound to their
+  loop, redacted and size-capped results, screenshots and other binary payloads
+  stripped before they leave the machine). Sessions resume after dropped
+  connections, and when Pro is unavailable a chat falls back to Community
+  (local/BYOK). Bring-your-own-key Pro turns accept hosted providers only.
+- `@hayba/brain-protocol`: versioned, strict Zod schemas for the Pro wire frames
+  and the shared activity-event vocabulary, with valid/invalid fixtures.
+- **Branded editor workspace.** The agent dock embeds agent activity, work modes
+  and specialist profiles, persists redacted sessions, shows the Agent World
+  Library, and inspects the loaded world.
+- **World workflows.** `world_inspect`, `world_ingest` and `asset_prepare` report
   ordered stages, dry-run plans, retained resources and explicit unsupported
-  capabilities. The current native success path imports one heightmap into an
-  existing writable non-partitioned world and verifies map saving and landscape
-  presence. Asset preparation supports editing existing LOD reductions; native
-  mesh-terrain/managed-update ingestion, partition/HLOD configuration and
-  Nanite/collision/lightmap/material writers remain unavailable. Contract tests
-  cover success, refusal, partial failure and programmatic cancellation.
-- `editor_pie_click_actor` performs exact OS-input-free world interaction
-  against a live visible PIE viewport without moving the desktop cursor or
-  foregrounding its window. It reuses player-controller projection, rejects
-  Slate/UMG and Canvas HUD blockers, verifies the first Visibility hit, and
-  dispatches the exact native primitive click stage used by `APlayerController`
-  after repeating every guard across re-entrant boundaries. It intentionally
-  avoids `InputKey`'s unchecked trace window. Hover is explicitly unsupported:
-  UE exposes no public route that both updates its protected native hover state
-  and guarantees zero OS cursor movement. Ambiguous clients, absent/hidden/minimized
-  viewports, hidden/offscreen/occluded targets, active gestures, ignored input,
-  and disabled controller event paths fail closed.
-- Read-only headless PIE scene grounding with `editor_pie_actor_list`,
-  `editor_pie_actor_inspect`, and `editor_pie_project_world`: deterministic
-  multi-client world selection, capped pagination, exact world-owned actor and
-  component resolution, live SViewport-to-desktop projection, and a
-  Visibility-channel hit result that identifies what is actually under the
-  projected point.
-- Production audio authoring and verification: typed create/inspect/set/save
-  support for SoundClass, SoundMix class overrides, SoundConcurrency,
-  SoundAttenuation, SoundSubmix, and SoundWave import/playback settings;
-  retained 2D AudioComponent control; active sound/physical voice inspection;
-  Audio Mixer spectrum metering; and synchronous, filesystem-verified submix
-  WAV capture. Asset edits have an explicit save boundary and every runtime
-  lifecycle command fails cleanly when its target/device state is unavailable.
-- `editor_save_all_and_quit` — saves every dirty package, refuses to quit while
-  anything is still unsaved (a dirty asset otherwise parks the editor on a
-  modal save prompt with the MCP port already closed), then issues
-  `QUIT_EDITOR`.
-- Parameter-name aliasing (`src/tools/param-aliases.ts`, `resolveAliases`) — a
-  single normalisation step, routed through by every dispatch path (`ueTool`,
-  the python-tool factory, `hayba_invoke`, the two hand-registered
-  meta-tools), that folds a historical/expected param spelling (e.g.
-  `widget_blueprint_path`) onto its canonical name before the tool's own Zod
-  schema sees it. Conflicting values under two spellings fail loudly instead
-  of silently picking one.
-- `hayba-cli` — a headless runner (`mcp-tools/hayba-mcp/src/cli`) for CI. Reads
-  a JSON/YAML spec of wire commands, sends them over the same TCP seam every
-  MCP tool uses, and exits with a code a pipeline can branch on (0 ok, 1 bad
-  spec, 2 UE unreachable, 3 a step failed, 4 unexpected CLI error — see
-  `src/cli/exit-codes.ts`). Does not launch UE; assumes an editor is already
-  running and holding the port. An example (untested, not wired into this
-  repo's own CI) workflow lives at
-  `mcp-tools/hayba-mcp/examples/github-actions-hayba-cli.yml`.
+  capabilities. The native success path imports a heightmap into an existing
+  writable non-partitioned world; asset preparation edits existing LOD reductions.
+- Blueprint event authoring: bound UMG click events, custom and override events,
+  function signatures, typed variables and function libraries.
+- PIE grounding and interaction: `editor_pie_actor_list`,
+  `editor_pie_actor_inspect`, `editor_pie_project_world`, and
+  `editor_pie_click_actor` (exact world clicks without moving the OS cursor).
+- Production audio authoring and verification (SoundClass/Mix/Concurrency/
+  Attenuation/Submix/Wave, spectrum metering, verified submix WAV capture) and
+  MetaSound graph authoring.
+- `editor_save_all_and_quit`, `memory_*` tools, parameter-name aliasing, a
+  bounded Unreal header index, and many previously unreachable commands
+  (physics, world partition, behavior trees, animation, Enhanced Input,
+  networking, project, audio).
+- `hayba-cli`, a headless runner that sends a JSON/YAML spec of wire commands to
+  a running editor and exits with a pipeline-friendly code.
 
 ### Changed
-- `/chat` and `/brain` sidecar routes refuse requests whose `Host` or
-  `Origin` is not loopback, closing DNS-rebinding access from web pages.
-- The visual-embeddings sidecar now listens on port 7822 by default (was 7821,
-  which the chat sidecar uses). Set `HAYBA_SIDECAR_PORT` to override.
-- Removed the editor plugin's unused single-request chat client; the chat panel
-  talks only to the local chat sidecar.
-- Removed the optional local `@huggingface/transformers` embedding backend and
-  its vulnerable Sharp/ONNX/AdmZip production graph. Tool and asset search now
-  select Ollama when a bounded local probe succeeds and otherwise use the
-  deterministic lexical index; clean-install CI exercises the offline,
-  cold-cache fallback and the production audit needs no exceptions for
-  `GHSA-f88m-g3jw-g9cj` or `GHSA-xcpc-8h2w-3j85`.
-- The architecture workspace now declares its actual Three.js boundary: the
-  browser-only Culture Studio keeps one pinned CDN import map, while the unused
-  `three` and `@types/three` npm dependencies are removed. A source/manifest/
-  lockfile guard prevents the inert duplicate from returning or the two CDN
-  addon URLs from drifting to different runtime versions.
-- **Satellite plugins settled** ([ADR-0008](docs/adr/0008-satellite-plugins-earn-their-place.md)).
-  `HaybaMCPGAS` and `HaybaMCPMetaSound` are installed and surfaced.
-  `HaybaMCPNiagara` and `HaybaMCPSequencer` are deleted — every command they
-  added duplicated a TS/python tool (`niagara_*`, `seq_*`) already shipping
-  under a different name, chosen deliberately not to collide with the dormant
-  C++ ones.
-- The C++ response limiter caps every string field in every reply at 512
-  characters — right for a property dump, fatal for a base64 image (the clip
-  produces a non-empty string that fails base64 validation, and the MCP SDK
-  drops the whole content block). `image_base64` is now in
-  `FHaybaMCPResponseBuilder::NeverTrimFields`, exempting it by field name (not
-  by command), so any command that returns an image is covered, including
-  ones not written yet. This was the root cause under #334.
+- **UE 5.7+ support.** The plugins no longer pin `EngineVersion`, so they load on
+  UE 5.7 and 5.8; install docs cover 5.7+ and symlink installs.
+- `hayba_import_landscape` and `import_landscape` are deprecated and remain for
+  one release as adapters to `world_ingest`, returning `deprecation` metadata.
+- `/chat` and `/brain` sidecar routes refuse non-loopback `Host`/`Origin`
+  (DNS-rebinding protection).
+- The visual-embeddings sidecar defaults to port 7822 (the chat sidecar keeps
+  7821); set `HAYBA_SIDECAR_PORT` to override. The two visual sidecar apps were
+  merged into one ([ADR-0006](docs/adr/0006-one-visual-sidecar.md)).
+- Satellite plugins settled ([ADR-0008](docs/adr/0008-satellite-plugins-earn-their-place.md)):
+  `HaybaMCPGAS` and `HaybaMCPMetaSound` ship.
+- Tool registration uses one descriptor catalogue; `ueTool` replaces dozens of
+  pass-through wrappers, and static checks know every call form
+  ([ADR-0007](docs/adr/0007-static-checks-must-know-every-call-form.md)).
+- Security hardening: secret redaction at Node response boundaries, an
+  idempotency ledger, safer archive ingestion, bounded embedded Python policy,
+  rate-limited dashboard storage, and production dependency gating.
+- The website now focuses on the Unreal toolkit.
 
 ### Fixed
-- Long native commands no longer lose their TCP response at the five-second
-  next-frame read deadline. The server now tracks accepted requests through
-  response send completion, suspends only the empty next-frame idle timeout
-  while work is outstanding, and still disconnects idle clients and partial-
-  frame slowloris senders on a bounded deadline.
-- Anthropic SDK 0.115 compatibility keeps context-window exhaustion,
-  refusals, token limits, pauses, and unknown future stop reasons distinct
-  instead of reporting them as a successful `end_turn`. Unsupported
-  mid-turn tool-catalog changes and malformed streamed tool JSON now fail
-  closed with bounded diagnostics; the unused second SDK dependency in the
-  architecture package was removed.
-- Large Widget Blueprints no longer lose controls after the native 50-item
-  response limit. `ui_layout_snapshot` now supports exact-name reads and
-  truthful pagination; `ui_copy_style` targets source/destination names
-  directly, and `ui_validate` reconstructs every page or fails closed instead
-  of silently judging an incomplete HUD.
-- `test_run` now accepts the same case-insensitive filter/category selectors as
-  `test_list`, rejects empty, ambiguous, and zero-match requests instead of
-  returning false-green empty results, and reports explicit pass/fail/skip
-  counts through `build_status`. Test status is structured rather than clipped
-  by the generic 512-character string limit; malformed results and unknown job
-  ids fail at the handler boundary.
-- Native handler SEH containment no longer resumes the normal transaction,
-  hashing, UI, and response-building tail after a structured exception. The
-  params hash is captured before dispatch and a fault returns immediately with
-  the editor session marked suspect, preventing the observed recovery-path
-  double fault.
-- UE 5.8 clean builds no longer fail to link the foliage add/paint tools.
-  `AInstancedFoliageActor::AddInstances` is declared on a `MinimalAPI` class
-  but not exported; Hayba now performs the same append through exported
-  `AInstancedFoliageActor` / `FFoliageInfo` APIs and preserves count readback.
-- CI on `main` had been red for 26 days, from three causes that were not the code under test: `room-grammar.test.ts` read a developer-machine absolute path (`D:/UnrealEngine/...`); `registerDeferredRouting` **created** its embedding backend instead of accepting one, so the default probe's Hugging Face model download blew a 5s test timeout on any cold cache; and `no-stub-wrappers` correctly flagged three Blueprint commands that had been implemented but left on the stub denylist. `probeOllama` also had no timeout at all.
-- **One visual sidecar.** Two FastAPI apps, both titled `hayba-visual-sidecar`, both defaulting to `:7821`, serving disjoint endpoints, with a single Node adapter calling across both — so whichever process ran, half the adapter was broken. Merged ([ADR-0006](docs/adr/0006-one-visual-sidecar.md)). The app also could not be *imported* without multi-GB weights, which took `/health` down with it; model imports are now lazy and `/health` reports real capability rather than a hardcoded `"clip": true`.
-- The TCP receive buffer was never cleared on socket close, so a half-arrived frame from a dead editor prefixed the next connection's first frame and desynced the stream. Surfaced by extracting `FrameDecoder`.
+- Website: docs layout, copyable command blocks, 320px reflow, contrast and
+  accessibility, mobile header menu, self-hosted fonts, and corrected product
+  facts.
+- Long native commands keep their TCP response past the next-frame read
+  deadline; the receive buffer is cleared on socket close; TCP teardown and
+  backpressure are exact.
+- Crash containment: a caught structured exception no longer resumes the normal
+  handler tail or skips the engine's world restore.
+- Base64 images are never trimmed by the response limiter (root cause of #334).
+- Truthful results: material parameter metadata, test counts and selectors,
+  mutation outcomes, large Widget Blueprint audits (paginated), ScrollBox-aware
+  UI validation, `render_camera`, `data_create` save status.
+- UE 5.8: foliage add/paint links, MetaSound builder registry, enum boundaries.
+- Anthropic SDK 0.115 stop reasons are kept distinct instead of reported as
+  `end_turn`.
+- Tests no longer depend on a developer-machine path or a cold model download.
+- Plan Mode messages point at the Settings toggle.
 
-### Changed
-- `ueTool(command, schema)` absorbs the pass-through wrapper body — 93 byte-identical copies down to 36 that differ for a reason. `toMcpResponse` and `FrameDecoder` recovered from a branch stranded since May rather than rewritten.
-- Two grep-based static checks were taught the new call form. Both kept **passing** while silently exempting 55 call sites, because `ueTool` calls `executeCommand` internally ([ADR-0007](docs/adr/0007-static-checks-must-know-every-call-form.md)). `wire-command-names` coverage went 56 → 111 sites.
-- Repo shape: `apps/` (1,160 untracked residue files), the root `assets/` duplicate of `website/assets/` (~53 MB), `mcp-tools/gaea` (a `dist/` with no `src/`) and 7 unimported source files deleted. Handoffs filed into `docs/handoffs/`. `workspaces` narrowed from a glob matching four directories of which one had a manifest.
-- `vitest.config.ts` carried 23 exclude patterns of which 21 matched no file, and was suppressing 13 passing tests. Now one honest pattern.
-- CI gained C++ static analysis (CodeQL `c-cpp`) — the 43k-line plugin previously had none — and the sidecar job, formerly "import + lint", now actually imports and runs pytest, torch-free on purpose.
+### Removed
+- Private working docs (personal dashboard, task backlog, local handoffs and
+  internal research) are no longer tracked in the public repo, and a consumer
+  project's name was removed from public docs.
+- `HaybaMCPNiagara` and `HaybaMCPSequencer` satellite plugins (their commands
+  duplicated shipping `niagara_*` / `seq_*` tools).
+- The unused single-request chat client and the optional local
+  `@huggingface/transformers` embedding backend (with its vulnerable
+  dependency graph).
+- Stale website pages and orphaned showcase assets, untracked residue
+  directories, and the unused Three.js npm install.
 
 ## [0.1.0] — 2026-08-07
 
@@ -232,5 +146,6 @@ commits are summarized in the [open feat/mcp-stabilization PR](https://github.co
 - Onboarding wizard + Plan Mode + 7d/50-call auto-prompt.
 - Visual sidecar (CLIP / SpatialCLIP / OWL-ViT) addon package.
 
-[Unreleased]: https://github.com/zajalist/hayba/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/zajalist/hayba/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/zajalist/hayba/compare/v0.1.0...v0.3.0
 [0.1.0]: https://github.com/zajalist/hayba/releases/tag/v0.1.0
