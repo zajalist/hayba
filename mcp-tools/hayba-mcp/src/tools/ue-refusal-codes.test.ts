@@ -41,3 +41,47 @@ describe('T1: editor_unsafe codes (ADR-0011)', () => {
     expect((error as UeToolError).code).toBe('ue_error');
   });
 });
+
+describe('T2: PIE refusal codes', () => {
+  const pieDetail = {
+    pie: 'agent:lane3',
+    phase: 'queued',
+    simulating: false,
+    since_s: 0,
+    command: 'editor_pie_press_key',
+    caller_owner: 'lane5',
+    rule: 'pie_owner',
+  };
+
+  it.each(['pie_active', 'pie_blocked'] as const)('%s maps to its own code and is sent once', async (code) => {
+    let calls = 0;
+    const sender: Sender = async () => {
+      calls += 1;
+      return { id: 't', ok: false, code, error: `${code}: refused; nothing ran`, pie: pieDetail };
+    };
+    const err = await executeCommand('blueprint_add_node', {}, { sender }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(UeToolError);
+    expect((err as UeToolError).code).toBe(code);
+    expect(calls).toBe(1);
+  });
+
+  it('keeps the pie detail on the payload', async () => {
+    const sender: Sender = async () => ({ id: 't', ok: false, code: 'pie_active', error: 'pie_active: refused', pie: pieDetail });
+    const err = (await executeCommand('editor_pie_press_key', {}, { sender }).catch((e: unknown) => e)) as UeToolError;
+    expect((err.uePayload as TcpResponse).pie).toEqual(pieDetail);
+  });
+
+  it('pie_blocked keeps the blocked Blueprints in data', async () => {
+    const data = { ok: false, code: 'pie_blocked', blocked_assets: [{ asset: '/Game/BP_A.BP_A', status: 'errored' }], blocked_count: 1 };
+    const sender: Sender = async () => ({
+      id: 't',
+      ok: false,
+      code: 'pie_blocked',
+      error: "pie_blocked: 'editor_start_pie' was not run: 1 Blueprint(s) would open a modal dialog before play (/Game/BP_A.BP_A is errored). Compile or fix them first.",
+      data,
+    });
+    const err = (await executeCommand('editor_start_pie', {}, { sender }).catch((e: unknown) => e)) as UeToolError;
+    expect(err.code).toBe('pie_blocked');
+    expect((err.uePayload as TcpResponse).data).toEqual(data);
+  });
+});

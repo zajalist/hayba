@@ -15,7 +15,11 @@ export type UeToolErrorCode =
   // An earlier native fault left the editor unsafe; nothing runs until it restarts (ADR-0011).
   | 'editor_unsafe_restart_required'
   // This command raised a native fault; its outcome is unknown and the editor must restart (ADR-0011).
-  | 'native_fault_contained';
+  | 'native_fault_contained'
+  // PIE is running or queued and the command is not PIE-safe; nothing ran (docs/adr/0012).
+  | 'pie_active'
+  // editor_start_pie found loaded Blueprints that would open a modal dialog before play.
+  | 'pie_blocked';
 
 export class UeToolError extends Error {
   readonly code: UeToolErrorCode;
@@ -34,6 +38,8 @@ const KNOWN_UE_CODES = new Set<UeToolErrorCode>([
   'lease_conflict',
   'editor_unsafe_restart_required',
   'native_fault_contained',
+  'pie_active',
+  'pie_blocked',
 ]);
 function mapUeCode(raw: string | undefined): UeToolErrorCode {
   if (raw && KNOWN_UE_CODES.has(raw as UeToolErrorCode)) return raw as UeToolErrorCode;

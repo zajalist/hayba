@@ -34,6 +34,9 @@ export interface TcpResponse {
   editor_health?: Record<string, unknown>;
   /** Typed lifecycle advisory the editor attaches to failures (state, mutation_status, session_health, …). */
   advisory?: Record<string, unknown>;
+  /** pie_active: the play session that refused the command
+   *  {pie, phase, simulating, since_s, command, caller_owner, rule}. */
+  pie?: Record<string, unknown>;
 }
 
 const MAX_OWNER_CHARS = 128;
