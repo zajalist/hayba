@@ -1,5 +1,6 @@
 #include "HaybaMCPPIEHandler.h"
 #include "HaybaPIERuntimeOps.h"
+#include "HaybaMCPEditorState.h"
 
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
@@ -69,24 +70,11 @@ TArray<FString> FHaybaMCPPIEHandler::GetCommands() const
     };
 }
 
-FHaybaMCPPIEHandler::~FHaybaMCPPIEHandler()
-{
-#if WITH_EDITOR
-    if (bHooksBound && GEditor)
-    {
-        if (BeginPIEHandle.IsValid())  FEditorDelegates::BeginPIE.Remove(BeginPIEHandle);
-        if (EndPIEHandle.IsValid())    FEditorDelegates::EndPIE.Remove(EndPIEHandle);
-        if (CancelPIEHandle.IsValid()) FEditorDelegates::CancelPIE.Remove(CancelPIEHandle);
-    }
-#endif
-}
-
 FHaybaHandlerResult FHaybaMCPPIEHandler::Handle(const FString& Cmd, const TSharedPtr<FJsonObject>& Params)
 {
 #if !WITH_EDITOR
     return FHaybaHandlerResult::Err(TEXT("PIE handler only available in editor builds"));
 #else
-    EnsureLifecycleHooks();
     if (Cmd == TEXT("editor_pie_assert"))     return PIEAssert(Params);
     if (Cmd == TEXT("editor_pie_wait_for"))   return PIEWaitFor(Params);
     if (Cmd == TEXT("editor_pie_press_key"))  return PIEPressKey(Params);
@@ -106,35 +94,6 @@ FHaybaHandlerResult FHaybaMCPPIEHandler::Handle(const FString& Cmd, const TShare
 }
 
 #if WITH_EDITOR
-
-void FHaybaMCPPIEHandler::EnsureLifecycleHooks()
-{
-    if (bHooksBound) return;
-    bHooksBound = true;
-
-    BeginPIEHandle = FEditorDelegates::BeginPIE.AddLambda([this](const bool bIsSimulating)
-    {
-        this->OnBeginPIE(bIsSimulating);
-    });
-    EndPIEHandle = FEditorDelegates::EndPIE.AddLambda([this](const bool bIsSimulating)
-    {
-        this->OnEndPIE(bIsSimulating);
-    });
-    CancelPIEHandle = FEditorDelegates::CancelPIE.AddLambda([this]()
-    {
-        this->OnEndPIE(false);
-    });
-}
-
-void FHaybaMCPPIEHandler::OnBeginPIE(const bool /*bIsSimulating*/)
-{
-    bCancelPending = false;
-}
-
-void FHaybaMCPPIEHandler::OnEndPIE(const bool /*bIsSimulating*/)
-{
-    bCancelPending = true;
-}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -382,7 +341,7 @@ FHaybaHandlerResult FHaybaMCPPIEHandler_WaitLoop(
     // response carries `polling: true` so that is obvious from the result
     // rather than only from the docs.
     {
-        if (Self.bCancelPending)
+        if (!FHaybaMCPEditorState::Get().IsPieActiveOrQueued())
         {
             TSharedPtr<FJsonObject> R = MakeShared<FJsonObject>();
             R->SetBoolField(TEXT("matched"), false);

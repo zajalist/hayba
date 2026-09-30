@@ -1,5 +1,8 @@
 #include "Misc/AutomationTest.h"
 #include "HaybaMCPEditorStatePolicy.h"
+#include "HaybaMCPEditorState.h"
+#include "HaybaMCPEditorHealth.h"
+#include "Misc/ScopeExit.h"
 
 #if WITH_DEV_AUTOMATION_TESTS
 
@@ -283,6 +286,33 @@ bool FHaybaMCPStateUserPlayDecisionTest::RunTest(const FString& Parameters)
 	TestFalse(TEXT("and does not notify"), Healthy.bNotifyOnly);
 	TestFalse(TEXT("the veto text never says token"), FString(UnsafePlayVetoText).Contains(TEXT("token"), ESearchCase::IgnoreCase));
 	TestEqual(TEXT("the double-press window is 10 s"), PlayVetoOverrideWindowSeconds, 10.0);
+	// Runtime: Startup registers the authorizer; Shutdown removes it.
+	{
+		FHaybaMCPEditorState& State = FHaybaMCPEditorState::Get();
+		TestTrue(TEXT("the authorizer is registered at module startup"), State.IsAuthorizerRegistered());
+		State.Shutdown();
+		ON_SCOPE_EXIT
+		{
+			FHaybaMCPEditorState::Get().Startup();
+		};
+		TestFalse(TEXT("unregistered after Shutdown"), State.IsAuthorizerRegistered());
+		TestFalse(TEXT("hooks unbound after Shutdown"), State.AreHooksBound());
+		State.Startup();
+		TestTrue(TEXT("registered again after Startup"), State.IsAuthorizerRegistered());
+	}
+	// Runtime: while unsafe, the authorizer's decision is the unsafe veto, with no override.
+	{
+		FHaybaEditorHealth::FScopedOverrideForTests Health;
+		AddExpectedMessagePlain(TEXT("editor_unsafe: native fault"), ELogVerbosity::Error, EAutomationExpectedMessageFlags::Contains, 1);
+		FHaybaEditorHealth::RecordCaughtFault(EHaybaFaultSite::TestInjection, 0xC0000005u);
+		const FPlayDecision Veto = FHaybaMCPEditorState::Get().EvaluateUserPlayRequest(FPlatformTime::Seconds());
+		TestTrue(TEXT("Play is denied while unsafe"), Veto.bDeny);
+		TestFalse(TEXT("no override while unsafe"), Veto.bOverrideAccepted);
+		TestEqual(TEXT("with the unsafe veto text"), Veto.Reason, FString(UnsafePlayVetoText));
+		TestEqual(TEXT("the fault logged its Error line once"), Health.FaultErrorLineCount(), 1);
+	}
+	TestFalse(TEXT("the health override left a clean process"), FHaybaEditorHealth::IsUnsafe());
+	TestFalse(TEXT("a healthy editor allows Play"), FHaybaMCPEditorState::Get().EvaluateUserPlayRequest(FPlatformTime::Seconds()).bDeny);
 	return true;
 }
 

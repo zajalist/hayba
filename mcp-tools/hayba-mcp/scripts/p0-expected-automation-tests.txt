@@ -36,3 +36,4 @@ Hayba.MCP.State.ResolvePieBackstop
 Hayba.MCP.State.UserPlayDecision
 Hayba.MCP.Batch.HoldExcludedFromFenceTimeout
 Hayba.MCP.Batch.ValidateRejectsPieSteps
+Hayba.MCP.State.HooksBoundAtStartup

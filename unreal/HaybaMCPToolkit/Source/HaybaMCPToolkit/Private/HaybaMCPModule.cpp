@@ -58,6 +58,7 @@
 #include "handlers/HaybaMCPRenderHandler.h"
 #include "handlers/HaybaMCPLeaseHandler.h"
 #include "handlers/HaybaMCPBatchHandler.h"
+#include "HaybaMCPEditorState.h"
 #include "HaybaMCPCaptureActor.h"
 #include "HaybaMCPSettings.h"
 #include "HaybaMCPRenderSafety.h"
@@ -210,6 +211,11 @@ void FHaybaMCPModule::StartupModule()
     CommandHandler->RegisterHandler(MakeShared<FHaybaMCPRenderHandler>());
     CommandHandler->RegisterHandler(MakeShared<FHaybaMCPLeaseHandler>());
     CommandHandler->RegisterHandler(MakeShared<FHaybaMCPBatchHandler>());
+
+    // PIE hooks and the Play authorizer exist before any request can arrive
+    // (the TCP server starts below) and in owned automation children, which
+    // never start a server. Editor state must depend on neither (docs/adr/0012).
+    FHaybaMCPEditorState::Get().Startup();
 
     // Optional-capability check: warn (log + editor notification) for any
     // satellite plugin that is disabled, so the user understands why a command
@@ -367,6 +373,7 @@ void FHaybaMCPModule::ShutdownModule()
     // Every engine-owned callback below executes code from this DLL. Revoke
     // them before any UI/server teardown so a hot unload cannot leave a timer,
     // console command, or ToolMenus startup callback pointing at plugin code.
+    FHaybaMCPEditorState::Get().Shutdown();
     if (GEditor && AutoOpenTimerHandle.IsValid())
     {
         GEditor->GetTimerManager()->ClearTimer(AutoOpenTimerHandle);
