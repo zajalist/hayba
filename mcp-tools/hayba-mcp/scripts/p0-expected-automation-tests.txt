@@ -27,3 +27,10 @@ Hayba.MCP.Health.FaultInjectionIsGuarded
 Hayba.MCP.Health.PythonGuardFaultSetsPythonUnhealthy
 Hayba.MCP.Health.BatchStepRefusedWhileUnsafe
 Hayba.MCP.Health.BatchPumpStopsWhileUnsafe
+
+# T2
+Hayba.MCP.State.PieRule
+Hayba.MCP.State.PieVerdict
+Hayba.MCP.State.PieTracker
+Hayba.MCP.State.ResolvePieBackstop
+Hayba.MCP.State.UserPlayDecision
