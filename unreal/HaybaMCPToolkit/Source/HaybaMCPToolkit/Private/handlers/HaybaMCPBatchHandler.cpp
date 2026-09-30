@@ -11,6 +11,7 @@
 #include "HaybaMCPBatchPolicy.h"
 #include "HaybaMCPCommandHandler.h"
 #include "HaybaMCPEditorHealth.h"
+#include "HaybaMCPEditorState.h"
 #include "HaybaMCPJobRegistry.h"
 #include "HaybaMCPLeaseManager.h"
 #include "HaybaMCPModule.h"
@@ -109,6 +110,10 @@ namespace
 		if (IsAsyncLoading())
 		{
 			Busy.Add(TEXT("async_loading"));
+		}
+		if (FHaybaMCPEditorState::Get().IsPieActiveOrQueued())
+		{
+			Busy.Add(TEXT("pie"));
 		}
 		return FString::Join(Busy, TEXT(","));
 	}
@@ -535,6 +540,13 @@ namespace
 			Out->SetStringField(TEXT("fence"), LexFence(M.GetFenceKind()));
 			Out->SetStringField(TEXT("busy"), S.LastBusy.IsEmpty() ? TEXT("none") : *S.LastBusy);
 		}
+		Out->SetNumberField(TEXT("held_s"), M.GetHeldSeconds());
+		if (!M.IsDone() && M.IsHeld())
+		{
+			// PIE is running or queued: the batch waits and its lease keeps renewing.
+			Out->SetBoolField(TEXT("held"), true);
+			Out->SetStringField(TEXT("busy"), TEXT("pie"));
+		}
 		if (M.Failed())
 		{
 			Out->SetNumberField(TEXT("failed_step"), M.GetFailedStep());
@@ -678,6 +690,15 @@ namespace
 			In.FenceGrantsOutstanding = Table.CountFenceGrants(S->LeaseToken);
 		}
 		In.LoadedRegions = CountLoaded(*S);
+
+		// PIE hold, after the lease keep-alive above so the batch lease renews
+		// through a PIE of any length. The machine spends no fence or yield time
+		// while held, and a queued PIE request counts (docs/adr/0012, R-11).
+		In.bHeld = FHaybaMCPEditorState::Get().IsPieActiveOrQueued();
+		if (In.bHeld)
+		{
+			S->LastBusy = TEXT("pie");
+		}
 
 		switch (S->Machine->Tick(In))
 		{

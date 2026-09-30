@@ -44,3 +44,4 @@ Hayba.MCP.State.StartPieBlockedByModal
 Hayba.MCP.State.GetStateShape
 Hayba.MCP.State.PieSafeDrift
 Hayba.MCP.State.StartPieBlockedByDirtyCode
+Hayba.MCP.State.BatchHoldsDuringPIE

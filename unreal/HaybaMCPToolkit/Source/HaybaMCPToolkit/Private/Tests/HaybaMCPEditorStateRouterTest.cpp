@@ -18,13 +18,16 @@
 #include "IPIEAuthorizer.h"
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "Kismet2/KismetEditorUtilities.h"
+#include "Misc/CommandLine.h"
 #include "Misc/Guid.h"
+#include "Misc/Parse.h"
 #include "Misc/ScopeExit.h"
 #include "Modules/ModuleManager.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
 #include "Settings/LevelEditorPlaySettings.h"
+#include "Tests/HaybaMCPLatentTest.h"
 #include "UObject/Package.h"
 
 #if WITH_DEV_AUTOMATION_TESTS
@@ -755,6 +758,110 @@ bool FHaybaMCPStatePieSafeDriftTest::RunTest(const FString& Parameters)
 	TArray<FString> SafeSorted = ActualNonLease.Array();
 	SafeSorted.Sort();
 	AddInfo(FString::Printf(TEXT("PIE-safe (%d): %s"), SafeSorted.Num(), *FString::Join(SafeSorted, TEXT(", "))));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FHaybaMCPStateBatchHoldsDuringPIETest,
+	"Hayba.MCP.State.BatchHoldsDuringPIE",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FHaybaMCPStateBatchHoldsDuringPIETest::RunTest(const FString& Parameters)
+{
+	const TSharedPtr<FHaybaMCPCommandHandler> Router = GetRouter(*this);
+	if (!Router.IsValid() || !NoRealPie(*this)) return false;
+
+	struct FHoldContext
+	{
+		FString Owner;
+		FString LeaseHandle;
+		FString JobId;
+		double ExpiresBefore = 0.0;
+		TUniquePtr<FHaybaMCPEditorState::FScopedPieOverride> Pie;
+	};
+	const TSharedRef<FHoldContext> Ctx = MakeShared<FHoldContext>();
+	Ctx->Owner = MakeTestOwner();
+
+	// A 10 s lease: the pump's keep-alive (below 30 s -> 90 s) must renew it during the hold.
+	HaybaMCPLease::FRequest Request;
+	Request.Owner = Ctx->Owner;
+	Request.TtlSeconds = 10.0;
+	Request.Label = TEXT("test:batch-hold");
+	HaybaMCPAccess::FClaim Claim;
+	FString ParseError;
+	TestTrue(TEXT("asset claim parses"), HaybaMCPAccess::ParseResource(
+		TEXT("asset:/Game/__HaybaTest__/BatchHold_") + Ctx->Owner.Right(8), Claim.Resource, ParseError));
+	Claim.bExclusive = true;
+	Request.Claims.Add(Claim);
+	const HaybaMCPLease::FAcquireResult Granted = FHaybaMCPLeaseManager::Get().Table().Acquire(Request);
+	if (!TestEqual(TEXT("lease granted"), Granted.Status, HaybaMCPLease::EStatus::Granted)) return false;
+	Ctx->LeaseHandle = Granted.Token;
+	Ctx->ExpiresBefore = Granted.ExpiresAt;
+
+	TSharedPtr<FJsonObject> Params = MakeShared<FJsonObject>();
+	Params->SetStringField(TEXT("lease"), Ctx->LeaseHandle);
+	TArray<TSharedPtr<FJsonValue>> Steps;
+	for (int32 I = 0; I < 2; ++I)
+	{
+		TSharedPtr<FJsonObject> Step = MakeShared<FJsonObject>();
+		Step->SetStringField(TEXT("cmd"), TEXT("ping"));
+		Step->SetStringField(TEXT("fence_after"), TEXT("none"));
+		Steps.Add(MakeShared<FJsonValueObject>(Step));
+	}
+	Params->SetArrayField(TEXT("steps"), Steps);
+	FHaybaMCPSettings& Settings = FHaybaMCPSettings::Get();
+	const bool bPlanModeWas = Settings.bPlanModeEnabled;
+	Settings.bPlanModeEnabled = false;   // editor_batch is plan-gated; the test is not about Plan Mode
+	const TSharedPtr<FJsonObject> Started = Send(*Router, 900301, Ctx->Owner, TEXT("editor_batch"), Params);
+	Settings.bPlanModeEnabled = bPlanModeWas;
+	if (!TestTrue(TEXT("editor_batch starts"), BoolOf(Started, TEXT("ok"))))
+	{
+		FString ReleaseError;
+		FHaybaMCPLeaseManager::Get().Table().Release(Ctx->LeaseHandle, Ctx->Owner, ReleaseError);
+		return false;
+	}
+	Ctx->JobId = StringOf(ObjectOf(Started, TEXT("data")), TEXT("job_id"));
+
+	// R-11: a queued request holds the batch like a running session. Set before the first pump tick.
+	Ctx->Pie = MakeUnique<FHaybaMCPEditorState::FScopedPieOverride>(
+		MakePie(HaybaMCPState::EPieKind::User, HaybaMCPState::EPiePhase::Queued));
+
+	const TFunction<TSharedPtr<FJsonObject>()> ReadStatus = [Router, Ctx]()
+	{
+		TSharedPtr<FJsonObject> Query = MakeShared<FJsonObject>();
+		Query->SetStringField(TEXT("job_id"), Ctx->JobId);
+		return ObjectOf(Send(*Router, 900301, Ctx->Owner, TEXT("batch_status"), Query), TEXT("data"));
+	};
+
+	const double HoldStart = FPlatformTime::Seconds();
+	ADD_LATENT_AUTOMATION_COMMAND(FHaybaWaitUntilLatentCommand(this, TEXT("a 1.5 s hold under a queued PIE"),
+		[HoldStart]() { return FPlatformTime::Seconds() - HoldStart >= 1.5; }, 3.0));
+	ADD_LATENT_AUTOMATION_COMMAND(FFunctionLatentCommand([this, Ctx, ReadStatus]()
+	{
+		const TSharedPtr<FJsonObject> During = ReadStatus();
+		TestEqual(TEXT("still running"), StringOf(During, TEXT("status")), FString(TEXT("running")));
+		TestEqual(TEXT("no step ran during PIE"), NumberOf(During, TEXT("steps_run")), 0.0);
+		TestTrue(TEXT("the status says it is held"), BoolOf(During, TEXT("held")));
+		TestEqual(TEXT("by PIE"), StringOf(During, TEXT("busy")), FString(TEXT("pie")));
+		TestTrue(TEXT("held_s counts the hold"), NumberOf(During, TEXT("held_s")) >= 1.0);
+		const HaybaMCPLease::FLease* Lease = FHaybaMCPLeaseManager::Get().Table().FindLease(Ctx->LeaseHandle);
+		TestTrue(TEXT("the batch lease kept renewing during the hold"), Lease && Lease->ExpiresAt > Ctx->ExpiresBefore + 60.0);
+		Ctx->Pie.Reset();   // PIE ends
+		return true;
+	}));
+	ADD_LATENT_AUTOMATION_COMMAND(FHaybaWaitUntilLatentCommand(this, TEXT("the batch resumes and finishes"),
+		[ReadStatus]() { const FString Status = StringOf(ReadStatus(), TEXT("status")); return !Status.IsEmpty() && Status != TEXT("running"); }, 5.0));
+	ADD_LATENT_AUTOMATION_COMMAND(FFunctionLatentCommand([this, Ctx, ReadStatus]()
+	{
+		const TSharedPtr<FJsonObject> After = ReadStatus();
+		TestEqual(TEXT("the batch succeeds after the hold"), StringOf(After, TEXT("status")), FString(TEXT("succeeded")));
+		TestEqual(TEXT("both steps ran"), NumberOf(After, TEXT("steps_run")), 2.0);
+		TestTrue(TEXT("the final status keeps the held time"), NumberOf(After, TEXT("held_s")) >= 1.0);
+		Ctx->Pie.Reset();
+		FString ReleaseError;
+		FHaybaMCPLeaseManager::Get().Table().Release(Ctx->LeaseHandle, Ctx->Owner, ReleaseError);
+		return true;
+	}));
 	return true;
 }
 
