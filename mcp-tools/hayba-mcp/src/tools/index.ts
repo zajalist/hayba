@@ -3406,11 +3406,12 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
   {
     name: 'editor_get_state',
     description:
-      'One-shot consolidated native editor status: current map, PIE/play state, selected-actor count, and dirty (unsaved) package list. The master gating probe before any action loop.',
+      'One-shot consolidated native editor status: current map, who owns PIE (pie: none | user | agent:<owner>) and its phase, selected-actor count, Live Coding / shader / save activity, asset builds in progress, editor health, and the dirty (unsaved) package list (include_dirty:false skips that walk). The master gating probe before any action loop; after a pie_active refusal, poll it until pie is "none".',
     meta: editorGetStateMeta,
     handler: editorGetStateHandler,
     cost: 'low',
-    returns: '{ok, map, pie_running, selection_count, dirty_packages[], dirty_count}',
+    returns:
+      '{ok, map, selection_count, caller_owner, pie, pie_running, pie_phase, pie_since_s, pie_simulating, compiling, shader_jobs, saving, building[], editor_unsafe, python_unhealthy, health{}, dirty_packages[]?, dirty_count?, dirty_packages_skipped?}',
     schema: editorGetStateSchema.shape,
   },
   {
