@@ -79,3 +79,7 @@ Hayba.MCP.Save.ReadOnly.EnvelopeCarriesCodeAndHint
 Hayba.MCP.Lease.EnforcementDecision
 Hayba.MCP.Lease.OwnerPresence
 Hayba.MCP.Lease.ProcessingLogOwner
+
+# T7
+Hayba.MCP.Lease.IdempotentAcquire
+Hayba.MCP.Lease.RenewByOwner

@@ -307,11 +307,12 @@ FString FHaybaMCPLeaseManager::EffectiveOwner()
 void FHaybaMCPLeaseManager::OnConnectionClosed(int32 ConnId)
 {
 	Presence.OnConnectionClosed(ConnId);
-	const int32 Released = LeaseTable.ReleaseConnection(ConnId);
-	if (Released > 0)
+	const int32 Orphaned = LeaseTable.OnConnectionClosed(ConnId);
+	if (Orphaned > 0)
 	{
 		UE_LOG(LogHaybaMCPLease, Log,
-			TEXT("Connection %d closed: released %d bound lease(s)/ticket(s)"), ConnId, Released);
+			TEXT("Connection %d closed: %d bound lease(s) orphaned; each lapses %.0f s later unless its owner renews it"),
+			ConnId, Orphaned, LeaseTable.GetTuning().OrphanGraceSeconds);
 	}
 }
 

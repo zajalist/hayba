@@ -10,7 +10,8 @@
  * injected, so every expiry, aging and fairness edge case is deterministic
  * in Hayba.MCP.Lease.* tests.
  *
- * The table never blocks. Acquire answers "granted" (with a lease_id) or
+ * The table never blocks. Acquire answers "granted" (with a lease id; the same one again
+ * for an identical request) or
  * "queued" (with a ticket, position, the blocking holder and an ETA); the
  * caller polls by calling Acquire again with its ticket. The game thread is
  * never parked waiting for a lease. See docs/adr/0010.
@@ -49,6 +50,10 @@ namespace HaybaMCPLease
 		 *  this long from its grant, renewals included, so a batch parked at a
 		 *  fence always gets its resources back. */
 		double FenceGrantMaxSeconds = 30.0;
+		/** A bound lease whose connection closed keeps its locks this long after
+		 *  the close, so a client that reconnects can renew it (T7). Capped at
+		 *  OrphanedAt + OrphanGraceSeconds: nothing can slide an orphan forward. */
+		double OrphanGraceSeconds = 60.0;
 	};
 
 	struct FRequest
@@ -58,7 +63,7 @@ namespace HaybaMCPLease
 		/** 0 = default TTL. Clamped to [MinTtlSeconds, MaxTtlSeconds]. */
 		double TtlSeconds = 0.0;
 		ELane Lane = ELane::Interactive;
-		/** Connection the lease dies with (bind_connection). 0 = unbound. */
+		/** Connection the lease is bound to (bind_connection). 0 = unbound. */
 		int32 ConnId = 0;
 		/** A ticket from an earlier Queued answer; empty for a new request. */
 		FString Ticket;
@@ -75,6 +80,14 @@ namespace HaybaMCPLease
 		double GrantedAt = 0.0;
 		double ExpiresAt = 0.0;
 		int32 ConnId = 0;
+		/** The acquire bound the lease to its connection (ConnId != 0 at grant). */
+		bool bBindConnection = false;
+		/** The lifetime a renew or a touch slides the expiry to. */
+		double TtlSeconds = 0.0;
+		/** When its connection closed; 0 = not orphaned. An orphan has ConnId 0. */
+		double OrphanedAt = 0.0;
+
+		bool IsOrphaned() const { return OrphanedAt > 0.0; }
 		ELane Lane = ELane::Interactive;
 		/** Held by a running editor_batch: it may yield at the batch's fences. */
 		bool bYieldable = false;
@@ -112,6 +125,8 @@ namespace HaybaMCPLease
 		/** Lease token when Granted, waiter ticket when Queued. */
 		FString Token;
 		double ExpiresAt = 0.0;
+		/** Granted by returning the caller's identical live lease (idempotent acquire). */
+		bool bReused = false;
 		/** 1-based place among the waiters that must go first. */
 		int32 Position = 0;
 		FString HolderOwner;
@@ -120,6 +135,18 @@ namespace HaybaMCPLease
 		double EtaSeconds = -1.0;
 		FString ConflictDetail;
 		FString Error;
+	};
+
+	struct FOwnerRenewResult
+	{
+		int32 Renewed = 0;
+		double MinExpiresAt = 0.0;
+	};
+
+	struct FOwnerReleaseResult
+	{
+		int32 Released = 0;
+		int32 TicketsWithdrawn = 0;
 	};
 
 	/** One exclusive asset lock and the lease that holds it (a build marking
@@ -281,6 +308,18 @@ namespace HaybaMCPLease
 					Result.Error = TEXT("at least one resource is required");
 					return Result;
 				}
+				// Idempotent acquire (T7): the same owner asking again for the same
+				// claims, label and binding gets its live lease back, refreshed.
+				if (FLease* Existing = FindReusable(Request))
+				{
+					Existing->TtlSeconds = ClampTtl(Request.TtlSeconds);
+					Existing->ExpiresAt = CapExpiry(*Existing, Now + Existing->TtlSeconds);
+					Result.Status = EStatus::Granted;
+					Result.Token = Existing->Token;
+					Result.ExpiresAt = Existing->ExpiresAt;
+					Result.bReused = true;
+					return Result;
+				}
 				const int32 Held = Leases.FilterByPredicate(
 					[&Request](const FLease& L) { return L.Owner == Request.Owner; }).Num();
 				if (Held >= Tuning.MaxLeasesPerOwner)
@@ -374,10 +413,16 @@ namespace HaybaMCPLease
 			return Result;
 		}
 
-		bool Renew(const FString& Token, const FString& Owner, double TtlSeconds, double& OutExpiresAt, FString& OutError)
+		/**
+		 * Renew one lease. ConnId 0 leaves a live lease's binding unchanged (the
+		 * batch keep-alive). On an ORPHANED lease the owner's renew revives it:
+		 * ConnId != 0 re-binds it to that connection, 0 makes it unbound.
+		 * TtlSeconds <= 0 keeps the lease's own TTL.
+		 */
+		bool Renew(const FString& Token, const FString& Owner, double TtlSeconds, double& OutExpiresAt, FString& OutError, int32 ConnId = 0)
 		{
 			Expire();
-			FLease* Lease = Leases.FindByPredicate([&Token](const FLease& L) { return L.Token == Token; });
+			FLease* Lease = FindMutable(Token);
 			if (!Lease)
 			{
 				OutError = TEXT("unknown or expired lease");
@@ -388,13 +433,68 @@ namespace HaybaMCPLease
 				OutError = FString::Printf(TEXT("lease belongs to '%s'"), *Lease->Owner);
 				return false;
 			}
-			Lease->ExpiresAt = Clock() + ClampTtl(TtlSeconds);
-			if (!Lease->FenceOf.IsEmpty())
-			{
-				Lease->ExpiresAt = FMath::Min(Lease->ExpiresAt, Lease->GrantedAt + Tuning.FenceGrantMaxSeconds);
-			}
+			RenewOne(*Lease, TtlSeconds, ConnId);
 			OutExpiresAt = Lease->ExpiresAt;
 			return true;
+		}
+
+		/** lease_renew {} : renew (and revive) every lease of Owner. */
+		FOwnerRenewResult RenewOwner(const FString& Owner, double TtlSeconds, int32 ConnId)
+		{
+			Expire();
+			FOwnerRenewResult Out;
+			for (FLease& Lease : Leases)
+			{
+				if (Lease.Owner != Owner) continue;
+				RenewOne(Lease, TtlSeconds, ConnId);
+				Out.MinExpiresAt = Out.Renewed == 0 ? Lease.ExpiresAt : FMath::Min(Out.MinExpiresAt, Lease.ExpiresAt);
+				++Out.Renewed;
+			}
+			return Out;
+		}
+
+		/** lease_release {all:true}: every lease and every ticket of Owner. */
+		FOwnerReleaseResult ReleaseOwner(const FString& Owner)
+		{
+			Expire();
+			FOwnerReleaseResult Out;
+			Out.Released = Leases.RemoveAll([&Owner](const FLease& L) { return L.Owner == Owner; });
+			Out.TicketsWithdrawn = Waiters.RemoveAll([&Owner](const FWaiter& W) { return W.Request.Owner == Owner; });
+			return Out;
+		}
+
+		/** The marker shim (R5): a redacted handle under the deprecated alias
+		 *  releases only the owner's legacy gate leases (the editor gate
+		 *  labels them editor_gate:<owner>), never a running batch's lease. */
+		int32 ReleaseLegacyGateLeases(const FString& Owner)
+		{
+			Expire();
+			const FString GateLabel = TEXT("editor_gate:") + Owner;
+			return Leases.RemoveAll([&Owner, &GateLabel](const FLease& L)
+			{
+				return L.Owner == Owner && L.Label == GateLabel && !L.bYieldable;
+			});
+		}
+
+		/**
+		 * Renew-on-use (T7): slide the expiry of Owner's live leases whose own
+		 * S/X locks a command that passed every gate uses, to at least
+		 * Now + TtlSeconds. Never shortens; never touches an orphan.
+		 */
+		int32 Touch(const FString& Owner, const TArray<FLock>& UsedLocks)
+		{
+			Expire();
+			if (UsedLocks.Num() == 0) return 0;
+			const double Now = Clock();
+			int32 Touched = 0;
+			for (FLease& Lease : Leases)
+			{
+				if (Lease.Owner != Owner || Lease.IsOrphaned() || !CoversAny(Lease.Locks, UsedLocks)) continue;
+				const double Ttl = Lease.TtlSeconds > 0.0 ? Lease.TtlSeconds : Tuning.DefaultTtlSeconds;
+				Lease.ExpiresAt = FMath::Max(Lease.ExpiresAt, CapExpiry(Lease, Now + Ttl));
+				++Touched;
+			}
+			return Touched;
 		}
 
 		/** Release a lease, or withdraw a queued ticket. */
@@ -429,14 +529,39 @@ namespace HaybaMCPLease
 			return false;
 		}
 
-		/** bind_connection: everything a closed connection held or queued goes. */
-		int32 ReleaseConnection(int32 ConnId)
+		/** bind_connection (T7): a closed connection's leases are ORPHANED, not
+		 *  deleted: they keep their locks until OrphanedAt + OrphanGraceSeconds
+		 *  unless their owner renews them. Its queued tickets go at once. */
+		int32 OnConnectionClosed(int32 ConnId)
 		{
+			Expire();
 			if (ConnId == 0) return 0;
-			const int32 Before = Leases.Num() + Waiters.Num();
-			Leases.RemoveAll([ConnId](const FLease& L) { return L.ConnId == ConnId; });
+			const double Now = Clock();
+			int32 Orphaned = 0;
+			for (FLease& Lease : Leases)
+			{
+				if (Lease.ConnId != ConnId || Lease.IsOrphaned()) continue;
+				Orphan(Lease, Now);
+				++Orphaned;
+			}
 			Waiters.RemoveAll([ConnId](const FWaiter& W) { return W.Request.ConnId == ConnId; });
-			return Before - Leases.Num() - Waiters.Num();
+			return Orphaned;
+		}
+
+		/** A TCP server restart: every bound lease loses its connection. */
+		int32 OrphanAllBound()
+		{
+			Expire();
+			const double Now = Clock();
+			int32 Orphaned = 0;
+			for (FLease& Lease : Leases)
+			{
+				if (Lease.ConnId == 0 || Lease.IsOrphaned()) continue;
+				Orphan(Lease, Now);
+				++Orphaned;
+			}
+			Waiters.RemoveAll([](const FWaiter& W) { return W.Request.ConnId != 0; });
+			return Orphaned;
 		}
 
 		/** The first lease of ANOTHER owner that conflicts with `Required`. */
@@ -598,6 +723,102 @@ namespace HaybaMCPLease
 			return Leases.FindByPredicate([&Token](const FLease& L) { return L.Token == Token; });
 		}
 
+		/** Fence grants live at most FenceGrantMaxSeconds from their grant; an
+		 *  orphan at most OrphanGraceSeconds from its close (never Now + grace). */
+		double CapExpiry(const FLease& Lease, double Wanted) const
+		{
+			double Out = Wanted;
+			if (!Lease.FenceOf.IsEmpty())
+			{
+				Out = FMath::Min(Out, Lease.GrantedAt + Tuning.FenceGrantMaxSeconds);
+			}
+			if (Lease.IsOrphaned())
+			{
+				Out = FMath::Min(Out, Lease.OrphanedAt + Tuning.OrphanGraceSeconds);
+			}
+			return Out;
+		}
+
+		void RenewOne(FLease& Lease, double TtlSeconds, int32 ConnId)
+		{
+			if (Lease.IsOrphaned())
+			{
+				// Only the owner's explicit renew revives an orphan (never a touch).
+				Lease.OrphanedAt = 0.0;
+				Lease.ConnId = ConnId;
+				Lease.bBindConnection = ConnId != 0;
+			}
+			if (TtlSeconds > 0.0)
+			{
+				Lease.TtlSeconds = ClampTtl(TtlSeconds);
+			}
+			else if (Lease.TtlSeconds <= 0.0)
+			{
+				Lease.TtlSeconds = Tuning.DefaultTtlSeconds;
+			}
+			Lease.ExpiresAt = CapExpiry(Lease, Clock() + Lease.TtlSeconds);
+		}
+
+		void Orphan(FLease& Lease, double Now)
+		{
+			// A clock of exactly 0 (a pure test) must still read as orphaned.
+			Lease.OrphanedAt = Now > 0.0 ? Now : UE_DOUBLE_SMALL_NUMBER;
+			Lease.ConnId = 0;
+			Lease.ExpiresAt = CapExpiry(Lease, Lease.ExpiresAt);
+		}
+
+		/** The live lease an identical request would duplicate: same owner,
+		 *  label, binding (and connection when bound) and claim set. Orphans and
+		 *  a running batch's (yieldable) lease are never handed out again. */
+		FLease* FindReusable(const FRequest& Request)
+		{
+			const bool bBind = Request.ConnId != 0;
+			for (FLease& Lease : Leases)
+			{
+				if (Lease.Owner != Request.Owner || Lease.Label != Request.Label) continue;
+				if (Lease.bBindConnection != bBind || (bBind && Lease.ConnId != Request.ConnId)) continue;
+				if (Lease.IsOrphaned() || Lease.bYieldable) continue;
+				if (SameClaimSet(Lease.Claims, Request.Claims)) return &Lease;
+			}
+			return nullptr;
+		}
+
+		static bool SameClaimSet(const TArray<FClaim>& A, const TArray<FClaim>& B)
+		{
+			auto Keys = [](const TArray<FClaim>& Claims)
+			{
+				TArray<FString> Out;
+				for (const FClaim& Claim : Claims)
+				{
+					Out.AddUnique(Claim.Resource.Key() + (Claim.bExclusive ? TEXT("|x") : TEXT("|s")));
+				}
+				Out.Sort();
+				return Out;
+			};
+			return Keys(A) == Keys(B);
+		}
+
+		/** A lease is "used" when a command needs a node the lease holds S or X
+		 *  on (intent locks name no resource the lease was taken for), or a
+		 *  region overlapping one of its regions. */
+		static bool CoversAny(const TArray<FLock>& Held, const TArray<FLock>& Used)
+		{
+			for (const FLock& H : Held)
+			{
+				if (H.Mode != HaybaMCPAccess::ELockMode::Shared && H.Mode != HaybaMCPAccess::ELockMode::Exclusive) continue;
+				for (const FLock& U : Used)
+				{
+					if (H.Key == U.Key) return true;
+					if (H.bRegion && U.bRegion && H.Region.World == U.Region.World
+						&& HaybaMCPAccess::RegionsOverlap(H.Region, U.Region))
+					{
+						return true;
+					}
+				}
+			}
+			return false;
+		}
+
 		bool IsFenceEligible(const FWaiter& W, double Now) const
 		{
 			return W.Request.Lane == ELane::Interactive || IsAged(W, Now);
@@ -650,6 +871,8 @@ namespace HaybaMCPLease
 			Lease.GrantedAt = Now;
 			Lease.ExpiresAt = Now + ClampTtl(Waiter.Request.TtlSeconds);
 			Lease.ConnId = Waiter.Request.ConnId;
+			Lease.bBindConnection = Waiter.Request.ConnId != 0;
+			Lease.TtlSeconds = ClampTtl(Waiter.Request.TtlSeconds);
 			Lease.Lane = Waiter.Request.Lane;
 			Lease.FenceOf = FenceOf;
 			if (!FenceOf.IsEmpty())

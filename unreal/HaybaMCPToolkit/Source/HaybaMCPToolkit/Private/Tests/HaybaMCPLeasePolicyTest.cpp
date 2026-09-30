@@ -257,8 +257,17 @@ bool FHaybaMCPLeaseTableTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("a free world is granted"), A.Status, EStatus::Granted);
 	TestEqual(TEXT("default TTL is 120 s"), A.ExpiresAt, Now + 120.0);
 
+	TestFalse(TEXT("a first grant is not a reuse"), A.bReused);
 	const FAcquireResult Again = Table.Acquire(MakeRequest(*this, TEXT("agent-a"), World));
-	TestEqual(TEXT("an owner never conflicts with itself"), Again.Status, EStatus::Granted);
+	TestTrue(TEXT("an identical re-acquire reuses the lease"), Again.bReused);
+	TestEqual(TEXT("the same lease id comes back"), Again.Token, A.Token);
+	TestEqual(TEXT("no ghost second lease"), Table.GetLeases().Num(), 1);
+
+	HaybaMCPLease::FRequest Labelled = MakeRequest(*this, TEXT("agent-a"), World);
+	Labelled.Label = TEXT("second holder");
+	const FAcquireResult Second = Table.Acquire(Labelled);
+	TestEqual(TEXT("an owner never conflicts with itself"), Second.Status, EStatus::Granted);
+	TestNotEqual(TEXT("a different label is a different holder"), Second.Token, A.Token);
 
 	const FAcquireResult B = Table.Acquire(MakeRequest(*this, TEXT("agent-b"), World));
 	TestEqual(TEXT("another owner is queued, not blocked"), B.Status, EStatus::Queued);
@@ -273,7 +282,7 @@ bool FHaybaMCPLeaseTableTest::RunTest(const FString& Parameters)
 	HaybaMCPLease::FRequest Poll = MakeRequest(*this, TEXT("agent-b"), World);
 	Poll.Ticket = B.Token;
 	TestEqual(TEXT("still blocked by the owner's second lease"), Table.Acquire(Poll).Status, EStatus::Queued);
-	TestTrue(TEXT("owner releases its second lease"), Table.Release(Again.Token, TEXT("agent-a"), Error));
+	TestTrue(TEXT("owner releases its second lease"), Table.Release(Second.Token, TEXT("agent-a"), Error));
 	const FAcquireResult BGranted = Table.Acquire(Poll);
 	TestEqual(TEXT("polling the ticket grants once free"), BGranted.Status, EStatus::Granted);
 	TestEqual(TEXT("the ticket is spent"), Table.GetWaiters().Num(), 0);
@@ -287,14 +296,63 @@ bool FHaybaMCPLeaseTableTest::RunTest(const FString& Parameters)
 	TestNull(TEXT("a lapsed lease disappears"), Table.FindLease(BGranted.Token));
 	TestFalse(TEXT("renewing a lapsed lease fails"), Table.Renew(BGranted.Token, TEXT("agent-b"), 60.0, NewExpiry, Error));
 
-	// bind_connection.
+	// bind_connection: a closed connection orphans its leases for 60 s (T7).
 	HaybaMCPLease::FRequest Bound = MakeRequest(*this, TEXT("agent-c"), World);
 	Bound.ConnId = 7;
 	const FAcquireResult C = Table.Acquire(Bound);
 	TestEqual(TEXT("bound lease granted"), C.Status, EStatus::Granted);
-	TestEqual(TEXT("a disconnect releases what the connection held"), Table.ReleaseConnection(7), 1);
-	TestNull(TEXT("bound lease is gone"), Table.FindLease(C.Token));
-	TestEqual(TEXT("connection 0 is never released"), Table.ReleaseConnection(0), 0);
+	TestEqual(TEXT("a disconnect orphans what the connection held"), Table.OnConnectionClosed(7), 1);
+	const FLease* Orphan = Table.FindLease(C.Token);
+	if (TestNotNull(TEXT("an orphan survives the disconnect"), Orphan))
+	{
+		TestTrue(TEXT("it is marked orphaned"), Orphan->IsOrphaned());
+		TestEqual(TEXT("it is bound to no connection"), Orphan->ConnId, 0);
+		TestEqual(TEXT("it lapses 60 s after the close"), Orphan->ExpiresAt, Now + 60.0);
+	}
+	TestEqual(TEXT("connection 0 is never orphaned"), Table.OnConnectionClosed(0), 0);
+	TestNotNull(TEXT("an orphan still blocks another owner"),
+		Table.FindConflictingHolder(TEXT("agent-x"), RequiredLocks(EAccessClass::WriteWorld, {}, TEXT("/Game/V"))));
+	Now += 30.0;
+	TestEqual(TEXT("its owner's writes never touch an orphan"),
+		Table.Touch(TEXT("agent-c"), RequiredLocks(EAccessClass::WriteWorld, {}, TEXT("/Game/V"))), 0);
+	Now += 30.0;
+	TestNull(TEXT("the orphan lapses at OrphanedAt + 60 s though its owner kept writing"), Table.FindLease(C.Token));
+
+	// Touch-on-use: a used lock slides the expiry; anything else does not.
+	HaybaMCPLease::FRequest Touchy = MakeRequest(*this, TEXT("agent-t"), TEXT("asset:/Game/__HaybaTest__/T"));
+	Touchy.TtlSeconds = 60.0;
+	const FAcquireResult T = Table.Acquire(Touchy);
+	if (!TestEqual(TEXT("touch lease granted"), T.Status, EStatus::Granted)) return false;
+	const double TouchyGrantedAt = Now;
+	Now += 20.0;
+	TestEqual(TEXT("a write on another asset does not touch"),
+		Table.Touch(TEXT("agent-t"), ExpandClaims({ ParseClaim(*this, TEXT("asset:/Game/__HaybaTest__/Other")) })), 0);
+	TestEqual(TEXT("so the expiry is unchanged"), Table.FindLease(T.Token)->ExpiresAt, TouchyGrantedAt + 60.0);
+	TestEqual(TEXT("another owner never touches it"),
+		Table.Touch(TEXT("agent-x"), ExpandClaims({ ParseClaim(*this, TEXT("asset:/Game/__HaybaTest__/T")) })), 0);
+	TestEqual(TEXT("a write that uses the lock touches it"),
+		Table.Touch(TEXT("agent-t"), ExpandClaims({ ParseClaim(*this, TEXT("asset:/Game/__HaybaTest__/T")) })), 1);
+	TestEqual(TEXT("and slides it a full TTL from now"), Table.FindLease(T.Token)->ExpiresAt, Now + 60.0);
+	Table.Release(T.Token, TEXT("agent-t"), Error);
+
+	// Hierarchy intent locks do not count as using a held region itself.
+	FRequest Region = MakeRequest(*this, TEXT("agent-region"), TEXT("wp-region:/Game/__HaybaTest__/Map:0,0,100,100"));
+	Region.TtlSeconds = 60.0;
+	const FAcquireResult R = Table.Acquire(Region);
+	if (!TestEqual(TEXT("region lease granted"), R.Status, EStatus::Granted)) return false;
+	const double RegionExpiry = R.ExpiresAt;
+	Now += 10.0;
+	TestEqual(TEXT("a disjoint region does not touch through shared ancestors"),
+		Table.Touch(TEXT("agent-region"), ExpandClaims({ ParseClaim(*this, TEXT("wp-region:/Game/__HaybaTest__/Map:500,500,600,600")) })), 0);
+	TestEqual(TEXT("a region in another world does not touch"),
+		Table.Touch(TEXT("agent-region"), ExpandClaims({ ParseClaim(*this, TEXT("wp-region:/Game/__HaybaTest__/OtherMap:0,0,100,100")) })), 0);
+	TestEqual(TEXT("an overlapping region touches"),
+		Table.Touch(TEXT("agent-region"), ExpandClaims({ ParseClaim(*this, TEXT("wp-region:/Game/__HaybaTest__/Map:50,50,150,150")) })), 1);
+	TestEqual(TEXT("region touch slides the expiry"), Table.FindLease(R.Token)->ExpiresAt, Now + 60.0);
+	Now -= 5.0;
+	Table.Touch(TEXT("agent-region"), ExpandClaims(Region.Claims));
+	TestEqual(TEXT("touch never shortens even when the clock moves backward"), Table.FindLease(R.Token)->ExpiresAt, RegionExpiry + 10.0);
+	Table.Release(R.Token, TEXT("agent-region"), Error);
 
 	// Abandoned waiters drop out.
 	const FAcquireResult Holder = Table.Acquire(MakeRequest(*this, TEXT("agent-d"), World));
@@ -627,6 +685,197 @@ bool FHaybaMCPLeaseEnvelopeTest::RunTest(const FString& Parameters)
 	Params->SetArrayField(TEXT("resources"), Items);
 	TestFalse(TEXT("a bad resource fails the whole list"), FHaybaMCPLeaseManager::ParseClaims(Params, true, Claims, Error));
 	TestTrue(TEXT("the error names the bad resource"), Error.Contains(TEXT("level:/Game/V")));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FHaybaMCPLeaseIdempotentAcquireTest,
+	"Hayba.MCP.Lease.IdempotentAcquire",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FHaybaMCPLeaseIdempotentAcquireTest::RunTest(const FString& Parameters)
+{
+	using namespace HaybaMCPLease;
+	double Now = 1000.0;
+	FTable Table([&Now]() { return Now; });
+
+	// The gate's lease and the lane's MCP lease: one owner, one claim, two holders.
+	FRequest Gate = MakeRequest(*this, TEXT("o"), TEXT("global"));
+	Gate.Label = TEXT("editor_gate:o");
+	FRequest Mcp = MakeRequest(*this, TEXT("o"), TEXT("global"));
+	Mcp.ConnId = 900101;
+	const FAcquireResult GateLease = Table.Acquire(Gate);
+	const FAcquireResult McpLease = Table.Acquire(Mcp);
+	TestEqual(TEXT("gate lease granted"), GateLease.Status, EStatus::Granted);
+	TestEqual(TEXT("MCP lease granted"), McpLease.Status, EStatus::Granted);
+	TestNotEqual(TEXT("different label and binding give distinct lease ids"), GateLease.Token, McpLease.Token);
+
+	const FAcquireResult GateAgain = Table.Acquire(Gate);
+	TestTrue(TEXT("re-running the gate's acquire reuses its lease"), GateAgain.bReused);
+	TestEqual(TEXT("same gate lease id"), GateAgain.Token, GateLease.Token);
+	TestEqual(TEXT("re-running the MCP acquire reuses the MCP lease"), Table.Acquire(Mcp).Token, McpLease.Token);
+	TestEqual(TEXT("no ghost leases"), Table.GetLeases().Num(), 2);
+
+	FString Error;
+	TestTrue(TEXT("release the gate lease"), Table.Release(GateLease.Token, TEXT("o"), Error));
+	TestNotNull(TEXT("the MCP lease survives it"), Table.FindLease(McpLease.Token));
+
+	FRequest OtherConn = Mcp;
+	OtherConn.ConnId = 900102;
+	TestNotEqual(TEXT("a bound acquire on another connection is another holder"),
+		Table.Acquire(OtherConn).Token, McpLease.Token);
+
+	// Claim order is ignored; shared and exclusive differ.
+	FTable ClaimsTable([&Now]() { return Now; });
+	FRequest AB = MakeRequest(*this, TEXT("p"), TEXT("asset:/Game/__HaybaTest__/A"));
+	AB.Claims.Add(MakeRequest(*this, TEXT("p"), TEXT("asset:/Game/__HaybaTest__/B")).Claims[0]);
+	FRequest BA = MakeRequest(*this, TEXT("p"), TEXT("asset:/Game/__HaybaTest__/B"));
+	BA.Claims.Add(MakeRequest(*this, TEXT("p"), TEXT("asset:/Game/__HaybaTest__/A")).Claims[0]);
+	const FAcquireResult First = ClaimsTable.Acquire(AB);
+	TestEqual(TEXT("claim-set lease granted"), First.Status, EStatus::Granted);
+	TestTrue(TEXT("claim order is ignored"), ClaimsTable.Acquire(BA).bReused);
+	FRequest SharedAB = MakeRequest(*this, TEXT("p"), TEXT("asset:/Game/__HaybaTest__/A"), ELane::Interactive, false);
+	SharedAB.Claims.Add(MakeRequest(*this, TEXT("p"), TEXT("asset:/Game/__HaybaTest__/B")).Claims[0]);
+	TestFalse(TEXT("shared is not exclusive"), ClaimsTable.Acquire(SharedAB).bReused);
+
+	// A re-acquire refreshes the lease like a renew.
+	Now += 50.0;
+	const FAcquireResult Refreshed = ClaimsTable.Acquire(AB);
+	TestEqual(TEXT("still the same lease"), Refreshed.Token, First.Token);
+	TestEqual(TEXT("its expiry runs a full TTL from the re-acquire"), Refreshed.ExpiresAt, Now + 120.0);
+
+	// An orphan is never reused: only its owner's renew revives it.
+	TestEqual(TEXT("the MCP lease is orphaned"), Table.OnConnectionClosed(900101), 1);
+	const FAcquireResult AfterOrphan = Table.Acquire(Mcp);
+	TestFalse(TEXT("a re-acquire does not revive an orphan"), AfterOrphan.bReused);
+	TestNotEqual(TEXT("it gets a new lease id"), AfterOrphan.Token, McpLease.Token);
+
+	// A lease a running batch holds is never handed to another acquire.
+	FTable BatchTable([&Now]() { return Now; });
+	FRequest Batch = MakeRequest(*this, TEXT("q"), TEXT("world:/Game/__HaybaTest__/Map"));
+	Batch.Label = TEXT("batch");
+	const FAcquireResult BatchLease = BatchTable.Acquire(Batch);
+	TestEqual(TEXT("batch lease granted"), BatchLease.Status, EStatus::Granted);
+	TestTrue(TEXT("mark it as a running batch's lease"), BatchTable.SetYieldable(BatchLease.Token, true));
+	TestNotEqual(TEXT("a yieldable batch lease is not reused"), BatchTable.Acquire(Batch).Token, BatchLease.Token);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FHaybaMCPLeaseRenewByOwnerTest,
+	"Hayba.MCP.Lease.RenewByOwner",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FHaybaMCPLeaseRenewByOwnerTest::RunTest(const FString& Parameters)
+{
+	using namespace HaybaMCPLease;
+	double Now = 1000.0;
+	FTable Table([&Now]() { return Now; });
+
+	FRequest Bound = MakeRequest(*this, TEXT("o"), TEXT("asset:/Game/__HaybaTest__/A"));
+	Bound.ConnId = 900201;
+	Bound.TtlSeconds = 60.0;
+	FRequest Gate = MakeRequest(*this, TEXT("o"), TEXT("world:/Game/__HaybaTest__/Map"));
+	Gate.Label = TEXT("editor_gate:o");
+	Gate.TtlSeconds = 30.0;
+	const FAcquireResult L1 = Table.Acquire(Bound);
+	const FAcquireResult L2 = Table.Acquire(Gate);
+	const FAcquireResult L3 = Table.Acquire(MakeRequest(*this, TEXT("p"), TEXT("asset:/Game/__HaybaTest__/B")));
+	if (!TestEqual(TEXT("bound renewal lease granted"), L1.Status, EStatus::Granted)
+		|| !TestEqual(TEXT("gate renewal lease granted"), L2.Status, EStatus::Granted)
+		|| !TestEqual(TEXT("unrelated owner lease granted"), L3.Status, EStatus::Granted)) return false;
+
+	Now += 10.0;
+	FOwnerRenewResult Renewed = Table.RenewOwner(TEXT("o"), 0.0, 0);
+	TestEqual(TEXT("renews every lease of the owner"), Renewed.Renewed, 2);
+	TestEqual(TEXT("ttl 0 keeps the lease's own TTL (60 s)"), Table.FindLease(L1.Token)->ExpiresAt, Now + 60.0);
+	TestEqual(TEXT("ttl 0 keeps the lease's own TTL (30 s)"), Table.FindLease(L2.Token)->ExpiresAt, Now + 30.0);
+	TestEqual(TEXT("the earliest expiry is reported"), Renewed.MinExpiresAt, Now + 30.0);
+	TestEqual(TEXT("another owner's lease is untouched"), Table.FindLease(L3.Token)->ExpiresAt, 1000.0 + 120.0);
+	TestEqual(TEXT("ConnId 0 leaves a live bound lease bound (R-25, batch keep-alive)"),
+		Table.FindLease(L1.Token)->ConnId, 900201);
+
+	Renewed = Table.RenewOwner(TEXT("o"), 300.0, 0);
+	TestEqual(TEXT("an explicit TTL applies to every lease"), Table.FindLease(L2.Token)->TtlSeconds, 300.0);
+
+	TestEqual(TEXT("the bound lease is orphaned"), Table.OnConnectionClosed(900201), 1);
+	Renewed = Table.RenewOwner(TEXT("o"), 0.0, 900202);
+	const FLease* Revived = Table.FindLease(L1.Token);
+	if (TestNotNull(TEXT("the orphan is still there"), Revived))
+	{
+		TestFalse(TEXT("an owner renew revives it"), Revived->IsOrphaned());
+		TestEqual(TEXT("and re-binds it to the renewing connection"), Revived->ConnId, 900202);
+		TestTrue(TEXT("still a bound lease"), Revived->bBindConnection);
+	}
+	TestEqual(TEXT("an owner with no leases renews nothing"), Table.RenewOwner(TEXT("nobody"), 0.0, 0).Renewed, 0);
+
+	// Release all.
+	const FAcquireResult Queued = Table.Acquire(MakeRequest(*this, TEXT("o"), TEXT("asset:/Game/__HaybaTest__/B")));
+	TestEqual(TEXT("o queues behind p"), Queued.Status, EStatus::Queued);
+	const FOwnerReleaseResult Released = Table.ReleaseOwner(TEXT("o"));
+	TestEqual(TEXT("release all drops both leases"), Released.Released, 2);
+	TestEqual(TEXT("and withdraws the ticket"), Released.TicketsWithdrawn, 1);
+	TestNotNull(TEXT("another owner's lease stays"), Table.FindLease(L3.Token));
+
+	// Legacy gate release (the marker shim): only unyielding editor_gate:<owner> leases.
+	FRequest G1 = MakeRequest(*this, TEXT("g"), TEXT("world:/Game/__HaybaTest__/G1"));
+	G1.Label = TEXT("editor_gate:g");
+	FRequest G2 = MakeRequest(*this, TEXT("g"), TEXT("world:/Game/__HaybaTest__/G2"));
+	G2.Label = TEXT("editor_gate:g");
+	const FAcquireResult GateLease = Table.Acquire(G1);
+	const FAcquireResult BatchLike = Table.Acquire(G2);
+	const FAcquireResult AssetLease = Table.Acquire(MakeRequest(*this, TEXT("g"), TEXT("asset:/Game/__HaybaTest__/G3")));
+	if (!TestEqual(TEXT("legacy gate lease granted"), GateLease.Status, EStatus::Granted)
+		|| !TestEqual(TEXT("batch-like gate lease granted"), BatchLike.Status, EStatus::Granted)
+		|| !TestEqual(TEXT("unlabelled asset lease granted"), AssetLease.Status, EStatus::Granted)) return false;
+	TestTrue(TEXT("batch-like lease marked yieldable"), Table.SetYieldable(BatchLike.Token, true));
+	TestEqual(TEXT("releases exactly the gate lease"), Table.ReleaseLegacyGateLeases(TEXT("g")), 1);
+	TestNull(TEXT("the gate lease is gone"), Table.FindLease(GateLease.Token));
+	TestNotNull(TEXT("a running batch's lease stays"), Table.FindLease(BatchLike.Token));
+	TestNotNull(TEXT("an unlabelled asset lease stays"), Table.FindLease(AssetLease.Token));
+	TestEqual(TEXT("nothing left to release"), Table.ReleaseLegacyGateLeases(TEXT("g")), 0);
+
+	// Disconnect never extends a lease that would expire sooner than the grace.
+	double EdgeNow = 0.0;
+	FTable Edge([&EdgeNow]() { return EdgeNow; });
+	FRequest Short = MakeRequest(*this, TEXT("edge"), TEXT("asset:/Game/__HaybaTest__/Short"));
+	Short.ConnId = 900301;
+	Short.TtlSeconds = 5.0;
+	const FAcquireResult ShortLease = Edge.Acquire(Short);
+	TestEqual(TEXT("short lease granted"), ShortLease.Status, EStatus::Granted);
+	TestEqual(TEXT("restart orphans a bound lease"), Edge.OrphanAllBound(), 1);
+	if (const FLease* L = Edge.FindLease(ShortLease.Token))
+	{
+		TestTrue(TEXT("clock zero still records an orphan"), L->IsOrphaned());
+		TestEqual(TEXT("disconnect preserves the earlier expiry"), L->ExpiresAt, 5.0);
+	}
+	else AddError(TEXT("short orphan disappeared before its expiry"));
+	double ExpiresAt = 0.0;
+	FString Error;
+	TestFalse(TEXT("another owner cannot revive an orphan"),
+		Edge.Renew(ShortLease.Token, TEXT("other"), 0.0, ExpiresAt, Error, 900302));
+	TestTrue(TEXT("owner renew without a connection revives unbound"),
+		Edge.Renew(ShortLease.Token, TEXT("edge"), 0.0, ExpiresAt, Error));
+	if (const FLease* L = Edge.FindLease(ShortLease.Token))
+	{
+		TestFalse(TEXT("renew cleared orphan status"), L->IsOrphaned());
+		TestFalse(TEXT("connection zero clears orphan binding"), L->bBindConnection);
+	}
+	TestEqual(TEXT("unbound revival survives a restart"), Edge.OrphanAllBound(), 0);
+	EdgeNow = 5.0;
+	TestNull(TEXT("short revived lease retains its own TTL"), Edge.FindLease(ShortLease.Token));
+
+	// A closed connection drops its queued tickets while leaving unbound holders.
+	const FAcquireResult Unbound = Edge.Acquire(MakeRequest(*this, TEXT("holder"), TEXT("global")));
+	FRequest Waiting = Short;
+	Waiting.Owner = TEXT("waiter");
+	Waiting.ConnId = 900303;
+	const FAcquireResult Ticket = Edge.Acquire(Waiting);
+	TestEqual(TEXT("connection-bound waiter queued"), Ticket.Status, EStatus::Queued);
+	TestEqual(TEXT("a waiter is withdrawn, not counted as orphaned"), Edge.OnConnectionClosed(900303), 0);
+	TestEqual(TEXT("disconnect drops that waiter's ticket"), Edge.GetWaiters().Num(), 0);
+	TestNotNull(TEXT("unbound holder survives another connection's close"), Edge.FindLease(Unbound.Token));
+
 	return true;
 }
 

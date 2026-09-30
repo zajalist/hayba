@@ -114,7 +114,7 @@ public:
 	/** The owner the current command acts as: the named lease's owner when a valid envelope lease_id was sent, otherwise the envelope owner. */
 	FString EffectiveOwner();
 
-	/** bind_connection: release everything a closed connection held or queued. */
+	/** bind_connection: orphan what a closed connection held (T7); drop its tickets. */
 	void OnConnectionClosed(int32 ConnId);
 
 	/**
