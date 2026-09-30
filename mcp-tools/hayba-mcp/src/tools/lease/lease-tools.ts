@@ -64,7 +64,7 @@ export const leaseAcquireSchema = z
     bind_connection: z
       .boolean()
       .optional()
-      .describe('Default true: the editor releases the lease if this server disconnects.'),
+      .describe('Default true: a disconnect orphans the lease for up to 60 seconds, unless it expires sooner or its owner renews it.'),
   })
   .strict();
 
@@ -79,23 +79,23 @@ export const LEASE_ID_MESSAGES = {
     `${cmd} [lease_id_ambiguous]: lease_id and its deprecated alias name different leases; send lease_id only`,
   redacted: (cmd: string) =>
     `${cmd} [lease_id_redacted]: the value is a redaction marker, not a lease_id; run lease_acquire again and send the lease_id it returns`,
-  releaseRequired: 'lease_release [lease_id_required]: pass lease_id (a held lease) or ticket (a queued request)',
-  releaseBoth: 'lease_release [lease_id_ambiguous]: pass lease_id or ticket, not both',
+  releaseExactlyOne: 'lease_release: [bad_request] send exactly one of lease_id, ticket or all:true',
 } as const;
 
 const leaseIdString = z.string().min(1).max(128);
 
 /** Raw shapes: the descriptors' published schema (the transport validates these). */
 export const leaseRenewShape = {
-  lease_id: leaseIdString.optional().describe('The lease_id lease_acquire returned (ls_...).'),
+  lease_id: leaseIdString.optional().describe('The lease_id lease_acquire returned (ls_...). Omit it to renew every lease you hold.'),
   token: leaseIdString.optional().describe('Deprecated alias of lease_id; send lease_id.'),
-  ttl_s: z.number().min(5).max(900).optional().describe('New lifetime from now, in seconds (default 120, max 900).'),
+  ttl_s: z.number().min(5).max(900).optional().describe('New lifetime from now, in seconds (max 900). Omitted: each lease keeps its own TTL.'),
 };
 
 export const leaseReleaseShape = {
   lease_id: leaseIdString.optional().describe('A lease you hold (the lease_id lease_acquire returned).'),
   token: leaseIdString.optional().describe('Deprecated alias of lease_id; send lease_id.'),
   ticket: leaseIdString.optional().describe('A queued request to withdraw (the ticket lease_acquire returned).'),
+  all: z.literal(true).optional().describe('Release every lease and withdraw every ticket you hold.'),
 };
 
 type IdArgs = { lease_id?: string; token?: string };
@@ -116,14 +116,18 @@ function namedLeaseId(v: IdArgs): string {
   return (v.lease_id ?? v.token ?? '').trim();
 }
 
+/** T7 (R5, R6): no id, or a redaction marker under the deprecated alias, renews
+ *  every lease this owner holds. A marker under lease_id stays an error. */
+function renewsByOwner(v: IdArgs): boolean {
+  return v.lease_id === undefined && (v.token === undefined || isRedactionMarker(v.token.trim()));
+}
+
 export const leaseRenewSchema = z
   .object(leaseRenewShape)
   .strict()
   .superRefine((v, ctx) => {
-    const problem =
-      v.lease_id === undefined && v.token === undefined
-        ? LEASE_ID_MESSAGES.required('lease_renew')
-        : leaseIdProblem('lease_renew', v);
+    if (renewsByOwner(v)) return;
+    const problem = leaseIdProblem('lease_renew', v);
     if (problem) ctx.addIssue({ code: 'custom', message: problem, path: ['lease_id'] });
   });
 
@@ -132,13 +136,12 @@ export const leaseReleaseSchema = z
   .strict()
   .superRefine((v, ctx) => {
     const named = v.lease_id !== undefined || v.token !== undefined;
-    const problem = !named && v.ticket === undefined
-      ? LEASE_ID_MESSAGES.releaseRequired
-      : named && v.ticket !== undefined
-        ? LEASE_ID_MESSAGES.releaseBoth
-        : named
-          ? leaseIdProblem('lease_release', v)
-          : null;
+    const options = (named ? 1 : 0) + (v.ticket !== undefined ? 1 : 0) + (v.all ? 1 : 0);
+    const problem = options !== 1
+      ? LEASE_ID_MESSAGES.releaseExactlyOne
+      : named
+        ? leaseIdProblem('lease_release', v)
+        : null;
     if (problem) ctx.addIssue({ code: 'custom', message: problem, path: ['lease_id'] });
   });
 
@@ -188,7 +191,8 @@ function validated<S extends z.ZodTypeAny>(schema: S, run: (args: z.infer<S>) =>
 export async function handleLeaseAcquire(args: z.infer<typeof leaseAcquireSchema>) {
   const data = await executeCommand<Record<string, unknown>>('lease_acquire', args as Record<string, unknown>);
   if (data.status !== 'granted') return text(data);
-  if (isUsableLeaseId(data.lease_id) && getLeaseKeeper().track(data.lease_id, args.ttl_s ?? 120)) {
+  const ttlS = typeof data.ttl_s === 'number' ? data.ttl_s : (args.ttl_s ?? 120);
+  if (isUsableLeaseId(data.lease_id) && getLeaseKeeper().track(data.lease_id, ttlS)) {
     return text({ ...data, auto_renew: true });
   }
   // A plugin that predates lease ids names the handle `token`, which the
@@ -202,6 +206,11 @@ export async function handleLeaseAcquire(args: z.infer<typeof leaseAcquireSchema
 }
 
 export async function handleLeaseRenew(args: z.infer<typeof leaseRenewSchema>) {
+  if (renewsByOwner(args)) {
+    // No id, or a legacy marker under the alias: renew every lease this owner holds (R5, R6).
+    return text(await getLeaseKeeper().renewAllByOwner(args.ttl_s));
+  }
+
   const params: Record<string, unknown> = { lease_id: namedLeaseId(args) };
   if (args.ttl_s !== undefined) params.ttl_s = args.ttl_s;
   const data = await executeCommand<Record<string, unknown>>('lease_renew', params);
@@ -209,6 +218,12 @@ export async function handleLeaseRenew(args: z.infer<typeof leaseRenewSchema>) {
 }
 
 export async function handleLeaseRelease(args: z.infer<typeof leaseReleaseSchema>) {
+  if (args.all) {
+    // Stop every heartbeat first: a renew racing the release would only fail.
+    getLeaseKeeper().stopAll();
+    return text(await executeCommand('lease_release', { all: true }));
+  }
+
   if (args.ticket !== undefined) {
     return text(await executeCommand('lease_release', { ticket: args.ticket.trim() }));
   }
@@ -238,27 +253,27 @@ export const LEASE_DESCRIPTORS: ToolDescriptor[] = [
     handler: validated(leaseAcquireSchema, handleLeaseAcquire) as never,
     cost: 'low',
     returns:
-      '{status:"granted", lease_id, expires_in_s, resources, auto_renew} | {status:"queued", ticket, position, holder_owner, eta_s, poll_after_s}',
+      '{status:"granted", lease_id, reused, ttl_s, max_ttl_s, orphan_grace_s, bind_connection, expires_in_s, resources, next} | {status:"queued", ticket, position, holder_owner, eta_s, poll_after_s}',
     schema: leaseAcquireSchema.shape,
   },
   {
     name: 'lease_renew',
     description:
-      'Extend a lease you hold, by its lease_id. Rarely needed: leases granted by lease_acquire are renewed in the background.',
+      'Extend leases you hold. With lease_id, that lease; with nothing, every lease you hold, which also revives leases the editor orphaned when this server\'s connection dropped. Rarely needed: leases granted by lease_acquire are renewed in the background.',
     meta: renewMeta,
     handler: validated(leaseRenewSchema, handleLeaseRenew) as never,
     cost: 'low',
-    returns: '{lease_id, renewed, expires_in_s, deprecation?}',
+    returns: '{lease_id, renewed, expires_in_s} | {owner, renewed:N, expires_in_s, leases:[{lease_id, resources, expires_in_s, orphaned}]}',
     schema: leaseRenewShape,
   },
   {
     name: 'lease_release',
     description:
-      'Release a lease you hold (lease_id), or withdraw a queued request (ticket). Other agents waiting on it can then be granted.',
+      'Release a lease (lease_id), withdraw a queued ticket (ticket), or release everything you hold (all:true). Send exactly one. Other agents waiting on it can then be granted.',
     meta: releaseMeta,
     handler: validated(leaseReleaseSchema, handleLeaseRelease) as never,
     cost: 'low',
-    returns: '{lease_id | ticket, released, deprecation?}',
+    returns: '{lease_id, released} | {ticket, released} | {owner, released:N, tickets_withdrawn:M}',
     schema: leaseReleaseShape,
   },
   {
@@ -268,7 +283,7 @@ export const LEASE_DESCRIPTORS: ToolDescriptor[] = [
     meta: statusMeta,
     handler: async () => handleLeaseStatus() as never,
     cost: 'low',
-    returns: '{enforcement, caller_owner, current_world, leases:[{lease_id (yours only), ...}], waiters:[...], renewing_lease_ids}',
+    returns: '{enforcement, caller_owner, current_world, max_ttl_s, orphan_grace_s, leases:[{owner, mine, lease_id?, label?, resources, lane, held_s, expires_in_s, bound_to_connection, orphaned, bind_connection, ttl_s}], waiters:[...], renewing_lease_ids}',
     schema: {},
   },
 ];

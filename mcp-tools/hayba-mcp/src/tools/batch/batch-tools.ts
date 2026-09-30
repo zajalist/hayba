@@ -187,7 +187,7 @@ export const BATCH_DESCRIPTORS: ToolDescriptor[] = [
   {
     name: 'editor_batch',
     description:
-      'Run several editor commands in order under one lease, one step per editor tick, with a fence after each (wait for shaders/asset loads/GC/async loading to settle; gc also collects garbage under an exclusive region/world lease). Returns {job_id} at once; follow it with batch_status. Steps may be wp_region_load {bounds:[minX,minY,maxX,maxY], name?} / wp_region_unload {name?}: the batch owns those World Partition regions and always releases them by the end. Other agents\' queued interactive lease requests are served at fences.',
+      'Run several editor commands in order under one lease, one step per editor tick, with a fence after each (wait for shaders/asset loads/GC/async loading to settle; gc also collects garbage under an exclusive region/world lease). Returns {job_id} at once; follow it with batch_status. Steps may be wp_region_load {bounds:[minX,minY,maxX,maxY], name?} / wp_region_unload {name?}: the batch owns those World Partition regions and always releases them by the end. Other agents\' queued interactive lease requests are served at fences. The batch keeps its own lease alive and runs to the end of its steps even if this server disconnects.',
     meta: batchMeta,
     handler: validated(editorBatchArgsSchema, handleEditorBatch) as never,
     cost: 'low',

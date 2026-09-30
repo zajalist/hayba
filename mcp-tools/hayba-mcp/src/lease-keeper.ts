@@ -3,8 +3,8 @@
 // A lease the editor grants lapses after its TTL unless renewed. An agent that
 // is busy thinking should not lose its world lease to that, so every lease
 // acquired through the lease_acquire tool is tracked here, by its lease_id,
-// and renewed at a third of its TTL. A renew the editor refuses (lease
-// expired, released, or dropped with its connection) stops tracking and
+// and renewed inside both its TTL and the orphan grace. A renew the editor
+// refuses (lease expired or released) stops tracking and
 // reports the loss; a transport failure keeps trying, because the next tick
 // may reconnect. Only usable lease_ids are tracked: a redaction marker or a
 // pre-lease_id handle could never be renewed (postmortem I-5).
@@ -33,9 +33,13 @@ interface Tracked {
   timer: TimerHandle;
 }
 
-/** Renew at a third of the TTL, never more often than once a second. */
-export function renewIntervalMs(ttlS: number): number {
-  return Math.max(1_000, Math.floor((ttlS * 1_000) / 3));
+/**
+ * Renew often enough that a lease survives both its TTL and, after the editor
+ * drops an idle connection (5 s) and orphans the lease, the orphan grace:
+ * max(1 s, min(ttl, grace) / 3). 20 s at the defaults (ttl 120, grace 60).
+ */
+export function renewIntervalMs(ttlS: number, graceS = 60): number {
+  return Math.max(1_000, Math.floor((Math.min(ttlS, graceS) * 1_000) / 3));
 }
 
 export class LeaseKeeper {
@@ -91,8 +95,8 @@ export class LeaseKeeper {
     } catch (err) {
       if (err instanceof UeToolError && err.code === 'transport') {
         // The editor may be busy or reconnecting; the next tick retries. If the
-        // connection really closed, the editor already released bound leases
-        // and the next renew is refused, which lands in the branch below.
+        // connection closed, the editor orphans bound leases; the next tick
+        // can revive them within their remaining orphan grace.
         return true;
       }
       const reason = err instanceof Error ? err.message : String(err);
@@ -100,6 +104,19 @@ export class LeaseKeeper {
       this.opts.onLost(leaseId, reason);
       return false;
     }
+  }
+
+  /**
+   * lease_renew {} : renew every lease this owner holds in the editor, which
+   * also revives (and re-binds to this connection) any lease the editor
+   * orphaned when this server's connection dropped. One-shot: it never starts
+   * tracking a lease this keeper did not grant (a gate's lease, a helper's),
+   * so nothing forgotten is kept alive by a heartbeat.
+   */
+  async renewAllByOwner(ttlS?: number): Promise<Record<string, unknown>> {
+    const params: Record<string, unknown> = {};
+    if (ttlS !== undefined) params.ttl_s = ttlS;
+    return executeCommand<Record<string, unknown>>('lease_renew', params, { sender: this.opts.sender });
   }
 
   stopAll(): void {

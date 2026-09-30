@@ -77,14 +77,23 @@ describe('Plan Mode gate covers every non-retryable command', () => {
   // The lease control plane must be answerable while a plan is pending and
   // while other agents hold leases. Gating lease_acquire behind Approve would
   // mean an agent cannot even queue for the world it wants to plan against.
-  // A retried lease_acquire by the same owner is self-compatible and expires,
-  // so it stays out of NON_IDEMPOTENT too (which would force it into the gate).
+  // A retried lease_acquire is idempotent (T7: the same owner, claims, label
+  // and binding get the same lease_id back), so it stays out of NON_IDEMPOTENT.
   it.runIf(available)('keeps the lease control plane ungated and retry-safe', () => {
     const gated = parseGatedCommands();
     for (const cmd of ['lease_acquire', 'lease_renew', 'lease_release', 'lease_status']) {
       expect(gated.has(cmd), cmd).toBe(false);
       expect(NON_IDEMPOTENT.has(cmd), cmd).toBe(false);
     }
+  });
+
+  it.runIf(available)('backs the retry-safety of lease_acquire with an idempotent table (T7)', () => {
+    const policy = readFileSync(
+      join(process.cwd(), '../../unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/HaybaMCPLeasePolicy.h'),
+      'utf-8',
+    );
+    expect(policy).toContain('if (FLease* Existing = FindReusable(Request))');
+    expect(policy).toContain('Result.bReused = true;');
   });
 
   // One global Approve used to cover whichever agent sent the next

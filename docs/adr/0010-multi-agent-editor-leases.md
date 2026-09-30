@@ -98,9 +98,19 @@ build marks its assets busy (`asset_busy`, ADR-0012).
 
 The caller polls by calling `lease_acquire` again with its ticket. A ticket
 not polled for 30 s is dropped, so a crashed agent cannot hold the queue.
-TTL defaults to 120 s, max 900 s; the Node `LeaseKeeper` renews at a third of
-the TTL. With `bind_connection` (the default) a closed connection releases
-everything it held or queued.
+TTL defaults to 120 s, max 900 s. The Node `LeaseKeeper` renews every
+`max(1 s, min(ttl, grace) / 3)`, 20 s at the defaults. With `bind_connection`
+(the default) a closed connection **orphans** its leases: they keep their
+locks until the earlier of their existing expiry and `OrphanedAt + 60 s`
+(`OrphanGraceSeconds`; never `Now + 60`, so nothing slides an orphan forward)
+and are then dropped, unless their owner revives them with an explicit `lease_renew` (by `lease_id`, or `lease_renew {}`
+for every lease it holds), which re-binds them to the renewing connection.
+The connection's queued tickets are dropped at once. A TCP server restart
+orphans every bound lease. Re-acquiring the same active, non-yieldable claims with the same owner,
+label and binding returns the same `lease_id` (`reused: true`). A command
+that passes every gate and uses a lock its owner holds slides that lease's
+expiry forward (touch-on-use); reads, status polls and refused commands never
+do. `lease_release {all: true}` releases every lease and ticket of the caller.
 
 The queue has two lanes. **Interactive** requests overtake **long** ones, but
 a long waiter that has been overtaken K times (3) or has waited T seconds (60)
@@ -180,7 +190,8 @@ agent that never acquires a lease are unaffected until someone else holds one.
   capability token remains the auth boundary. Tokens are salted and shown only
   to their owner, because an envelope `lease` acts as that owner.
 - The table lives in editor memory. An editor restart forgets every lease;
-  a TCP-server restart keeps them until their TTL.
+  a TCP-server restart orphans bound leases until their earlier expiry or
+  orphan grace limit, unless their owner renews them.
 - Advisory mode changes nothing for existing single-agent clients except a
   possible `lease_warning`. Turning on Enforced is a per-project choice.
 - A command's class is only as good as its table entry. A misspelt entry
@@ -234,8 +245,10 @@ action it answers.
 - **Errors.** `on_error: stop` halts at the failing step and releases the
   regions. `unload_then_stop` releases them and then runs a settle fence
   (gc when allowed, then idle) before reporting done. A lost lease stops the
-  batch the same way. The batch keeps its own lease alive while it runs; if
-  the lease is released or its connection closes, the batch stops.
+  batch the same way. The batch keeps its own lease alive while it runs and
+  stops if the lease is released. Its client's connection closing does not
+  stop it: the lease is orphaned, the batch's in-process keep-alive renews it
+  (which unbinds it), and the batch runs to the end of its step list.
 
 ### Fair queue at fences
 

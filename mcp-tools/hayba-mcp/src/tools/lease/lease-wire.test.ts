@@ -108,10 +108,8 @@ describe('lease_renew', () => {
   });
 
   it.each([
-    ['no id', {}, LEASE_ID_MESSAGES.required('lease_renew')],
     ['two different ids', { lease_id: A, token: B }, LEASE_ID_MESSAGES.ambiguous('lease_renew')],
     ['a marker under lease_id', { lease_id: '[REDACTED:token]' }, LEASE_ID_MESSAGES.redacted('lease_renew')],
-    ['a marker under the alias', { token: '[REDACTED:token]' }, LEASE_ID_MESSAGES.redacted('lease_renew')],
   ])('refuses %s with the editor message and sends nothing', async (_label, args, message) => {
     const editor = fakeEditor(() => ({ ok: true, data: {} }));
     setDefaultSender(editor.send);
@@ -151,8 +149,8 @@ describe('lease_release', () => {
   });
 
   it.each([
-    ['nothing', {}, LEASE_ID_MESSAGES.releaseRequired],
-    ['both a lease_id and a ticket', { lease_id: A, ticket: TICKET }, LEASE_ID_MESSAGES.releaseBoth],
+    ['nothing', {}, LEASE_ID_MESSAGES.releaseExactlyOne],
+    ['both a lease_id and a ticket', { lease_id: A, ticket: TICKET }, LEASE_ID_MESSAGES.releaseExactlyOne],
     ['two different ids', { lease_id: A, token: B }, LEASE_ID_MESSAGES.ambiguous('lease_release')],
     ['a marker', { lease_id: '[REDACTED:token]' }, LEASE_ID_MESSAGES.redacted('lease_release')],
   ])('refuses %s with the editor message and sends nothing', async (_label, args, message) => {
@@ -192,5 +190,136 @@ describe('protocol keys (ADR-0010, "Lease ids")', () => {
       expect(`${d.name}: ${d.returns}`).not.toMatch(/\btoken\b/);
       expect(d.description).not.toMatch(/token[:=]/);
     }
+  });
+});
+
+describe('lease tools, lifetime (T7)', () => {
+  type T7Call = { cmd: string; params: Record<string, unknown> };
+  function t7Editor(data: Record<string, unknown> = {}) {
+    const calls: T7Call[] = [];
+    const send: Sender = async (cmd, params) => {
+      calls.push({ cmd, params });
+      return { id: 't7', ok: true, data };
+    };
+    setDefaultSender(send);
+    return calls;
+  }
+  function t7Tool(name: string) {
+    const d = LEASE_DESCRIPTORS.find((t) => t.name === name);
+    if (!d) throw new Error(`no descriptor ${name}`);
+    return d.handler as unknown as (args: unknown) => Promise<{ content: Array<{ text: string }>; isError?: boolean }>;
+  }
+  afterEach(() => _resetLeaseKeeperForTesting());
+
+  it('lease_renew with no id renews by owner', async () => {
+    const calls = t7Editor({ owner: 'o', renewed: 2 });
+    await t7Tool('lease_renew')({});
+    await t7Tool('lease_renew')({ ttl_s: 60 });
+    expect(calls).toEqual([
+      { cmd: 'lease_renew', params: {} },
+      { cmd: 'lease_renew', params: { ttl_s: 60 } },
+    ]);
+  });
+
+  it('a marker under the deprecated alias renews by owner too (R5)', async () => {
+    const calls = t7Editor({ renewed: 1 });
+    await t7Tool('lease_renew')({ token: '[REDACTED:token]' });
+    expect(calls).toEqual([{ cmd: 'lease_renew', params: {} }]);
+  });
+
+  it('lease_renew with an id sends lease_id, never the alias', async () => {
+    const calls = t7Editor({ renewed: true });
+    await t7Tool('lease_renew')({ token: 'ls_3_0123456789ab' });
+    expect(calls).toEqual([{ cmd: 'lease_renew', params: { lease_id: 'ls_3_0123456789ab' } }]);
+  });
+
+  it('lease_release all stops every heartbeat before releasing', async () => {
+    const stopped = vi.spyOn(getLeaseKeeper(), 'stopAll');
+    const editor = fakeEditor(() => {
+      expect(stopped).toHaveBeenCalledOnce();
+      expect(getLeaseKeeper().heldLeaseIds()).toEqual([]);
+      return { ok: true, data: { owner: 'o', released: 2, tickets_withdrawn: 0 } };
+    });
+    setDefaultSender(editor.send);
+    const calls = editor.calls;
+    getLeaseKeeper().track('ls_1_0123456789ab', 120);
+    getLeaseKeeper().track('ls_2_0123456789ab', 120);
+    await t7Tool('lease_release')({ all: true });
+    expect(getLeaseKeeper().heldLeaseIds()).toEqual([]);
+    expect(calls).toEqual([{ cmd: 'lease_release', params: { all: true } }]);
+    stopped.mockRestore();
+  });
+
+  it('lease_release needs exactly one of lease_id, ticket or all', async () => {
+    const calls = t7Editor();
+    for (const bad of [
+      {},
+      { lease_id: A, all: true },
+      { ticket: TICKET, lease_id: A },
+      { ticket: TICKET, all: true },
+      { token: A, all: true },
+    ]) {
+      const r = await t7Tool('lease_release')(bad);
+      expect(r.isError).toBe(true);
+      expect(r.content[0]!.text).toContain('[bad_request]');
+    }
+    const marker = await t7Tool('lease_release')({ lease_id: '[REDACTED:token]' });
+    expect(marker.isError).toBe(true);
+    expect(marker.content[0]!.text).toContain('[lease_id_redacted]');
+    expect(calls).toEqual([]);
+  });
+
+  it('lease_release of a ticket sends ticket', async () => {
+    const calls = t7Editor({ released: true });
+    await t7Tool('lease_release')({ ticket: 'lq_7_0123456789ab' });
+    expect(calls).toEqual([{ cmd: 'lease_release', params: { ticket: 'lq_7_0123456789ab' } }]);
+  });
+});
+
+
+describe('lease lifetime compatibility (T7)', () => {
+  it('acquire renews with the server-clamped TTL', async () => {
+    const editor = fakeEditor(({ cmd }) => ({
+      ok: true,
+      data: cmd === 'lease_acquire' ? { status: 'granted', lease_id: A, ttl_s: 5 } : { renewed: true },
+    }));
+    setDefaultSender(editor.send);
+    const interval = vi.spyOn(globalThis, 'setInterval');
+    try {
+      await tool('lease_acquire')({ resources: ['global'], ttl_s: 900 });
+      expect(interval).toHaveBeenLastCalledWith(expect.any(Function), 1_666);
+      await getLeaseKeeper().renewNow(A);
+      expect(editor.calls.at(-1)).toEqual({ cmd: 'lease_renew', params: { lease_id: A, ttl_s: 5 } });
+    } finally {
+      interval.mockRestore();
+    }
+  });
+
+  it('trims matching canonical and alias IDs and preserves ticket aliases', async () => {
+    const editor = fakeEditor(() => ({ ok: true, data: {} }));
+    setDefaultSender(editor.send);
+    await tool('lease_renew')({ lease_id: ` ${A} `, token: A });
+    await tool('lease_release')({ token: ` ${TICKET} ` });
+    expect(editor.calls).toEqual([
+      { cmd: 'lease_renew', params: { lease_id: A } },
+      { cmd: 'lease_release', params: { ticket: TICKET } },
+    ]);
+  });
+
+  it('owner renew with a padded deprecated marker forwards TTL and adopts no returned IDs', async () => {
+    const editor = fakeEditor(() => ({ ok: true, data: { renewed: 1, leases: [{ lease_id: A }] } }));
+    setDefaultSender(editor.send);
+    await tool('lease_renew')({ token: ' [REDACTED:token] ', ttl_s: 300 });
+    expect(editor.calls).toEqual([{ cmd: 'lease_renew', params: { ttl_s: 300 } }]);
+    expect(getLeaseKeeper().heldLeaseIds()).toEqual([]);
+  });
+
+  it('never turns a conflicting canonical ID and alias marker into owner renewal', async () => {
+    const editor = fakeEditor(() => ({ ok: true, data: {} }));
+    setDefaultSender(editor.send);
+    const result = await tool('lease_renew')({ lease_id: A, token: '[REDACTED:token]' });
+    expect(result.isError).toBe(true);
+    expect(result.content[0]!.text).toContain(LEASE_ID_MESSAGES.ambiguous('lease_renew'));
+    expect(editor.calls).toEqual([]);
   });
 });

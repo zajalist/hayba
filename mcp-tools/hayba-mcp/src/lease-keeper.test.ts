@@ -129,9 +129,12 @@ describe('lease ids', () => {
 });
 
 describe('LeaseKeeper heartbeat', () => {
-  it('renews at a third of the TTL, never faster than once a second', () => {
-    expect(renewIntervalMs(120)).toBe(40_000);
+  it('renews inside both the TTL and the orphan grace: max(1 s, min(ttl, grace) / 3)', () => {
+    expect(renewIntervalMs(120)).toBe(20_000);
+    expect(renewIntervalMs(30)).toBe(10_000);
+    expect(renewIntervalMs(900)).toBe(20_000);
     expect(renewIntervalMs(1)).toBe(1_000);
+    expect(renewIntervalMs(120, 300)).toBe(40_000);
   });
 
   it('renews every tick with lease_id and the lease TTL', async () => {
@@ -212,5 +215,72 @@ describe('I-5: the lease handle survives redaction', () => {
     expect(getLeaseKeeper().heldLeaseIds()).toEqual([LEASE]);
     expect(await getLeaseKeeper().renewNow(LEASE)).toBe(true);
     expect(editor.calls.at(-1)).toEqual({ cmd: 'lease_renew', params: { lease_id: LEASE, ttl_s: 60 } });
+  });
+});
+
+describe('LeaseKeeper lifetime (T7)', () => {
+  it('renewAllByOwner sends lease_renew with no id and adopts nothing', async () => {
+    const editor = fakeEditor(({ cmd, params }) =>
+      cmd === 'lease_renew' && Object.keys(params).length === 0
+        ? {
+            ok: true,
+            data: {
+              owner: 'lane-3',
+              renewed: 2,
+              expires_in_s: 118,
+              leases: [
+                { lease_id: 'ls_4_0123456789ab', expires_in_s: 118, orphaned: false },
+                { lease_id: 'ls_5_0123456789ab', expires_in_s: 120, orphaned: false },
+              ],
+            },
+          }
+        : new Error(`unexpected ${cmd}`),
+    );
+    const keeper = new LeaseKeeper({ sender: editor.send, ...manualTimers() });
+    const reply = await keeper.renewAllByOwner();
+    expect(editor.calls).toEqual([{ cmd: 'lease_renew', params: {} }]);
+    expect(reply).toMatchObject({ owner: 'lane-3', renewed: 2 });
+    expect(keeper.heldLeaseIds()).toEqual([]);
+  });
+
+  it('renewAllByOwner forwards an explicit TTL', async () => {
+    const editor = fakeEditor(() => ({ ok: true, data: { renewed: 1 } }));
+    const keeper = new LeaseKeeper({ sender: editor.send, ...manualTimers() });
+    await keeper.renewAllByOwner(300);
+    expect(editor.calls).toEqual([{ cmd: 'lease_renew', params: { ttl_s: 300 } }]);
+  });
+
+  it('a restarted server with the same HAYBA_AGENT_ID revives its orphans by owner (R-10)', async () => {
+    // Same owner before and after the restart, whatever the pid.
+    expect(resolveAgentOwner({ HAYBA_AGENT_ID: 'lane-3' }, 111)).toBe(resolveAgentOwner({ HAYBA_AGENT_ID: 'lane-3' }, 222));
+    const editor = fakeEditor(({ cmd }) =>
+      cmd === 'lease_renew'
+        ? { ok: true, data: { owner: 'lane-3', renewed: 1, leases: [{ lease_id: 'ls_9_0123456789ab', orphaned: false }] } }
+        : new Error(`unexpected ${cmd}`),
+    );
+    const restarted = new LeaseKeeper({ sender: editor.send, ...manualTimers() });
+    expect(restarted.heldLeaseIds()).toEqual([]); // the old tracked ids died with the old process
+    await expect(restarted.renewAllByOwner()).resolves.toMatchObject({ renewed: 1 });
+  });
+
+  it('a redaction marker is never tracked', () => {
+    const timers = manualTimers();
+    const keeper = new LeaseKeeper({ sender: fakeEditor(() => ({ ok: true })).send, ...timers });
+    expect(keeper.track('[REDACTED:token]', 60)).toBe(false);
+    expect(timers.count()).toBe(0);
+  });
+
+  it('the heartbeat stays inside the 60 s orphan grace even for the maximum TTL', () => {
+    const intervals: number[] = [];
+    const keeper = new LeaseKeeper({
+      sender: fakeEditor(() => ({ ok: true })).send,
+      setInterval: (_fn, ms) => {
+        intervals.push(ms);
+        return {};
+      },
+      clearInterval: () => {},
+    });
+    keeper.track('ls_1_0123456789ab', 900);
+    expect(intervals).toEqual([20_000]);
   });
 });
