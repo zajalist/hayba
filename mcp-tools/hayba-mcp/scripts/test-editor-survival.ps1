@@ -1126,6 +1126,201 @@ function Wait-ForBoundedPeerClose([Net.Sockets.NetworkStream]$Stream, [string]$O
     }
 }
 
+function Get-RawCloseEvidence([Threading.Tasks.Task]$Task, [string]$Operation) {
+    try {
+        $count = Wait-RawTask $Task $Operation
+    }
+    catch {
+        # Only demonstrated terminal socket errors are close evidence. Deadline,
+        # binding, disposal, and unrelated helper failures must remain fatal.
+        $cause = $_.Exception
+        while ($null -ne $cause -and $cause -isnot [Net.Sockets.SocketException]) { $cause = $cause.InnerException }
+        if ($null -eq $cause -or $cause.SocketErrorCode -notin @(
+            [Net.Sockets.SocketError]::ConnectionReset, [Net.Sockets.SocketError]::ConnectionAborted)) { throw }
+        return [pscustomobject]@{ kind='socket_error'; socket_error=[string]$cause.SocketErrorCode }
+    }
+    if ($count -ne 0) { throw "$Operation received response bytes instead of peer closure" }
+    return [pscustomobject]@{ kind='eof'; socket_error=$null }
+}
+
+function Initialize-RawCloseObservation {
+    if ('HaybaRawCloseObservation' -as [type]) { return }
+    # Capture monotonic time in the async read completion, before PowerShell
+    # polling. A Task.Delay race measures timer scheduling rather than expiry.
+    Add-Type -TypeDefinition @'
+using System.Diagnostics;
+using System.Net.Sockets;
+using System.Threading.Tasks;
+public sealed class HaybaRawCloseObservation {
+    public long ElapsedMs;
+    public Task<int> ReadTask;
+    public static HaybaRawCloseObservation Start(NetworkStream stream, Stopwatch clock) {
+        var observation = new HaybaRawCloseObservation();
+        observation.ReadTask = observation.ReadAsync(stream, clock);
+        return observation;
+    }
+    private async Task<int> ReadAsync(NetworkStream stream, Stopwatch clock) {
+        try { return await stream.ReadAsync(new byte[1], 0, 1).ConfigureAwait(false); }
+        finally { ElapsedMs = clock.ElapsedMilliseconds; }
+    }
+}
+'@
+}
+
+function New-AdmittedRawHolder($Clients, [string]$Operation) {
+    $client = Open-BoundedClient
+    # Own the current iteration before GetStream or either write can fail.
+    $Clients.Add($client)
+    $stream = $client.GetStream()
+    $frame = New-RawCommandFrame 'ping' @{} ('admission_' + [guid]::NewGuid().ToString('N'))
+    Write-BoundedBytes $stream $frame.header "$Operation admission header"
+    Write-BoundedBytes $stream $frame.body "$Operation admission body"
+    $header = [byte[]]::new(4)
+    Read-BoundedExact $stream $header 4 "$Operation admission response header"
+    if ([BitConverter]::IsLittleEndian) { [Array]::Reverse($header) }
+    $length = [BitConverter]::ToInt32($header, 0)
+    if ($length -le 0 -or $length -gt 8MB) { throw "$Operation admission response length was invalid" }
+    $body = [byte[]]::new($length)
+    Read-BoundedExact $stream $body $length "$Operation admission response body"
+    $response = ([Text.UTF8Encoding]::new($false, $true)).GetString($body) | ConvertFrom-Json
+    if ($response.ok -isnot [bool] -or $response.ok -ne $true -or [string]$response.id -cne $frame.id) {
+        throw "$Operation admission ping was refused or uncorrelated"
+    }
+    return [pscustomobject]@{
+        stream=$stream; id=$frame.id; clock=$null; close_task=$null; close_observation=$null;
+        drips=0; last_progress_ms=0; max_progress_gap_ms=0
+    }
+}
+
+function New-PartialFrameHolders($Clients, [string]$Operation) {
+    Initialize-RawCloseObservation
+    $holders = [Collections.Generic.List[object]]::new()
+    # Finish admission before starting any partial-frame clock. TCP connection
+    # or a successful write alone never proves application participation.
+    for ($i = 0; $i -lt $ConfiguredMaxClients; $i++) {
+        $holder = New-AdmittedRawHolder $Clients $Operation
+        $holders.Add($holder)
+        $script:RawProbeEvidence.admitted++
+    }
+    foreach ($holder in $holders) {
+        $holder.clock = [Diagnostics.Stopwatch]::StartNew()
+        Write-BoundedBytes $holder.stream (Get-BigEndianHeader 512) "$Operation partial header"
+        Write-BoundedBytes $holder.stream ([byte[]]@(0x7b)) "$Operation initial body byte"
+        $holder.last_progress_ms = $holder.clock.ElapsedMilliseconds
+        $holder.close_observation = [HaybaRawCloseObservation]::Start($holder.stream, $holder.clock)
+        $holder.close_task = $holder.close_observation.ReadTask
+    }
+    return ,$holders
+}
+
+function Assert-PartialHoldersActive($Holders, [string]$Operation) {
+    foreach ($holder in $Holders) {
+        if ($holder.close_task.IsCompleted -or $holder.clock.ElapsedMilliseconds -ge $FrameReadTimeoutMs) {
+            throw "$Operation lost an admitted holder or exceeded its active partial-frame lifetime"
+        }
+    }
+}
+
+function Invoke-PartialFrameCapacityProbe([int]$OverflowCount, [string]$Operation) {
+    $clients = [Collections.Generic.List[Net.Sockets.TcpClient]]::new()
+    $script:RawProbeEvidence = [pscustomobject]@{
+        configured_max_clients=$ConfiguredMaxClients; frame_timeout_ms=$FrameReadTimeoutMs;
+        admitted=0; closures=[Collections.Generic.List[object]]::new(); disposed=0
+    }
+    try {
+        $holders = New-PartialFrameHolders $clients $Operation
+        for ($i = 0; $i -lt $OverflowCount; $i++) {
+            Assert-PartialHoldersActive $holders $Operation
+            $extra = Open-BoundedClient
+            $clients.Add($extra)
+            $stream = $extra.GetStream()
+            $closeTask = $stream.ReadAsync([byte[]]::new(1), 0, 1)
+            $frame = New-RawCommandFrame 'ping' @{} ('overflow_' + [guid]::NewGuid().ToString('N'))
+            try {
+                Write-BoundedBytes $stream $frame.header "$Operation overflow header"
+                Write-BoundedBytes $stream $frame.body "$Operation overflow body"
+            }
+            catch {
+                # A terminal write error is not by itself rejection evidence;
+                # still require EOF/reset from the retained valid stream.
+                $cause = $_.Exception
+                while ($null -ne $cause -and $cause -isnot [Net.Sockets.SocketException]) { $cause = $cause.InnerException }
+                if ($null -eq $cause -or $cause.SocketErrorCode -notin @(
+                    [Net.Sockets.SocketError]::ConnectionReset, [Net.Sockets.SocketError]::ConnectionAborted)) { throw }
+            }
+            $closure = Get-RawCloseEvidence $closeTask "$Operation overflow close"
+            Assert-PartialHoldersActive $holders $Operation
+            $script:RawProbeEvidence.closures.Add($closure)
+        }
+    }
+    finally {
+        foreach ($client in $clients) { $client.Dispose(); $script:RawProbeEvidence.disposed++ }
+    }
+}
+
+function Invoke-SlowlorisDeadlineProbe {
+    $clients = [Collections.Generic.List[Net.Sockets.TcpClient]]::new()
+    $closed = [Collections.Generic.HashSet[int]]::new()
+    $script:RawProbeEvidence = [pscustomobject]@{
+        configured_max_clients=$ConfiguredMaxClients; frame_timeout_ms=$FrameReadTimeoutMs;
+        admitted=0; drips=0; closures=[Collections.Generic.List[object]]::new(); disposed=0
+    }
+    try {
+        $holders = New-PartialFrameHolders $clients 'slowloris'
+        $interval = [Math]::Max(20, [Math]::Min(500, [int]($FrameReadTimeoutMs / 3)))
+        $nextDrip = $interval
+        $clock = [Diagnostics.Stopwatch]::StartNew()
+        while ($closed.Count -lt $holders.Count) {
+            Get-RemainingCaseMs 'slowloris observation' | Out-Null
+            for ($i = 0; $i -lt $holders.Count; $i++) {
+                if ($closed.Contains($i)) { continue }
+                $holder = $holders[$i]
+                if ($holder.close_task.IsCompleted) {
+                    $elapsed = $holder.close_observation.ElapsedMs
+                    if ($elapsed -lt $FrameReadTimeoutMs) { throw 'slowloris holder closed prematurely before the total-frame deadline' }
+                    $closure = Get-RawCloseEvidence $holder.close_task 'slowloris total-deadline peer close'
+                    $gap = $elapsed - $holder.last_progress_ms
+                    if ($holder.drips -eq 0 -or $gap -ge $FrameReadTimeoutMs) { throw 'slowloris closure did not demonstrate continued partial-frame progress' }
+                    $closure | Add-Member -NotePropertyName elapsed_ms -NotePropertyValue $elapsed
+                    $closure | Add-Member -NotePropertyName drips -NotePropertyValue $holder.drips
+                    $closure | Add-Member -NotePropertyName max_progress_gap_ms -NotePropertyValue ([Math]::Max($gap, $holder.max_progress_gap_ms))
+                    $script:RawProbeEvidence.closures.Add($closure)
+                    [void]$closed.Add($i)
+                    continue
+                }
+                if ($clock.ElapsedMilliseconds -ge $nextDrip) {
+                    try {
+                        $gap = $holder.clock.ElapsedMilliseconds - $holder.last_progress_ms
+                        if ($gap -ge $FrameReadTimeoutMs) { throw 'slowloris drip interval exceeded the active frame timeout' }
+                        Write-BoundedBytes $holder.stream ([byte[]]@(0x20)) 'slowloris drip byte'
+                        if (-not $holder.close_task.IsCompleted) {
+                            $holder.max_progress_gap_ms = [Math]::Max($gap, $holder.max_progress_gap_ms)
+                            $holder.last_progress_ms = $holder.clock.ElapsedMilliseconds
+                            $holder.drips++
+                            $script:RawProbeEvidence.drips++
+                        }
+                    }
+                    catch {
+                        $cause = $_.Exception
+                        while ($null -ne $cause -and $cause -isnot [Net.Sockets.SocketException]) { $cause = $cause.InnerException }
+                        if ($null -eq $cause -or $cause.SocketErrorCode -notin @(
+                            [Net.Sockets.SocketError]::ConnectionReset, [Net.Sockets.SocketError]::ConnectionAborted)) { throw }
+                        # The pending read and its completion time must prove expiry.
+                    }
+                }
+            }
+            if ($clock.ElapsedMilliseconds -ge $nextDrip) { $nextDrip = $clock.ElapsedMilliseconds + $interval }
+            if ($closed.Count -lt $holders.Count) {
+                $remaining = Get-RemainingCaseMs 'slowloris observation sleep'
+                Start-Sleep -Milliseconds ([Math]::Min(20, $remaining))
+            }
+        }
+    }
+    finally {
+        foreach ($client in $clients) { $client.Dispose(); $script:RawProbeEvidence.disposed++ }
+    }
+}
+
 function Test-RawCase {
     param(
         [string]$Name,
@@ -1133,6 +1328,7 @@ function Test-RawCase {
     )
     $clock = [System.Diagnostics.Stopwatch]::StartNew()
     $script:CaseDeadline = [DateTime]::UtcNow.AddMilliseconds($MaxCaseMs)
+    $script:RawProbeEvidence = $null
     try {
         $preflight = Assert-CaseTarget
         & $Action
@@ -1147,7 +1343,12 @@ function Test-RawCase {
         Add-Result $Name $false $clock.ElapsedMilliseconds $_.Exception.Message 'raw_frame' (Get-SanitizedHash @{ case = $Name })
         throw
     }
-    finally { $script:CaseDeadline = $null }
+    finally {
+        if ($null -ne $RawProbeEvidence) {
+            $Results[$Results.Count - 1] | Add-Member -NotePropertyName probe_evidence -NotePropertyValue $RawProbeEvidence
+        }
+        $script:CaseDeadline = $null
+    }
 }
 
 function Wait-OwnedProcessExit([int]$TimeoutMs) {
@@ -1467,94 +1668,15 @@ p.write_text('this line must never execute', encoding='utf-8')
         }
     }
     Test-RawCase 'partial_frame_client_flood' {
-        $clients = [Collections.Generic.List[Net.Sockets.TcpClient]]::new()
-        try {
-            for ($i = 0; $i -lt ($ConfiguredMaxClients + 8); $i++) {
-                $client = $null
-                try {
-                    $client = Open-BoundedClient
-                    Write-BoundedBytes ($client.GetStream()) ([byte[]]@(0)) 'partial-flood byte write'
-                    $clients.Add($client)
-                }
-                catch {
-                    # Refusal above the configured ceiling is an expected safe
-                    # outcome. All accepted sockets are still disposed below.
-                    if ($null -ne $client) { $client.Dispose() }
-                }
-            }
-            if ($clients.Count -eq 0) { throw 'partial-frame flood could not establish any probe connection' }
-        }
-        finally {
-            foreach ($client in $clients) { $client.Dispose() }
-        }
+        Invoke-PartialFrameCapacityProbe 8 'partial-flood'
     }
 
     Test-RawCase 'client_limit_accounting_recovery' {
-        $holders = [Collections.Generic.List[Net.Sockets.TcpClient]]::new()
-        $extra = $null
-        try {
-            $incompleteHeader = Get-BigEndianHeader 512
-            for ($i = 0; $i -lt $ConfiguredMaxClients; $i++) {
-                $client = Open-BoundedClient
-                Write-BoundedBytes ($client.GetStream()) $incompleteHeader 'client-limit header write'
-                Write-BoundedBytes ($client.GetStream()) ([byte[]]@(0x7b)) 'client-limit partial body write'
-                $holders.Add($client)
-            }
-            $extra = Open-BoundedClient
-            $frame = New-RawCommandFrame 'ping' @{} ('limit_' + [guid]::NewGuid().ToString('N'))
-            $extraStream = $null
-            try {
-                $extraStream = $extra.GetStream()
-                Write-BoundedBytes $extraStream $frame.header 'over-limit header write'
-                Write-BoundedBytes $extraStream $frame.body 'over-limit body write'
-            }
-            catch {
-                # A write-side refusal is already the desired bounded outcome.
-            }
-            if ($extra.Connected) { Wait-ForBoundedPeerClose $extraStream 'over-limit peer close' | Out-Null }
-        }
-        finally {
-            if ($null -ne $extra) { $extra.Dispose() }
-            foreach ($client in $holders) { $client.Dispose() }
-        }
+        Invoke-PartialFrameCapacityProbe 1 'client-limit'
     }
 
     Test-RawCase 'slowloris_total_frame_deadline' {
-        # Complete the header, then drip an incomplete body often enough that a
-        # per-read idle timeout would never fire. Only a total-frame deadline
-        # closes these sockets while they continue to make progress.
-        $clients = [Collections.Generic.List[Net.Sockets.TcpClient]]::new()
-        $streams = [Collections.Generic.List[Net.Sockets.NetworkStream]]::new()
-        $closed = [Collections.Generic.HashSet[int]]::new()
-        try {
-            $declared = Get-BigEndianHeader 512
-            for ($i = 0; $i -lt $ConfiguredMaxClients; $i++) {
-                $client = Open-BoundedClient
-                $stream = $client.GetStream()
-                Write-BoundedBytes $stream $declared 'slowloris header write'
-                Write-BoundedBytes $stream ([byte[]]@(0x7b)) 'slowloris initial body byte'
-                $clients.Add($client)
-                $streams.Add($stream)
-            }
-            $drip = [Diagnostics.Stopwatch]::StartNew()
-            $interval = [Math]::Max(100, [Math]::Min(500, [int]($FrameReadTimeoutMs / 3)))
-            while ($drip.ElapsedMilliseconds -lt ($FrameReadTimeoutMs + 300)) {
-                Start-Sleep -Milliseconds $interval
-                for ($i = 0; $i -lt $clients.Count; $i++) {
-                    if ($closed.Contains($i)) { continue }
-                    try { Write-BoundedBytes $streams[$i] ([byte[]]@(0x20)) 'slowloris drip byte' }
-                    catch { [void]$closed.Add($i) }
-                }
-            }
-            for ($i = 0; $i -lt $clients.Count; $i++) {
-                if (-not $closed.Contains($i)) {
-                    Wait-ForBoundedPeerClose $streams[$i] 'slowloris total-deadline peer close' | Out-Null
-                }
-            }
-        }
-        finally {
-            foreach ($client in $clients) { $client.Dispose() }
-        }
+        Invoke-SlowlorisDeadlineProbe
     }
 
     Test-RawCase 'pipelined_request_limit' {

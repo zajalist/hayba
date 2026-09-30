@@ -38,3 +38,41 @@ describe('survival harness raw transport helpers', () => {
     expect(diagnostics).toBe('');
   });
 });
+
+describe('survival harness client admission and closure probes', () => {
+  const scenarios = [
+    'flood_admission_and_capacity', 'limit_admission_and_capacity', 'limit_reset_capacity',
+    'slowloris_admitted_expiry', 'slowloris_premature_close', 'uncorrelated_admission_cleanup',
+    'overflow_response_is_not_rejection', 'expired_holders_are_not_capacity_proof', 'flood_deadline_is_not_rejection',
+    'slowloris_default_limits', 'limit_minimum_client_count', 'null_close_task_is_not_closure',
+    'unrelated_error_is_not_closure', 'early_close_completion_timestamp', 'socket_timeout_is_not_closure',
+  ];
+  let results: Array<{ name: string; passed: boolean; elapsed_ms?: number }>;
+  let exitStatus: number | null;
+  let diagnostics: string;
+
+  beforeAll(() => {
+    const run = spawnSync('pwsh', [
+      '-NoProfile', '-NonInteractive', '-File', join(scripts, 'test-survival-client-probes.ps1'),
+      '-HarnessPath', join(scripts, 'test-editor-survival.ps1'),
+    ], { encoding: 'utf8', timeout: 20_000, windowsHide: true });
+    if (run.error) throw run.error;
+    if (!run.stdout.trim()) throw new Error(`PowerShell client probes produced no result: ${run.stderr}`);
+    results = JSON.parse(run.stdout);
+    exitStatus = run.status;
+    diagnostics = run.stderr;
+    expect(results).toHaveLength(scenarios.length);
+  }, 25_000);
+
+  for (const scenario of scenarios) {
+    it(scenario, () => {
+      const result = results.find((item) => item.name === scenario);
+      expect(result, scenario).toBeDefined();
+      expect(result?.passed, JSON.stringify(result)).toBe(true);
+    });
+  }
+  it('completes the subprocess successfully without unexpected diagnostics', () => {
+    expect(exitStatus, diagnostics).toBe(0);
+    expect(diagnostics).toBe('');
+  });
+});

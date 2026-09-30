@@ -70,6 +70,15 @@ public sealed class HaybaHalfClosePeer {
 $MaxCaseMs = 1000
 $CaseDeadline = $null
 $results = [Collections.Generic.List[object]]::new()
+function Start-IsolatedLoopbackListener([Net.Sockets.TcpListener]$Listener) {
+    for ($attempt = 0; $attempt -lt 32; $attempt++) {
+        $Listener.Start()
+        $selectedPort = $Listener.LocalEndpoint.Port
+        if ($selectedPort -lt 52342 -or $selectedPort -gt 52350) { return }
+        $Listener.Stop()
+    }
+    throw 'Unable to bind an isolated ephemeral loopback port'
+}
 $endianPassed = $true
 try {
     foreach ($case in @(
@@ -98,7 +107,8 @@ foreach ($scenario in @('fragmented_read', 'early_eof', 'stalled_deadline', 'inv
     $passed = $false
     $elapsed = 0
     try {
-        $listener.Start()
+        Start-IsolatedLoopbackListener $listener
+        $selectedPort = $listener.LocalEndpoint.Port
         $accept = $listener.AcceptTcpClientAsync()
         $client.Connect('127.0.0.1', $listener.LocalEndpoint.Port)
         $peer = $accept.GetAwaiter().GetResult()
@@ -141,7 +151,7 @@ foreach ($scenario in @('fragmented_read', 'early_eof', 'stalled_deadline', 'inv
         $client.Dispose()
         $listener.Stop()
     }
-    $results.Add([pscustomobject]@{ name=$scenario; passed=$passed; elapsed_ms=$elapsed })
+    $results.Add([pscustomobject]@{ name=$scenario; passed=$passed; elapsed_ms=$elapsed; port=$selectedPort })
 }
 foreach ($scenario in @('truncated_header_halfclose', 'truncated_body_halfclose',
     'delayed_peer_eof', 'nonclosing_peer_deadline')) {
@@ -154,7 +164,7 @@ foreach ($scenario in @('truncated_header_halfclose', 'truncated_body_halfclose'
     $peerDiagnostic = ''
     $elapsed = 0
     try {
-        $listener.Start()
+        Start-IsolatedLoopbackListener $listener
         $Port = $listener.LocalEndpoint.Port
         $neverCloses = $scenario -ceq 'nonclosing_peer_deadline'
         $closeDelay = if ($neverCloses) { -1 } elseif ($scenario -ceq 'delayed_peer_eof') { 150 } else { 0 }
@@ -202,7 +212,7 @@ foreach ($scenario in @('truncated_header_halfclose', 'truncated_body_halfclose'
         $cancel.Dispose()
         $listener.Stop()
     }
-    $results.Add([pscustomobject]@{ name=$scenario; passed=$passed; elapsed_ms=$elapsed; diagnostic=$diagnostic; peer_diagnostic=$peerDiagnostic })
+    $results.Add([pscustomobject]@{ name=$scenario; passed=$passed; elapsed_ms=$elapsed; port=$Port; diagnostic=$diagnostic; peer_diagnostic=$peerDiagnostic })
 }
 $results | ConvertTo-Json -Compress
 if (@($results | Where-Object { -not $_.passed }).Count) { exit 1 }
