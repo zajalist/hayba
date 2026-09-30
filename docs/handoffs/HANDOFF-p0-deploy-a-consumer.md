@@ -8,7 +8,7 @@ For the consumer's session, to act on in its own closed-editor window. Hayba nev
 |---|---|
 | Tag | `p0-deploy-a` (and `v0.4.0-rc.1`, see `docs/VERSIONING.md`) → `e3ca9b62` on `fix/p0-safety-public` |
 | Deploy branch | `<deploy-branch>` at `1cdf1f2c`. |
-| Node | `mcp-tools/hayba-mcp/dist` built from `1cdf1f2c` (§4 step 4) |
+| Node | `mcp-tools/hayba-mcp/dist` built from `1cdf1f2c` (§4 step 5) |
 | Gate evidence | BuildPlugin, host build twice, 42 exact test names (R0+34), RealPIE, TS suite, live ladder A1–A8 |
 
 - **Sticky `editor_unsafe` (T1).** After a contained native fault, Hayba refuses writes, Python, saves, compiles and PIE with `editor_unsafe_restart_required` until the editor restarts. Reads still answer. After an engine fatal during a save (`HCR-NATIVE-004`), only status commands answer: `ping`, `editor_get_state`, `lease_status`, `lease_release`, `batch_status` and the logs. The person at the editor gets a persistent notification within one frame, and the Play button is refused until the restart.
@@ -86,15 +86,19 @@ The gate itself uses 0, 1, 2 and 4.
 1. Announce the window to every lane.
 2. `python Tools/GameFlow/editor_gate.py acquire --owner deploy` (global). Every lane stops at the gate.
 3. The user saves and closes the consumer's editor.
-4. Build through the existing deploy-branch path, at exactly `1cdf1f2c`:
+4. Fast-forward the deploy branch to the merge commit. `1cdf1f2c` is already in the shared local repository, so no fetch is needed. With the editor closed and the deploy worktree clean (`git -C <deploy-worktree> status --short` prints nothing), run:
    ```powershell
-   git -C <deploy-worktree> fetch
+   git -C <deploy-worktree> merge --ff-only 1cdf1f2c
+   ```
+   Expected: a fast-forward to `1cdf1f2c`. If the fast-forward is refused, stop and report back. Never merge by hand.
+5. Build through the existing deploy-branch path, at exactly `1cdf1f2c`:
+   ```powershell
    git -C <deploy-worktree> rev-parse --short HEAD   # must print 1cdf1f2c
    Set-Location <deploy-worktree>\mcp-tools\hayba-mcp
    npm run build:server                                            # Node dist from the same commit
    ```
    Then do the usual full editor rebuild of the consumer project with the editor closed. **Never `robocopy /MIR` into `<project>/Plugins`.** The MetaSound satellite reaches the consumer only once it is installed there (D6).
-5. Start the editor. Restart every lane's MCP server so that it loads the new `dist/`.
+6. Start the editor. Restart every lane's MCP server so that it loads the new `dist/`.
 
 ## 5. After the restart (the consumer's session, on its own editor)
 
@@ -225,6 +229,8 @@ M7 needs at least 60 000 commands before its rate means anything; below that, re
 ## 8. Verification status
 
 The gate (build, exact-name headless test run, RealPIE, TS suite) is green: BuildPlugin standalone, the host built twice, all 42 manifest test names passing (108 total, 0 failures), `RealPIE` passing, and the TS gate clean. The live ladder A1, A2, A4, A5, A6 and A7 passed on the throwaway scratch host.
+
+On the merge `1cdf1f2c`, one vitest test fails: `compile-persistence-truth-contract` › "revokes every module-owned callback" (`PlanModeMenuStartupHandle`). It fails the same way on the deploy tip `151c55ec`; the merge did not introduce it, and it does not block Deploy A.
 
 **Three ladder steps are still pending manual verification with the maintainer, at the editor itself:** A3 (a user PIE refuses agent writes, and nobody stops it), A7b (the person at the editor sees the fault notification and Play is refused), and A8 (an editor restart clears the unsafe state). This handoff is not a claim that those three are verified — the checklist to run them is recorded alongside the gate evidence. Deploy A should not be presented as fully verified until they are run and pass.
 
