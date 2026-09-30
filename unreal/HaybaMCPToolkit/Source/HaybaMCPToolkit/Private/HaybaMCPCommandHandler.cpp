@@ -22,6 +22,8 @@
 #include "HaybaMCPHealthPolicy.h"
 #include "HaybaMCPCommandSets.h"
 #include "HaybaMCPWarningLimiter.h"
+#include "HaybaMCPEditorState.h"
+#include "HaybaMCPEditorStatePolicy.h"
 #include "Json.h"
 #include "Editor.h"
 #include "EngineUtils.h"
@@ -1146,6 +1148,24 @@ static void LogDrainedGateRefusals()
     }
 }
 
+/** pie_active Warning: once per (owner, command, session kind) per 30 s through
+ *  the shared gate limiter. A user PIE during a bpgraph build (25-35 calls/s)
+ *  would otherwise log every refused call (R-18: drain at every log site). */
+static void LogPieActiveRefusal(const FString& Cmd, const FString& Caller, const HaybaMCPState::FPieState& Pie)
+{
+    LogDrainedGateRefusals();   // T1.3: one drained-line format for every gate
+    const FWarningLimiter::FHit Hit = GateRefusalLimiter().Note(FWarningLimiter::MakeKey(
+        TEXT("pie"), TEXT("pie_active"), Caller, Cmd,
+        Pie.Kind == HaybaMCPState::EPieKind::User ? TEXT("user") : TEXT("agent")));
+    if (!Hit.bLog)
+    {
+        return;
+    }
+    UE_LOG(LogHaybaMCPCmd, Warning, TEXT("pie_active: refused '%s' from '%s' during %s PIE (%s)%s"),
+        *Cmd, *Caller, *HaybaMCPState::LexPie(Pie), HaybaMCPState::LexPiePhase(Pie.Phase),
+        *FWarningLimiter::PreviousWindowSuffix(Hit.SuppressedInPreviousWindow));
+}
+
 /** Slot 1 (ADR-0011): the editor is unsafe and Cmd is not in CommandsAllowedWhileUnsafe(GateCause). */
 static FString RefuseWhileUnsafe(const FString& Id, const FString& Cmd, const FString& Owner, HaybaMCPHealth::ECause GateCause)
 {
@@ -1459,8 +1479,51 @@ FString FHaybaMCPCommandHandler::ProcessCommandInContext(const FString& CommandJ
         }
     }
 
+    // Slot 2: pie_active (docs/adr/0012). PIE is a state, not a lock. While a
+    // session runs or is queued only the named read/control/observation sets
+    // run; a drive command runs only for the agent that owns the session;
+    // editor_stop_pie of an agent PIE runs for anyone. A command authorized
+    // here as a PIE command skips the lease gate below (R13).
+    bool bPieAuthorized = false;
+    {
+        const HaybaMCPState::FPieState Pie = FHaybaMCPEditorState::Get().CurrentPie();
+        if (Pie.Kind != HaybaMCPState::EPieKind::None)
+        {
+            const FString Caller = Leases.EffectiveOwner();
+            const HaybaMCPState::FPieVerdict PieVerdict = HaybaMCPState::CheckPie(Pie, Cmd, Caller);
+            if (!PieVerdict.bAllow)
+            {
+                const double Now = FPlatformTime::Seconds();
+                TSharedPtr<FJsonObject> PieDetail = MakeShared<FJsonObject>();
+                PieDetail->SetStringField(TEXT("pie"), HaybaMCPState::LexPie(Pie));
+                PieDetail->SetStringField(TEXT("phase"), HaybaMCPState::LexPiePhase(Pie.Phase));
+                PieDetail->SetBoolField(TEXT("simulating"), Pie.bSimulating);
+                PieDetail->SetNumberField(TEXT("since_s"), FMath::Max(0.0, Now - Pie.Since));
+                PieDetail->SetStringField(TEXT("command"), Cmd);
+                PieDetail->SetStringField(TEXT("caller_owner"), Caller);
+                PieDetail->SetStringField(TEXT("rule"), HaybaMCPState::LexPieRule(PieVerdict.Rule));
+                LogPieActiveRefusal(Cmd, Caller, Pie);
+
+                FGateRefusal Refusal;
+                Refusal.Code = TEXT("pie_active");
+                Refusal.Message = HaybaMCPState::FormatPieActiveMessage(Pie, Cmd, PieVerdict.Rule, Now);
+                Refusal.DetailKey = TEXT("pie");
+                Refusal.Detail = PieDetail;
+                Refusal.FailureKind = EHaybaMCPFailureKind::Retryable;
+                Refusal.bRetryUnchangedSafe = true;
+                return MakeGateRefusal(Id, Cmd, Refusal);
+            }
+            bPieAuthorized = PieVerdict.bAuthorizedAsPie;
+            if (PieVerdict.bNonOwnerStop)
+            {
+                UE_LOG(LogHaybaMCPCmd, Warning, TEXT("editor_stop_pie: '%s' stopped an agent PIE owned by '%s'"), *Caller, *Pie.Owner);
+            }
+        }
+    }
+
     // Lease gate (after auth, before anything runs). Never blocks: Advisory
-    // lets the command run and attaches lease_warning; Enforced refuses it.
+    // Advisory lets the command run and attaches lease_warning; Enforced refuses it. A PIE command slot 2 authorized skips it (R13): another owner's lease taken during the PIE would otherwise deadlock the PIE's owner.
+    if (!bPieAuthorized)
     {
         const FHaybaMCPLeaseManager::FVerdict Verdict = Leases.CheckCommand(Cmd, Params);
         if (Verdict.bRefuse)
