@@ -37,6 +37,12 @@ export interface TcpResponse {
   /** pie_active: the play session that refused the command
    *  {pie, phase, simulating, since_s, command, caller_owner, rule}. */
   pie?: Record<string, unknown>;
+  /** asset_busy refusal (P0 T3): the asset build that refused the command.
+   *  `{command, caller_owner, assets:[{asset, owner, label, lane, held_s, since, expires_in_s}]}`. */
+  busy?: Record<string, unknown>;
+  /** Advisory lease mode (P0 T3): the command ran although another owner is
+   *  building its asset. `{code: 'asset_busy', busy}`. */
+  state_warning?: Record<string, unknown>;
 }
 
 const MAX_OWNER_CHARS = 128;

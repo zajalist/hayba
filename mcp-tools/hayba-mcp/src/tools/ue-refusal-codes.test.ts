@@ -85,3 +85,82 @@ describe('T2: PIE refusal codes', () => {
     expect((err.uePayload as TcpResponse).data).toEqual(data);
   });
 });
+
+// ---------------------------------------------------------------------------
+// P0 T3: asset_busy (router slot 3) and the Advisory state_warning.
+// Imports are lazy so this block only appends to the file.
+// ---------------------------------------------------------------------------
+describe('asset_busy (P0 T3)', () => {
+  const busy = {
+    command: 'editor_start_pie',
+    caller_owner: 'lane5',
+    assets: [
+      {
+        asset: '/game/__haybatest__/bp_busy',
+        owner: 'builder',
+        label: 'build:bpgraph_7',
+        lane: 'long',
+        held_s: 12,
+        since: '2026-09-28T11:59:48.000Z',
+        expires_in_s: 108,
+      },
+    ],
+  };
+
+  it('keeps asset_busy as its own code with the busy detail, and sends once', async () => {
+    const { executeCommand, UeToolError } = await import('./tool-executor.js');
+    let sends = 0;
+    const err: unknown = await executeCommand('editor_start_pie', {}, {
+      sender: async () => {
+        sends += 1;
+        return {
+          id: 'busy-1',
+          ok: false,
+          code: 'asset_busy',
+          error:
+            "asset_busy: 'editor_start_pie' is refused: /game/__haybatest__/bp_busy is being built by 'builder' " +
+            '(label build:bpgraph_7, held 12 s, lease expires in 108 s). PIE/compile would use it half-built. ' +
+            'Nothing ran; try again when editor_get_state.building no longer lists it.',
+          busy,
+        };
+      },
+    }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(UeToolError);
+    expect(err).toMatchObject({ code: 'asset_busy' });
+    expect((err as { uePayload: { busy?: unknown } }).uePayload.busy).toEqual(busy);
+    expect(sends).toBe(1);
+  });
+
+  it('surfaces state_warning beside lease_warning when the command ran under Advisory', async () => {
+    const { executeCommand } = await import('./tool-executor.js');
+    const state_warning = { code: 'asset_busy', busy: { ...busy, command: 'blueprint_compile' } };
+    const lease_warning = { code: 'lease_conflict', reason: 'held', holder_owner: 'builder' };
+    await expect(
+      executeCommand('blueprint_compile', { path: '/Game/__HaybaTest__/BP_Busy' }, {
+        sender: async () => ({ id: 'busy-2', ok: true, data: { compiled_clean: true }, lease_warning, state_warning }),
+      }),
+    ).resolves.toEqual({ compiled_clean: true, lease_warning, state_warning });
+  });
+
+  it('surfaces state_warning on its own', async () => {
+    const { executeCommand } = await import('./tool-executor.js');
+    const state_warning = { code: 'asset_busy', busy };
+    await expect(
+      executeCommand('ui_save_widget', { widget_blueprint_path: '/Game/UI/WBP_Menu' }, {
+        sender: async () => ({ id: 'busy-3', ok: true, data: { saved: true }, state_warning }),
+      }),
+    ).resolves.toEqual({ saved: true, state_warning });
+  });
+
+  it('types busy and state_warning on TcpResponse and never carries a handle', () => {
+    const reply: import('../tcp-client.js').TcpResponse = {
+      id: 'busy-4',
+      ok: false,
+      code: 'asset_busy',
+      busy,
+      state_warning: { code: 'asset_busy', busy },
+    };
+    expect(reply.busy).toEqual(busy);
+    expect(Object.keys(busy.assets[0]!).some((k) => /token|lease_id/.test(k))).toBe(false);
+  });
+});

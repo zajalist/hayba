@@ -19,7 +19,9 @@ export type UeToolErrorCode =
   // PIE is running or queued and the command is not PIE-safe; nothing ran (docs/adr/0012).
   | 'pie_active'
   // editor_start_pie found loaded Blueprints that would open a modal dialog before play.
-  | 'pie_blocked';
+  | 'pie_blocked'
+  // Another owner is building an asset this command would use half-built; nothing ran (P0 T3).
+  | 'asset_busy';
 
 export class UeToolError extends Error {
   readonly code: UeToolErrorCode;
@@ -40,6 +42,7 @@ const KNOWN_UE_CODES = new Set<UeToolErrorCode>([
   'native_fault_contained',
   'pie_active',
   'pie_blocked',
+  'asset_busy',
 ]);
 function mapUeCode(raw: string | undefined): UeToolErrorCode {
   if (raw && KNOWN_UE_CODES.has(raw as UeToolErrorCode)) return raw as UeToolErrorCode;
@@ -309,11 +312,17 @@ export async function executeCommand<T = Record<string, unknown>>(
 
   if (resp.ok) {
     const data = resp.data ?? {};
-    // Advisory lease mode runs the command but says it collided with another
-    // agent's lease. The warning is a top-level envelope field; surface it in
-    // the data every tool returns so the agent actually sees it.
-    if (resp.lease_warning && typeof data === 'object' && !Array.isArray(data)) {
-      return { ...data, lease_warning: resp.lease_warning } as T;
+    // Advisory mode runs the command but says why it was risky. Two cases:
+    // it collided with another agent's lease (lease_warning), or it ran while
+    // another owner builds its asset (state_warning, P0 T3). Both are
+    // top-level envelope fields; surface them in the data every tool
+    // returns, so the agent actually sees them.
+    if ((resp.lease_warning || resp.state_warning) && typeof data === 'object' && !Array.isArray(data)) {
+      return {
+        ...data,
+        ...(resp.lease_warning ? { lease_warning: resp.lease_warning } : {}),
+        ...(resp.state_warning ? { state_warning: resp.state_warning } : {}),
+      } as T;
     }
     return data as T;
   }
