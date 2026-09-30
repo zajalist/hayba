@@ -45,3 +45,4 @@ Hayba.MCP.State.GetStateShape
 Hayba.MCP.State.PieSafeDrift
 Hayba.MCP.State.StartPieBlockedByDirtyCode
 Hayba.MCP.State.BatchHoldsDuringPIE
+# optional: Hayba.MCP.State.RealPIE (run alone with -HaybaRealPIETests)

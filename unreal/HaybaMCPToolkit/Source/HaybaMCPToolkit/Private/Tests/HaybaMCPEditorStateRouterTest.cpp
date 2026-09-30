@@ -865,4 +865,61 @@ bool FHaybaMCPStateBatchHoldsDuringPIETest::RunTest(const FString& Parameters)
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FHaybaMCPStateRealPIETest,
+	"Hayba.MCP.State.RealPIE",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FHaybaMCPStateRealPIETest::RunTest(const FString& Parameters)
+{
+	// Opt-in and owned child only: a real PIE in a shared process is too heavy for the main run.
+	if (!FParse::Param(FCommandLine::Get(), TEXT("HaybaRealPIETests")))
+	{
+		AddInfo(TEXT("skipped: run with -HaybaRealPIETests in its own invocation"));
+		return true;
+	}
+	const TSharedPtr<FHaybaMCPCommandHandler> Router = GetRouter(*this);
+	if (!Router.IsValid() || !NoRealPie(*this)) return false;
+
+	const FString Owner = MakeTestOwner();
+	const FString Other = MakeTestOwner();
+	const int32 EndSerialBefore = FHaybaMCPEditorState::Get().PieEndSerial();
+	AddExpectedMessagePlain(FString::Printf(TEXT("editor_stop_pie: '%s' stopped an agent PIE owned by '%s'"), *Other, *Owner),
+		ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 1);
+
+	const TSharedPtr<FJsonObject> Start = Send(*Router, 900401, Owner, TEXT("editor_start_pie"));
+	if (!TestTrue(TEXT("editor_start_pie is accepted"), BoolOf(Start, TEXT("ok"))))
+	{
+		AddError(StringOf(Start, TEXT("error")));
+		return false;
+	}
+	ADD_LATENT_AUTOMATION_COMMAND(FHaybaWaitUntilLatentCommand(this, TEXT("the agent's PIE is running"), [Owner]()
+	{
+		const HaybaMCPState::FPieState Pie = FHaybaMCPEditorState::Get().CurrentPie();
+		return Pie.Kind == HaybaMCPState::EPieKind::Agent && Pie.Phase == HaybaMCPState::EPiePhase::Running && Pie.Owner == Owner;
+	}, 10.0));
+	ADD_LATENT_AUTOMATION_COMMAND(FFunctionLatentCommand([this, Router, Owner, Other]()
+	{
+		TSharedPtr<FJsonObject> AddNode = MakeShared<FJsonObject>();
+		AddNode->SetStringField(TEXT("path"), TEXT("/Game/__HaybaTest__/BP_RealPie"));
+		TestEqual(TEXT("a write during real PIE is refused"), CodeOf(Send(*Router, 900402, Other, TEXT("blueprint_add_node"), AddNode)), FString(TEXT("pie_active")));
+		TSharedPtr<FJsonObject> NoDirty = MakeShared<FJsonObject>();
+		NoDirty->SetBoolField(TEXT("include_dirty"), false);
+		const TSharedPtr<FJsonObject> StateData = ObjectOf(Send(*Router, 900402, Other, TEXT("editor_get_state"), NoDirty), TEXT("data"));
+		TestEqual(TEXT("editor_get_state names the agent"), StringOf(StateData, TEXT("pie")), TEXT("agent:") + Owner);
+		TestTrue(TEXT("another agent may stop an agent PIE"), BoolOf(Send(*Router, 900402, Other, TEXT("editor_stop_pie")), TEXT("ok")));
+		return true;
+	}));
+	ADD_LATENT_AUTOMATION_COMMAND(FHaybaWaitUntilLatentCommand(this, TEXT("PIE has ended"), []()
+	{
+		return FHaybaMCPEditorState::Get().CurrentPie().Kind == HaybaMCPState::EPieKind::None;
+	}, 10.0));
+	ADD_LATENT_AUTOMATION_COMMAND(FFunctionLatentCommand([this, EndSerialBefore]()
+	{
+		TestEqual(TEXT("one session, one end"), FHaybaMCPEditorState::Get().PieEndSerial() - EndSerialBefore, 1);
+		return true;
+	}));
+	return true;
+}
+
 #endif // WITH_DEV_AUTOMATION_TESTS
