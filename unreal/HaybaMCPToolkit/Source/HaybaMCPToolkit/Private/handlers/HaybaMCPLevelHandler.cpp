@@ -52,41 +52,51 @@ struct FSanitizedStaticMeshRef
     TWeakObjectPtr<UStaticMesh> Mesh;
 };
 
+// Discover the future write set without changing references or dirty flags.
+static TArray<FSanitizedStaticMeshRef> DiscoverTransientStaticMeshRefs(UWorld* World)
+{
+    TArray<FSanitizedStaticMeshRef> Candidates;
+    if (!World) return Candidates;
+    for (TActorIterator<AActor> It(World); It; ++It)
+    {
+        AActor* Actor = *It;
+        if (!Actor || Actor->GetLevel() != World->GetCurrentLevel()) continue;
+        TArray<UStaticMeshComponent*> Components;
+        Actor->GetComponents(Components);
+        for (UStaticMeshComponent* Component : Components)
+        {
+            if (!Component) continue;
+            UStaticMesh* Mesh = Component->GetStaticMesh();
+            if (Mesh && IsTransientPackageRef(Mesh))
+            {
+                FSanitizedStaticMeshRef Candidate;
+                Candidate.Component = Component;
+                Candidate.Mesh = Mesh;
+                Candidates.Add(Candidate);
+            }
+        }
+    }
+    return Candidates;
+}
+
 static int32 SanitizeTransientStaticMeshRefs(
-    UWorld* World,
+    const TArray<FSanitizedStaticMeshRef>& Candidates,
     TArray<FString>& OutCleaned,
     TArray<FSanitizedStaticMeshRef>* OutRestore = nullptr)
 {
-    if (!World) return 0;
     int32 Count = 0;
-    for (TActorIterator<AActor> It(World); It; ++It)
+    for (const FSanitizedStaticMeshRef& Candidate : Candidates)
     {
-        AActor* A = *It;
-        if (!A) continue;
-        // level_save writes only the current level. Do not dirty actors in
-        // streamed/sub-level packages while repairing the package being saved.
-        if (A->GetLevel() != World->GetCurrentLevel()) continue;
-        TArray<UStaticMeshComponent*> Comps;
-        A->GetComponents(Comps);
-        for (UStaticMeshComponent* C : Comps)
-        {
-            if (!C) continue;
-            UStaticMesh* SM = C->GetStaticMesh();
-            if (SM && IsTransientPackageRef(SM))
-            {
-                if (OutRestore)
-                {
-                    FSanitizedStaticMeshRef Restore;
-                    Restore.Component = C;
-                    Restore.Mesh = SM;
-                    OutRestore->Add(Restore);
-                }
-                C->Modify();
-                C->SetStaticMesh(nullptr);
-                OutCleaned.Add(FString::Printf(TEXT("%s.%s -> %s"), *A->GetName(), *C->GetName(), *SM->GetName()));
-                ++Count;
-            }
-        }
+        UStaticMeshComponent* Component = Candidate.Component.Get();
+        UStaticMesh* Mesh = Candidate.Mesh.Get();
+        // Apply only the discovered repair. A prior editor callback may have
+        // removed a candidate or changed its mesh since discovery.
+        if (!Component || !Mesh || Component->GetStaticMesh() != Mesh) continue;
+        if (OutRestore) OutRestore->Add(Candidate);
+        Component->Modify();
+        Component->SetStaticMesh(nullptr);
+        OutCleaned.Add(FString::Printf(TEXT("%s.%s -> %s"), *GetNameSafe(Component->GetOwner()), *Component->GetName(), *Mesh->GetName()));
+        ++Count;
     }
     return Count;
 }
@@ -250,6 +260,7 @@ FHaybaHandlerResult FHaybaMCPLevelHandler::LevelSave(const TSharedPtr<FJsonObjec
 
     UPackage* LevelPackage = World->GetCurrentLevel()->GetOutermost();
     const bool bWasDirty = LevelPackage && LevelPackage->IsDirty();
+    const TArray<FSanitizedStaticMeshRef> SanitizerCandidates = DiscoverTransientStaticMeshRefs(World);
 
     // Refuse before the sanitizer touches anything. Check exactly what
     // SaveCurrentLevel will write (FileHelpers.cpp): the map when it is dirty or
@@ -271,13 +282,25 @@ FHaybaHandlerResult FHaybaMCPLevelHandler::LevelSave(const TSharedPtr<FJsonObjec
                 return ReadOnly;
             }
         }
+        // Modify() will dirty these packages even when they were initially
+        // clean. Components can belong to external actor packages rather than
+        // the map, so preflight their actual ownership before any repair.
+        for (const FSanitizedStaticMeshRef& Candidate : SanitizerCandidates)
+        {
+            UStaticMeshComponent* Component = Candidate.Component.Get();
+            UPackage* RepairPackage = Component ? Component->GetPackage() : nullptr;
+            if (RepairPackage && HaybaSaveVerify::RefuseIfReadOnly(TEXT("level_save"), RepairPackage->GetName(), ReadOnly))
+            {
+                return ReadOnly;
+            }
+        }
     }
 
     // Strip dangling transient mesh refs (stale HLOD proxies) that would
     // otherwise fail the save with "Illegal reference to private object".
     TArray<FString> Cleaned;
     TArray<FSanitizedStaticMeshRef> Restore;
-    SanitizeTransientStaticMeshRefs(World, Cleaned, &Restore);
+    SanitizeTransientStaticMeshRefs(SanitizerCandidates, Cleaned, &Restore);
 
     bool bSaved = false;
     {
@@ -363,7 +386,7 @@ FHaybaHandlerResult FHaybaMCPLevelHandler::LevelCreate(const TSharedPtr<FJsonObj
     // Defensive: a freshly created map is clean, but if a template world is ever
     // used here, strip stale transient HLOD refs so the first save can't fail.
     TArray<FString> Cleaned;
-    SanitizeTransientStaticMeshRefs(World, Cleaned);
+    SanitizeTransientStaticMeshRefs(DiscoverTransientStaticMeshRefs(World), Cleaned);
 
     bool bSaved = false;
     {

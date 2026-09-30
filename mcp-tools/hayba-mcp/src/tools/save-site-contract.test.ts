@@ -172,7 +172,7 @@ const SITES: Array<{ cmd: string; file: string; anchor: string; preflights: numb
     cmd: 'level_save',
     file: `${TOOLKIT}/Private/handlers/HaybaMCPLevelHandler.cpp`,
     anchor: 'FHaybaHandlerResult FHaybaMCPLevelHandler::LevelSave(',
-    preflights: 2,
+    preflights: 3,
     mutations: ['SanitizeTransientStaticMeshRefs('],
   },
   {
@@ -286,4 +286,18 @@ it('level_create resolves the package to a map filename before SaveLevel', () =>
   const body = functionBody(at(`${TOOLKIT}/Private/handlers/HaybaMCPLevelHandler.cpp`), 'FHaybaHandlerResult FHaybaMCPLevelHandler::LevelCreate(');
   expect(body).toMatch(/HaybaSaveVerify::PackageFilename\(Path,\s*true\)/);
   expect(body).toContain('SaveLevel(World->GetCurrentLevel(), *MapFilename)');
+});
+
+it('discovers sanitizer candidates without mutation and preflights their actual packages', () => {
+  const scan = at(`${TOOLKIT}/Private/handlers/HaybaMCPLevelHandler.cpp`);
+  const discover = functionBody(scan, 'static TArray<FSanitizedStaticMeshRef> DiscoverTransientStaticMeshRefs(');
+  expect(discover).not.toContain('->Modify(');
+  expect(discover).not.toContain('->SetStaticMesh(');
+  const save = functionBody(scan, 'FHaybaHandlerResult FHaybaMCPLevelHandler::LevelSave(');
+  const found = save.indexOf('DiscoverTransientStaticMeshRefs(World)');
+  const preflight = save.indexOf('Component->GetPackage()');
+  const mutation = save.indexOf('SanitizeTransientStaticMeshRefs(');
+  expect(found).toBeGreaterThan(-1);
+  expect(preflight).toBeGreaterThan(found);
+  expect(preflight).toBeLessThan(mutation);
 });

@@ -72,3 +72,4 @@ Hayba.MCP.Save.ReadOnly.MaterialRefusesBeforeEdit
 Hayba.MCP.Save.ReadOnly.AudioAndSaveAllRefuse
 Hayba.MCP.Save.ReadOnly.LevelSaveRefusesWithoutModal
 Hayba.MCP.Save.ReadOnly.PythonMapSaveReturnsWithoutModal
+Hayba.MCP.Save.ReadOnly.SanitizerPackagesRefuseBeforeMutation

@@ -19,6 +19,8 @@
 #include "handlers/HaybaMCPUIHandler.h"
 #include "Editor.h"
 #include "Engine/StaticMeshActor.h"
+#include "Engine/StaticMesh.h"
+#include "Components/StaticMeshComponent.h"
 #include "Engine/World.h"
 #include "Factories/MaterialFactoryNew.h"
 #include "Factories/MaterialFunctionFactoryNew.h"
@@ -788,6 +790,86 @@ bool FHaybaMCPSaveReadOnlyPythonTest::RunTest(const FString& Parameters)
 	// engine: without it SaveCurrentLevel answers PR_Cancelled and prints False.
 	Map.MarkMapDirty();
 	RunSave(TEXT("writable map"), TEXT("saved=True"));
+	return true;
+}
+
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FHaybaMCPSaveReadOnlySanitizerTest,
+	"Hayba.MCP.Save.ReadOnly.SanitizerPackagesRefuseBeforeMutation",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FHaybaMCPSaveReadOnlySanitizerTest::RunTest(const FString& Parameters)
+{
+	namespace RO = HaybaSaveReadOnlyTest;
+	for (const bool bExternal : { false, true })
+	{
+		const FString Case = bExternal ? TEXT("external actor") : TEXT("map-owned actor");
+		RO::FScopedTestMap Map(bExternal ? TEXT("SanitizeExternal") : TEXT("SanitizeMap"));
+		if (!TestTrue(Case + TEXT(": fixture map and writable external actor exist"), Map.IsReady())) return false;
+		FActorSpawnParameters Spawn;
+		Spawn.bCreateActorPackage = bExternal;
+		AStaticMeshActor* RepairActor = Map.World()->SpawnActor<AStaticMeshActor>(Spawn);
+		if (!TestNotNull(Case + TEXT(": repair actor exists"), RepairActor)) return false;
+		UStaticMeshComponent* Component = RepairActor->GetStaticMeshComponent();
+		UPackage* RepairPackage = Component->GetPackage();
+		UPackage* OtherPackage = Map.GetActor()->GetExternalPackage();
+		UPackage* MapPackage = Map.World()->PersistentLevel->GetPackage();
+		TestTrue(Case + TEXT(": actual owning package matches actor external mode"),
+			bExternal ? RepairPackage == RepairActor->GetExternalPackage() : RepairPackage == MapPackage);
+		{
+			TGuardValue<bool> Unattended(GIsRunningUnattendedScript, true);
+			if (bExternal && !TestTrue(Case + TEXT(": repair actor package saved"),
+				UEditorLoadingAndSavingUtils::SavePackages({ RepairPackage }, false))) return false;
+			if (!TestTrue(Case + TEXT(": map saved before adding transient reference"),
+				UEditorLoadingAndSavingUtils::SaveMap(Map.World(), MapPackage->GetName()))) return false;
+		}
+		UStaticMesh* Mesh = NewObject<UStaticMesh>(GetTransientPackage(), NAME_None, RF_Transient);
+		Component->SetStaticMesh(Mesh);
+		RepairPackage->SetDirtyFlag(false);
+		MapPackage->SetDirtyFlag(false);
+		// A saved test map may retain PKG_NewlyCreated in this editor session.
+		// Model an existing clean package: the ordinary engine save predicates
+		// must exclude the repair target before the sanitizer touches it.
+		RepairPackage->ClearPackageFlags(PKG_NewlyCreated);
+		MapPackage->ClearPackageFlags(PKG_NewlyCreated);
+		TestFalse(Case + TEXT(": repair target starts clean and existing"),
+			RepairPackage->IsDirty() || RepairPackage->HasAnyPackageFlags(PKG_NewlyCreated) || UPackage::IsEmptyPackage(RepairPackage));
+		OtherPackage->SetDirtyFlag(true);
+		const FString RepairFile = HaybaSaveVerify::PackageFilename(RepairPackage->GetName(), !bExternal);
+		const FString OtherFile = Map.ExternalActorFile();
+		const FDateTime RepairStamp = IFileManager::Get().GetTimeStamp(*RepairFile);
+		const FDateTime OtherStamp = IFileManager::Get().GetTimeStamp(*OtherFile);
+		RO::SetReadOnly(RepairFile, true);
+		ON_SCOPE_EXIT
+		{
+			RO::SetReadOnly(RepairFile, false);
+			Component->SetStaticMesh(nullptr);
+		};
+		FHaybaMCPLevelHandler Handler;
+		HaybaMCPUnattendedProbe::FScopedRecorder Probe;
+		const FHaybaHandlerResult R = Handler.Handle(TEXT("level_save"), MakeShared<FJsonObject>());
+		RO::ExpectRefusal(*this, TEXT("level_save"), R);
+		TestTrue(Case + TEXT(": refusal names the clean repair package"), RO::DataFiles(R).Contains(RepairFile));
+		TestEqual(Case + TEXT(": no engine save was entered"), Probe.Records.Num(), 0);
+		TestTrue(Case + TEXT(": transient mesh reference is unchanged"), Component->GetStaticMesh() == Mesh);
+		TestFalse(Case + TEXT(": repair package stays clean"), RepairPackage->IsDirty());
+		TestFalse(Case + TEXT(": map stays clean"), MapPackage->IsDirty());
+		TestTrue(Case + TEXT(": separate writable candidate stays dirty"), OtherPackage->IsDirty());
+		TestTrue(Case + TEXT(": repair file unchanged"), IFileManager::Get().GetTimeStamp(*RepairFile) == RepairStamp);
+		TestTrue(Case + TEXT(": separate writable file unchanged"), IFileManager::Get().GetTimeStamp(*OtherFile) == OtherStamp);
+		// Once writable, the same planned repair must still run and persist.
+		RO::SetReadOnly(RepairFile, false);
+		Probe.Records.Reset();
+		const FHaybaHandlerResult Saved = Handler.Handle(TEXT("level_save"), MakeShared<FJsonObject>());
+		TestTrue(Case + TEXT(": writable repair save succeeds"), Saved.bOk && Saved.Data.IsValid()
+			&& Saved.Data->GetBoolField(TEXT("saved")));
+		TestTrue(Case + TEXT(": writable repair runs unattended"), Probe.Records.Num() == 1
+			&& Probe.Records[0].Site == TEXT("level_save") && Probe.Records[0].bUnattended);
+		TestNull(Case + TEXT(": writable transient reference was repaired"), Component->GetStaticMesh());
+		TestFalse(Case + TEXT(": writable repair persisted"), RepairPackage->IsDirty());
+		TestFalse(Case + TEXT(": writable separate candidate persisted"), OtherPackage->IsDirty());
+	}
 	return true;
 }
 
