@@ -8,6 +8,44 @@
 #include "HaybaMCPLeasePolicy.h"
 #include "HaybaMCPWarningLimiter.h"
 
+/** How the envelope `lease` relates to the resolved caller (P0 T9). */
+enum class ELeaseRef : uint8
+{
+	None,      // no envelope lease
+	Bound,     // a live lease whose owner is the caller
+	Unknown,   // not a live lease id
+	NotBound,  // a live lease of ANOTHER owner: the caller is still judged as itself
+	Redacted,  // a "[REDACTED:" marker: counts as absent
+};
+
+/** Who is calling, resolved once per request (FHaybaMCPLeaseManager::ResolveCaller). */
+struct FCallerResolution
+{
+	FString Owner;
+	/** "envelope" | "adopted" | "conn" | "local" | "batch" */
+	FString Via;
+	ELeaseRef LeaseRef = ELeaseRef::None;
+	/** The envelope lease id; empty for None and Redacted. */
+	FString LeaseId;
+	/** For NotBound: the owner of the lease the envelope named. */
+	FString NamedLeaseOwner;
+	/** The envelope claimed conn:<n> or local, and that is not this caller. */
+	bool bReservedViolation = false;
+};
+
+/** The `lease:` value of the Processing-command log line (T6 names; not_bound is T9's). */
+inline const TCHAR* LexLeaseRef(ELeaseRef Ref)
+{
+	switch (Ref)
+	{
+	case ELeaseRef::Bound:    return TEXT("valid");
+	case ELeaseRef::Unknown:  return TEXT("unknown");
+	case ELeaseRef::NotBound: return TEXT("not_bound");
+	case ELeaseRef::Redacted: return TEXT("redacted");
+	default:                  return TEXT("none");
+	}
+}
+
 /**
  * Who sent the command being processed. Set by FHaybaMCPCommandHandler for
  * the duration of one ProcessCommand call (game thread only), so a handler
@@ -16,14 +54,16 @@
  */
 struct FHaybaMCPRequestContext
 {
-	/** Envelope `owner`, else "conn:<id>", else "local". */
+	/** Envelope owner, adopted owner, else conn:<id> / local (T9). */
 	FString Owner;
 	/** TCP connection the command arrived on; 0 for in-process callers. */
 	int32 ConnId = 0;
-	/** The owner came from the envelope `owner` field (not conn:<n> / local). */
+	/** Compatibility flag: the resolved caller is an identified agent (T9). */
 	bool bOwnerFromEnvelope = false;
 	/** Envelope `lease`: the lease_id the caller named (may be a redaction marker). */
 	FString LeaseToken;
+	/** Resolved once; Owner always equals Caller.Owner after envelope parsing. */
+	FCallerResolution Caller;
 	/** Set by the Advisory check; merged into the response as `lease_warning`. */
 	TSharedPtr<FJsonObject> LeaseWarning;
 	/** Set by the router's asset_busy slot under Advisory. Merged into the
@@ -51,6 +91,33 @@ public:
 	/** Owner string for an envelope: the sanitized `owner` if present, else
 	 *  per connection. `bOutFromEnvelope` says which (T6). */
 	static FString ResolveOwner(const TSharedPtr<FJsonObject>& Envelope, int32 ConnId, bool* bOutFromEnvelope = nullptr);
+
+	/**
+	 * T9: owner first. The envelope owner, else the connection's adopted owner,
+	 * else conn:<n> / local. conn:<n> is accepted only from connection n and
+	 * local only in-process; any other claim sets bReservedViolation and the
+	 * caller stays its own synthetic owner. The envelope lease never changes
+	 * the owner; it is only classified as Bound / NotBound / Unknown / Redacted.
+	 */
+	static FCallerResolution ResolveCaller(const FString& EnvelopeOwner, int32 ConnId, const FString& EnvelopeLease);
+
+	/** A batch step acts as its batch's owner, checked when editor_batch was accepted. */
+	static FCallerResolution ResolveBatchCaller(const FString& BatchOwner, const FString& EnvelopeLease);
+
+	/** conn:<anything> or local. */
+	static bool IsReservedOwner(const FString& Owner);
+
+	/** A named agent (envelope, adopted, or a named batch owner): counts for presence and owner_required. */
+	static bool IsIdentifiedCaller(const FCallerResolution& Caller);
+
+	/** Connection ConnId acts as Owner whenever its envelope names no owner, until it closes. */
+	bool AdoptConnection(int32 ConnId, const FString& Owner, FString& OutError);
+
+	/** The adopted owner of ConnId, or empty. */
+	FString ConnectionOwner(int32 ConnId) const;
+
+	/** TCP server restart: the close queue was discarded, so forget every adoption. */
+	void ForgetAllAdoptions();
 
 	/** What the envelope `lease` names. Only ever classified; never logged. */
 	enum class EEnvelopeLease : uint8
@@ -111,7 +178,8 @@ public:
 	/** The request being processed, or null outside ProcessCommand. */
 	FHaybaMCPRequestContext* Current() const { return CurrentContext; }
 
-	/** The owner the current command acts as: the named lease's owner when a valid envelope lease_id was sent, otherwise the envelope owner. */
+	/** The owner the current command acts as: the resolved caller (T9). The
+	 *  envelope lease no longer changes it. "local" outside ProcessCommand. */
 	FString EffectiveOwner();
 
 	/** bind_connection: orphan what a closed connection held (T7); drop its tickets. */
@@ -176,6 +244,9 @@ public:
 
 private:
 	FHaybaMCPLeaseManager();
+
+	/** ConnId -> adopted owner. Game thread only; cleared on close/restart. */
+	TMap<int32, FString> AdoptedOwners;
 
 	/** Rate-limit one lease warning (T6): log the first per key per 30 s. */
 	FWarningLimiter::FHit NoteLeaseWarning(const FString& ModeName, const FString& Code, const FString& Reason,

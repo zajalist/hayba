@@ -444,6 +444,7 @@ bool FHaybaMCPModule::StartTcpServer()
     // the previous server's connections is orphaned (60 s grace) instead of
     // living on to its TTL.
     const int32 Orphaned = FHaybaMCPLeaseManager::Get().Table().OrphanAllBound();
+    FHaybaMCPLeaseManager::Get().ForgetAllAdoptions();
     if (Orphaned > 0)
     {
         UE_LOG(LogHaybaMCP, Log, TEXT("TCP server starting: orphaned %d lease(s) bound to the previous server's connections"), Orphaned);

@@ -17,10 +17,46 @@ namespace
 	{
 		// The HMAC key for lease ids (ls_<seq>_<mac12>). Ids are coordination
 		// handles, not credentials (the capability token is the auth
-		// boundary), but a lease id in the envelope acts as its owner, so one
-		// holder must not be able to derive another's. The salt itself never
+		// boundary). Keep lease ids unpredictable so a caller cannot derive
+		// another holder's coordination handle. The salt itself never
 		// appears in an id.
 		return FGuid::NewGuid().ToString(EGuidFormats::Digits).ToLower();
+	}
+
+	FString SyntheticOwner(int32 ConnId)
+	{
+		return ConnId > 0 ? FString::Printf(TEXT("conn:%d"), ConnId) : FString(TEXT("local"));
+	}
+
+	/** Classify the envelope lease against Out.Owner. Never changes Out.Owner. */
+	void ResolveLeaseRef(FCallerResolution& Out, const FString& EnvelopeLease)
+	{
+		const FString Lease = EnvelopeLease.TrimStartAndEnd();
+		if (Lease.IsEmpty())
+		{
+			Out.LeaseRef = ELeaseRef::None;
+			return;
+		}
+		if (HaybaMCPLease::IsRedactionMarker(Lease))
+		{
+			Out.LeaseRef = ELeaseRef::Redacted;
+			return;
+		}
+		Out.LeaseId = Lease;
+		const HaybaMCPLease::FLease* Held = FHaybaMCPLeaseManager::Get().Table().FindLease(Lease);
+		if (!Held)
+		{
+			Out.LeaseRef = ELeaseRef::Unknown;
+		}
+		else if (Held->Owner == Out.Owner)
+		{
+			Out.LeaseRef = ELeaseRef::Bound;
+		}
+		else
+		{
+			Out.LeaseRef = ELeaseRef::NotBound;
+			Out.NamedLeaseOwner = Held->Owner;
+		}
 	}
 }
 
@@ -59,6 +95,99 @@ FString FHaybaMCPLeaseManager::ResolveOwner(const TSharedPtr<FJsonObject>& Envel
 	return ConnId > 0 ? FString::Printf(TEXT("conn:%d"), ConnId) : FString(TEXT("local"));
 }
 
+bool FHaybaMCPLeaseManager::IsReservedOwner(const FString& Owner)
+{
+	return Owner == TEXT("local") || Owner.StartsWith(TEXT("conn:"), ESearchCase::CaseSensitive);
+}
+
+bool FHaybaMCPLeaseManager::IsIdentifiedCaller(const FCallerResolution& Caller)
+{
+	if (Caller.Via == TEXT("envelope") || Caller.Via == TEXT("adopted"))
+	{
+		return true;
+	}
+	return Caller.Via == TEXT("batch") && !IsReservedOwner(Caller.Owner);
+}
+
+FCallerResolution FHaybaMCPLeaseManager::ResolveCaller(const FString& EnvelopeOwner, int32 ConnId, const FString& EnvelopeLease)
+{
+	FCallerResolution Out;
+	const FString Claimed = HaybaMCPEnforcement::SanitizeOwner(EnvelopeOwner);
+	const FString Mine = SyntheticOwner(ConnId);
+	if (!Claimed.IsEmpty() && !IsReservedOwner(Claimed))
+	{
+		Out.Owner = Claimed;
+		Out.Via = TEXT("envelope");
+	}
+	else
+	{
+		// A reserved claim is accepted only when it is the caller's own synthetic owner.
+		Out.bReservedViolation = !Claimed.IsEmpty() && Claimed != Mine;
+		const FString Adopted = Claimed.IsEmpty() ? Get().ConnectionOwner(ConnId) : FString();
+		if (!Adopted.IsEmpty())
+		{
+			Out.Owner = Adopted;
+			Out.Via = TEXT("adopted");
+		}
+		else
+		{
+			Out.Owner = Mine;
+			Out.Via = ConnId > 0 ? TEXT("conn") : TEXT("local");
+		}
+	}
+	ResolveLeaseRef(Out, EnvelopeLease);
+	return Out;
+}
+
+FCallerResolution FHaybaMCPLeaseManager::ResolveBatchCaller(const FString& BatchOwner, const FString& EnvelopeLease)
+{
+	FCallerResolution Out;
+	Out.Owner = BatchOwner;
+	Out.Via = TEXT("batch");
+	ResolveLeaseRef(Out, EnvelopeLease);
+	return Out;
+}
+
+bool FHaybaMCPLeaseManager::AdoptConnection(int32 ConnId, const FString& OwnerValue, FString& OutError)
+{
+	OutError.Reset();
+	const FString Owner = HaybaMCPEnforcement::SanitizeOwner(OwnerValue);
+	if (ConnId <= 0)
+	{
+		OutError = TEXT("[adopt_needs_connection] only a TCP connection can adopt an owner; in-process callers name the owner on each envelope");
+		return false;
+	}
+	if (Owner.IsEmpty() || IsReservedOwner(Owner))
+	{
+		OutError = FString::Printf(TEXT("[owner_reserved] '%s' cannot be adopted: conn:<n> and local name connections, not agents"), *Owner);
+		return false;
+	}
+	if (const FString* Existing = AdoptedOwners.Find(ConnId))
+	{
+		if (*Existing != Owner)
+		{
+			OutError = FString::Printf(
+				TEXT("[connection_already_adopted] connection %d already acts as '%s'; open a new connection to act as '%s'"),
+				ConnId, **Existing, *Owner);
+			return false;
+		}
+		return true;
+	}
+	AdoptedOwners.Add(ConnId, Owner);
+	return true;
+}
+
+FString FHaybaMCPLeaseManager::ConnectionOwner(int32 ConnId) const
+{
+	const FString* Owner = AdoptedOwners.Find(ConnId);
+	return Owner ? *Owner : FString();
+}
+
+void FHaybaMCPLeaseManager::ForgetAllAdoptions()
+{
+	AdoptedOwners.Reset();
+}
+
 FHaybaMCPLeaseManager::EEnvelopeLease FHaybaMCPLeaseManager::ClassifyEnvelopeLease(const FString& LeaseValue)
 {
 	if (LeaseValue.IsEmpty())
@@ -86,8 +215,8 @@ const TCHAR* FHaybaMCPLeaseManager::LexEnvelopeLease(EEnvelopeLease State)
 
 void FHaybaMCPLeaseManager::NoteAuthenticatedCaller(const FString& Owner, int32 ConnId, bool bIdentified)
 {
-	// conn:<n> and local are synthetic; only a named owner (or, from T8, a
-	// valid lease handle) proves an agent is present.
+	// Only a resolved named caller proves an agent is present. conn:<n>
+	// and local remain synthetic; a lease never supplies identity.
 	if (bIdentified)
 	{
 		Presence.Note(Owner, ConnId);
@@ -288,23 +417,15 @@ FHaybaMCPLeaseManager::FScope::~FScope()
 
 FString FHaybaMCPLeaseManager::EffectiveOwner()
 {
-	if (!CurrentContext)
-	{
-		return TEXT("local");
-	}
-	if (!CurrentContext->LeaseToken.IsEmpty())
-	{
-		// FindLease expires first; a lapsed token falls back to the envelope owner.
-		if (const HaybaMCPLease::FLease* Lease = LeaseTable.FindLease(CurrentContext->LeaseToken))
-		{
-			return Lease->Owner;
-		}
-	}
-	return CurrentContext->Owner;
+	// T9: the resolved caller. The envelope lease no longer acts as its owner, so
+	// the Plan gate, python_run deadline_s, editor_batch and the lease handlers
+	// all judge the caller as itself.
+	return CurrentContext ? CurrentContext->Owner : FString(TEXT("local"));
 }
 
 void FHaybaMCPLeaseManager::OnConnectionClosed(int32 ConnId)
 {
+	AdoptedOwners.Remove(ConnId);
 	Presence.OnConnectionClosed(ConnId);
 	const int32 Orphaned = LeaseTable.OnConnectionClosed(ConnId);
 	if (Orphaned > 0)
