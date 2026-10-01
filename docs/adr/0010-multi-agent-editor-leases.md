@@ -62,7 +62,10 @@ WriteWorld whatever it declares; declared `resources` make it WriteScoped on
 those claims; `read_only: true` makes it Read; anything else is an undeclared
 mutation and takes X on `global` for conflicts, so it meets any other owner's
 lock, including an `asset:` build lease. The lexical tier classifier no
-longer decides the class: it misses real writers.
+longer decides the class: it misses real writers. The Node server's
+Python-backed read tools declare `read_only` themselves
+(`PyToolDescriptor.readOnly`, a reviewed list), so they keep working while
+another owner holds a lease; a tool that does not declare it is a write.
 
 ### Resources form a hierarchy with intent locks
 
@@ -151,20 +154,43 @@ secret-shaped. `ping` reports `capabilities.lease_id: true`; host tools use
 leases only when it is set. The Node server seeds its envelope lease only from
 `HAYBA_LEASE_ID` and ignores `HAYBA_LEASE` and `HAYBA_LEASE_TOKEN`.
 
-### Enforcement is a setting, advisory by default
+### EnforcedForWrites by default
 
-After authentication, `ProcessCommand` checks the command's locks against
-other owners' leases. `LeaseEnforcement`:
+After authentication, `ProcessCommand` records the caller's presence and then
+checks the command's locks against other owners' leases. `LeaseEnforcement`
+is read on every check (Project Settings > Hayba MCP Toolkit), so a change
+applies at once:
 
 - **Off** — no check.
-- **Advisory** (default) — the command runs; the response gains a top-level
+- **Advisory** — the command runs; the response gains a top-level
   `lease_warning` (the Node client folds it into the tool's data) and the
   editor logs it.
-- **Enforced** — the command is refused with `code: "lease_conflict"` and the
-  conflict facts under `lease`.
+- **EnforcedForWrites** (default; shipped only together with `lease_id`) —
+  reads run, and a dead lease handle on a read only warns. A write is refused
+  with `lease_conflict` when another owner's lease conflicts (`reason: held`)
+  or its envelope names a dead lease (`reason: lease_unknown`), and with
+  `owner_required` when it names no owner while other agents are connected.
+- **Enforced** — as EnforcedForWrites, and a read that names a dead lease is
+  refused too.
 
-The check refuses or warns; it never grants and never waits. Commands from an
-agent that never acquires a lease are unaffected until someone else holds one.
+Precedence is `owner_missing` > `lease_unknown` > `held`. Only an owner named
+in the envelope, or proven by a valid lease handle, counts as present; the
+synthetic `conn:<n>` and `local` owners never do, and presence never extends a
+lease. A redaction marker in the envelope `lease` counts as absent. Every
+lease warning is rate-limited: the first per (reason, owner, command, holder)
+per 30 s is logged, the next window's first line says `(+N identical …)`, and
+a closed window is summed as `repeated N more times in 30 s`; each response
+still carries its own `lease_warning` with `repeats_in_window`.
+
+Write detection fails closed (see the class table). PIE observation commands
+are Read; PIE drive commands keep a write class, but a PIE command that the
+PIE guard authorizes (a drive command from the PIE's owner, or
+`editor_stop_pie` of an agent PIE) skips the lease check, so a lease taken
+during the PIE cannot deadlock it. The check refuses or warns; it never grants
+and never waits. Rollback is live: set Lease Enforcement to Advisory; the
+restart fallback is `Config/DefaultHaybaMCP.ini` with the
+`[/Script/HaybaMCPToolkit.HaybaMCPDeveloperSettings]` section and
+`LeaseEnforcement=Advisory`.
 
 ### What leases unlock
 
@@ -194,8 +220,9 @@ agent that never acquires a lease are unaffected until someone else holds one.
 - The table lives in editor memory. An editor restart forgets every lease;
   a TCP-server restart orphans bound leases until their earlier expiry or
   orphan grace limit, unless their owner renews them.
-- Advisory mode changes nothing for existing single-agent clients except a
-  possible `lease_warning`. Turning on Enforced is a per-project choice.
+- EnforcedForWrites changes nothing for a single-agent client: with no other
+  owner present and no other lease held, nothing is refused. Advisory remains
+  the live rollback.
 - A command's class is only as good as its table entry. A misspelt entry
   silently falls back to the derived class, so both a native test
   (`Hayba.MCP.Lease.ClassificationDrift`) and a local-gate test

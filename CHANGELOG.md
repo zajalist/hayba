@@ -52,6 +52,16 @@ All notable changes to Hayba MCP Toolkit are documented here. Format based on [K
 - `ping` reports `capabilities.lease_id`.
 
 ### Changed
+- Lease enforcement defaults to `EnforcedForWrites` (ADR-0010), shipped
+  together with `lease_id`: a conflicting write is refused with
+  `lease_conflict`, and a write that names no owner while other agents are
+  connected with `owner_required`. Write detection fails closed (only the read
+  sets are Read), undeclared `python_run` conflicts as X on `global` (declare
+  `resources` or `read_only: true`), PIE observation commands are Read, and
+  lease warnings are rate-limited. `ping` reports
+  `capabilities.lease_enforcement` and `owner_required`; `lease_status`
+  reports `active_owners`. Rollback: Project Settings > Hayba MCP Toolkit >
+  Lease Enforcement = Advisory, live.
 - Plan-Mode approval is per owner: only the agent that proposed a plan can
   spend its Approve.
 - Lease handles are `lease_id` (`ls_<seq>_<mac12>`) on every lease reply and
