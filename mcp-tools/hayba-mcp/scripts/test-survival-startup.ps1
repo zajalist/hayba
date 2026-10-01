@@ -22,7 +22,18 @@ foreach($name in @('Get-SanitizedHash','Resolve-FullPath','Test-ExactCommandLine
     }
     . ([scriptblock]::Create($definitions[0].Extent.Text))
 }
+$helperErrors=$null; $helperTokens=$null
+$helperAst=[Management.Automation.Language.Parser]::ParseFile((Join-Path (Split-Path -Parent $HarnessPath) 'query-survival-host-proof.ps1'),[ref]$helperTokens,[ref]$helperErrors)
+if($helperErrors.Count){throw 'Host proof helper did not parse'}
+$conversion=@($helperAst.FindAll({param($n)$n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq 'ConvertTo-SurvivalProcessRow'},$true))
+if($conversion.Count -ne 1){throw 'Host proof conversion missing'}
+. ([scriptblock]::Create($conversion[0].Extent.Text))
 if($IdentityOnly){
+    function Invoke-HostProofQuery {
+        param([switch]$IncludeListener,[int]$TimeoutMs=0)
+        $rows=@(Get-CimInstance Win32_Process -Filter "ProcessId = $EditorPid" -ErrorAction Stop)
+        return [pscustomobject]@{process=ConvertTo-SurvivalProcessRow $rows $EditorPid;listener_owners=@()}
+    }
     # Keep the real process-row wrapper, parser and identity comparison. Only the
     # CIM boundary is synthetic; no process is queried, launched or terminated.
     function Get-CimInstance {
@@ -30,7 +41,8 @@ if($IdentityOnly){
         $Queries.Add([pscustomobject]@{class=$ClassName;filter=$Filter;error_action=$ErrorAction})
         if($Scenario -ceq 'query_error'){throw 'controlled CIM query error'}
         if($Scenario -ceq 'missing_process'){return $null}
-        return $ProcessRow
+        $SyntheticProcessRow.ProcessId=$EditorPid
+        return $SyntheticProcessRow
     }
     $results.Clear()
     $identityCases=@(
@@ -51,7 +63,7 @@ if($IdentityOnly){
     )
     foreach($case in $identityCases){
         $EditorPid=42; $EditorExe='C:/fake/UnrealEditor.exe'; $ProjectPath='C:/fake/Scratch.uproject'; $SessionToken='disposable_test_token'
-        $ProcessRow=[pscustomobject]@{ExecutablePath=$EditorExe;CreationDate=[datetime]'2026-01-01T00:00:00Z';CommandLine="`"$ProjectPath`" -HaybaSurvivalSession=$SessionToken"}
+        $SyntheticProcessRow=[pscustomobject]@{ProcessId=$EditorPid;ExecutablePath=$EditorExe;CreationDate=[datetime]'2026-01-01T00:00:00Z';CommandLine="`"$ProjectPath`" -HaybaSurvivalSession=$SessionToken"}
         $Queries=[Collections.Generic.List[object]]::new()
         $Scenario='baseline'
         $EditorIdentity=New-EditorIdentity $EditorPid
@@ -59,14 +71,14 @@ if($IdentityOnly){
         $Queries.Clear()
         $Scenario=$case.name
         switch($Scenario){
-            'creation_changed' {$ProcessRow.CreationDate=$ProcessRow.CreationDate.AddSeconds(1)}
+            'creation_changed' {$SyntheticProcessRow.CreationDate=$SyntheticProcessRow.CreationDate.AddSeconds(1)}
             'pid_changed' {$EditorPid=43}
-            'wrong_executable' {$ProcessRow.ExecutablePath='C:/fake/Other.exe'}
-            'session_missing' {$ProcessRow.CommandLine="`"$ProjectPath`""}
-            'session_deceptive' {$ProcessRow.CommandLine="`"$ProjectPath`" -HaybaSurvivalSession=${SessionToken}_suffix"}
-            'project_missing' {$ProcessRow.CommandLine="-HaybaSurvivalSession=$SessionToken"}
-            'project_deceptive' {$ProcessRow.CommandLine="`"${ProjectPath}.backup`" -HaybaSurvivalSession=$SessionToken"}
-            'command_line_changed' {$ProcessRow.CommandLine+=' -Unattended'}
+            'wrong_executable' {$SyntheticProcessRow.ExecutablePath='C:/fake/Other.exe'}
+            'session_missing' {$SyntheticProcessRow.CommandLine="`"$ProjectPath`""}
+            'session_deceptive' {$SyntheticProcessRow.CommandLine="`"$ProjectPath`" -HaybaSurvivalSession=${SessionToken}_suffix"}
+            'project_missing' {$SyntheticProcessRow.CommandLine="-HaybaSurvivalSession=$SessionToken"}
+            'project_deceptive' {$SyntheticProcessRow.CommandLine="`"${ProjectPath}.backup`" -HaybaSurvivalSession=$SessionToken"}
+            'command_line_changed' {$SyntheticProcessRow.CommandLine+=' -Unattended'}
             'baseline_executable_changed' {$EditorIdentity.executable_path='C:/fake/Other.exe'}
             'baseline_session_changed' {$EditorIdentity.session_token_sha256='changed'}
             'baseline_project_changed' {$EditorIdentity.project_path='C:/fake/Other.uproject'}
@@ -104,7 +116,7 @@ function Get-EditorProcessRow {
     if($Scenario -ceq 'identity_replaced' -and $Requests.Count){$created=$created.AddSeconds(1)}
     $exe=$EditorExe
     if($Scenario -ceq 'wrong_initial_identity'){$exe='C:/fake/Other.exe'}
-    [pscustomobject]@{ExecutablePath=$exe;CreationDate=$created;CommandLine="`"$ProjectPath`" -HaybaSurvivalSession=$SessionToken"}
+    ConvertTo-SurvivalProcessRow @([pscustomobject]@{ProcessId=$ProcessId;ExecutablePath=$exe;CreationDate=$created;CommandLine="`"$ProjectPath`" -HaybaSurvivalSession=$SessionToken"}) $ProcessId
 }
 function Get-NetTCPConnection {
     param($OwningProcess,$LocalPort,$State,$ErrorAction)
@@ -114,13 +126,20 @@ function Get-NetTCPConnection {
     if($Scenario -in @('listener_replaced','explicit_foreign_port') -and ($Requests.Count -or $Scenario -ceq 'explicit_foreign_port')){$owner=99}
     [pscustomobject]@{LocalPort=52349;OwningProcess=$owner}
 }
+function Invoke-HostProofQuery {
+    param([switch]$IncludeListener,[int]$TimeoutMs=0)
+    $process=Get-EditorProcessRow $EditorPid
+    $owners=@()
+    if($IncludeListener){$owners=@(Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue|Select-Object -ExpandProperty OwningProcess -Unique)}
+    return [pscustomobject]@{process=$process;listener_owners=$owners}
+}
 function Start-Sleep { param([int]$Milliseconds) $StartupClock.ElapsedMilliseconds+=$Milliseconds }
 $Invoker={
-    param($Cmd,$ParamsJson,$Port,$TimeoutMs,$Auth,[switch]$ThrowOnTimeout)
+    param($Cmd,$ParamsJson,$Port,$TimeoutMs,$Auth,$Owner,[switch]$ThrowOnTimeout)
     $Requests.Add([pscustomobject]@{command=$Cmd;timeout=$TimeoutMs;port=$Port;elapsed=$StartupClock.ElapsedMilliseconds})
     $global:LASTEXITCODE=0
     if($Cmd -cne 'ping' -or $Port -ne 52349){throw 'Unexpected startup command or port'}
-    if($CaseDeadline -ne $null){return '{"id":"probe_case","ok":true}'}
+    if($CaseClock -ne $null){return '{"id":"probe_case","ok":true}'}
     if($Scenario -ceq 'transport_failure'){$global:LASTEXITCODE=1;return}
     if($Scenario -in @('early_listener','exhausted','process_death','identity_replaced','listener_replaced') -and ($Requests.Count -eq 1 -or $Scenario -ceq 'exhausted')){
         $StartupClock.ElapsedMilliseconds+=$TimeoutMs
@@ -152,7 +171,7 @@ foreach($case in $cases){
     $Scenario=$case.name; $StartupTimeoutMs=140000
     $StartupClock=[pscustomobject]@{ElapsedMilliseconds=30000}
     if($Scenario -ceq 'setup_exhausted'){$StartupClock.ElapsedMilliseconds=140000}
-    $StartupReadinessEvidence=$null; $EditorIdentity=$null; $CaseDeadline=$null
+    $StartupReadinessEvidence=$null; $EditorIdentity=$null; $CaseClock=$null
     $Port=if($Scenario -in @('explicit_attach','explicit_foreign_port')){52349}else{0}
     $Requests=[Collections.Generic.List[object]]::new()
     $passed=$false; $reason=''
@@ -164,11 +183,11 @@ foreach($case in $cases){
         if($Scenario -ceq 'early_listener' -and ($Requests.Count -ne 2 -or $Requests[0].timeout -ne 60000 -or $Requests[1].timeout -ge 50000)){throw 'Startup budget was reset or readiness did not retry'}
         if($Scenario -ceq 'listener_late' -and $Requests[0].elapsed -lt 35000){throw 'Command sent before owned discovery'}
         foreach($request in $Requests){if($request.timeout -lt 100 -or $request.timeout -gt 60000 -or ($request.elapsed+$request.timeout) -gt 140000){throw 'Unbounded startup request'}}
-        $CaseDeadline=[DateTime]::UtcNow.AddMilliseconds(500)
+        $CaseClock=[pscustomobject]@{ElapsedMilliseconds=0}
         Invoke-HaybaCommand -Command 'ping'|Out-Null
         if($Requests[-1].timeout -gt 500){throw 'Startup allowance leaked into hostile case'}
         $requestCount=$Requests.Count
-        $CaseDeadline=[DateTime]::UtcNow.AddMilliseconds(-1)
+        $CaseClock=[pscustomobject]@{ElapsedMilliseconds=501}
         try { Invoke-HaybaCommand -Command 'ping'|Out-Null; throw 'Expired hostile case was admitted' }
         catch { if($_.Exception.Message -notmatch 'absolute 500ms case deadline'){throw} }
         if($Requests.Count -ne $requestCount){throw 'Expired hostile case sent another command'}

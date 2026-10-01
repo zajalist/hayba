@@ -3,14 +3,16 @@ $ErrorActionPreference = 'Stop'
 $errors=$null; $tokens=$null
 $ast=[Management.Automation.Language.Parser]::ParseFile($HarnessPath,[ref]$tokens,[ref]$errors)
 if ($errors.Count) { throw 'Survival harness did not parse' }
-foreach ($name in @('Get-SanitizedHash','Get-EditorState','Test-BenignPythonNonce','Assert-CaseTarget','Assert-EditorHealthy')) {
+foreach ($name in @('Get-SanitizedHash','Invoke-CasePhase','Get-RemainingCaseMs','Get-EditorState','Test-BenignPythonNonce','Assert-CaseTarget','Assert-EditorHealthy')) {
     $definitions=@($ast.FindAll({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name},$true))
     if($definitions.Count -ne 1){throw "Expected exactly one health helper: $name"}
     . ([scriptblock]::Create($definitions[0].Extent.Text))
 }
 # Test doubles stand in for native/transport boundaries; exact source health
 # helpers still decide admission, baseline checks, and evidence truthfulness.
-function Assert-EditorIdentity {}
+function Assert-EditorIdentity {param($ProcessRow)}
+function Invoke-HostProofQuery {param([switch]$IncludeListener) [pscustomobject]@{process=$null;listener_owners=@(42)}}
+$CaseClock=$null
 function Get-ListenerOwner { return 42 }
 function Assert-CrashEvidenceUnchanged { return $InitialCrashEvidence }
 function Assert-ProjectFilesystemUnchanged { return $InitialFilesystemEvidence }
@@ -28,6 +30,7 @@ function Invoke-HaybaCommand {
         }}
     }
     if($Command -cne 'python_run'){throw 'Unexpected mock command'}
+    if($Params.read_only -isnot [bool] -or -not $Params.read_only){throw 'Nonce lacks justified read declaration'}
     $marker=[regex]::Match($Params.script,'__HAYBA_NONCE__[0-9a-f]{32}').Value
     if(-not $marker){throw 'Health probe did not generate a bounded nonce'}
     if($MockPie){

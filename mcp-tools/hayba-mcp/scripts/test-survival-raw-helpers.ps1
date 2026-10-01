@@ -68,7 +68,7 @@ public sealed class HaybaHalfClosePeer {
 '@
 
 $MaxCaseMs = 1000
-$CaseDeadline = $null
+$CaseClock = $null
 $results = [Collections.Generic.List[object]]::new()
 function Start-IsolatedLoopbackListener([Net.Sockets.TcpListener]$Listener) {
     for ($attempt = 0; $attempt -lt 32; $attempt++) {
@@ -122,7 +122,7 @@ foreach ($scenario in @('fragmented_read', 'early_eof', 'stalled_deadline', 'inv
         }
         [byte[]]$buffer = if ($isInvoker) { [byte[]]@(238,0,0,0,0,238) } else { [byte[]]::new(4) }
         $timeoutMs = if ($behavior -ceq 'stalled_deadline') { 250 } else { 1000 }
-        $CaseDeadline = [DateTime]::UtcNow.AddMilliseconds($timeoutMs)
+        $MaxCaseMs = $timeoutMs; $CaseClock = [Diagnostics.Stopwatch]::StartNew()
         $Clock = [Diagnostics.Stopwatch]::StartNew()
         $caseTimer = [Diagnostics.Stopwatch]::StartNew()
         try {
@@ -146,7 +146,7 @@ foreach ($scenario in @('fragmented_read', 'early_eof', 'stalled_deadline', 'inv
         }
     }
     finally {
-        $CaseDeadline = $null
+        $CaseClock = $null
         if ($null -ne $peer) { $peer.Dispose() }
         $client.Dispose()
         $listener.Stop()
@@ -173,7 +173,7 @@ foreach ($scenario in @('truncated_header_halfclose', 'truncated_body_halfclose'
         $body = if ($scenario -ceq 'truncated_header_halfclose') { [byte[]]@() } else { [byte[]]@(0x7b) }
         $expected = if ($scenario -ceq 'truncated_header_halfclose') { '0,0' } else { '0,0,0,100,123' }
         $timeoutMs = if ($neverCloses) { 250 } else { 1000 }
-        $CaseDeadline = [DateTime]::UtcNow.AddMilliseconds($timeoutMs)
+        $MaxCaseMs = $timeoutMs; $CaseClock = [Diagnostics.Stopwatch]::StartNew()
         $caseTimer = [Diagnostics.Stopwatch]::StartNew()
         try {
             $response = Send-RawFrame -Header $header -Body $body -HalfCloseSend -ExpectPeerClose
@@ -198,7 +198,7 @@ foreach ($scenario in @('truncated_header_halfclose', 'truncated_body_halfclose'
             ($peer.SentEof -eq (-not $neverCloses))
     }
     finally {
-        $CaseDeadline = $null
+        $CaseClock = $null
         $cancel.Cancel()
         if ($null -ne $peerTask) {
             try { $peerTask.GetAwaiter().GetResult() | Out-Null }

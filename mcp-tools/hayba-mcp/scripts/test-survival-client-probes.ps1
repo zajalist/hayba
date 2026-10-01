@@ -1,6 +1,7 @@
 param([Parameter(Mandatory=$true)][string]$HarnessPath)
 
 $ErrorActionPreference = 'Stop'
+$SurvivalOwner = 'survival-test-' + [guid]::NewGuid().ToString('N')
 $errors = $null
 $tokens = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile($HarnessPath, [ref]$tokens, [ref]$errors)
@@ -176,8 +177,8 @@ foreach ($test in @(
 )) {
     $ConfiguredMaxClients = if ($test.clients) { $test.clients } else { 2 }
     $FrameReadTimeoutMs = if ($test.frame_ms) { $test.frame_ms } else { 350 }
-    $timeout = if ($test.mode -ceq 'silent') { 250 } elseif ($test.frame_ms) { $MaxCaseMs } else { 2500 }
-    $CaseDeadline = [DateTime]::UtcNow.AddMilliseconds($timeout)
+    $timeout = if ($test.mode -ceq 'silent') { 250 } elseif ($test.frame_ms) { 10000 } else { 2500 }
+    $MaxCaseMs = $timeout; $CaseClock = [Diagnostics.Stopwatch]::StartNew()
     $RawProbeEvidence = $null
     $peerFrameMs = if ($test.peer_frame_ms) { $test.peer_frame_ms } else { $FrameReadTimeoutMs }
     $peer = [HaybaClientProbePeer]::new($test.mode, $ConfiguredMaxClients, $peerFrameMs)
@@ -204,7 +205,7 @@ foreach ($test in @(
     catch { $threw = $true; $diagnostic = $_.Exception.Message }
     finally {
         Set-Item Function:Write-BoundedBytes $actualWriteBoundedBytes
-        $peer.Dispose(); $CaseDeadline = $null
+        $peer.Dispose(); $CaseClock = $null
     }
     $passed = if ($test.expected -ceq 'success') {
         -not $threw -and $peer.Pings -eq $ConfiguredMaxClients -and $peer.Partials -eq $ConfiguredMaxClients -and $peer.SawAuth
@@ -230,7 +231,7 @@ $clients = [Collections.Generic.List[Net.Sockets.TcpClient]]::new()
 $RawProbeEvidence = [pscustomobject]@{ admitted=0 }
 $ConfiguredMaxClients = 1
 $FrameReadTimeoutMs = 350
-$CaseDeadline = [DateTime]::UtcNow.AddMilliseconds(2000)
+$MaxCaseMs = 2000; $CaseClock = [Diagnostics.Stopwatch]::StartNew()
 $peer = [HaybaClientProbePeer]::new('premature', 1, $FrameReadTimeoutMs)
 $Port = $peer.Listener.LocalEndpoint.Port
 try {
@@ -244,7 +245,7 @@ try {
 }
 finally {
     foreach ($client in $clients) { $client.Dispose() }
-    $peer.Dispose(); $CaseDeadline = $null
+    $peer.Dispose(); $CaseClock = $null
 }
 foreach ($test in @(
     @{ name='null_close_task_is_not_closure'; task=$null },
@@ -263,7 +264,7 @@ foreach ($test in @(
 )) {
     $terminalException = [IO.IOException]::new('synthetic terminal socket error', [Net.Sockets.SocketException]::new($test.code))
     $task = [Threading.Tasks.Task]::FromException($terminalException)
-    $CaseDeadline = [DateTime]::UtcNow.AddMilliseconds(1000)
+    $MaxCaseMs = 1000; $CaseClock = [Diagnostics.Stopwatch]::StartNew()
     $passed = $false
     $diagnostic = ''
     try {
@@ -271,7 +272,7 @@ foreach ($test in @(
         $passed = $closure.kind -ceq 'socket_error' -and $closure.socket_error -ceq $test.expected
     }
     catch { $diagnostic = $_.Exception.Message }
-    finally { $CaseDeadline = $null }
+    finally { $CaseClock = $null }
     $results.Add([pscustomobject]@{ name=$test.name; passed=$passed; diagnostic=$diagnostic })
 }
 $results | ConvertTo-Json -Depth 10 -Compress
