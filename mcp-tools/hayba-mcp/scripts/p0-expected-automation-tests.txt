@@ -110,3 +110,4 @@ Hayba.MCP.Lease.ResolveCaller
 Hayba.MCP.Lease.ReservedOwner
 Hayba.MCP.Lease.RouterBinding
 Hayba.MCP.Lease.UnknownLeaseRefusesWrites
+Hayba.MCP.Lease.Adopt

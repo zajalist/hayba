@@ -119,6 +119,9 @@ public:
 	/** TCP server restart: the close queue was discarded, so forget every adoption. */
 	void ForgetAllAdoptions();
 
+	/** Re-bind only Owner's orphaned leases to ConnId; live and unbound leases are unchanged. */
+	int32 ReviveOrphanedLeases(const FString& Owner, int32 ConnId);
+
 	/** What the envelope `lease` names. Only ever classified; never logged. */
 	enum class EEnvelopeLease : uint8
 	{

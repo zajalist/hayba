@@ -1,4 +1,4 @@
-// Multi-agent editor leases: lease_acquire / lease_renew / lease_release / lease_status.
+// Multi-agent editor leases: acquire / renew / release / status / adopt.
 //
 // Several agents can drive one editor. A lease says "I am working on this
 // world / region / asset; do not change it under me". The editor never blocks
@@ -18,6 +18,7 @@ import type { HaybaToolMeta } from '../hayba-tool-meta.js';
 import { executeCommand } from '../tool-executor.js';
 import { getLeaseKeeper, isUsableLeaseId } from '../../lease-keeper.js';
 import { isRedactionMarker } from '../../lease-id.js';
+import { getUEClient } from '../../tcp-client.js';
 
 const resourceString = z
   .string()
@@ -98,6 +99,15 @@ export const leaseReleaseShape = {
   all: z.literal(true).optional().describe('Release every lease and withdraw every ticket you hold.'),
 };
 
+export const leaseAdoptShape = z
+  .object({
+    owner: z.string().trim().min(1).max(128).describe('The owner of the lease (HAYBA_AGENT_ID).'),
+    lease_id: z.string()
+      .refine((v) => isUsableLeaseId(v), { message: 'lease_id must be the ls_ id lease_acquire returned' })
+      .describe('A live lease of that owner.'),
+  })
+  .strict();
+
 type IdArgs = { lease_id?: string; token?: string };
 
 /** Mirrors HaybaMCPLease::ResolveIdParam: the canonical value wins, the alias
@@ -173,6 +183,13 @@ const statusMeta: HaybaToolMeta = {
   not_when: 'you already hold the lease you need',
 };
 
+const adoptMeta: HaybaToolMeta = {
+  cost: 'low',
+  effects: ['coordination'],
+  when: 'a client cannot put an owner on every envelope and must act as the owner of a lease it was handed',
+  not_when: 'this server already sends HAYBA_AGENT_ID as the envelope owner; the owner match covers its leases',
+};
+
 function text(data: unknown) {
   return { content: [{ type: 'text' as const, text: JSON.stringify(data, null, 2) }] };
 }
@@ -244,6 +261,22 @@ export async function handleLeaseStatus() {
   return text({ ...data, renewing_lease_ids: getLeaseKeeper().heldLeaseIds() });
 }
 
+export async function handleLeaseAdopt(args: z.infer<typeof leaseAdoptShape>) {
+  const data = await executeCommand<Record<string, unknown>>('lease_adopt', { owner: args.owner, lease_id: args.lease_id });
+  // Only full matching confirmation switches this process's envelope identity.
+  // setLease is manual/sticky: unknown replies do not automatically clear it.
+  // Adoption neither tracks this id nor transfers/resets existing keeper timers;
+  // those renew under the new caller and untrack on ordinary definitive refusal.
+  // Reconnect does not automatically issue lease_adopt.
+  if (data.adopted === true && data.owner === args.owner && data.lease_id === args.lease_id
+    && data.connection_owner === args.owner) {
+    const client = getUEClient();
+    client.setOwner(args.owner);
+    client.setLease(args.lease_id);
+  }
+  return text(data);
+}
+
 export const LEASE_DESCRIPTORS: ToolDescriptor[] = [
   {
     name: 'lease_acquire',
@@ -283,7 +316,17 @@ export const LEASE_DESCRIPTORS: ToolDescriptor[] = [
     meta: statusMeta,
     handler: async () => handleLeaseStatus() as never,
     cost: 'low',
-    returns: '{enforcement, caller_owner, current_world, max_ttl_s, orphan_grace_s, active_owners, leases:[{owner, mine, lease_id?, label?, resources, lane, held_s, expires_in_s, bound_to_connection, orphaned, bind_connection, ttl_s}], waiters:[...], renewing_lease_ids}',
+    returns: '{enforcement, caller_owner, connection_owner, current_world, max_ttl_s, orphan_grace_s, active_owners, leases:[{owner, mine, lease_id?, label?, resources, lane, held_s, expires_in_s, bound_to_connection, orphaned, bind_connection, ttl_s}], waiters:[...], renewing_lease_ids}',
     schema: {},
+  },
+  {
+    name: 'lease_adopt',
+    description:
+      'Make this connection act as the owner of a live lease: later commands that name no owner run as that owner, and the owner\'s orphaned connection-bound leases re-bind here. Needs lease_id and its owner. Connection adoption ends on close; repeat after reconnect. A confirmed adoption also switches this server\'s process-wide envelope owner and manual lease_id, which remain set across reconnects and unknown-id replies until explicitly changed. It does not start auto-renew or transfer existing renewal timers; renew or release the adopted lease yourself.',
+    meta: adoptMeta,
+    handler: validated(leaseAdoptShape, handleLeaseAdopt) as never,
+    cost: 'low',
+    returns: '{adopted:true, owner, lease_id, connection_owner, expires_in_s, note}',
+    schema: leaseAdoptShape.shape,
   },
 ];

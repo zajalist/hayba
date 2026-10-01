@@ -40,7 +40,7 @@ namespace HaybaMCPCommandSets
 	{
 		static const TSet<FString> Set = {
 			TEXT("ping"), TEXT("editor_get_state"), TEXT("get_setting"), TEXT("copilot_key_status"), TEXT("batch_status"),
-			TEXT("lease_acquire"), TEXT("lease_renew"), TEXT("lease_release"), TEXT("lease_status"),
+			TEXT("lease_acquire"), TEXT("lease_renew"), TEXT("lease_release"), TEXT("lease_status"), TEXT("lease_adopt"),
 			TEXT("hayba_propose_plan"), TEXT("ui_memory_set"), TEXT("ui_tool_stream"), TEXT("ui_tool_stream_new_turn"),
 			TEXT("editor_get_output_log"), TEXT("editor_stream_log"), TEXT("editor_get_performance_stats"),
 			TEXT("editor_get_perf_stats"), TEXT("test_cancel"),

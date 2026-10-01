@@ -476,4 +476,164 @@ bool FHaybaMCPLeaseUnknownLeaseRefusesWritesTest::RunTest(const FString& Paramet
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FHaybaMCPLeaseAdoptTest,
+	"Hayba.MCP.Lease.Adopt",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FHaybaMCPLeaseAdoptTest::RunTest(const FString& Parameters)
+{
+	using namespace HaybaIdentityTest;
+	if (!TestNotNull(TEXT("the router exists"), Router())) return false;
+	if (!TestFalse(TEXT("the editor is not unsafe (R-7)"), FHaybaEditorHealth::IsUnsafe())) return false;
+	FScopedGateSettings Settings(EHaybaMCPLeaseEnforcement::EnforcedForWrites);
+	FHaybaMCPLeaseManager& M = FHaybaMCPLeaseManager::Get();
+	const FString T = Tag();
+	const FString O = TEXT("hayba-test-") + T + TEXT("-o");
+	const FString P = TEXT("hayba-test-") + T + TEXT("-p");
+	const FString Q = TEXT("hayba-test-") + T + TEXT("-q");
+	const TArray<int32> Conns = { 900101, 900102, 900103, 900104, 900105, 900106, 900107,
+		900108, 900109, 900110, 900111, 900112, 900113 };
+	double Advanced = 0.0;
+	ON_SCOPE_EXIT
+	{
+		M.AdvanceClockForTests(-Advanced);
+		Forget({ O, P, Q, TEXT("conn:900103") }, Conns);
+	};
+	auto Adopt = [](int32 ConnId, const FString& Owner, const FString& Id)
+	{
+		return Send(TEXT("lease_adopt"), Params({ { TEXT("owner"), Owner }, { TEXT("lease_id"), Id } }), ConnId);
+	};
+	auto Status = [](int32 ConnId, const FString& Owner = FString())
+	{
+		return Obj(Send(TEXT("lease_status"), nullptr, ConnId, Owner), TEXT("data"));
+	};
+	const FString Resource = TEXT("asset:/Game/__HaybaTest__/Adopt_") + T;
+	const FString LeaseO = Acquire(*this, 900101, O, Resource, false);
+	if (LeaseO.IsEmpty()) return false;
+
+	// Ordered validation: a later condition must not hide an earlier refusal.
+	TestTrue(TEXT("bad request precedes missing connection"),
+		Str(Adopt(0, FString(), TEXT("[REDACTED:lease]")), TEXT("error")).Contains(TEXT("[bad_request]")));
+	TestTrue(TEXT("missing id is bad request"), Str(Adopt(900102, O, FString()), TEXT("error")).Contains(TEXT("[bad_request]")));
+	TestTrue(TEXT("in-process precedes redaction"),
+		Str(Adopt(0, O, TEXT("[REDACTED:lease]")), TEXT("error")).Contains(TEXT("[adopt_needs_connection]")));
+	TestTrue(TEXT("redacted id is explicit refusal"),
+		Str(Adopt(900102, O, TEXT("[REDACTED:lease]")), TEXT("error")).Contains(TEXT("[lease_id_redacted]")));
+	TestTrue(TEXT("unknown id precedes reserved owner"),
+		Str(Adopt(900102, TEXT("local"), TEXT("ls_999999_000000000000")), TEXT("error")).Contains(TEXT("[lease_id_unknown]")));
+	const FString Mismatch = Str(Adopt(900102, P, LeaseO), TEXT("error"));
+	TestTrue(TEXT("wrong owner is refused"), Mismatch.Contains(TEXT("[lease_owner_mismatch]")));
+	TestTrue(TEXT("owner mismatch retains belongs to"), Mismatch.Contains(TEXT("lease belongs to '") + O + TEXT("'")));
+	TestTrue(TEXT("owner mismatch precedes reserved owner"),
+		Str(Adopt(900102, TEXT("local"), LeaseO), TEXT("error")).Contains(TEXT("[lease_owner_mismatch]")));
+	const FString LeaseConn = Acquire(*this, 900103, FString(), TEXT("asset:/Game/__HaybaTest__/AdoptConn_") + T, false);
+	if (LeaseConn.IsEmpty()) return false;
+	TestTrue(TEXT("a matching reserved owner is refused"),
+		Str(Adopt(900104, TEXT("conn:900103"), LeaseConn), TEXT("error")).Contains(TEXT("[owner_reserved]")));
+	TestEqual(TEXT("refusals never adopt"), Str(Status(900102), TEXT("connection_owner")), FString());
+
+	const TSharedPtr<FJsonObject> Reply = Adopt(900102, TEXT(" ") + O + TEXT(" "), TEXT(" ") + LeaseO + TEXT(" "));
+	const TSharedPtr<FJsonObject> Data = Obj(Reply, TEXT("data"));
+	bool bAdopted = false;
+	if (Data.IsValid()) Data->TryGetBoolField(TEXT("adopted"), bAdopted);
+	TestTrue(TEXT("adopted"), Ok(Reply) && bAdopted);
+	TestEqual(TEXT("sanitized owner echoed"), Str(Data, TEXT("owner")), O);
+	TestEqual(TEXT("trimmed id echoed"), Str(Data, TEXT("lease_id")), LeaseO);
+	TestEqual(TEXT("connection owner echoed"), Str(Data, TEXT("connection_owner")), O);
+	double Expires = 0.0;
+	if (Data.IsValid()) Data->TryGetNumberField(TEXT("expires_in_s"), Expires);
+	TestTrue(TEXT("expires_in_s is positive"), Expires > 0.0);
+	TestFalse(TEXT("adoption explains its lifetime"), Str(Data, TEXT("note")).IsEmpty());
+	TestEqual(TEXT("ownerless requests act as adopted owner"), Str(Status(900102), TEXT("caller_owner")), O);
+	TestEqual(TEXT("status reports adoption"), Str(Status(900102), TEXT("connection_owner")), O);
+	TestEqual(TEXT("explicit envelope overrides adoption"), Str(Status(900102, P), TEXT("caller_owner")), P);
+	TestEqual(TEXT("override leaves adoption intact"), Str(Status(900102, P), TEXT("connection_owner")), O);
+	TestTrue(TEXT("re-adopting same owner is idempotent"), Ok(Adopt(900102, O, LeaseO)));
+	const FString LeaseP = Acquire(*this, 900105, P, TEXT("asset:/Game/__HaybaTest__/AdoptP_") + T, false);
+	if (LeaseP.IsEmpty()) return false;
+	TestTrue(TEXT("different owner cannot replace adoption"),
+		Str(Adopt(900102, P, LeaseP), TEXT("error")).Contains(TEXT("[connection_already_adopted]")));
+	TestTrue(TEXT("owner mismatch precedes already-adopted"),
+		Str(Adopt(900102, Q, LeaseP), TEXT("error")).Contains(TEXT("[lease_owner_mismatch]")));
+	Router()->NotifyConnectionClosed(900102);
+	TestEqual(TEXT("close forgets adoption"), Str(Status(900102), TEXT("connection_owner")), FString());
+	TestEqual(TEXT("reconnected caller starts synthetic"), Str(Status(900102), TEXT("caller_owner")), FString(TEXT("conn:900102")));
+	TestTrue(TEXT("reconnect requires explicit adoption again"), Ok(Adopt(900102, O, LeaseO)));
+
+	// Snapshot values, not table pointers: renew/expire/acquire can mutate the TArray.
+	const FString Bound = Acquire(*this, 900106, O, TEXT("asset:/Game/__HaybaTest__/AdoptBound_") + T, true);
+	const FString Live = Acquire(*this, 900110, O, TEXT("asset:/Game/__HaybaTest__/AdoptLive_") + T, true);
+	const FString Other = Acquire(*this, 900111, P, TEXT("asset:/Game/__HaybaTest__/AdoptOther_") + T, true);
+	if (Bound.IsEmpty() || Live.IsEmpty() || Other.IsEmpty()) return false;
+	double RenewedUntil = 0.0;
+	FString RenewError;
+	if (!TestTrue(TEXT("give the orphan its own TTL"), M.Table().Renew(Bound, O, 25.0, RenewedUntil, RenewError, 900106))) return false;
+	Router()->NotifyConnectionClosed(900106);
+	Router()->NotifyConnectionClosed(900111);
+	const HaybaMCPLease::FLease* Found = M.Table().FindLease(LeaseO);
+	if (!TestNotNull(TEXT("unbound lease exists"), Found)) return false;
+	const double UnboundExpiry = Found->ExpiresAt;
+	Found = M.Table().FindLease(Live);
+	if (!TestNotNull(TEXT("live binding exists"), Found)) return false;
+	const double LiveExpiry = Found->ExpiresAt;
+	Found = M.Table().FindLease(Other);
+	if (!TestNotNull(TEXT("other owner's orphan exists"), Found)) return false;
+	const double OtherExpiry = Found->ExpiresAt;
+	const double OtherOrphanedAt = Found->OrphanedAt;
+	TestTrue(TEXT("adopting revives owner's orphan"), Ok(Adopt(900107, O, LeaseO)));
+	Found = M.Table().FindLease(Bound);
+	if (!TestNotNull(TEXT("revived orphan exists"), Found)) return false;
+	TestEqual(TEXT("orphan is cleared"), Found->OrphanedAt, 0.0);
+	TestEqual(TEXT("orphan rebinds to adopting connection"), Found->ConnId, 900107);
+	TestEqual(TEXT("revival preserves each lease's TTL"), Found->TtlSeconds, 25.0);
+	TestTrue(TEXT("revival renews by that real TTL"), Found->ExpiresAt - M.Now() > 24.0 && Found->ExpiresAt - M.Now() <= 25.0);
+	Found = M.Table().FindLease(LeaseO);
+	if (!TestNotNull(TEXT("unbound remains live"), Found)) return false;
+	TestEqual(TEXT("unbound remains unbound"), Found->ConnId, 0);
+	TestEqual(TEXT("unbound TTL is not extended"), Found->ExpiresAt, UnboundExpiry);
+	Found = M.Table().FindLease(Live);
+	if (!TestNotNull(TEXT("other live connection still holds lease"), Found)) return false;
+	TestEqual(TEXT("live binding never moves"), Found->ConnId, 900110);
+	TestEqual(TEXT("live binding expiry unchanged"), Found->ExpiresAt, LiveExpiry);
+	Found = M.Table().FindLease(Other);
+	if (!TestNotNull(TEXT("other owner orphan remains"), Found)) return false;
+	TestEqual(TEXT("other owner's orphan is untouched"), Found->OrphanedAt, OtherOrphanedAt);
+	TestEqual(TEXT("other owner's expiry unchanged"), Found->ExpiresAt, OtherExpiry);
+
+	const FString Short = Acquire(*this, 900112, O, TEXT("asset:/Game/__HaybaTest__/AdoptExpired_") + T, true);
+	if (Short.IsEmpty()) return false;
+	if (!TestTrue(TEXT("short real TTL"), M.Table().Renew(Short, O, 5.0, RenewedUntil, RenewError, 900112))) return false;
+	Router()->NotifyConnectionClosed(900112);
+	M.AdvanceClockForTests(6.0);
+	Advanced += 6.0;
+	TestTrue(TEXT("expired orphan cannot be adopted"),
+		Str(Adopt(900113, O, Short), TEXT("error")).Contains(TEXT("[lease_id_unknown]")));
+	TestEqual(TEXT("expired id refuses without adopting"), M.ConnectionOwner(900113), FString());
+	TestTrue(TEXT("live id still adopts after time advances"), Ok(Adopt(900113, O, LeaseO)));
+	TestNull(TEXT("expired orphan is never revived"), M.Table().FindLease(Short));
+
+	Acquire(*this, 900108, Q, TEXT("asset:/Game/__HaybaTest__/AdoptQ_") + T, false);
+	TestEqual(TEXT("explicit grant auto-adopts connection"), Str(Status(900108), TEXT("connection_owner")), Q);
+	Acquire(*this, 900108, P, TEXT("asset:/Game/__HaybaTest__/AdoptOverride_") + T, false);
+	TestEqual(TEXT("grant with override never replaces adoption"), Str(Status(900108), TEXT("connection_owner")), Q);
+	TSharedPtr<FJsonObject> QueuedParams = MakeShared<FJsonObject>();
+	QueuedParams->SetArrayField(TEXT("resources"), { MakeShared<FJsonValueString>(Resource) });
+	QueuedParams->SetBoolField(TEXT("bind_connection"), false);
+	TestEqual(TEXT("another owner queues"), Str(Obj(Send(TEXT("lease_acquire"), QueuedParams, 900109, Q), TEXT("data")), TEXT("status")), FString(TEXT("queued")));
+	TestEqual(TEXT("queued request does not adopt"), Str(Status(900109), TEXT("connection_owner")), FString());
+	TestEqual(TEXT("synthetic grant does not adopt"), Str(Status(900103), TEXT("connection_owner")), FString());
+	TestEqual(TEXT("in-process status has no adoption"), Str(Status(0), TEXT("connection_owner")), FString());
+
+	{
+		FHaybaEditorHealth::FScopedOverrideForTests Override;
+		AddExpectedError(TEXT("editor_unsafe_restart_required"), EAutomationExpectedErrorFlags::Contains, 0);
+		FHaybaEditorHealth::RecordCaughtFault(EHaybaFaultSite::TestInjection, 0xC0000005u);
+		TestEqual(TEXT("unsafe refuses adopt"), Str(Adopt(900107, O, LeaseO), TEXT("code")), FString(TEXT("editor_unsafe_restart_required")));
+		TestEqual(TEXT("one injected fault error"), Override.FaultErrorLineCount(), 1);
+	}
+	TestFalse(TEXT("real health remains untouched"), FHaybaEditorHealth::IsUnsafe());
+	return true;
+}
+
 #endif

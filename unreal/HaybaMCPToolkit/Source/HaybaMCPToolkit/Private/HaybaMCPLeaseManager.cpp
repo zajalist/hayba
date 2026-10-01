@@ -188,6 +188,31 @@ void FHaybaMCPLeaseManager::ForgetAllAdoptions()
 	AdoptedOwners.Reset();
 }
 
+int32 FHaybaMCPLeaseManager::ReviveOrphanedLeases(const FString& Owner, int32 ConnId)
+{
+	LeaseTable.Expire();
+	// Renew expires/mutates the table: copy ids and real TTLs before renewing.
+	TArray<TPair<FString, double>> Orphans;
+	for (const HaybaMCPLease::FLease& Lease : LeaseTable.GetLeases())
+	{
+		if (Lease.Owner == Owner && Lease.OrphanedAt > 0.0)
+		{
+			Orphans.Emplace(Lease.Token, Lease.TtlSeconds);
+		}
+	}
+	int32 Revived = 0;
+	for (const TPair<FString, double>& Orphan : Orphans)
+	{
+		double ExpiresAt = 0.0;
+		FString Error;
+		if (LeaseTable.Renew(Orphan.Key, Owner, Orphan.Value, ExpiresAt, Error, ConnId))
+		{
+			++Revived;
+		}
+	}
+	return Revived;
+}
+
 FHaybaMCPLeaseManager::EEnvelopeLease FHaybaMCPLeaseManager::ClassifyEnvelopeLease(const FString& LeaseValue)
 {
 	if (LeaseValue.IsEmpty())

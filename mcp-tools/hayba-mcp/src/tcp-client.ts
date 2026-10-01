@@ -185,6 +185,7 @@ export class UETcpClient extends EventEmitter {
     return this.connected;
   }
 
+  /** Process-wide envelope owner; a confirmed lease_adopt can switch it. */
   getOwner(): string {
     return this.owner;
   }
@@ -193,11 +194,14 @@ export class UETcpClient extends EventEmitter {
     this.owner = owner.trim().slice(0, MAX_OWNER_CHARS) || resolveAgentOwner({});
   }
 
-  /** The lease_id sent with every command (null = none). HAYBA_LEASE_ID seeds it. */
+  /** The lease_id sent with every command (null = none). Env-seeded ids can be
+   *  cleared on unknown replies; manually set ids remain until explicitly changed. */
   getLease(): string | null {
     return this.lease;
   }
 
+  /** Manual envelope lease, including confirmed adoption. Sticky across reconnect
+   *  and unknown replies; this does not start or transfer keeper renewal timers. */
   setLease(leaseId: string | null): void {
     this.lease = leaseId?.trim() || null;
     this.leaseFromEnv = false;

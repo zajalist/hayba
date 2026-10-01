@@ -4,6 +4,9 @@
 #include "HaybaMCPCommandHandler.h"
 #include "HaybaMCPModule.h"
 #include "HaybaMCPLeaseManager.h"
+#include "HaybaMCPCommandSets.h"
+#include "HaybaMCPEditorStatePolicy.h"
+#include "HaybaMCPHealthPolicy.h"
 #include "Modules/ModuleManager.h"
 
 #if WITH_DEV_AUTOMATION_TESTS
@@ -624,11 +627,17 @@ bool FHaybaMCPLeaseClassificationDriftTest::RunTest(const FString& Parameters)
 		}
 	}
 	for (const FString& Cmd : { FString(TEXT("lease_acquire")), FString(TEXT("lease_renew")),
-		FString(TEXT("lease_release")), FString(TEXT("lease_status")),
+		FString(TEXT("lease_release")), FString(TEXT("lease_status")), FString(TEXT("lease_adopt")),
 		FString(TEXT("editor_batch")), FString(TEXT("batch_status")) })
 	{
 		TestTrue(*FString::Printf(TEXT("lease command is registered: %s"), *Cmd), Registered.Contains(Cmd));
 	}
+	TestEqual(TEXT("lease_adopt classifies read"), ClassifyCommand(TEXT("lease_adopt"), false).Class, EAccessClass::Read);
+	TestFalse(TEXT("lease_adopt is not Plan-gated"), FHaybaMCPCommandHandler::IsPlanGatedCommand(TEXT("lease_adopt")));
+	TestTrue(TEXT("lease_adopt is control plane"), HaybaMCPCommandSets::ControlPlaneCommands().Contains(TEXT("lease_adopt")));
+	TestTrue(TEXT("lease_adopt is PIE-safe"), HaybaMCPState::PieRuleFor(TEXT("lease_adopt")) == HaybaMCPState::EPieRule::Safe);
+	TestFalse(TEXT("lease_adopt is refused while unsafe"),
+		HaybaMCPHealth::IsCommandAllowedWhileUnsafe(TEXT("lease_adopt"), HaybaMCPHealth::ECause::NativeFault));
 	return true;
 }
 

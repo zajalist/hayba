@@ -2,6 +2,7 @@
 
 #include "HaybaMCPLeaseHandler.h"
 #include "HaybaMCPLeaseManager.h"
+#include "HaybaMCPEnforcementPolicy.h"
 #include "HAL/PlatformTime.h"
 
 namespace
@@ -130,6 +131,7 @@ TArray<FString> FHaybaMCPLeaseHandler::GetCommands() const
 		TEXT("lease_renew"),
 		TEXT("lease_release"),
 		TEXT("lease_status"),
+		TEXT("lease_adopt"),
 	};
 }
 
@@ -140,6 +142,7 @@ FHaybaHandlerResult FHaybaMCPLeaseHandler::Handle(const FString& Command, const 
 	if (Command == TEXT("lease_renew"))   return Renew(P);
 	if (Command == TEXT("lease_release")) return Release(P);
 	if (Command == TEXT("lease_status"))  return Status(P);
+	if (Command == TEXT("lease_adopt"))   return Adopt(P);
 	return FHaybaHandlerResult::Err(FString::Printf(TEXT("Unknown lease command: %s"), *Command));
 }
 
@@ -216,6 +219,15 @@ FHaybaHandlerResult FHaybaMCPLeaseHandler::Acquire(const TSharedPtr<FJsonObject>
 				 "on a helper connection with lease_adopt {owner, lease_id}. The lease alone does not supply identity. Renew before it lapses (lease_renew {} renews every lease you hold) and lease_release "
 				 "when done. A bound lease is orphaned on closing and dropped within orphan_grace_s after closing, unless it expires sooner or you "
 				 "renew it. Per-call clients should pass bind_connection:false or keep one socket open."));
+
+		// An explicit named owner on a granted connection becomes its default.
+		// Envelope overrides may still act as another owner without replacing it.
+		if (Context && Context->ConnId > 0 && Context->Caller.Via == TEXT("envelope")
+			&& Manager.ConnectionOwner(Context->ConnId).IsEmpty())
+		{
+			FString Ignored;
+			Manager.AdoptConnection(Context->ConnId, Request.Owner, Ignored);
+		}
 	}
 	else
 	{
@@ -447,5 +459,61 @@ FHaybaHandlerResult FHaybaMCPLeaseHandler::Status(const TSharedPtr<FJsonObject>&
 
 	Out->SetArrayField(TEXT("leases"), LeasesJson);
 	Out->SetArrayField(TEXT("waiters"), WaitersJson);
+	const FHaybaMCPRequestContext* Context = FHaybaMCPLeaseManager::Get().Current();
+	Out->SetStringField(TEXT("connection_owner"),
+		Context && Context->ConnId > 0 ? FHaybaMCPLeaseManager::Get().ConnectionOwner(Context->ConnId) : FString());
+	return FHaybaHandlerResult::Ok(Out);
+}
+
+FHaybaHandlerResult FHaybaMCPLeaseHandler::Adopt(const TSharedPtr<FJsonObject>& P)
+{
+	FHaybaMCPLeaseManager& Manager = FHaybaMCPLeaseManager::Get();
+	const FHaybaMCPRequestContext* Context = Manager.Current();
+	FString Owner;
+	FString LeaseId;
+	P->TryGetStringField(TEXT("owner"), Owner);
+	P->TryGetStringField(TEXT("lease_id"), LeaseId);
+	Owner = HaybaMCPEnforcement::SanitizeOwner(Owner);
+	LeaseId.TrimStartAndEndInline();
+	if (Owner.IsEmpty() || LeaseId.IsEmpty())
+	{
+		return FHaybaHandlerResult::Err(TEXT("lease_adopt: [bad_request] owner and lease_id are both required"));
+	}
+	if (!Context || Context->ConnId <= 0)
+	{
+		return FHaybaHandlerResult::Err(TEXT("lease_adopt: [adopt_needs_connection] only a TCP connection can adopt an owner; in-process callers name the owner on each envelope"));
+	}
+	if (HaybaMCPLease::IsRedactionMarker(LeaseId))
+	{
+		return FHaybaHandlerResult::Err(TEXT("lease_adopt: [lease_id_redacted] a redacted marker cannot name a lease; send the lease_id lease_acquire returned"));
+	}
+	const HaybaMCPLease::FLease* Lease = Manager.Table().FindLease(LeaseId);
+	if (!Lease)
+	{
+		return FHaybaHandlerResult::Err(TEXT("lease_adopt: [lease_id_unknown] no live lease has that lease_id; acquire again"));
+	}
+	if (Lease->Owner != Owner)
+	{
+		return FHaybaHandlerResult::Err(FString::Printf(TEXT("lease_adopt: [lease_owner_mismatch] lease belongs to '%s'"), *Lease->Owner));
+	}
+	// Reserved-owner and already-adopted checks follow live-id/owner validation.
+	FString Error;
+	if (!Manager.AdoptConnection(Context->ConnId, Owner, Error))
+	{
+		return FHaybaHandlerResult::Err(TEXT("lease_adopt: ") + Error);
+	}
+	const int32 Revived = Manager.ReviveOrphanedLeases(Owner, Context->ConnId);
+	// Revival can mutate the table; never keep Lease across it.
+	const HaybaMCPLease::FLease* Adopted = Manager.Table().FindLease(LeaseId);
+	TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
+	Out->SetBoolField(TEXT("adopted"), true);
+	Out->SetStringField(TEXT("owner"), Owner);
+	Out->SetStringField(TEXT("lease_id"), LeaseId);
+	Out->SetStringField(TEXT("connection_owner"), Manager.ConnectionOwner(Context->ConnId));
+	Out->SetNumberField(TEXT("expires_in_s"), Adopted ? FMath::Max(0.0, Adopted->ExpiresAt - Manager.Now()) : 0.0);
+	Out->SetStringField(TEXT("note"), FString::Printf(
+		TEXT("This connection now acts as '%s' whenever an envelope names no owner, until it closes. The editor drops ")
+		TEXT("connections idle for about 5 s: repeat lease_adopt after every reconnect. %d orphaned lease(s) of '%s' were ")
+		TEXT("re-bound to this connection."), *Owner, Revived, *Owner));
 	return FHaybaHandlerResult::Ok(Out);
 }

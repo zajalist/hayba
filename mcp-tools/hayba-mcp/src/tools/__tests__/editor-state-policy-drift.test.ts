@@ -76,7 +76,8 @@ const pieSafe = [...controlPlane, ...reads, ...observation];
 
 describe('editor-state policy names real commands', () => {
   it('parses sets of the expected size', () => {
-    expect(controlPlane.length).toBeGreaterThanOrEqual(18);
+    expect(controlPlane.length).toBe(19);
+    expect(controlPlane).toContain('lease_adopt');
     expect(reads.length).toBeGreaterThanOrEqual(71);
     for (const name of ['wait_for_idle', 'wait_for_shaders', 'asset_validate', 'material_validate', 'mesh_audit', 'mesh_list_dynamic', 'mesh_topology_stats', 'metasound_inspect', 'metasound_list',
       'pcg_export_graph', 'pcg_read_node_output', 'pcg_validate_graph', 'placement_validate', 'scene_export', 'scene_validate_physics', 'texture_audit', 'ui_measure_text', 'copilot_get_key']) {

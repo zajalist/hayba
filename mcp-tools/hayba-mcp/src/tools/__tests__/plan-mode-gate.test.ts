@@ -81,7 +81,7 @@ describe('Plan Mode gate covers every non-retryable command', () => {
   // and binding get the same lease_id back), so it stays out of NON_IDEMPOTENT.
   it.runIf(available)('keeps the lease control plane ungated and retry-safe', () => {
     const gated = parseGatedCommands();
-    for (const cmd of ['lease_acquire', 'lease_renew', 'lease_release', 'lease_status']) {
+    for (const cmd of ['lease_acquire', 'lease_renew', 'lease_release', 'lease_status', 'lease_adopt']) {
       expect(gated.has(cmd), cmd).toBe(false);
       expect(NON_IDEMPOTENT.has(cmd), cmd).toBe(false);
     }

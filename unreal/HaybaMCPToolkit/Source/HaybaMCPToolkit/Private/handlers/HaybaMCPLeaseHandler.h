@@ -1,4 +1,4 @@
-// HaybaMCPLeaseHandler.h - multi-agent leases (lease_acquire / renew / release / status).
+// HaybaMCPLeaseHandler.h - multi-agent leases (lease_acquire / renew / release / status / adopt).
 //
 // A thin command facade over FHaybaMCPLeaseManager's pure table. Nothing here
 // blocks: lease_acquire answers granted (lease_id) or queued (ticket,
@@ -21,4 +21,5 @@ private:
 	FHaybaHandlerResult Renew(const TSharedPtr<FJsonObject>& Params);
 	FHaybaHandlerResult Release(const TSharedPtr<FJsonObject>& Params);
 	FHaybaHandlerResult Status(const TSharedPtr<FJsonObject>& Params);
+	FHaybaHandlerResult Adopt(const TSharedPtr<FJsonObject>& Params);
 };
