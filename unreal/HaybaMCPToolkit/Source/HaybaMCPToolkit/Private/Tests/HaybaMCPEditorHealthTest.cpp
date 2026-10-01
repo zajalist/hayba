@@ -913,7 +913,7 @@ bool FHaybaHealthBatchStepRefusedTest::RunTest(const FString&)
 
 		// A routed batch step takes slot 1 like any other request.
 		const TSharedPtr<FJsonObject> Routed = Parse(R->ProcessBatchStep(
-			Envelope(TEXT("python_run"), Owner, Params(TEXT("script"), TEXT("print(1)"))), TEXT("job-health-test"), false));
+			Envelope(TEXT("python_run"), Owner, Params(TEXT("script"), TEXT("print(1)"))), TEXT("job-health-test"), false, Owner));
 		TestEqual(TEXT("a routed python_run step is refused"), Str(Routed, TEXT("code")), FString(TEXT("editor_unsafe_restart_required")));
 
 		// The native region steps check IsUnsafe() before anything else (defence in depth).

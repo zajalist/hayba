@@ -67,7 +67,7 @@ namespace
 	}
 
 
-	/** The envelope owner, or the owner of the lease its `lease` field names. */
+	/** The resolved owner-first caller; an envelope lease never supplies identity. */
 	FString CallerOwner()
 	{
 		return FHaybaMCPLeaseManager::Get().EffectiveOwner();
@@ -212,8 +212,8 @@ FHaybaHandlerResult FHaybaMCPLeaseHandler::Acquire(const TSharedPtr<FJsonObject>
 		Out->SetNumberField(TEXT("orphan_grace_s"), Manager.Table().GetTuning().OrphanGraceSeconds);
 
 		Out->SetStringField(TEXT("next"),
-			TEXT("Keep sending your envelope owner (HAYBA_AGENT_ID); send this lease_id as the envelope 'lease' only from a helper "
-				 "process that has no owner. Renew before it lapses (lease_renew {} renews every lease you hold) and lease_release "
+			TEXT("Keep sending your envelope owner (HAYBA_AGENT_ID) with this lease_id as the envelope 'lease', or adopt the owner "
+				 "on a helper connection with lease_adopt {owner, lease_id}. The lease alone does not supply identity. Renew before it lapses (lease_renew {} renews every lease you hold) and lease_release "
 				 "when done. A bound lease is orphaned on closing and dropped within orphan_grace_s after closing, unless it expires sooner or you "
 				 "renew it. Per-call clients should pass bind_connection:false or keep one socket open."));
 	}
@@ -400,7 +400,7 @@ FHaybaHandlerResult FHaybaMCPLeaseHandler::Status(const TSharedPtr<FJsonObject>&
 		Item->SetBoolField(TEXT("mine"), bMine);
 		if (bMine)
 		{
-			// Only the owner sees its lease_id; a lease_id in an envelope acts as its owner.
+			// Only the resolved caller owning this lease sees its coordination id.
 			Item->SetStringField(TEXT("lease_id"), Lease.Token);
 		}
 		if (!Lease.Label.IsEmpty()) Item->SetStringField(TEXT("label"), Lease.Label);

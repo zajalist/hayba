@@ -444,14 +444,13 @@ namespace
 				Envelope->SetStringField(TEXT("cmd"), Cmd);
 				Envelope->SetStringField(TEXT("id"), FString::Printf(TEXT("batch-%s-%d"), *S.JobId.Left(8), Index));
 				Envelope->SetObjectField(TEXT("params"), Params);
-				Envelope->SetStringField(TEXT("owner"), S.Owner);
 				Envelope->SetStringField(TEXT("lease"), S.LeaseToken);
 				// The batch request itself authenticated; its steps carry the
 				// same capability (empty when auth is off).
 				const FString& Auth = FHaybaMCPSettings::Get().CapabilityToken;
 				if (!Auth.IsEmpty()) Envelope->SetStringField(TEXT("auth"), Auth);
 
-				const FString Response = Router->ProcessBatchStep(JsonToCondensed(Envelope), S.JobId, S.bPlanPreApproved);
+				const FString Response = Router->ProcessBatchStep(JsonToCondensed(Envelope), S.JobId, S.bPlanPreApproved, S.Owner);
 				const TSharedPtr<FJsonObject> Reply = ParseObject(Response);
 				bOk = false;
 				if (!Reply.IsValid())

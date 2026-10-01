@@ -60,10 +60,17 @@ describe('lease enforcement contract (T6)', () => {
   });
 
   it('owners are resolved and sanitized in one place', () => {
-    expect(readFileSync(ROUTER, 'utf-8')).toContain(
-      'FHaybaMCPLeaseManager::ResolveOwner(Parsed, Context->ConnId, &Context->bOwnerFromEnvelope)',
+    const router = readFileSync(ROUTER, 'utf-8');
+    // T9: owner first. The router resolves the caller once, from the envelope owner,
+    // the connection and the envelope lease.
+    expect(router).toContain(
+      'FHaybaMCPLeaseManager::ResolveCaller(EnvelopeOwner, CallerContext->ConnId, EnvelopeLease)',
     );
-    expect(readFileSync(MANAGER, 'utf-8')).toContain('HaybaMCPEnforcement::SanitizeOwner(Owner)');
+    // The pre-T9 resolver no longer reads the parsed envelope in the router.
+    expect(router).not.toContain('ResolveOwner(Parsed');
+    const manager = readFileSync(MANAGER, 'utf-8');
+    expect(manager).toContain('HaybaMCPEnforcement::SanitizeOwner(EnvelopeOwner)');
+    expect(manager).toContain('HaybaMCPEnforcement::SanitizeOwner(Owner)');
   });
 
   it('presence is noted after auth and before the lease gate', () => {
@@ -345,5 +352,42 @@ describe('python read declarations (R-1)', () => {
     expect(calls[1]).not.toHaveProperty('read_only');
     expect(calls[2]).not.toHaveProperty('read_only');
     expect(calls[3]).not.toHaveProperty('read_only');
+  });
+});
+
+describe('lease enforcement contract (T9)', () => {
+  it('reserved-owner admission follows auth and precedes presence and unsafe admission', () => {
+    const router = readFileSync(ROUTER, 'utf-8');
+    const auth = router.indexOf('FHaybaMCPSecurityManager::Get().ValidateRequest(Parsed, AuthReason)');
+    const reserved = router.indexOf('CallerContext->BatchJobId.IsEmpty() && CallerContext->Caller.bReservedViolation');
+    const presence = router.indexOf('Leases.NoteAuthenticatedCaller(');
+    const unsafe = router.indexOf('if (FHaybaEditorHealth::IsUnsafe())', reserved);
+    expect(auth).toBeGreaterThan(-1);
+    expect(reserved).toBeGreaterThan(auth);
+    expect(presence).toBeGreaterThan(reserved);
+    expect(unsafe).toBeGreaterThan(presence);
+  });
+
+  it('every gate code the router sets maps to its own UeToolError code', async () => {
+    const router = readFileSync(ROUTER, 'utf-8');
+    const codes = [
+      ...new Set([...router.matchAll(/\b(?:R|Refusal)\.Code = TEXT\("([a-z_]+)"\);/g)].map((m) => m[1]!)),
+    ].sort();
+    // Fail closed: the scan must find the gates it is about, slot 0 included.
+    expect(codes).toEqual(['asset_busy', 'editor_unsafe_restart_required', 'owner_reserved', 'pie_active']);
+    for (const code of codes) {
+      const send: Sender = async () => ({ id: 'x', ok: false, code, error: `${code}: refused` });
+      await expect(executeCommand('blueprint_add_node', {}, { sender: send })).rejects.toMatchObject({ code });
+    }
+  });
+
+  it('the lease_not_bound warning is logged by NoteLeaseWarning', () => {
+    const manager = readFileSync(MANAGER, 'utf-8');
+    const start = manager.indexOf('void FHaybaMCPLeaseManager::AddLeaseBinding(');
+    expect(start).toBeGreaterThan(-1);
+    const body = manager.slice(start, manager.indexOf('\n}', start));
+    expect(body).toContain('NoteLeaseWarning(ModeName, TEXT("lease_warning"), TEXT("lease_not_bound")');
+    expect(body).not.toContain('UE_LOG(');
+    expect(body).not.toContain('LeaseWarningLimiter.Note(');
   });
 });

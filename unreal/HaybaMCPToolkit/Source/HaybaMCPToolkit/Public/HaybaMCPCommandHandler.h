@@ -29,12 +29,14 @@ public:
     FString ProcessCommand(const FString& CommandJson, int32 ConnId);
 
     /**
-     * One editor_batch step, through the normal path (auth, lease check, Plan
-     * gate, transaction, dispatch, journal). `bPlanPreApproved` is true when
-     * the batch itself passed the Plan-Mode gate: its steps are covered by
-     * that approval. Game thread only; no connection (the batch owns it).
+     * One editor_batch step, through the normal path (auth, gates, Plan gate,
+     * transaction, dispatch, journal). The step acts as BatchOwner, which
+     * editor_batch checked when it accepted the batch; it is never round-tripped
+     * through the envelope, so a conn:<n> owner keeps working after connection n
+     * closes (T9, R-27). `bPlanPreApproved` is true when the batch itself passed
+     * the Plan-Mode gate. Game thread only; no connection.
      */
-    FString ProcessBatchStep(const FString& CommandJson, const FString& BatchJobId, bool bPlanPreApproved);
+    FString ProcessBatchStep(const FString& CommandJson, const FString& BatchJobId, bool bPlanPreApproved, const FString& BatchOwner);
 
     /** A TCP connection closed: release the leases bound to it. Game thread. */
     void NotifyConnectionClosed(int32 ConnId);

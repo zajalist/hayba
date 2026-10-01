@@ -1413,14 +1413,14 @@ FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson, int3
 }
 
 FString FHaybaMCPCommandHandler::ProcessBatchStep(
-    const FString& CommandJson, const FString& BatchJobId, bool bPlanPreApproved)
+    const FString& CommandJson, const FString& BatchJobId, bool bPlanPreApproved, const FString& BatchOwner)
 {
     if (!IsInGameThread())
     {
         return MakeOffGameThreadResponse();
     }
     FHaybaMCPRequestContext Context;
-    Context.Owner = FHaybaMCPLeaseManager::ResolveOwner(nullptr, 0);
+    Context.Owner = BatchOwner;
     Context.BatchJobId = BatchJobId;
     Context.bPlanPreApproved = bPlanPreApproved;
     return ProcessWithContext(CommandJson, Context);
@@ -1493,33 +1493,34 @@ FString FHaybaMCPCommandHandler::ProcessCommandInContext(const FString& CommandJ
     }
     if (!Params.IsValid()) Params = MakeShared<FJsonObject>();
 
-    // Optional, back-compatible envelope fields: `owner` names the agent
-    // (else one owner per connection) and `lease` names a held lease_id.
+    // Owner first (T9): the envelope owner, else the connection's adopted owner,
+    // else conn:<n> / local. The envelope lease is classified, never an identity.
     FHaybaMCPLeaseManager& Leases = FHaybaMCPLeaseManager::Get();
-    if (FHaybaMCPRequestContext* Context = Leases.Current())
+    FString EnvelopeOwner;
+    FString EnvelopeLease;
+    Parsed->TryGetStringField(TEXT("owner"), EnvelopeOwner);
+    Parsed->TryGetStringField(TEXT("lease"), EnvelopeLease);
+    FHaybaMCPRequestContext* CallerContext = Leases.Current();
+    check(CallerContext); // ProcessWithContext always publishes one.
+    CallerContext->LeaseToken = EnvelopeLease;
+    if (CallerContext->BatchJobId.IsEmpty())
     {
-        Context->Owner = FHaybaMCPLeaseManager::ResolveOwner(Parsed, Context->ConnId, &Context->bOwnerFromEnvelope);
-        Parsed->TryGetStringField(TEXT("lease"), Context->LeaseToken);
+        CallerContext->Caller = FHaybaMCPLeaseManager::ResolveCaller(EnvelopeOwner, CallerContext->ConnId, EnvelopeLease);
+        CallerContext->Owner = CallerContext->Caller.Owner;
     }
+    else
+    {
+        // A batch step acts as its batch's owner, which editor_batch checked when it
+        // accepted the batch (R-27). ProcessBatchStep set Context.Owner.
+        CallerContext->Caller = FHaybaMCPLeaseManager::ResolveBatchCaller(CallerContext->Owner, EnvelopeLease);
+    }
+    // T6.2's flag stays on the context; from T9 on it is derived from the resolution.
+    CallerContext->bOwnerFromEnvelope = FHaybaMCPLeaseManager::IsIdentifiedCaller(CallerContext->Caller);
 
-    // T6: who is acting, and how we know. The lease handle is classified, never
-    // printed. The prefix is unchanged for audit-crash-threat-model.mjs.
-    {
-        const FHaybaMCPRequestContext* LogContext = Leases.Current();
-        const FString LogOwner = Leases.EffectiveOwner();
-        const int32 LogConn = LogContext ? LogContext->ConnId : 0;
-        const FHaybaMCPLeaseManager::EEnvelopeLease LeaseState = LogContext
-            ? Leases.ClassifyEnvelopeLease(LogContext->LeaseToken)
-            : FHaybaMCPLeaseManager::EEnvelopeLease::None;
-        const TCHAR* Via = (LeaseState == FHaybaMCPLeaseManager::EEnvelopeLease::Valid) ? TEXT("lease")
-            : (LogContext && LogContext->bOwnerFromEnvelope) ? TEXT("envelope")
-            : (LogConn > 0 ? TEXT("conn") : TEXT("local"));
-        const FString BatchPart = (LogContext && !LogContext->BatchJobId.IsEmpty())
-            ? FString::Printf(TEXT(", batch: %s"), *LogContext->BatchJobId.Left(8))
-            : FString();
-        UE_LOG(LogHaybaMCPCmd, Log, TEXT("Processing command: %s (id: %s, owner: %s, via: %s, conn: %d, lease: %s%s)"),
-            *Cmd, *Id, *LogOwner, Via, LogConn, FHaybaMCPLeaseManager::LexEnvelopeLease(LeaseState), *BatchPart);
-    }
+    UE_LOG(LogHaybaMCPCmd, Log, TEXT("Processing command: %s (id: %s, owner: %s, via: %s, conn: %d, lease: %s%s)"),
+        *Cmd, *Id, *CallerContext->Owner, *CallerContext->Caller.Via, CallerContext->ConnId,
+        LexLeaseRef(CallerContext->Caller.LeaseRef),
+        CallerContext->BatchJobId.IsEmpty() ? TEXT("") : *FString::Printf(TEXT(", batch: %s"), *CallerContext->BatchJobId.Left(8)));
 
     // Auth gate
     FString AuthReason;
@@ -1528,19 +1529,44 @@ FString FHaybaMCPCommandHandler::ProcessCommandInContext(const FString& CommandJ
         return MakeErrorResponse(Id, AuthReason, Cmd, false, true);
     }
 
-    // Presence (T6; T8 widens who counts): an identified caller counts as an
-    // active owner for owner_required. It runs in every mode, before any gate
-    // can refuse, so even a refused command proves its owner is connected.
-    // Never refuses; never extends a lease.
-    if (const FHaybaMCPRequestContext* PresenceContext = Leases.Current())
+    // Slot 0 (T9): an envelope may not claim a synthetic owner that is not the
+    // caller's own. Skipped for batch steps: their owner was checked at submit.
+    if (CallerContext->BatchJobId.IsEmpty() && CallerContext->Caller.bReservedViolation)
     {
-        // T8: identified = named in the envelope, or proven by a valid lease
-        // handle. conn:<n> and local never count as present.
-        const bool bHandleValid = Leases.ClassifyEnvelopeLease(PresenceContext->LeaseToken)
-            == FHaybaMCPLeaseManager::EEnvelopeLease::Valid;
-        Leases.NoteAuthenticatedCaller(Leases.EffectiveOwner(), PresenceContext->ConnId,
-            /*bIdentified=*/PresenceContext->bOwnerFromEnvelope || bHandleValid);
+        const FString Claimed = HaybaMCPEnforcement::SanitizeOwner(EnvelopeOwner);
+        FGateRefusal R;
+        R.Code = TEXT("owner_reserved");
+        R.Message = FString::Printf(
+            TEXT("owner_reserved: '%s' was not run: the envelope owner '%s' is reserved for %s, and this request came from %s. ")
+            TEXT("Send your own owner (HAYBA_AGENT_ID), or no owner to act as '%s'."),
+            *Cmd, *Claimed,
+            Claimed == TEXT("local") ? TEXT("in-process callers") : TEXT("the connection it names"),
+            CallerContext->ConnId > 0 ? *FString::Printf(TEXT("connection %d"), CallerContext->ConnId) : TEXT("an in-process caller"),
+            *CallerContext->Owner);
+        TSharedPtr<FJsonObject> Detail = MakeShared<FJsonObject>();
+        Detail->SetStringField(TEXT("claimed_owner"), Claimed);
+        Detail->SetNumberField(TEXT("conn"), CallerContext->ConnId);
+        Detail->SetStringField(TEXT("caller_owner"), CallerContext->Owner);
+        R.DetailKey = TEXT("owner");
+        R.Detail = Detail;
+        R.FailureKind = EHaybaMCPFailureKind::InputRejected;
+        // The router rule for every gate log site (R-18): drain first, then Note,
+        // and the one suffix format of FWarningLimiter.
+        LogDrainedGateRefusals();
+        const FWarningLimiter::FHit Hit = GateRefusalLimiter().Note(
+            FWarningLimiter::MakeKey(TEXT("gate"), TEXT("owner_reserved"), CallerContext->Owner, Cmd, Claimed));
+        if (Hit.bLog)
+        {
+            UE_LOG(LogHaybaMCPCmd, Warning, TEXT("%s%s"), *R.Message,
+                *FWarningLimiter::PreviousWindowSuffix(Hit.SuppressedInPreviousWindow));
+        }
+        return MakeGateRefusal(Id, Cmd, R);
     }
+
+    // Presence is owner-first and authenticated. Synthetic identities and
+    // refused reserved claims do not prove an agent is connected.
+    Leases.NoteAuthenticatedCaller(CallerContext->Owner, CallerContext->ConnId,
+        FHaybaMCPLeaseManager::IsIdentifiedCaller(CallerContext->Caller));
 
     // Slot 1 (ADR-0011): a contained native fault left this process unsafe.
     // Everything outside CommandsAllowedWhileUnsafe(most severe cause so far)

@@ -107,3 +107,6 @@ Hayba.MCP.Lease.PythonRunClassification
 
 # T9
 Hayba.MCP.Lease.ResolveCaller
+Hayba.MCP.Lease.ReservedOwner
+Hayba.MCP.Lease.RouterBinding
+Hayba.MCP.Lease.UnknownLeaseRefusesWrites

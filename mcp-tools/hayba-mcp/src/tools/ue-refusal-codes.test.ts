@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { executeCommand, UeToolError, type Sender } from './tool-executor.js';
+import { executeCommand, InMemoryToolExecutor, UeToolError, type Sender } from './tool-executor.js';
 import type { TcpResponse } from '../tcp-client.js';
 
 // Top-level refusal codes from the editor (P0 spec §4.2). Each task appends one
@@ -199,5 +199,20 @@ describe('T8: owner_required', () => {
     };
     expect(err).toMatchObject({ name: 'UeToolError', code: 'owner_required' });
     expect(err.uePayload.lease).toMatchObject({ reason: 'owner_missing' });
+  });
+});
+
+describe('T9: owner_reserved', () => {
+  it('maps owner_reserved to a known code, not ue_error', async () => {
+    const exec = new InMemoryToolExecutor().on('ping', () => ({
+      ok: false,
+      code: 'owner_reserved',
+      error: "owner_reserved: 'ping' was not run: the envelope owner 'conn:7' is reserved for the connection it names",
+      owner: { claimed_owner: 'conn:7', conn: 8, caller_owner: 'conn:8' },
+    }));
+    await expect(executeCommand('ping', {}, { sender: exec.send })).rejects.toMatchObject({
+      name: 'UeToolError',
+      code: 'owner_reserved',
+    });
   });
 });

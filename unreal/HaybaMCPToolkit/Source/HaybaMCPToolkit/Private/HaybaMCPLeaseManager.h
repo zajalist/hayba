@@ -245,6 +245,10 @@ public:
 private:
 	FHaybaMCPLeaseManager();
 
+	/** The fact decision and binding diagnostics share the resolved request access. */
+	FVerdict CheckCommandFacts(const FString& Cmd, const FRequiredAccess& Access);
+	void AddLeaseBinding(const FString& Cmd, const FRequiredAccess& Access, FVerdict& Verdict);
+
 	/** ConnId -> adopted owner. Game thread only; cleared on close/restart. */
 	TMap<int32, FString> AdoptedOwners;
 

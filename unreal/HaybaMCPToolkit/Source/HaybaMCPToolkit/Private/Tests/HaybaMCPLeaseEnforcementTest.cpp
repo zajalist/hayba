@@ -259,7 +259,7 @@ bool FHaybaMCPLeaseProcessingLogOwnerTest::RunTest(const FString& Parameters)
 		TestEqual(TEXT("a second unknown repetition leaves the marker count alone"), WarningRepeats(UnknownAgain), 3);
 		Send(*R, 900655, Caller, TEXT("ping"), nullptr, HolderLease);
 		Send(*R, 900656, Holder, TEXT("ping"), nullptr, HolderLease);
-		R->ProcessBatchStep(Envelope(Caller, TEXT("ping"), nullptr), TEXT("hayba-test-job-6f2a91c0"), true);
+		R->ProcessBatchStep(Envelope(Caller, TEXT("ping"), nullptr), TEXT("hayba-test-job-6f2a91c0"), true, Caller);
 		Cmd.Flush();
 
 		TestEqual(TEXT("an envelope owner"),
@@ -270,10 +270,11 @@ bool FHaybaMCPLeaseProcessingLogOwnerTest::RunTest(const FString& Parameters)
 			Cmd.Count(TEXT("owner: local, via: local, conn: 0, lease: none)")), 1);
 		TestEqual(TEXT("a marker is classified, not printed"), Cmd.Count(TEXT("conn: 900652, lease: redacted)")), 1);
 		TestEqual(TEXT("an unknown handle"), Cmd.Count(TEXT("conn: 900653, lease: unknown)")), 1);
-		TestEqual(TEXT("a valid handle acts as its lease's owner"),
-			Cmd.Count(FString::Printf(TEXT("owner: %s, via: lease, conn: 900655, lease: valid)"), *Holder)), 1);
-		TestEqual(TEXT("a valid handle still supplies an identical envelope owner"),
-			Cmd.Count(FString::Printf(TEXT("owner: %s, via: lease, conn: 900656, lease: valid)"), *Holder)), 1);
+		TestEqual(TEXT("another owner's lease does not change who is calling"),
+			Cmd.Count(FString::Printf(TEXT("owner: %s, via: envelope, conn: 900655, lease: not_bound)"), *Caller)), 1);
+		TestEqual(TEXT("no command is logged as its lease's owner"), Cmd.Count(TEXT("via: lease")), 0);
+		TestEqual(TEXT("the envelope owner stays the caller with its own valid lease"),
+			Cmd.Count(FString::Printf(TEXT("owner: %s, via: envelope, conn: 900656, lease: valid)"), *Holder)), 1);
 		TestEqual(TEXT("a batch step names its job"), Cmd.Count(TEXT(", batch: hayba-te)")), 1);
 		TestEqual(TEXT("the handle itself never reaches the log"),
 			Cmd.Count(HolderLease) + Cmd.Count(TEXT("ls_999999_000000000000")) + Cmd.Count(TEXT("[REDACTED:token]")), 0);
@@ -303,6 +304,8 @@ bool FHaybaMCPLeaseProcessingLogOwnerTest::RunTest(const FString& Parameters)
 			// rule exists (an unnamed one would be owner_missing while Holder and
 			// Caller are present).
 			Ctx.bOwnerFromEnvelope = true;
+			Ctx.Caller.Owner = Ctx.Owner;
+			Ctx.Caller.Via = TEXT("envelope");
 			FHaybaMCPLeaseManager::FScope Scope(Ctx);
 			const FHaybaMCPLeaseManager::FVerdict Verdict = Leases.CheckCommand(TEXT("blueprint_add_node"), Params);
 			TestFalse(TEXT("advisory never refuses"), Verdict.bRefuse);
@@ -536,10 +539,10 @@ bool FHaybaMCPLeaseEnforcedForWritesTwoOwnersTest::RunTest(const FString& Parame
 
 		// R-24: a batch python_run step that declares its resources passes; undeclared it conflicts.
 		const FString Scoped = R->ProcessBatchStep(Envelope(B, TEXT("python_run"),
-			Json(TEXT("{\"script\":\"x = 1\",\"resources\":[\"asset:/Game/__HaybaTest__/BP_B\"]}"))), TEXT("hayba-test-batch-t8"), true);
+			Json(TEXT("{\"script\":\"x = 1\",\"resources\":[\"asset:/Game/__HaybaTest__/BP_B\"]}"))), TEXT("hayba-test-batch-t8"), true, B);
 		TestFalse(TEXT("a declared batch step passes"), IsLeaseRefusal(CodeOf(Json(Scoped))));
 		const FString Undeclared = R->ProcessBatchStep(Envelope(B, TEXT("python_run"),
-			Json(TEXT("{\"script\":\"x = 1\"}"))), TEXT("hayba-test-batch-t8"), true);
+			Json(TEXT("{\"script\":\"x = 1\"}"))), TEXT("hayba-test-batch-t8"), true, B);
 		TestEqual(TEXT("an undeclared batch step conflicts"), CodeOf(Json(Undeclared)), FString(TEXT("lease_conflict")));
 		Send(*R, ConnA, A, TEXT("lease_release"), Json(TEXT("{\"all\":true}")));
 	}

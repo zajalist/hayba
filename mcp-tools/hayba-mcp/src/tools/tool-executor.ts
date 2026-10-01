@@ -25,7 +25,9 @@ export type UeToolErrorCode =
   // A handler preflight found a read-only package file (T5); data.make_writable_hint says how to fix it.
   | 'package_read_only'
   // A write named no owner while other agents are connected (EnforcedForWrites, T8).
-  | 'owner_required';
+  | 'owner_required'
+  // An envelope claimed another connection's conn:<n> or local (T9).
+  | 'owner_reserved';
 
 export class UeToolError extends Error {
   readonly code: UeToolErrorCode;
@@ -49,6 +51,7 @@ const KNOWN_UE_CODES = new Set<UeToolErrorCode>([
   'asset_busy',
   'package_read_only',
   'owner_required',
+  'owner_reserved',
 ]);
 function mapUeCode(raw: string | undefined): UeToolErrorCode {
   if (raw && KNOWN_UE_CODES.has(raw as UeToolErrorCode)) return raw as UeToolErrorCode;

@@ -456,8 +456,8 @@ bool FHaybaMCPLeaseWireRoundTripTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("status: the caller's lease is listed by lease_id"), bListed);
 
 	// status as another owner: it sees that the leases exist, never their ids.
-	// Until T9 an envelope that names a lease_id acts as that lease's owner, so
-	// a leaked id would let one agent act as another.
+	// Coordination ids remain private to the owning caller; a foreign
+	// envelope lease never changes the owner-first identity (T9).
 	const FString Other = W::UniqueOwner();
 	ON_SCOPE_EXIT { FHaybaMCPLeaseManager::Get().ForgetOwnerForTests(Other); };
 	FString OtherRaw;

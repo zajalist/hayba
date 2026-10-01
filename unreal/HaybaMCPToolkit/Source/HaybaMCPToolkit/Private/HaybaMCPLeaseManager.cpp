@@ -547,8 +547,8 @@ FString FHaybaMCPLeaseManager::CurrentModeName()
 	return HaybaMCPEnforcement::LexMode(CurrentMode());
 }
 
-FHaybaMCPLeaseManager::FVerdict FHaybaMCPLeaseManager::CheckCommand(
-	const FString& Cmd, const TSharedPtr<FJsonObject>& Params)
+FHaybaMCPLeaseManager::FVerdict FHaybaMCPLeaseManager::CheckCommandFacts(
+	const FString& Cmd, const FRequiredAccess& Access)
 {
 	using namespace HaybaMCPEnforcement;
 	FVerdict Verdict;
@@ -559,8 +559,8 @@ FHaybaMCPLeaseManager::FVerdict FHaybaMCPLeaseManager::CheckCommand(
 	}
 	const FString ModeName = LexMode(Mode);
 
-	const FRequiredAccess Access = ResolveRequiredAccess(Cmd, Params, CurrentWorldPackage());
-	const EEnvelopeLease LeaseState = CurrentContext ? ClassifyEnvelopeLease(CurrentContext->LeaseToken) : EEnvelopeLease::None;
+	static const FCallerResolution NoCaller;
+	const FCallerResolution& Caller = CurrentContext ? CurrentContext->Caller : NoCaller;
 	const FString Owner = EffectiveOwner();
 	FString ConflictDetail;
 	const HaybaMCPLease::FLease* Holder = LeaseTable.FindConflictingHolder(Owner, Access.Locks, &ConflictDetail);
@@ -569,16 +569,17 @@ FHaybaMCPLeaseManager::FVerdict FHaybaMCPLeaseManager::CheckCommand(
 	FFacts Facts;
 	Facts.Mode = Mode;
 	Facts.Class = Access.Class;
-	Facts.bOwnerFromEnvelope = CurrentContext && CurrentContext->bOwnerFromEnvelope;
-	// R5: a redaction marker names no lease; it counts as absent.
-	Facts.Handle = LeaseState == EEnvelopeLease::Valid ? EHandle::Valid
-		: LeaseState == EEnvelopeLease::Unknown ? EHandle::Unknown : EHandle::None;
+	Facts.bOwnerFromEnvelope = IsIdentifiedCaller(Caller);
+	// A foreign live lease is valid as a reference, but never changes the caller.
+	// R5: redaction markers name no lease and count as absent.
+	Facts.Handle = Caller.LeaseRef == ELeaseRef::Unknown ? EHandle::Unknown
+		: (Caller.LeaseRef == ELeaseRef::Bound || Caller.LeaseRef == ELeaseRef::NotBound) ? EHandle::Valid : EHandle::None;
 	Facts.bInProcess = !CurrentContext || CurrentContext->ConnId == 0;
 	Facts.bHeldConflict = Holder != nullptr;
 	Facts.OtherActiveOwners = Others.Num();
 	const FDecision Decision = Decide(Facts);
 
-	const bool bHandleRedacted = LeaseState == EEnvelopeLease::Redacted;
+	const bool bHandleRedacted = Caller.LeaseRef == ELeaseRef::Redacted;
 	if (Decision.Verdict == EVerdict::Allow && !bHandleRedacted)
 	{
 		return Verdict;
@@ -606,7 +607,7 @@ FHaybaMCPLeaseManager::FVerdict FHaybaMCPLeaseManager::CheckCommand(
 	}
 	if (Holder)
 	{
-		// Never the holder's lease_id: an envelope lease acts as its owner.
+		// Never expose another holder's coordination handle.
 		Detail->SetStringField(TEXT("holder_owner"), Holder->Owner);
 		if (!Holder->Label.IsEmpty()) Detail->SetStringField(TEXT("holder_label"), Holder->Label);
 		Detail->SetNumberField(TEXT("holder_expires_in_s"), FMath::Max(0.0, Holder->ExpiresAt - Now()));
@@ -618,14 +619,14 @@ FHaybaMCPLeaseManager::FVerdict FHaybaMCPLeaseManager::CheckCommand(
 		for (const FString& Other : Shown) OwnersJson.Add(MakeShared<FJsonValueString>(Other));
 		Detail->SetArrayField(TEXT("other_owners"), OwnersJson);
 	}
-	if (LeaseState == EEnvelopeLease::Unknown) Detail->SetStringField(TEXT("lease_id_error"), TEXT("unknown_or_expired"));
+	if (Caller.LeaseRef == ELeaseRef::Unknown) Detail->SetStringField(TEXT("lease_id_error"), TEXT("unknown_or_expired"));
 	if (bHandleRedacted) Detail->SetStringField(TEXT("lease_id_error"), TEXT("redaction_marker"));
 
 	FString Hint;
 	if (Decision.Reason == EReason::OwnerMissing)
 	{
 		Verdict.Message = FString::Printf(
-			TEXT("owner_required: '%s' (%s) names no owner while %d other agents are connected (%s). Send the envelope 'owner' (HAYBA_AGENT_ID) or a valid lease handle, then retry."),
+			TEXT("owner_required: '%s' (%s) names no owner while %d other agents are connected (%s). Send the envelope 'owner' (HAYBA_AGENT_ID), or adopt your owner on this connection with lease_adopt, then retry."),
 			*Cmd, HaybaMCPAccess::LexAccessClass(Access.Class), Others.Num(), *FString::Join(Shown, TEXT(", ")));
 		Hint = TEXT("Set HAYBA_AGENT_ID (Node) or send the envelope 'owner' on every command, so the editor knows which agent is writing.");
 	}
@@ -663,6 +664,60 @@ FHaybaMCPLeaseManager::FVerdict FHaybaMCPLeaseManager::CheckCommand(
 		CurrentContext->LeaseWarning = Detail;
 	}
 	return Verdict;
+}
+
+FHaybaMCPLeaseManager::FVerdict FHaybaMCPLeaseManager::CheckCommand(const FString& Cmd, const TSharedPtr<FJsonObject>& Params)
+{
+	const FRequiredAccess Access = ResolveRequiredAccess(Cmd, Params, CurrentWorldPackage());
+	FVerdict Verdict = CheckCommandFacts(Cmd, Access);
+	AddLeaseBinding(Cmd, Access, Verdict);
+	return Verdict;
+}
+
+void FHaybaMCPLeaseManager::AddLeaseBinding(const FString& Cmd, const FRequiredAccess& Access, FVerdict& Verdict)
+{
+	if (!CurrentContext || CurrentContext->Caller.LeaseRef != ELeaseRef::NotBound
+		|| CurrentMode() == HaybaMCPEnforcement::EMode::Off)
+	{
+		return;
+	}
+	if (Access.Class == HaybaMCPAccess::EAccessClass::Read)
+	{
+		return; // A read is never judged, so naming someone else's lease changes nothing.
+	}
+	const FCallerResolution& Caller = CurrentContext->Caller;
+	TSharedPtr<FJsonObject> Binding = MakeShared<FJsonObject>();
+	Binding->SetStringField(TEXT("named_lease_owner"), Caller.NamedLeaseOwner);
+	Binding->SetStringField(TEXT("caller_owner"), CurrentContext->Owner);
+	Binding->SetStringField(TEXT("fix"), FString::Printf(
+		TEXT("The envelope 'lease' does not change who is calling. Send the envelope 'owner' '%s' (HAYBA_AGENT_ID) with this lease, ")
+		TEXT("or call lease_adopt {owner, lease_id} once on this connection."), *Caller.NamedLeaseOwner));
+	if (Verdict.Detail.IsValid())
+	{
+		// Rides on the lease_conflict / owner_required detail (refusal or Advisory warning).
+		Verdict.Detail->SetObjectField(TEXT("lease_binding"), Binding);
+		return;
+	}
+	// Through NoteLeaseWarning, like every lease warning (T6.2): it logs the first
+	// hit per key per 30 s, and it registers the text the 30 s drain ticker prints
+	// for the suppressed ones. No UE_LOG and no limiter call of its own here.
+	const FString ModeName = CurrentModeName();
+	const FWarningLimiter::FHit Hit = NoteLeaseWarning(ModeName, TEXT("lease_warning"), TEXT("lease_not_bound"),
+		CurrentContext->Owner, Cmd, Caller.NamedLeaseOwner, TEXT("lease_not_bound"),
+		FString::Printf(TEXT("lease_warning/lease_not_bound: '%s' from '%s' names a lease of '%s'"),
+			*Cmd, *CurrentContext->Owner, *Caller.NamedLeaseOwner));
+	TSharedPtr<FJsonObject> Warning = MakeShared<FJsonObject>();
+	Warning->SetStringField(TEXT("reason"), TEXT("lease_not_bound"));
+	Warning->SetStringField(TEXT("enforcement"), ModeName);
+	Warning->SetStringField(TEXT("command"), Cmd);
+	Warning->SetStringField(TEXT("caller_owner"), CurrentContext->Owner);
+	Warning->SetObjectField(TEXT("lease_binding"), Binding);
+	Warning->SetNumberField(TEXT("repeats_in_window"), Hit.RepeatsInWindow);
+	Warning->SetStringField(TEXT("hint"), Binding->GetStringField(TEXT("fix")));
+	if (!CurrentContext->LeaseWarning.IsValid())
+	{
+		CurrentContext->LeaseWarning = Warning;
+	}
 }
 
 void FHaybaMCPLeaseManager::TouchOnUse(const FString& Cmd, const TSharedPtr<FJsonObject>& Params)
