@@ -2,7 +2,6 @@
 
 #include "HaybaMCPLeaseHandler.h"
 #include "HaybaMCPLeaseManager.h"
-#include "HaybaMCPDeveloperSettings.h"
 #include "HAL/PlatformTime.h"
 
 namespace
@@ -67,16 +66,6 @@ namespace
 		return Lane == ELane::Long ? TEXT("long") : TEXT("interactive");
 	}
 
-	const TCHAR* LexEnforcement()
-	{
-		const UHaybaMCPDeveloperSettings* Settings = GetDefault<UHaybaMCPDeveloperSettings>();
-		switch (Settings ? Settings->LeaseEnforcement : EHaybaMCPLeaseEnforcement::Advisory)
-		{
-		case EHaybaMCPLeaseEnforcement::Off:      return TEXT("off");
-		case EHaybaMCPLeaseEnforcement::Enforced: return TEXT("enforced");
-		default:                                  return TEXT("advisory");
-		}
-	}
 
 	/** The envelope owner, or the owner of the lease its `lease` field names. */
 	FString CallerOwner()
@@ -442,7 +431,13 @@ FHaybaHandlerResult FHaybaMCPLeaseHandler::Status(const TSharedPtr<FJsonObject>&
 	}
 
 	TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
-	Out->SetStringField(TEXT("enforcement"), LexEnforcement());
+	Out->SetStringField(TEXT("enforcement"), FHaybaMCPLeaseManager::CurrentModeName());
+	TArray<TSharedPtr<FJsonValue>> ActiveJson;
+	for (const FString& Active : FHaybaMCPLeaseManager::Get().ActiveOwners())
+	{
+		ActiveJson.Add(MakeShared<FJsonValueString>(Active));
+	}
+	Out->SetArrayField(TEXT("active_owners"), ActiveJson);
 	Out->SetStringField(TEXT("caller_owner"), Caller);
 	Out->SetStringField(TEXT("current_world"), FHaybaMCPLeaseManager::CurrentWorldPackage());
 	Out->SetNumberField(TEXT("lease_count"), LeasesJson.Num());

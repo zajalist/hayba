@@ -98,3 +98,6 @@ Hayba.MCP.Transport.NativeResetDrain
 Hayba.MCP.Transport.NativeShutdownPending
 Hayba.MCP.Transport.NativePartialNextFIN
 Hayba.MCP.Transport.NativeWriterStartFailure
+
+# T8
+Hayba.MCP.Lease.EnforcedForWritesTwoOwners

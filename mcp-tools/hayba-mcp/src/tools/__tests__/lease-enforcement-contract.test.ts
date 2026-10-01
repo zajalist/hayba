@@ -95,3 +95,47 @@ describe('lease enforcement contract (T6)', () => {
     );
   });
 });
+
+describe('lease enforcement contract (T8, C++)', () => {
+  const SETTINGS = join(PRIVATE, 'HaybaMCPDeveloperSettings.h');
+  const LEASE_HANDLER = join(PRIVATE, 'handlers/HaybaMCPLeaseHandler.cpp');
+
+  it.runIf(available)('EnforcedForWrites is the C++ default (D1)', () => {
+    expect(readFileSync(SETTINGS, 'utf-8')).toContain(
+      'EHaybaMCPLeaseEnforcement LeaseEnforcement = EHaybaMCPLeaseEnforcement::EnforcedForWrites;',
+    );
+  });
+
+  it.runIf(available)('every enum value has a wire name', () => {
+    const settings = readFileSync(SETTINGS, 'utf-8');
+    const start = settings.indexOf('enum class EHaybaMCPLeaseEnforcement');
+    expect(start).toBeGreaterThan(-1);
+    const body = settings.slice(start, settings.indexOf('};', start));
+    const values = [...body.matchAll(/^\s+(\w+),?\s*$/gm)].map((m) => m[1]);
+    expect(values).toEqual(['Off', 'Advisory', 'EnforcedForWrites', 'Enforced']);
+    const manager = readFileSync(MANAGER, 'utf-8');
+    for (const v of values) expect(manager).toContain(`case EHaybaMCPLeaseEnforcement::${v}:`);
+    const policy = readFileSync(POLICY, 'utf-8');
+    for (const wire of ['off', 'advisory', 'enforced_for_writes', 'enforced']) expect(policy).toContain(`TEXT("${wire}")`);
+  });
+
+  it.runIf(available)('the mode is reported by one function and never as a number', () => {
+    const files = [ROUTER, MANAGER, LEASE_HANDLER, join(PRIVATE, 'handlers/HaybaMCPLegacyHandler.cpp')];
+    for (const file of files) {
+      const src = readFileSync(file, 'utf-8');
+      expect(src, file).not.toMatch(/\bLexEnforcement\s*\(/);
+      expect(src, file).not.toMatch(/static_cast<\s*u?int\d*\s*>\s*\([^)]*LeaseEnforcement/);
+    }
+    expect(readFileSync(LEASE_HANDLER, 'utf-8')).toContain('FHaybaMCPLeaseManager::CurrentModeName()');
+  });
+
+  it.runIf(available)('slot 4 refuses through MakeGateRefusal and is skipped for a PIE-authorized command (R13)', () => {
+    const src = readFileSync(ROUTER, 'utf-8');
+    const gate = src.indexOf('Leases.CheckCommand(Cmd, Params)');
+    expect(gate).toBeGreaterThan(-1);
+    const window = src.slice(Math.max(0, gate - 400), gate + 1200);
+    expect(window).toContain('if (!bPieAuthorized)');
+    expect(window).toContain('MakeGateRefusal(Id, Cmd, Refusal)');
+    expect(window).not.toContain('Envelope.SetStringField(TEXT("code"), TEXT("lease_conflict"))');
+  });
+});

@@ -21,7 +21,11 @@ enum class EHaybaMCPLeaseEnforcement : uint8
     Off,
     /** Run the command, but attach a lease_warning to its response and log it. */
     Advisory,
-    /** Refuse the command with code lease_conflict. */
+    /** Reads run (a dead lease handle only warns). A write is refused with lease_conflict when another
+     *  owner's lease conflicts or it names a dead lease, and with owner_required when it names no owner
+     *  while other agents are connected. */
+    EnforcedForWrites,
+    /** As EnforcedForWrites, and a read that names a dead lease is refused too. */
     Enforced
 };
 
@@ -91,8 +95,8 @@ public:
     bool bAllowLongPythonDeadlineWithoutLease = false;
 
     UPROPERTY(EditAnywhere, Config, Category="Multi-Agent",
-        meta=(ToolTip="What happens when a command collides with another agent's lease (lease_acquire). Advisory runs it and attaches lease_warning; Enforced refuses it with code lease_conflict. Takes effect immediately."))
-    EHaybaMCPLeaseEnforcement LeaseEnforcement = EHaybaMCPLeaseEnforcement::Advisory;
+        meta=(ToolTip="What happens when a command collides with another agent's lease (lease_acquire). EnforcedForWrites (default): reads run; a conflicting write is refused with lease_conflict, and a write that names no owner while other agents are connected with owner_required. Advisory runs everything and attaches lease_warning. Enforced also refuses a read that names a dead lease. Takes effect immediately."))
+    EHaybaMCPLeaseEnforcement LeaseEnforcement = EHaybaMCPLeaseEnforcement::EnforcedForWrites;
 
     UPROPERTY(EditAnywhere, Config, Category="Performance")
     bool bCodeModeEnabled = true;

@@ -6,6 +6,9 @@
 #include "HaybaMCPDeveloperSettings.h"
 #include "Tests/HaybaMCPLeaseTestUtil.h"
 #include "Misc/ScopeExit.h"
+#include "HaybaMCPSettings.h"
+#include "HaybaMCPEditorState.h"
+#include "HaybaMCPEditorStatePolicy.h"
 
 #if WITH_DEV_AUTOMATION_TESTS
 
@@ -333,6 +336,166 @@ bool FHaybaMCPLeaseProcessingLogOwnerTest::RunTest(const FString& Parameters)
 		InvalidLeaseLog.Count(FString::Printf(
 			TEXT("[advisory] lease_conflict/lease_unknown repeated 2 more times in 30 s: owner='%s' cmd='ping' holder='' conflict=''"),
 			*Caller), ELogVerbosity::Warning), 1);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FHaybaMCPLeaseEnforcedForWritesTwoOwnersTest,
+	"Hayba.MCP.Lease.EnforcedForWritesTwoOwners",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FHaybaMCPLeaseEnforcedForWritesTwoOwnersTest::RunTest(const FString& Parameters)
+{
+	using namespace HaybaMCPLeaseTest;
+	const TSharedPtr<FHaybaMCPCommandHandler> R = Router();
+	if (!TestTrue(TEXT("command router exists"), R.IsValid())) return false;
+	FHaybaMCPLeaseManager& Leases = FHaybaMCPLeaseManager::Get();
+	FHaybaMCPSettings& Settings = FHaybaMCPSettings::Get();
+	UHaybaMCPDeveloperSettings* Dev = GetMutableDefault<UHaybaMCPDeveloperSettings>();
+	const EHaybaMCPLeaseEnforcement ModeWas = Dev->LeaseEnforcement;
+	const bool bPlanWas = Settings.bPlanModeEnabled;
+	// Nobody is present when this test starts, so A and B are the only other owners
+	// the owner-less write can meet, and owner_required names both. Without it the
+	// owners of earlier tests (fake connections that never close) would fill the 8
+	// names the refusal shows, in sorted order, and A might not be one of them.
+	FScopedCleanPresence CleanPresence;
+	const FString A = UniqueOwner(TEXT("a"));
+	const FString B = UniqueOwner(TEXT("b"));
+	constexpr int32 ConnA = 900701;
+	constexpr int32 ConnB = 900702;
+	constexpr int32 ConnC = 900703;
+	ON_SCOPE_EXIT
+	{
+		Dev->LeaseEnforcement = ModeWas;
+		Settings.bPlanModeEnabled = bPlanWas;
+		Leases.ForgetOwnerForTests(A);
+		Leases.ForgetOwnerForTests(B);
+		R->NotifyConnectionClosed(ConnA);
+		R->NotifyConnectionClosed(ConnB);
+		R->NotifyConnectionClosed(ConnC);
+	};
+	// R-26: set the mode explicitly; a DefaultHaybaMCP.ini must not decide this test.
+	Dev->LeaseEnforcement = EHaybaMCPLeaseEnforcement::EnforcedForWrites;
+	Settings.bPlanModeEnabled = false;
+
+	auto WriteParams = [](const TCHAR* Asset)
+	{
+		return Json(FString::Printf(
+			TEXT("{\"path\":\"/Game/__HaybaTest__/%s\",\"node_type\":\"call_function\",\"function_name\":\"PrintString\"}"), Asset));
+	};
+	auto ObjectOf = [](const TSharedPtr<FJsonObject>& Reply, const TCHAR* Key)
+	{
+		const TSharedPtr<FJsonObject>* Out = nullptr;
+		return Reply.IsValid() && Reply->TryGetObjectField(Key, Out) && Out ? *Out : TSharedPtr<FJsonObject>(MakeShared<FJsonObject>());
+	};
+	auto StringOf = [](const TSharedPtr<FJsonObject>& Object, const TCHAR* Key)
+	{
+		FString Out;
+		if (Object.IsValid()) Object->TryGetStringField(Key, Out);
+		return Out;
+	};
+	auto IsLeaseRefusal = [](const FString& Code)
+	{
+		return Code == TEXT("lease_conflict") || Code == TEXT("owner_required");
+	};
+
+	// ping names the mode, live (the T8 rollback path).
+	auto Caps = [&R, &ObjectOf]() { return ObjectOf(DataOf(Send(*R, 0, FString(), TEXT("ping"), nullptr)), TEXT("capabilities")); };
+	TestEqual(TEXT("ping names the mode"), StringOf(Caps(), TEXT("lease_enforcement")), FString(TEXT("enforced_for_writes")));
+	bool bOwnerRequired = false;
+	Caps()->TryGetBoolField(TEXT("owner_required"), bOwnerRequired);
+	TestTrue(TEXT("ping advertises owner_required"), bOwnerRequired);
+	Dev->LeaseEnforcement = EHaybaMCPLeaseEnforcement::Advisory;
+	TestEqual(TEXT("switching to Advisory shows at once"), StringOf(Caps(), TEXT("lease_enforcement")), FString(TEXT("advisory")));
+	Dev->LeaseEnforcement = EHaybaMCPLeaseEnforcement::EnforcedForWrites;
+
+	// A holds global X; B is connected under its own name.
+	const FString AGlobal = AcquireId(*R, ConnA, A,
+		TEXT("{\"resources\":[\"global\"],\"bind_connection\":false,\"label\":\"two-owners\"}"));
+	if (!TestFalse(TEXT("A holds global X"), AGlobal.IsEmpty())) return false;
+	Send(*R, ConnB, B, TEXT("ping"), nullptr);
+
+	const TSharedPtr<FJsonObject> BWrite = Send(*R, ConnB, B, TEXT("blueprint_add_node"), WriteParams(TEXT("BP_TwoOwnersA")));
+	const TSharedPtr<FJsonObject> BLease = ObjectOf(BWrite, TEXT("lease"));
+	TestEqual(TEXT("B's write is refused"), CodeOf(BWrite), FString(TEXT("lease_conflict")));
+	TestEqual(TEXT("under enforced_for_writes"), StringOf(BLease, TEXT("enforcement")), FString(TEXT("enforced_for_writes")));
+	TestEqual(TEXT("because A holds it"), StringOf(BLease, TEXT("reason")), FString(TEXT("held")));
+	TestEqual(TEXT("names the holder"), StringOf(BLease, TEXT("holder_owner")), A);
+	TestFalse(TEXT("never a handle in the detail"), BLease->HasField(TEXT("lease_id")) || BLease->HasField(TEXT("token")));
+	TestEqual(TEXT("a held conflict is retryable"), StringOf(ObjectOf(BWrite, TEXT("advisory")), TEXT("state")), FString(TEXT("retryable_failure")));
+	TestEqual(TEXT("nothing ran"), StringOf(ObjectOf(BWrite, TEXT("advisory")), TEXT("mutation_status")), FString(TEXT("not_started")));
+
+	const TSharedPtr<FJsonObject> BRead = Send(*R, ConnB, B, TEXT("blueprint_inspect_graph"),
+		Json(TEXT("{\"path\":\"/Game/__HaybaTest__/BP_TwoOwnersA\"}")));
+	TestFalse(TEXT("B's read is never refused by the lease gate"), IsLeaseRefusal(CodeOf(BRead)));
+
+	const TSharedPtr<FJsonObject> Anon = Send(*R, ConnC, FString(), TEXT("blueprint_add_node"), WriteParams(TEXT("BP_TwoOwnersA")));
+	TestEqual(TEXT("an owner-less write is owner_required"), CodeOf(Anon), FString(TEXT("owner_required")));
+	TestTrue(TEXT("it names A"), StringOf(Anon, TEXT("error")).Contains(A));
+	TestTrue(TEXT("it counts exactly the two owners that are present"),
+		StringOf(Anon, TEXT("error")).Contains(TEXT("while 2 other agents are connected")));
+	TestEqual(TEXT("reason owner_missing"), StringOf(ObjectOf(Anon, TEXT("lease")), TEXT("reason")), FString(TEXT("owner_missing")));
+	{
+		// Membership, not position: other_owners is sorted, and nothing promises A is first.
+		TSet<FString> Named;
+		const TArray<TSharedPtr<FJsonValue>>* OthersJson = nullptr;
+		const TSharedPtr<FJsonObject> AnonLease = ObjectOf(Anon, TEXT("lease"));
+		if (AnonLease->TryGetArrayField(TEXT("other_owners"), OthersJson) && OthersJson)
+		{
+			for (const TSharedPtr<FJsonValue>& Value : *OthersJson) Named.Add(Value->AsString());
+		}
+		TestTrue(TEXT("other_owners holds A"), Named.Contains(A));
+		TestTrue(TEXT("other_owners holds B"), Named.Contains(B));
+		TestEqual(TEXT("other_owners holds nobody else"), Named.Num(), 2);
+	}
+	TestEqual(TEXT("input_rejected"), StringOf(ObjectOf(Anon, TEXT("advisory")), TEXT("state")), FString(TEXT("input_rejected")));
+
+	const TSharedPtr<FJsonObject> AWrite = Send(*R, ConnA, A, TEXT("blueprint_add_node"), WriteParams(TEXT("BP_TwoOwnersA")));
+	TestFalse(TEXT("A's own write passes the lease gate"), IsLeaseRefusal(CodeOf(AWrite)));
+
+	const TSharedPtr<FJsonObject> Status = DataOf(Send(*R, ConnB, B, TEXT("lease_status"), nullptr));
+	TestEqual(TEXT("lease_status names the mode"), StringOf(Status, TEXT("enforcement")), FString(TEXT("enforced_for_writes")));
+	TArray<FString> Active;
+	const TArray<TSharedPtr<FJsonValue>>* ActiveJson = nullptr;
+	if (Status->TryGetArrayField(TEXT("active_owners"), ActiveJson) && ActiveJson)
+	{
+		for (const TSharedPtr<FJsonValue>& Value : *ActiveJson) Active.Add(Value->AsString());
+	}
+	TestTrue(TEXT("active_owners lists A and B"), Active.Contains(A) && Active.Contains(B));
+
+	Send(*R, ConnA, A, TEXT("lease_release"), Json(TEXT("{\"all\":true}")));
+	TestFalse(TEXT("after A releases, B's write is not refused"),
+		IsLeaseRefusal(CodeOf(Send(*R, ConnB, B, TEXT("blueprint_add_node"), WriteParams(TEXT("BP_TwoOwnersA"))))));
+
+	// R13: a lease taken during the PIE never deadlocks the PIE's owner.
+	{
+		HaybaMCPState::FPieState Forced;
+		Forced.Kind = HaybaMCPState::EPieKind::Agent;
+		Forced.Phase = HaybaMCPState::EPiePhase::Running;
+		Forced.Owner = A;
+		FHaybaMCPEditorState::FScopedPieOverride Pie(Forced);
+		TestEqual(TEXT("lease_acquire is PIE-safe"),
+			StringOf(DataOf(Send(*R, ConnB, B, TEXT("lease_acquire"),
+				Json(TEXT("{\"resources\":[\"global\"],\"bind_connection\":false,\"label\":\"during-pie\"}")))), TEXT("status")),
+			FString(TEXT("granted")));
+		const FString Press = CodeOf(Send(*R, ConnA, A, TEXT("editor_pie_press_key"), Json(TEXT("{\"key\":\"SpaceBar\"}"))));
+		TestFalse(TEXT("the PIE owner's drive command skips the lease gate"), IsLeaseRefusal(Press) || Press == TEXT("pie_active"));
+		const FString Stop = CodeOf(Send(*R, ConnA, A, TEXT("editor_stop_pie"), nullptr));
+		TestFalse(TEXT("the PIE owner's stop skips the lease gate"), IsLeaseRefusal(Stop) || Stop == TEXT("pie_active"));
+		Send(*R, ConnB, B, TEXT("lease_release"), Json(TEXT("{\"all\":true}")));
+	}
+
+	// Slot 3 learns the new mode: another owner's asset build refuses a compile.
+	{
+		const FString Build = AcquireId(*R, ConnA, A,
+			TEXT("{\"resources\":[\"asset:/Game/__HaybaTest__/BP_TwoOwnersBusy\"],\"bind_connection\":false,\"label\":\"build:t8\"}"));
+		TestFalse(TEXT("A holds the build lease"), Build.IsEmpty());
+		TestEqual(TEXT("B's compile of A's build is asset_busy under enforced_for_writes"),
+			CodeOf(Send(*R, ConnB, B, TEXT("blueprint_compile"),
+				Json(TEXT("{\"path\":\"/Game/__HaybaTest__/BP_TwoOwnersBusy\",\"save\":false}")))),
+			FString(TEXT("asset_busy")));
+		Send(*R, ConnA, A, TEXT("lease_release"), Json(TEXT("{\"all\":true}")));
+	}
 	return true;
 }
 

@@ -373,38 +373,74 @@ FHaybaMCPLeaseManager::FRequiredAccess FHaybaMCPLeaseManager::ResolveRequiredAcc
 	return Out;
 }
 
+HaybaMCPEnforcement::EMode FHaybaMCPLeaseManager::CurrentMode()
+{
+	const UHaybaMCPDeveloperSettings* Settings = GetDefault<UHaybaMCPDeveloperSettings>();
+	switch (Settings ? Settings->LeaseEnforcement : EHaybaMCPLeaseEnforcement::EnforcedForWrites)
+	{
+	case EHaybaMCPLeaseEnforcement::Off:               return HaybaMCPEnforcement::EMode::Off;
+	case EHaybaMCPLeaseEnforcement::Advisory:          return HaybaMCPEnforcement::EMode::Advisory;
+	case EHaybaMCPLeaseEnforcement::EnforcedForWrites: return HaybaMCPEnforcement::EMode::EnforcedForWrites;
+	case EHaybaMCPLeaseEnforcement::Enforced:          return HaybaMCPEnforcement::EMode::Enforced;
+	}
+	return HaybaMCPEnforcement::EMode::EnforcedForWrites;
+}
+
+FString FHaybaMCPLeaseManager::CurrentModeName()
+{
+	return HaybaMCPEnforcement::LexMode(CurrentMode());
+}
+
 FHaybaMCPLeaseManager::FVerdict FHaybaMCPLeaseManager::CheckCommand(
 	const FString& Cmd, const TSharedPtr<FJsonObject>& Params)
 {
+	using namespace HaybaMCPEnforcement;
 	FVerdict Verdict;
-	const UHaybaMCPDeveloperSettings* Settings = GetDefault<UHaybaMCPDeveloperSettings>();
-	const EHaybaMCPLeaseEnforcement Mode = Settings ? Settings->LeaseEnforcement : EHaybaMCPLeaseEnforcement::Advisory;
-	if (Mode == EHaybaMCPLeaseEnforcement::Off)
+	const EMode Mode = CurrentMode();
+	if (Mode == EMode::Off)
 	{
 		return Verdict;
 	}
-	const TCHAR* ModeName = Mode == EHaybaMCPLeaseEnforcement::Enforced ? TEXT("enforced") : TEXT("advisory");
+	const FString ModeName = LexMode(Mode);
 
 	const FRequiredAccess Access = ResolveRequiredAccess(Cmd, Params, CurrentWorldPackage());
 	const EEnvelopeLease LeaseState = CurrentContext ? ClassifyEnvelopeLease(CurrentContext->LeaseToken) : EEnvelopeLease::None;
-	const bool bHandleUnknown = LeaseState == EEnvelopeLease::Unknown;
-	// R5: a redaction marker names no lease. It counts as absent for admission
-	// and is reported as lease_handle_redacted; other conflicts still refuse.
-	const bool bHandleRedacted = LeaseState == EEnvelopeLease::Redacted;
-
-	FString ConflictDetail;
 	const FString Owner = EffectiveOwner();
+	FString ConflictDetail;
 	const HaybaMCPLease::FLease* Holder = LeaseTable.FindConflictingHolder(Owner, Access.Locks, &ConflictDetail);
-	if (!Holder && !bHandleUnknown && !bHandleRedacted)
+	const TArray<FString> Others = Presence.ActiveOwners(Owner);
+
+	FFacts Facts;
+	Facts.Mode = Mode;
+	Facts.Class = Access.Class;
+	Facts.bOwnerFromEnvelope = CurrentContext && CurrentContext->bOwnerFromEnvelope;
+	// R5: a redaction marker names no lease; it counts as absent.
+	Facts.Handle = LeaseState == EEnvelopeLease::Valid ? EHandle::Valid
+		: LeaseState == EEnvelopeLease::Unknown ? EHandle::Unknown : EHandle::None;
+	Facts.bInProcess = !CurrentContext || CurrentContext->ConnId == 0;
+	Facts.bHeldConflict = Holder != nullptr;
+	Facts.OtherActiveOwners = Others.Num();
+	const FDecision Decision = Decide(Facts);
+
+	const bool bHandleRedacted = LeaseState == EEnvelopeLease::Redacted;
+	if (Decision.Verdict == EVerdict::Allow && !bHandleRedacted)
 	{
 		return Verdict;
 	}
+	// A marker alone only warns (reason lease_handle_redacted); it never refuses.
+	const bool bRedactedOnly = Decision.Verdict == EVerdict::Allow;
+	const FString Code = bRedactedOnly ? FString(TEXT("lease_conflict")) : Decision.Code;
+	const FString ReasonName = bRedactedOnly ? FString(TEXT("lease_handle_redacted")) : FString(LexReason(Decision.Reason));
+	TArray<FString> Shown = Others;
+	if (Shown.Num() > 8)
+	{
+		Shown.SetNum(8);
+	}
 
-	const TCHAR* Reason = Holder ? TEXT("held") : (bHandleUnknown ? TEXT("lease_unknown") : TEXT("lease_handle_redacted"));
 	TSharedPtr<FJsonObject> Detail = MakeShared<FJsonObject>();
-	Detail->SetStringField(TEXT("code"), TEXT("lease_conflict"));
+	Detail->SetStringField(TEXT("code"), Code);
 	Detail->SetStringField(TEXT("enforcement"), ModeName);
-	Detail->SetStringField(TEXT("reason"), Reason);
+	Detail->SetStringField(TEXT("reason"), ReasonName);
 	Detail->SetStringField(TEXT("command"), Cmd);
 	Detail->SetStringField(TEXT("access_class"), HaybaMCPAccess::LexAccessClass(Access.Class));
 	Detail->SetStringField(TEXT("caller_owner"), Owner);
@@ -420,27 +456,49 @@ FHaybaMCPLeaseManager::FVerdict FHaybaMCPLeaseManager::CheckCommand(
 		Detail->SetNumberField(TEXT("holder_expires_in_s"), FMath::Max(0.0, Holder->ExpiresAt - Now()));
 		Detail->SetStringField(TEXT("conflict"), ConflictDetail);
 	}
-	if (bHandleUnknown) Detail->SetStringField(TEXT("lease_id_error"), TEXT("unknown_or_expired"));
+	if (Decision.Reason == EReason::OwnerMissing)
+	{
+		TArray<TSharedPtr<FJsonValue>> OwnersJson;
+		for (const FString& Other : Shown) OwnersJson.Add(MakeShared<FJsonValueString>(Other));
+		Detail->SetArrayField(TEXT("other_owners"), OwnersJson);
+	}
+	if (LeaseState == EEnvelopeLease::Unknown) Detail->SetStringField(TEXT("lease_id_error"), TEXT("unknown_or_expired"));
 	if (bHandleRedacted) Detail->SetStringField(TEXT("lease_id_error"), TEXT("redaction_marker"));
-	Detail->SetStringField(TEXT("hint"), Holder
-		? TEXT("Wait for the holder or ask it to release. lease_acquire queues you fairly: it answers granted or queued (with position and ETA) and never blocks. lease_status shows every holder.")
-		: bHandleUnknown
-			? TEXT("The envelope's lease_id is dead. Run lease_acquire again and send the lease_id it returns, or stop sending the envelope lease and send only your owner.")
-			: TEXT("Send the lease_id from lease_acquire. A [REDACTED:...] marker is ignored; this command was judged by its owner."));
 
-	Verdict.Message = Holder
-		? FString::Printf(TEXT("lease_conflict: '%s' (%s) conflicts with a lease held by '%s' (%s)"),
-			*Cmd, HaybaMCPAccess::LexAccessClass(Access.Class), *Holder->Owner, *ConflictDetail)
-		: bHandleUnknown
-			? FString::Printf(TEXT("lease_conflict: '%s': the envelope's lease_id is unknown or expired"), *Cmd)
-			: FString::Printf(TEXT("lease_conflict: '%s': the envelope's lease is a redaction marker, not a lease_id; run lease_acquire again and send the lease_id it returns"), *Cmd);
-	const FWarningLimiter::FHit Hit = NoteLeaseWarning(ModeName, TEXT("lease_conflict"), Reason, Owner, Cmd,
+	FString Hint;
+	if (Decision.Reason == EReason::OwnerMissing)
+	{
+		Verdict.Message = FString::Printf(
+			TEXT("owner_required: '%s' (%s) names no owner while %d other agents are connected (%s). Send the envelope 'owner' (HAYBA_AGENT_ID) or a valid lease handle, then retry."),
+			*Cmd, HaybaMCPAccess::LexAccessClass(Access.Class), Others.Num(), *FString::Join(Shown, TEXT(", ")));
+		Hint = TEXT("Set HAYBA_AGENT_ID (Node) or send the envelope 'owner' on every command, so the editor knows which agent is writing.");
+	}
+	else if (Decision.Reason == EReason::LeaseUnknown)
+	{
+		Verdict.Message = FString::Printf(TEXT("lease_conflict: '%s': the envelope's lease_id is unknown or expired"), *Cmd);
+		Hint = TEXT("The envelope's lease_id is dead. Run lease_acquire again and send the lease_id it returns, or stop sending the envelope lease and send only your owner.");
+	}
+	else if (Decision.Reason == EReason::Held)
+	{
+		Verdict.Message = FString::Printf(TEXT("lease_conflict: '%s' (%s) conflicts with a lease held by '%s' (%s)"),
+			*Cmd, HaybaMCPAccess::LexAccessClass(Access.Class), *Holder->Owner, *ConflictDetail);
+		Hint = TEXT("Wait for the holder or ask it to release. lease_acquire queues you fairly: it answers granted or queued (with position and ETA) and never blocks. lease_status shows every holder.");
+	}
+	else
+	{
+		Verdict.Message = FString::Printf(
+			TEXT("lease_conflict: '%s': the envelope's lease is a redaction marker, not a lease_id; run lease_acquire again and send the lease_id it returns"), *Cmd);
+		Hint = TEXT("Send the lease_id from lease_acquire. A [REDACTED:...] marker is ignored; this command was judged by its owner.");
+	}
+	Detail->SetStringField(TEXT("hint"), Hint);
+
+	const FWarningLimiter::FHit Hit = NoteLeaseWarning(ModeName, Code, ReasonName, Owner, Cmd,
 		Holder ? Holder->Owner : FString(), ConflictDetail, Verdict.Message);
 	Detail->SetNumberField(TEXT("repeats_in_window"), Hit.RepeatsInWindow);
 	Verdict.Detail = Detail;
-
-	// Enforced refuses a held conflict or a dead handle; a marker alone never refuses (R5).
-	if (Mode == EHaybaMCPLeaseEnforcement::Enforced && (Holder || bHandleUnknown))
+	Verdict.Code = Code;
+	Verdict.Reason = bRedactedOnly ? EReason::None : Decision.Reason;
+	if (Decision.Verdict == EVerdict::Refuse)
 	{
 		Verdict.bRefuse = true;
 	}

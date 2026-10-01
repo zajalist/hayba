@@ -1534,8 +1534,12 @@ FString FHaybaMCPCommandHandler::ProcessCommandInContext(const FString& CommandJ
     // Never refuses; never extends a lease.
     if (const FHaybaMCPRequestContext* PresenceContext = Leases.Current())
     {
+        // T8: identified = named in the envelope, or proven by a valid lease
+        // handle. conn:<n> and local never count as present.
+        const bool bHandleValid = Leases.ClassifyEnvelopeLease(PresenceContext->LeaseToken)
+            == FHaybaMCPLeaseManager::EEnvelopeLease::Valid;
         Leases.NoteAuthenticatedCaller(Leases.EffectiveOwner(), PresenceContext->ConnId,
-            /*bIdentified=*/PresenceContext->bOwnerFromEnvelope);
+            /*bIdentified=*/PresenceContext->bOwnerFromEnvelope || bHandleValid);
     }
 
     // Slot 1 (ADR-0011): a contained native fault left this process unsafe.
@@ -1645,23 +1649,24 @@ FString FHaybaMCPCommandHandler::ProcessCommandInContext(const FString& CommandJ
         }
     }
 
-    // Lease gate (after auth, before anything runs). Never blocks: Advisory
-    // lets the command run and attaches lease_warning; Enforced refuses it.
-    // A PIE command slot 2 authorized skips it (R13): another owner's lease
-    // taken during the PIE would otherwise deadlock the PIE's owner.
+    // Slot 4: the lease gate (T8). Never blocks: a refusal is preflight, a
+    // warning rides on the reply. A PIE command slot 2 authorized (a drive
+    // command from the PIE's owner, or editor_stop_pie of an agent PIE) skips
+    // it, so a lease taken during the PIE cannot deadlock the PIE (R13).
     if (!bPieAuthorized)
     {
         const FHaybaMCPLeaseManager::FVerdict Verdict = Leases.CheckCommand(Cmd, Params);
         if (Verdict.bRefuse)
         {
-            const TSharedPtr<FJsonObject> Detail = Verdict.Detail;
-            return AddEnvelopeFields(
-                MakeErrorResponse(Id, Verdict.Message, Cmd, false, /*bKnownPreflight=*/true),
-                [&Detail](FJsonObject& Envelope)
-                {
-                    Envelope.SetStringField(TEXT("code"), TEXT("lease_conflict"));
-                    if (Detail.IsValid()) Envelope.SetObjectField(TEXT("lease"), Detail);
-                });
+            const bool bHeld = Verdict.Reason == HaybaMCPEnforcement::EReason::Held;
+            FGateRefusal Refusal;
+            Refusal.Code = Verdict.Code;
+            Refusal.Message = Verdict.Message;
+            Refusal.DetailKey = TEXT("lease");
+            Refusal.Detail = Verdict.Detail;
+            Refusal.FailureKind = bHeld ? EHaybaMCPFailureKind::Retryable : EHaybaMCPFailureKind::InputRejected;
+            Refusal.bRetryUnchangedSafe = bHeld;
+            return MakeGateRefusal(Id, Cmd, Refusal);
         }
     }
 

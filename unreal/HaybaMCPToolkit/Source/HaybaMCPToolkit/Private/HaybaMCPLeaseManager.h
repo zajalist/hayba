@@ -133,18 +133,26 @@ public:
 
 	struct FVerdict
 	{
-		/** Enforced mode and a conflict: refuse with code lease_conflict. */
+		/** Refuse with Code (lease_conflict or owner_required). */
 		bool bRefuse = false;
 		FString Message;
-		/** Conflict facts (holder, resource, class); set for refuse and warn. */
+		/** Conflict facts; set for refuse and warn. Never a handle. */
 		TSharedPtr<FJsonObject> Detail;
+		/** "lease_conflict" | "owner_required" (T8). */
+		FString Code;
+		HaybaMCPEnforcement::EReason Reason = HaybaMCPEnforcement::EReason::None;
 	};
 
-	/**
-	 * Check one command against the table. Off -> always allowed. Advisory ->
-	 * allowed, a conflict is recorded on the context as a warning. Enforced ->
-	 * a conflict refuses. Never blocks and never grants anything.
-	 */
+	/** The live LeaseEnforcement setting; read on every check, so a change in
+	 *  Project Settings applies at once (the T8 rollback). */
+	static HaybaMCPEnforcement::EMode CurrentMode();
+	/** LexMode(CurrentMode()): the only way the mode is ever reported. */
+	static FString CurrentModeName();
+
+	/** Identified owners with an open connection or seen within 60 s. */
+	TArray<FString> ActiveOwners(const FString& Except = FString()) const { return Presence.ActiveOwners(Except); }
+
+	/** The lease gate (router slot 4, T8): HaybaMCPEnforcement::Decide over this command's facts. Never blocks and never grants. */
 	FVerdict CheckCommand(const FString& Cmd, const TSharedPtr<FJsonObject>& Params);
 
 	/** What one command needs from the lease table: its class and its locks

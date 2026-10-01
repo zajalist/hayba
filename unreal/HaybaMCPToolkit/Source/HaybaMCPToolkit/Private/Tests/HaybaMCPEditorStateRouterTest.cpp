@@ -23,6 +23,7 @@
 #include "Misc/Guid.h"
 #include "Misc/Parse.h"
 #include "Misc/ScopeExit.h"
+#include "Tests/HaybaMCPLeaseTestUtil.h"
 #include "Modules/ModuleManager.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
@@ -323,6 +324,10 @@ bool FHaybaMCPStateRouterStopAgentPieFromAnyCallerTest::RunTest(const FString& P
 	const TSharedPtr<FHaybaMCPCommandHandler> Router = GetRouter(*this);
 	if (!Router.IsValid() || !NoRealPie(*this)) return false;
 	ON_SCOPE_EXIT { CancelQueuedPie(); };
+	// T8: an owner-less write is refused with owner_required while an identified
+	// owner is present. This test is about owner-less raw clients, so it starts
+	// with nobody present; the owners earlier tests left behind do not count.
+	HaybaMCPLeaseTest::FScopedCleanPresence CleanPresence;
 
 	// The default advisory verbosity strips hint fields from data; ask for tips
 	// so the reply keeps editor_start_pie's hint.

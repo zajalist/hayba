@@ -4,6 +4,7 @@
 #include "HaybaMCPGameThread.h"
 #include "HaybaMCPCommandHandler.h"
 #include "HaybaMCPModule.h"
+#include "HaybaMCPLeaseManager.h"
 #include "HaybaMCPSettings.h"
 #include "HaybaMCPEditorHealth.h"
 #include "HaybaMCPLandscapeImporter.h"
@@ -159,6 +160,9 @@ FHaybaHandlerResult FHaybaMCPLegacyHandler::Cmd_Ping(const TSharedPtr<FJsonObjec
 		Caps->SetBoolField(TEXT("lease_id"), true);
 		Caps->SetBoolField(TEXT("editor_batch"), true);
 		Caps->SetBoolField(TEXT("wp_region_steps"), true);
+		// T8 (D1): the live enforcement mode by name, and the owner_required rule.
+		Caps->SetStringField(TEXT("lease_enforcement"), FHaybaMCPLeaseManager::CurrentModeName());
+		Caps->SetBoolField(TEXT("owner_required"), true);
 		// Sticky editor_unsafe (ADR-0011): health fields below; refusals carry editor_health.
 		Caps->SetBoolField(TEXT("editor_health"), true);
 		Data->SetObjectField(TEXT("capabilities"), Caps);
