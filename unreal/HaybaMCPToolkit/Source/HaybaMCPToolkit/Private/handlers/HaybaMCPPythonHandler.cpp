@@ -1994,6 +1994,20 @@ FHaybaHandlerResult FHaybaMCPPythonHandler::Run(const TSharedPtr<FJsonObject>& P
             "python_run invalid_request [HCR-INPUT-002]: matched 'deadline_s_type'; field 'deadline_s' must be a number of seconds when present. "
             "Retry unchanged: forbidden."));
     }
+    // T8: `read_only` declares a script that only reads; the lease check then
+    // treats it as a Read (trusted like declared resources). Only a real
+    // boolean declares, so a string is refused here rather than ignored.
+    bool bDeclaredReadOnly = false;
+    if (const TSharedPtr<FJsonValue> ReadOnlyField = P->TryGetField(TEXT("read_only")))
+    {
+        if (ReadOnlyField->Type != EJson::Boolean)
+        {
+            return FHaybaHandlerResult::Err(TEXT(
+                "python_run invalid_request [HCR-INPUT-003]: matched 'read_only_type'; field 'read_only' must be a boolean when present. "
+                "Retry unchanged: forbidden."));
+        }
+        bDeclaredReadOnly = ReadOnlyField->AsBool();
+    }
     const UHaybaMCPDeveloperSettings* DevSettings = GetDefault<UHaybaMCPDeveloperSettings>();
     const HaybaMCPAccess::FPythonDeadline Deadline = HaybaMCPAccess::ResolvePythonDeadline(
         bHasDeadline,
@@ -2351,6 +2365,7 @@ FHaybaHandlerResult FHaybaMCPPythonHandler::Run(const TSharedPtr<FJsonObject>& P
     Out->SetBoolField(TEXT("ok"), bExecOk && bUserOk);
     Out->SetNumberField(TEXT("tier"), static_cast<int32>(Tier));
     Out->SetNumberField(TEXT("deadline_s"), MaxPythonExecutionSeconds);
+    Out->SetBoolField(TEXT("read_only_declared"), bDeclaredReadOnly);
     Out->SetBoolField(TEXT("allow_unsafe_requested"), bAllowUnsafeRequested);
     Out->SetBoolField(TEXT("allow_unsafe_effective"), false);
     Out->SetBoolField(TEXT("allow_unsafe_deprecated"), true);

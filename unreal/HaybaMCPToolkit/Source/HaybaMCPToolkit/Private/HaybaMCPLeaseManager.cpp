@@ -3,7 +3,6 @@
 #include "HaybaMCPCommandHandler.h"
 #include "HaybaMCPDeveloperSettings.h"
 #include "HaybaMCPWarningLimiter.h"
-#include "handlers/HaybaMCPPythonHandler.h"
 #include "Editor.h"
 #include "Engine/World.h"
 #include "HAL/PlatformTime.h"
@@ -345,20 +344,56 @@ FHaybaMCPLeaseManager::FRequiredAccess FHaybaMCPLeaseManager::ResolveRequiredAcc
 	{
 		FString Script;
 		bool bWorldPartition = false;
+		bool bDeclaredReadOnly = false;
 		if (Params.IsValid())
 		{
 			Params->TryGetStringField(TEXT("script"), Script);
 			Params->TryGetBoolField(TEXT("world_partition"), bWorldPartition);
+			// Only a real boolean declares; a string "true" is undeclared (fail closed).
+			const TSharedPtr<FJsonValue> ReadOnlyField = Params->TryGetField(TEXT("read_only"));
+			bDeclaredReadOnly = ReadOnlyField.IsValid() && ReadOnlyField->Type == EJson::Boolean && ReadOnlyField->AsBool();
 		}
-		if (!ParseClaims(Params, /*bDefaultExclusive=*/true, Out.Declared, Out.ClaimError))
+		// Python declarations must be complete: the shared parser tolerates null
+		// entries and a non-string mode for compatibility with lease commands.
+		// Reject those shapes here before trusting any partial scope.
+		bool bDeclarationShapeValid = true;
+		const TArray<TSharedPtr<FJsonValue>>* ResourceItems = nullptr;
+		if (Params.IsValid() && Params->TryGetArrayField(TEXT("resources"), ResourceItems) && ResourceItems)
+		{
+			for (const TSharedPtr<FJsonValue>& Item : *ResourceItems)
+			{
+				const TSharedPtr<FJsonObject>* ResourceObject = nullptr;
+				if (!Item.IsValid() || Item->Type == EJson::Null)
+				{
+					bDeclarationShapeValid = false;
+					Out.ClaimError = TEXT("resources entries must not be null");
+					break;
+				}
+				if (Item->TryGetObject(ResourceObject) && ResourceObject && ResourceObject->IsValid())
+				{
+					const TSharedPtr<FJsonValue> Mode = (*ResourceObject)->TryGetField(TEXT("mode"));
+					if (Mode.IsValid() && Mode->Type != EJson::String)
+					{
+						bDeclarationShapeValid = false;
+						Out.ClaimError = TEXT("resources mode must be a string");
+						break;
+					}
+				}
+			}
+		}
+		if (!bDeclarationShapeValid || !ParseClaims(Params, /*bDefaultExclusive=*/true, Out.Declared, Out.ClaimError))
 		{
 			// An unparseable declaration is treated as no declaration.
 			Out.Declared.Reset();
 		}
-		Out.Class = HaybaMCPAccess::ClassifyPythonRun(
-			FHaybaMCPPythonHandler::IsReadOnlyScriptForAccess(Script),
-			bWorldPartition || HaybaMCPAccess::ScriptTouchesWorldPartition(Script),
-			Out.Declared.Num() > 0);
+		const bool bTouchesWorldPartition = bWorldPartition || HaybaMCPAccess::ScriptTouchesWorldPartition(Script);
+		Out.Class = HaybaMCPAccess::ClassifyPythonRun(bDeclaredReadOnly, bTouchesWorldPartition, Out.Declared.Num() > 0);
+		if (Out.Class == HaybaMCPAccess::EAccessClass::WriteWorld && !bTouchesWorldPartition)
+		{
+			// T8 design 5: undeclared and not read_only is X on global for conflicts.
+			Out.Locks = HaybaMCPAccess::UndeclaredPythonRunLocks();
+			return Out;
+		}
 	}
 	if (Out.Declared.Num() == 0)
 	{

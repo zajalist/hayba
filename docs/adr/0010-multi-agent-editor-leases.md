@@ -52,15 +52,17 @@ drain hands to the router.
 
 | Class       | Meaning                                                                                                      | Locks it needs                                     |
 | ----------- | ------------------------------------------------------------------------------------------------------------ | -------------------------------------------------- |
-| Read        | reads state                                                                                                  | none                                               |
-| WriteScoped | changes something inside one world; default for every Plan-Mode destructive command                          | X on declared resources, else only IX on the world |
-| WriteWorld  | `level_save`, `editor_save*`, `wp_load_cell`, a World Partition python script, an undeclared python mutation | X on `world:<current>`                             |
-| Global      | `level_load`, `level_create`, `editor_pie_*`, PIE start/stop, save-and-quit, console commands, Live Coding   | X on `global`                                      |
+| Read        | reads state; only commands in the R12 read sets (`HaybaMCPCommandSets.h`: control plane, reads, PIE observation, `lease_*`) | none                                               |
+| WriteScoped | changes something inside one world; every command outside the read sets (fail closed); PIE drive commands   | X on declared resources, else only IX on the world |
+| WriteWorld  | `level_save`, `editor_save*`, `wp_load_cell`, a World Partition python script, an undeclared python mutation | X on `world:<current>`; an undeclared non-WP `python_run`: X on `global` |
+| Global      | `level_load`, `level_create`, PIE start/stop, save-and-quit, console commands, Live Coding                    | X on `global`                                      |
 
 `python_run` is classified per request: a World Partition script is
-WriteWorld whatever its tier; declared `resources` make it WriteScoped; a
-read-only tier with nothing declared is Read. The tier classifier is lexical
-and weak, so declaring resources is the reliable way to ask for less.
+WriteWorld whatever it declares; declared `resources` make it WriteScoped on
+those claims; `read_only: true` makes it Read; anything else is an undeclared
+mutation and takes X on `global` for conflicts, so it meets any other owner's
+lock, including an `asset:` build lease. The lexical tier classifier no
+longer decides the class: it misses real writers.
 
 ### Resources form a hierarchy with intent locks
 

@@ -62,16 +62,22 @@ bool FHaybaMCPLeaseClassificationTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("level_create is global"), ClassifyCommand(TEXT("level_create"), true).Class, EAccessClass::Global);
 	TestEqual(TEXT("console commands are global"),
 		ClassifyCommand(TEXT("editor_run_console_command"), true).Class, EAccessClass::Global);
-	TestEqual(TEXT("every editor_pie_* is global"),
-		ClassifyCommand(TEXT("editor_pie_screenshot"), false).Class, EAccessClass::Global);
+	TestEqual(TEXT("PIE observation is a read"),
+		ClassifyCommand(TEXT("editor_pie_screenshot"), false).Class, EAccessClass::Read);
+	TestEqual(TEXT("a PIE drive command is a scoped write"),
+		ClassifyCommand(TEXT("editor_pie_press_key"), false).Class, EAccessClass::WriteScoped);
+	TestEqual(TEXT("starting PIE is global"),
+		ClassifyCommand(TEXT("editor_start_pie"), false).Class, EAccessClass::Global);
 	TestEqual(TEXT("lease control plane is a read"),
 		ClassifyCommand(TEXT("lease_acquire"), false).Class, EAccessClass::Read);
 
 	const FClassification Spawn = ClassifyCommand(TEXT("actor_spawn"), true);
 	TestEqual(TEXT("a destructive command defaults to scoped write"), Spawn.Class, EAccessClass::WriteScoped);
 	TestFalse(TEXT("the default is marked derived"), Spawn.bExplicit);
-	TestEqual(TEXT("a non-destructive command defaults to read"),
+	TestEqual(TEXT("a read-set command is a read"),
 		ClassifyCommand(TEXT("actor_list"), false).Class, EAccessClass::Read);
+	TestEqual(TEXT("a writer outside every table is no longer a read (fail closed)"),
+		ClassifyCommand(TEXT("material_set_param"), false).Class, EAccessClass::WriteScoped);
 
 	TestEqual(TEXT("python_run by name is an undeclared mutation"),
 		ClassifyCommand(TEXT("python_run"), true).Class, EAccessClass::WriteWorld);
@@ -79,7 +85,7 @@ bool FHaybaMCPLeaseClassificationTest::RunTest(const FString& Parameters)
 		ClassifyPythonRun(true, true, true), EAccessClass::WriteWorld);
 	TestEqual(TEXT("declared resources scope a python mutation"),
 		ClassifyPythonRun(false, false, true), EAccessClass::WriteScoped);
-	TestEqual(TEXT("a read-only-tier script is a read"),
+	TestEqual(TEXT("a declared read_only script is a read"),
 		ClassifyPythonRun(true, false, false), EAccessClass::Read);
 	TestEqual(TEXT("an undeclared python mutation is a world write"),
 		ClassifyPythonRun(false, false, false), EAccessClass::WriteWorld);

@@ -2,6 +2,9 @@
 // log case; T8 the router cases). See docs/adr/0010.
 #include "Misc/AutomationTest.h"
 #include "HaybaMCPEnforcementPolicy.h"
+#include "HaybaMCPAccessPolicy.h"
+#include "HaybaMCPCommandSets.h"
+#include "handlers/HaybaMCPPythonHandler.h"
 #include "HaybaMCPLeaseManager.h"
 #include "HaybaMCPDeveloperSettings.h"
 #include "Tests/HaybaMCPLeaseTestUtil.h"
@@ -496,6 +499,230 @@ bool FHaybaMCPLeaseEnforcedForWritesTwoOwnersTest::RunTest(const FString& Parame
 			FString(TEXT("asset_busy")));
 		Send(*R, ConnA, A, TEXT("lease_release"), Json(TEXT("{\"all\":true}")));
 	}
+	// T8.2: fail-closed write detection and python_run declarations.
+	{
+		const FString AAgain = AcquireId(*R, ConnA, A,
+			TEXT("{\"resources\":[\"global\"],\"bind_connection\":false,\"label\":\"two-owners-2\"}"));
+		TestFalse(TEXT("A holds global X again"), AAgain.IsEmpty());
+		TestEqual(TEXT("B's material_set_param is refused (it was a Read before T8)"),
+			CodeOf(Send(*R, ConnB, B, TEXT("material_set_param"),
+				Json(TEXT("{\"instance_path\":\"/Game/__HaybaTest__/MI_TwoOwners\",\"param_name\":\"Tint\",\"value\":1}")))),
+			FString(TEXT("lease_conflict")));
+		// R-12 (decided 2026-09-28): the read-like commands are reads under
+		// EnforcedForWrites. While A holds global X they pass the lease gate and
+		// reach their handler, which answers a missing-parameter error for {}.
+		// A read needs no owner either.
+		for (const TCHAR* Read : { TEXT("material_validate"), TEXT("ui_measure_text") })
+		{
+			TestFalse(*FString::Printf(TEXT("R-12: B's %s is not refused while A holds global X"), Read),
+				IsLeaseRefusal(CodeOf(Send(*R, ConnB, B, Read, Json(TEXT("{}"))))));
+			TestFalse(*FString::Printf(TEXT("R-12: an owner-less %s is not refused"), Read),
+				IsLeaseRefusal(CodeOf(Send(*R, ConnC, FString(), Read, Json(TEXT("{}"))))));
+		}
+		Send(*R, ConnA, A, TEXT("lease_release"), Json(TEXT("{\"all\":true}")));
+
+		const FString AAsset = AcquireId(*R, ConnA, A,
+			TEXT("{\"resources\":[\"asset:/Game/__HaybaTest__/BP_A\"],\"bind_connection\":false,\"label\":\"build:t8-python\"}"));
+		TestFalse(TEXT("A holds only an asset lease"), AAsset.IsEmpty());
+		TestEqual(TEXT("B's undeclared python_run conflicts with it"),
+			CodeOf(Send(*R, ConnB, B, TEXT("python_run"), Json(TEXT("{\"script\":\"x = 1\"}")))),
+			FString(TEXT("lease_conflict")));
+		const TSharedPtr<FJsonObject> ReadOnly = Send(*R, ConnB, B, TEXT("python_run"),
+			Json(TEXT("{\"script\":\"x = 1\",\"read_only\":true}")));
+		TestFalse(TEXT("with read_only:true it passes"), IsLeaseRefusal(CodeOf(ReadOnly)));
+		bool bDeclared = false;
+		DataOf(ReadOnly)->TryGetBoolField(TEXT("read_only_declared"), bDeclared);
+		TestTrue(TEXT("and the reply says it was declared"), bDeclared);
+
+		// R-24: a batch python_run step that declares its resources passes; undeclared it conflicts.
+		const FString Scoped = R->ProcessBatchStep(Envelope(B, TEXT("python_run"),
+			Json(TEXT("{\"script\":\"x = 1\",\"resources\":[\"asset:/Game/__HaybaTest__/BP_B\"]}"))), TEXT("hayba-test-batch-t8"), true);
+		TestFalse(TEXT("a declared batch step passes"), IsLeaseRefusal(CodeOf(Json(Scoped))));
+		const FString Undeclared = R->ProcessBatchStep(Envelope(B, TEXT("python_run"),
+			Json(TEXT("{\"script\":\"x = 1\"}"))), TEXT("hayba-test-batch-t8"), true);
+		TestEqual(TEXT("an undeclared batch step conflicts"), CodeOf(Json(Undeclared)), FString(TEXT("lease_conflict")));
+		Send(*R, ConnA, A, TEXT("lease_release"), Json(TEXT("{\"all\":true}")));
+	}
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FHaybaMCPLeasePieCommandsClassifyTest,
+	"Hayba.MCP.Lease.PieCommandsClassify",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FHaybaMCPLeasePieCommandsClassifyTest::RunTest(const FString& Parameters)
+{
+	using HaybaMCPAccess::EAccessClass;
+	const TSharedPtr<FHaybaMCPCommandHandler> R = HaybaMCPLeaseTest::Router();
+	if (!TestTrue(TEXT("command router exists"), R.IsValid())) return false;
+
+	for (const FString& Cmd : HaybaMCPCommandSets::PieObservationCommands())
+	{
+		TestEqual(*FString::Printf(TEXT("PIE observation is Read: %s"), *Cmd),
+			HaybaMCPAccess::ClassifyCommand(Cmd, FHaybaMCPCommandHandler::IsPlanGatedCommand(Cmd)).Class, EAccessClass::Read);
+	}
+	for (const FString& Cmd : HaybaMCPState::PieOwnerCommands())
+	{
+		const EAccessClass Expected = Cmd == TEXT("editor_stop_pie") ? EAccessClass::Global : EAccessClass::WriteScoped;
+		TestEqual(*FString::Printf(TEXT("PIE owner command keeps a write class: %s"), *Cmd),
+			HaybaMCPAccess::ClassifyCommand(Cmd, FHaybaMCPCommandHandler::IsPlanGatedCommand(Cmd)).Class, Expected);
+	}
+	TestEqual(TEXT("editor_start_pie stays Global"),
+		HaybaMCPAccess::ClassifyCommand(TEXT("editor_start_pie"), true).Class, EAccessClass::Global);
+
+	// Every registered editor_pie_* command is either observation or a drive command.
+	for (const FString& Cmd : R->GetAllCommands())
+	{
+		if (!Cmd.StartsWith(TEXT("editor_pie_"))) continue;
+		TestTrue(*FString::Printf(TEXT("editor_pie_* is observation or owner-drive: %s"), *Cmd),
+			HaybaMCPCommandSets::PieObservationCommands().Contains(Cmd) || HaybaMCPState::PieOwnerCommands().Contains(Cmd));
+	}
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FHaybaMCPLeaseReadClassDriftTest,
+	"Hayba.MCP.Lease.ReadClassDrift",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FHaybaMCPLeaseReadClassDriftTest::RunTest(const FString& Parameters)
+{
+	using HaybaMCPAccess::EAccessClass;
+	const TSharedPtr<FHaybaMCPCommandHandler> R = HaybaMCPLeaseTest::Router();
+	if (!TestTrue(TEXT("command router exists"), R.IsValid())) return false;
+
+	TSet<FString> Commands(R->GetAllCommands());
+	TestTrue(TEXT("a plausible command surface"), Commands.Num() > 100);
+	Commands.Append(HaybaMCPCommandSets::RouterInlineCommands());
+
+	// The pre-T8 rule, only to report what moved: a derived class was Read
+	// unless the Plan-Mode gate named the command destructive.
+	auto WasReadBeforeT8 = [](const FString& Cmd, bool bGated)
+	{
+		if (Cmd.StartsWith(TEXT("lease_"))) return true;
+		if (HaybaMCPAccess::GlobalCommands().Contains(Cmd) || Cmd.StartsWith(TEXT("editor_pie_"))) return false;
+		if (HaybaMCPAccess::WriteWorldCommands().Contains(Cmd) || Cmd.StartsWith(TEXT("editor_save")) || Cmd == TEXT("python_run")) return false;
+		if (HaybaMCPAccess::AssetWriteCommands().Contains(Cmd)) return false;
+		return !bGated;
+	};
+
+	TArray<FString> Moved;
+	for (const FString& Cmd : Commands)
+	{
+		const bool bGated = FHaybaMCPCommandHandler::IsPlanGatedCommand(Cmd);
+		const EAccessClass Class = HaybaMCPAccess::ClassifyCommand(Cmd, bGated).Class;
+		const bool bReadSet = HaybaMCPCommandSets::IsReadSetCommand(Cmd);
+		TestEqual(*FString::Printf(TEXT("Read exactly when in the R12 read sets: %s"), *Cmd), Class == EAccessClass::Read, bReadSet);
+		if (Class != EAccessClass::Read && WasReadBeforeT8(Cmd, bGated))
+		{
+			Moved.Add(Cmd);
+		}
+	}
+	// R-2: the router-inline mirrors pass slot 4 before their special-case code.
+	for (const FString& Cmd : HaybaMCPCommandSets::RouterInlineCommands())
+	{
+		TestEqual(*FString::Printf(TEXT("router-inline command is Read: %s"), *Cmd),
+			HaybaMCPAccess::ClassifyCommand(Cmd, FHaybaMCPCommandHandler::IsPlanGatedCommand(Cmd)).Class, EAccessClass::Read);
+	}
+	Moved.Sort();
+	AddInfo(FString::Printf(TEXT("Read -> WriteScoped in T8 (%d): %s"), Moved.Num(), *FString::Join(Moved, TEXT(", "))));
+	TestTrue(TEXT("the fail-closed move includes material_set_param"), Moved.Contains(TEXT("material_set_param")));
+	// R-12 (decided 2026-09-28): the 18 read-like commands are reads, so none of them moved.
+	for (const TCHAR* Read : { TEXT("wait_for_idle"), TEXT("wait_for_shaders"), TEXT("asset_validate"), TEXT("material_validate"), TEXT("mesh_audit"), TEXT("mesh_list_dynamic"),
+		TEXT("mesh_topology_stats"), TEXT("metasound_inspect"), TEXT("metasound_list"), TEXT("pcg_export_graph"), TEXT("pcg_read_node_output"), TEXT("pcg_validate_graph"),
+		TEXT("placement_validate"), TEXT("scene_export"), TEXT("scene_validate_physics"), TEXT("texture_audit"), TEXT("ui_measure_text"), TEXT("copilot_get_key") })
+	{
+		TestFalse(*FString::Printf(TEXT("R-12 read %s did not move to a write class"), Read), Moved.Contains(Read));
+		TestEqual(*FString::Printf(TEXT("R-12 read %s classifies Read"), Read),
+			HaybaMCPAccess::ClassifyCommand(Read, false).Class, EAccessClass::Read);
+	}
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FHaybaMCPLeasePythonRunClassificationTest,
+	"Hayba.MCP.Lease.PythonRunClassification",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FHaybaMCPLeasePythonRunClassificationTest::RunTest(const FString& Parameters)
+{
+	using HaybaMCPAccess::EAccessClass;
+	using HaybaMCPAccess::ELockMode;
+	const FString World = TEXT("/Game/__HaybaTest__/Map");
+	auto Resolve = [&World](const TCHAR* ParamsJson)
+	{
+		return FHaybaMCPLeaseManager::ResolveRequiredAccess(TEXT("python_run"), HaybaMCPLeaseTest::Json(ParamsJson), World);
+	};
+	auto HasLock = [](const TArray<HaybaMCPAccess::FLock>& Locks, const TCHAR* Key, ELockMode Mode)
+	{
+		return Locks.ContainsByPredicate([Key, Mode](const HaybaMCPAccess::FLock& L) { return L.Key == Key && L.Mode == Mode; });
+	};
+	HaybaMCPAccess::FClaim AssetA;
+	FString Error;
+	HaybaMCPAccess::ParseResource(TEXT("asset:/Game/__HaybaTest__/BP_A"), AssetA.Resource, Error);
+	const TArray<HaybaMCPAccess::FLock> BuildLease = HaybaMCPAccess::ExpandClaims({ AssetA });
+
+	const FHaybaMCPLeaseManager::FRequiredAccess Undeclared = Resolve(TEXT("{\"script\":\"x = 1\"}"));
+	TestEqual(TEXT("undeclared is an undeclared mutation"), Undeclared.Class, EAccessClass::WriteWorld);
+	TestTrue(TEXT("undeclared takes X on global for conflicts"), HasLock(Undeclared.Locks, TEXT("global"), ELockMode::Exclusive));
+	TestTrue(TEXT("so it conflicts with another owner's asset build lease"),
+		HaybaMCPAccess::FindConflict(Undeclared.Locks, BuildLease));
+
+	const FHaybaMCPLeaseManager::FRequiredAccess Declared =
+		Resolve(TEXT("{\"script\":\"x = 1\",\"resources\":[\"asset:/Game/__HaybaTest__/BP_B\"]}"));
+	TestEqual(TEXT("declared resources scope it"), Declared.Class, EAccessClass::WriteScoped);
+	TestTrue(TEXT("X on the declared asset"), HasLock(Declared.Locks, TEXT("asset:/game/__haybatest__/bp_b"), ELockMode::Exclusive));
+	TestFalse(TEXT("and it does not meet another asset's build lease"), HaybaMCPAccess::FindConflict(Declared.Locks, BuildLease));
+
+	const FHaybaMCPLeaseManager::FRequiredAccess ReadOnly = Resolve(TEXT("{\"script\":\"x = 1\",\"read_only\":true}"));
+	TestEqual(TEXT("read_only:true is a read"), ReadOnly.Class, EAccessClass::Read);
+	TestEqual(TEXT("a read needs no locks"), ReadOnly.Locks.Num(), 0);
+
+	TestNotEqual(TEXT("set_editor_property with no declaration is never a read"),
+		Resolve(TEXT("{\"script\":\"unreal.EditorAssetLibrary.load_asset('/Game/__HaybaTest__/BP_A').set_editor_property('x', 1)\"}")).Class,
+		EAccessClass::Read);
+	TestNotEqual(TEXT("only a real boolean declares (a string does not)"),
+		Resolve(TEXT("{\"script\":\"x = 1\",\"read_only\":\"true\"}")).Class, EAccessClass::Read);
+
+	for (const TCHAR* Invalid : { TEXT("{\"read_only\":false}"), TEXT("{\"read_only\":1}"), TEXT("{\"read_only\":null}"),
+		TEXT("{\"resources\":[]}"), TEXT("{\"resources\":\"asset:/Game/A\"}"), TEXT("{\"resources\":[\"asset:/Game/A\",null]}"),
+		TEXT("{\"resources\":[{\"resource\":\"asset:/Game/A\",\"mode\":1}]}") })
+	{
+		const FHaybaMCPLeaseManager::FRequiredAccess InvalidAccess = Resolve(Invalid);
+		TestEqual(*FString::Printf(TEXT("invalid/empty declarations without a valid read fail closed: %s"), Invalid), InvalidAccess.Class, EAccessClass::WriteWorld);
+		TestTrue(TEXT("invalid/empty declarations retain global X"), HasLock(InvalidAccess.Locks, TEXT("global"), ELockMode::Exclusive));
+		TestTrue(TEXT("invalid/empty declarations conflict with another owner asset scope"), HaybaMCPAccess::FindConflict(InvalidAccess.Locks, BuildLease));
+	}
+	for (const TCHAR* Read : { TEXT("{\"resources\":[],\"read_only\":true}"), TEXT("{\"resources\":\"invalid\",\"read_only\":true}") })
+	{
+		TestEqual(TEXT("a real read declaration remains trusted with no valid resource claims"), Resolve(Read).Class, EAccessClass::Read);
+	}
+	TestEqual(TEXT("valid resources outrank read_only"), Resolve(TEXT("{\"resources\":[\"asset:/Game/A\"],\"read_only\":true}")).Class, EAccessClass::WriteScoped);
+	TestEqual(TEXT("valid resources still scope a nonboolean read_only, rejected by handler"), Resolve(TEXT("{\"resources\":[\"asset:/Game/A\"],\"read_only\":\"true\"}")).Class, EAccessClass::WriteScoped);
+	TestEqual(TEXT("an unknown handler fails closed"), HaybaMCPAccess::ClassifyCommand(TEXT("future_writer"), false).Class, EAccessClass::WriteScoped);
+
+	FHaybaMCPPythonHandler PythonHandler;
+	for (const TCHAR* NonBool : { TEXT("{\"script\":\"x = 1\",\"read_only\":\"true\"}"), TEXT("{\"script\":\"x = 1\",\"read_only\":1}"), TEXT("{\"script\":\"x = 1\",\"read_only\":null}") })
+	{
+		const FHaybaHandlerResult Refused = PythonHandler.Handle(TEXT("python_run"), HaybaMCPLeaseTest::Json(NonBool));
+		TestFalse(TEXT("handler rejects nonboolean read declarations before execution"), Refused.bOk);
+		TestTrue(TEXT("handler rejects with HCR-INPUT-003"), Refused.ErrorMessage.Contains(TEXT("HCR-INPUT-003")));
+	}
+
+	const FHaybaMCPLeaseManager::FRequiredAccess WorldPartition =
+		Resolve(TEXT("{\"script\":\"x = 1\",\"world_partition\":true,\"read_only\":true}"));
+	TestEqual(TEXT("World Partition wins over read_only"), WorldPartition.Class, EAccessClass::WriteWorld);
+	TestTrue(TEXT("X on the world, not global"),
+		HasLock(WorldPartition.Locks, TEXT("world:/game/__haybatest__/map"), ELockMode::Exclusive));
+
+	TestEqual(TEXT("pure: WP first"), HaybaMCPAccess::ClassifyPythonRun(true, true, true), EAccessClass::WriteWorld);
+	TestEqual(TEXT("pure: resources next"), HaybaMCPAccess::ClassifyPythonRun(true, false, true), EAccessClass::WriteScoped);
+	TestEqual(TEXT("pure: then read_only"), HaybaMCPAccess::ClassifyPythonRun(true, false, false), EAccessClass::Read);
+	TestEqual(TEXT("pure: else undeclared"), HaybaMCPAccess::ClassifyPythonRun(false, false, false), EAccessClass::WriteWorld);
+	const TArray<HaybaMCPAccess::FLock> GlobalX = HaybaMCPAccess::UndeclaredPythonRunLocks();
+	TestTrue(TEXT("UndeclaredPythonRunLocks is exactly global X"),
+		GlobalX.Num() == 1 && HasLock(GlobalX, TEXT("global"), ELockMode::Exclusive));
 	return true;
 }
 

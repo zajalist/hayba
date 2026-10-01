@@ -100,4 +100,15 @@ namespace HaybaMCPCommandSets
 		};
 		return Set;
 	}
+
+	/** T8: the one read table (R12). Only these commands are Read for leases;
+	 *  every other command is at least WriteScoped (fail closed). The PIE rule's
+	 *  Safe set is the same union. */
+	inline bool IsReadSetCommand(const FString& Cmd)
+	{
+		return ControlPlaneCommands().Contains(Cmd)
+			|| ReadCommands().Contains(Cmd)
+			|| PieObservationCommands().Contains(Cmd)
+			|| Cmd.StartsWith(TEXT("lease_"));
+	}
 }

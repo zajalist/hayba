@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "Dom/JsonObject.h"
+#include "HaybaMCPCommandSets.h"
 
 /**
  * Pure access policy for one MCP command: what it touches (its access class
@@ -154,29 +155,40 @@ namespace HaybaMCPAccess
 	struct FClassification
 	{
 		EAccessClass Class = EAccessClass::Read;
-		/** False when the class was derived from the Plan-Mode gate rather than
+		/** False when the class was the fail-closed fallback rather than
 		 *  named by a table or a prefix rule. */
 		bool bExplicit = false;
 	};
 
 	/**
-	 * Classify a command by name. `bIsDestructive` is the Plan-Mode gate's
-	 * verdict (IsDestructiveCommand); it supplies the default for every command
-	 * the tables do not name: destructive -> WriteScoped, otherwise Read.
+	 * Classify a command by name. T8: fail closed. A command is Read ONLY
+	 * when it is in the R12 read sets (HaybaMCPCommandSets::IsReadSetCommand:
+	 * control plane, reads, PIE observation, lease_*); every other command is
+	 * at least WriteScoped, so a writer missing from these tables and from the
+	 * Plan-Mode gate (material_set_param, bt_compile, …) can no longer pass as
+	 * a Read. `bIsDestructive` (the Plan-Mode verdict) no longer decides the
+	 * class; it stays in the signature for its callers. The fallback is
+	 * WriteScoped, marked derived (bExplicit false).
 	 *
 	 * python_run is refined per request by ClassifyPythonRun; by name alone it
 	 * is WriteWorld, the class of an undeclared mutation.
 	 */
 	inline FClassification ClassifyCommand(const FString& Cmd, bool bIsDestructive)
 	{
-		if (Cmd.StartsWith(TEXT("lease_")))
+		if (HaybaMCPCommandSets::IsReadSetCommand(Cmd))
 		{
-			// The lease control plane must stay answerable while leases are held.
 			return { EAccessClass::Read, true };
 		}
-		if (GlobalCommands().Contains(Cmd) || Cmd.StartsWith(TEXT("editor_pie_")))
+		if (GlobalCommands().Contains(Cmd))
 		{
 			return { EAccessClass::Global, true };
+		}
+		if (Cmd.StartsWith(TEXT("editor_pie_")))
+		{
+			// PIE drive commands (observation is Read above). They keep a write
+			// class for reporting; slot 2 authorizes them for the PIE's owner and
+			// they then skip the lease gate (R13).
+			return { EAccessClass::WriteScoped, true };
 		}
 		if (WriteWorldCommands().Contains(Cmd) || Cmd.StartsWith(TEXT("editor_save")))
 		{
@@ -188,23 +200,27 @@ namespace HaybaMCPAccess
 		}
 		if (AssetWriteCommands().Contains(Cmd))
 		{
-			// Even the ones Plan Mode leaves alone (compile-and-save) write the asset (S1).
+			// Even the ones Plan Mode leaves alone (compile-and-save) write the asset.
 			return { EAccessClass::WriteScoped, true };
 		}
-		return { bIsDestructive ? EAccessClass::WriteScoped : EAccessClass::Read, false };
+		(void)bIsDestructive;
+		return { EAccessClass::WriteScoped, false };
 	}
 
 	/**
-	 * python_run by what the request says about itself. The tier classifier is
-	 * lexical and cannot prove a script read-only, so a World Partition script
-	 * is WriteWorld whatever its tier, and declared resources are the reliable
-	 * way to ask for less than the whole world.
+	 * python_run by what the request declares (T8). The lexical tier
+	 * classifier no longer decides the class: it misses real writers
+	 * (set_editor_property, build_from_static_mesh_descriptions,
+	 * compile_blueprint). A World Partition script is WriteWorld whatever it
+	 * declares; declared resources make it WriteScoped; `read_only: true`,
+	 * trusted like a resource list, makes it Read; anything else is an
+	 * undeclared mutation.
 	 */
-	inline EAccessClass ClassifyPythonRun(bool bReadOnlyTier, bool bTouchesWorldPartition, bool bDeclaredResources)
+	inline EAccessClass ClassifyPythonRun(bool bDeclaredReadOnly, bool bTouchesWorldPartition, bool bDeclaredResources)
 	{
 		if (bTouchesWorldPartition) return EAccessClass::WriteWorld;
 		if (bDeclaredResources) return EAccessClass::WriteScoped;
-		if (bReadOnlyTier) return EAccessClass::Read;
+		if (bDeclaredReadOnly) return EAccessClass::Read;
 		return EAccessClass::WriteWorld;
 	}
 
@@ -616,6 +632,17 @@ namespace HaybaMCPAccess
 			}
 		}
 		return false;
+	}
+
+	/**
+	 * T8: an undeclared, non-read_only, non-World-Partition python_run takes X
+	 * on global for conflict checks, so it meets any other owner's lock,
+	 * including an asset: build lease that sits directly under global. Scripts
+	 * narrow their scope by declaring resources (or read_only).
+	 */
+	inline TArray<FLock> UndeclaredPythonRunLocks()
+	{
+		return ExpandClaims({ FClaim() });
 	}
 
 	// -------------------------------------------------------------------------

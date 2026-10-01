@@ -101,3 +101,6 @@ Hayba.MCP.Transport.NativeWriterStartFailure
 
 # T8
 Hayba.MCP.Lease.EnforcedForWritesTwoOwners
+Hayba.MCP.Lease.PieCommandsClassify
+Hayba.MCP.Lease.ReadClassDrift
+Hayba.MCP.Lease.PythonRunClassification
