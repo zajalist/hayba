@@ -266,7 +266,7 @@ describe('Deploy B deterministic behavior', () => {
     if (variant === 'valid') await bStep('B9').run(ctx); else await expect(bStep('B9').run(ctx)).rejects.toThrow();
     expect(ctx.calls.at(-1).cmd).toBe('lease_release');
   });
-  it.each(['valid', 'wrong-repeats', 'duplicate-caller', 'missing-drain', 'wrong-drain', 'slow-burst'])('B10 enforces fifty fresh raw refusals and isolated ticker drain: %s', async (variant) => {
+  it.each(['valid', 'delayed-first', 'missing-first', 'duplicate-first', 'wrong-repeats', 'duplicate-caller', 'missing-drain', 'wrong-drain', 'slow-burst'])('B10 enforces fifty fresh raw refusals and isolated ticker drain: %s', async (variant) => {
     let owner = ''; let count = 0; let time = 0;
     const ctx = bContext(({ cmd, opts }) => {
       if (cmd === 'lease_acquire') { owner = opts.owner; return grant(owner); }
@@ -280,9 +280,11 @@ describe('Deploy B deterministic behavior', () => {
       const unrelated = "Warning: [enforced_for_writes] owner_required/owner_missing repeated 49 more times in 30 s: owner='conn:*' cmd='material_set_param' holder='unrelated-b9'\n";
       const first = `Warning: [enforced_for_writes] owner_required: 'material_set_param' (write_scoped) names no owner while 1 other agents are connected (${owner}).\n`;
       const drain = `Warning: [enforced_for_writes] owner_required/owner_missing repeated ${variant === 'wrong-drain' ? 48 : 49} more times in 30 s: owner='conn:*' cmd='material_set_param' holder='${owner}' conflict='global'\n`;
-      return unrelated + first + (time >= 30_000 && variant !== 'missing-drain' ? drain : '');
+      const visibleFirst = variant === 'missing-first' || (variant === 'delayed-first' && time < 5_000) ? ''
+        : first.repeat(variant === 'duplicate-first' ? 2 : 1);
+      return unrelated + visibleFirst + (time >= 30_000 && variant !== 'missing-drain' ? drain : '');
     } });
-    if (variant === 'valid') {
+    if (variant === 'valid' || variant === 'delayed-first') {
       await bStep('B10').run(ctx);
       const writes = ctx.calls.filter((c: Call) => c.cmd === 'material_set_param');
       expect(writes).toHaveLength(50);

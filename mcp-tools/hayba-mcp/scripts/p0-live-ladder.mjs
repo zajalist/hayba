@@ -731,10 +731,10 @@ const B_STEPS = [
           && l.includes("owner_required: 'material_set_param' (write_scoped) names no owner") && l.includes(owner) && !/repeated \d+ more times/.test(l));
         const drained = lines.filter((l) => l.includes('Warning:') && l.includes('[enforced_for_writes] owner_required/owner_missing repeated ')
           && l.includes("owner='conn:*'") && l.includes("cmd='material_set_param'") && l.includes(`holder='${owner}'`));
-        check(first.length === 1, `expected one scoped first-hit Warning, found ${first.length}`);
+        check(first.length <= 1, `expected one scoped first-hit Warning, found ${first.length}`);
         check(drained.length <= 1, `expected one scoped drain, found ${drained.length}`);
         if (drained.length) check(drained[0].includes('repeated 49 more times in 30 s:'), `incorrect scoped drain: ${drained[0]}`);
-        return drained.length === 1;
+        return first.length === 1 && drained.length === 1;
       };
       // Only read the log while waiting: another conflicting call would force a drain.
       await bWait(ctx, 'the ticker-only scoped 49-hit drain', scoped, 65_000, 1_000);
