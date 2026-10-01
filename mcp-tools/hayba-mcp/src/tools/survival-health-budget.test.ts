@@ -25,6 +25,11 @@ describe('survival health budget and owned host proof', () => {
       'malformed_helper_output_rejected', 'nonzero_helper_exit_rejected',
       'unconfirmed_helper_exit_blocks_further_queries',
       'cleanup_identity_timeout_never_terminates',
+      'startup_query_remaining_propagation', 'startup_identity_expiry_blocks_listener',
+      'startup_post_ping_expiry_blocks_listener',
+      'cleanup_later_query_timeout_never_terminates', 'cleanup_later_identity_mismatch_never_terminates',
+      'cleanup_later_unconfirmed_helper_never_terminates', 'cleanup_wm_wait_identity_failure_never_forces',
+      'cleanup_missing_listener_retains_owned_fallback',
     ]);
     expect(cases.filter((item) => !item.passed)).toEqual([]);
     expect(result.status).toBe(0);

@@ -8,7 +8,11 @@ $names=@('monotonic_remaining','expired_transport_not_invoked','late_transport_r
  'synthetic_owner_all_caller_paths','read_declarations_are_narrow',
  'fresh_owned_helper_query',
  'owned_hanging_helper_exit','oversized_helper_output_rejected','malformed_helper_output_rejected',
- 'nonzero_helper_exit_rejected','unconfirmed_helper_exit_blocks_further_queries','cleanup_identity_timeout_never_terminates')
+ 'nonzero_helper_exit_rejected','unconfirmed_helper_exit_blocks_further_queries','cleanup_identity_timeout_never_terminates',
+ 'startup_query_remaining_propagation','startup_identity_expiry_blocks_listener','startup_post_ping_expiry_blocks_listener',
+ 'cleanup_later_query_timeout_never_terminates','cleanup_later_identity_mismatch_never_terminates',
+ 'cleanup_later_unconfirmed_helper_never_terminates','cleanup_wm_wait_identity_failure_never_forces',
+ 'cleanup_missing_listener_retains_owned_fallback')
 $ScenarioResults=[Collections.Generic.List[object]]::new()
 $errors=$null;$tokens=$null
 $ast=[Management.Automation.Language.Parser]::ParseFile($HarnessPath,[ref]$tokens,[ref]$errors)
@@ -19,7 +23,7 @@ $required=@('Get-SanitizedHash','New-DiagnosticDigest','Get-RemainingCaseMs','In
  'Assert-CaseTarget','Assert-EditorHealthy','Get-EditorState','Test-BenignPythonNonce',
  'Initialize-HostProofCapture','Start-HostProofProcess','Invoke-HostProofQuery','Get-ListenerOwner',
  'Get-BigEndianHeader','New-RawCommandFrame','Wait-EditorReady','Get-RemainingStartupMs',
- 'Stop-OwnedEditorWithEvidence')
+ 'Get-EditorProcessRow','Wait-OwnedProcessExit','Stop-OwnedEditorWithEvidence')
 foreach($name in $required){
  $found=@($ast.FindAll({param($n)$n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq $name},$true))
  if($found.Count -ne 1){
@@ -226,6 +230,84 @@ try {
      function Invoke-HaybaCommand{$script:TerminationCalls++}
      Must-Reject {Stop-OwnedEditorWithEvidence} 'controlled identity timeout'
      Require ($TerminationCalls -eq 0) 'Cleanup terminated after identity timeout'
+    }
+    {$_ -in @('startup_query_remaining_propagation','startup_identity_expiry_blocks_listener','startup_post_ping_expiry_blocks_listener')} {
+     $StartupTimeoutMs=1000;$StartupClock=[pscustomobject]@{ElapsedMilliseconds=0};$CaseClock=$null
+     if($scenario -ceq 'startup_identity_expiry_blocks_listener'){$StartupClock.ElapsedMilliseconds=790}
+     $script:QueryAllowances=[Collections.Generic.List[object]]::new()
+     function Get-EditorProcessRow {
+      param($ProcessId,[int]$TimeoutMs=0)
+      $QueryAllowances.Add([pscustomobject]@{kind='identity';timeout=$TimeoutMs;start=$StartupClock.ElapsedMilliseconds})
+      if(($scenario -ceq 'startup_identity_expiry_blocks_listener' -and $QueryAllowances.Count -eq 2) -or
+         ($scenario -ceq 'startup_post_ping_expiry_blocks_listener' -and $Requests.Count)){$StartupClock.ElapsedMilliseconds=1000}
+      else{$StartupClock.ElapsedMilliseconds+=10}
+      ConvertTo-SurvivalProcessRow @($initialRow) $ProcessId
+     }
+     function Invoke-HostProofQuery {
+      param([switch]$IncludeListener,[int]$TimeoutMs=0)
+      $QueryAllowances.Add([pscustomobject]@{kind='listener';timeout=$TimeoutMs;start=$StartupClock.ElapsedMilliseconds})
+      $StartupClock.ElapsedMilliseconds+=10
+      [pscustomobject]@{process=ConvertTo-SurvivalProcessRow @($initialRow) $EditorPid;listener_owners=@(42)}
+     }
+     $Invoker={param($Cmd,$ParamsJson,$Port,$TimeoutMs,$Auth,$Owner,[switch]$ThrowOnTimeout)
+      $Requests.Add($Cmd);$StartupClock.ElapsedMilliseconds+=20;$global:LASTEXITCODE=0;'{"ok":true}'}
+     if($scenario -ceq 'startup_query_remaining_propagation'){
+      Wait-EditorReady|Out-Null
+      Require (($QueryAllowances.timeout -join ',') -ceq '0,990,980,950,940') 'Startup helper did not receive each fresh remaining allowance'
+      Require ($StartupReadinessEvidence.ready) 'Correctly bounded startup did not become ready'
+     }else{
+      Must-Reject {Wait-EditorReady} 'startup deadline'
+      $listeners=@($QueryAllowances|Where-Object{$_.kind -ceq 'listener'})
+      $expected=if($scenario -ceq 'startup_identity_expiry_blocks_listener'){0}else{1}
+      Require ($listeners.Count -eq $expected) 'Startup launched listener query after identity consumed its remainder'
+      Require (-not $StartupReadinessEvidence.ready) 'Expired startup claimed readiness'
+     }
+    }
+    {$_ -in @('cleanup_later_query_timeout_never_terminates','cleanup_later_identity_mismatch_never_terminates',
+       'cleanup_later_unconfirmed_helper_never_terminates','cleanup_wm_wait_identity_failure_never_forces',
+       'cleanup_missing_listener_retains_owned_fallback')} {
+     $OwnsTarget=$true;$CaseClock=$null;$GracefulShutdownTimeoutMs=1000
+     $script:CloseCalls=0;$script:ForceCalls=0;$script:IdentityCalls=0;$script:WaitEntered=$false;$script:WaitFailureInjected=$false
+     $InitialCrashEvidence=[pscustomobject]@{state_sha256='safe';artifact_count=0;signature_count=0}
+     $InitialFilesystemEvidence=[pscustomobject]@{state_sha256='safe';tracked_file_count=0}
+     function Assert-EditorIdentity {
+      param($ProcessRow,[int]$TimeoutMs=0)
+      $script:IdentityCalls++
+      if($scenario -ceq 'cleanup_later_identity_mismatch_never_terminates' -and $null -ne $ProcessRow){throw 'controlled later identity mismatch'}
+      if($scenario -ceq 'cleanup_wm_wait_identity_failure_never_forces' -and $WaitEntered -and -not $WaitFailureInjected){
+       $script:WaitFailureInjected=$true;throw [TimeoutException]::new('controlled WM wait identity timeout')
+      }
+     }
+     function Invoke-HostProofQuery {
+      param([switch]$IncludeListener,[int]$TimeoutMs=0)
+      if($scenario -ceq 'cleanup_later_query_timeout_never_terminates'){throw [TimeoutException]::new('controlled later identity query timeout')}
+      if($scenario -ceq 'cleanup_later_unconfirmed_helper_never_terminates'){throw 'controlled later helper exit unconfirmed'}
+      [pscustomobject]@{process=[pscustomobject]@{fresh=$true};listener_owners=@()}
+     }
+     $owned=[pscustomobject]@{Id=42}
+     $owned|Add-Member ScriptMethod CloseMainWindow {$script:CloseCalls++;return $true}
+     function Get-Process {
+      param($Id,$ErrorAction)
+      if($ForceCalls -gt 0 -or ($scenario -ceq 'cleanup_missing_listener_retains_owned_fallback' -and $CloseCalls -gt 0)){return}
+      return $owned
+     }
+     $actualWait=(Get-Item Function:Wait-OwnedProcessExit).ScriptBlock
+     function Wait-OwnedProcessExit{param($TimeoutMs)$script:WaitEntered=$true;& $actualWait $TimeoutMs}
+     function Get-EditorState{throw 'ordinary unavailable socket state'}
+     function Stop-Process{param($Id,[switch]$Force,$ErrorAction)$script:ForceCalls++}
+     function Start-Sleep{param($Milliseconds)}
+     function Get-CrashEvidence{return $InitialCrashEvidence}
+     function Get-ProjectFilesystemEvidence{return $InitialFilesystemEvidence}
+     function Read-NewCriticalLogEvidence{[pscustomobject]@{critical_count=0}}
+     if($scenario -ceq 'cleanup_missing_listener_retains_owned_fallback'){
+      $cleanup=Stop-OwnedEditorWithEvidence
+      Require ($cleanup.exited -and $CloseCalls -eq 1 -and $ForceCalls -eq 0) 'Missing listener disabled safe owned graceful fallback'
+     }else{
+      Must-Reject {Stop-OwnedEditorWithEvidence} 'controlled'
+      $expectedClose=if($scenario -ceq 'cleanup_wm_wait_identity_failure_never_forces'){1}else{0}
+      Require ($CloseCalls -eq $expectedClose -and $ForceCalls -eq 0) 'Cleanup continued termination after identity/query failure'
+      if($WaitFailureInjected){Require ($IdentityCalls -eq 4) 'Cleanup revalidated again after failed WM identity proof'}
+     }
     }
    }
    $passed=$true

@@ -109,7 +109,8 @@ if($IdentityOnly){
 # Only OS/process/listener/time/transport boundaries are doubled. The source
 # owns identity comparison, port selection, deadline accounting and admission.
 function Get-EditorProcessRow {
-    param([int]$ProcessId)
+    param([int]$ProcessId,[int]$TimeoutMs=0)
+    if($TimeoutMs -gt 0 -and $StartupClock.ElapsedMilliseconds+$TimeoutMs -gt $StartupTimeoutMs){throw 'startup identity helper borrowed allowance beyond its deadline'}
     $StartupClock.ElapsedMilliseconds+=20
     if($Scenario -ceq 'process_death' -and $Requests.Count){throw 'editor PID does not exist'}
     $created=[datetime]'2026-01-01T00:00:00Z'
@@ -128,7 +129,7 @@ function Get-NetTCPConnection {
 }
 function Invoke-HostProofQuery {
     param([switch]$IncludeListener,[int]$TimeoutMs=0)
-    $process=Get-EditorProcessRow $EditorPid
+    $process=Get-EditorProcessRow $EditorPid $TimeoutMs
     $owners=@()
     if($IncludeListener){$owners=@(Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue|Select-Object -ExpandProperty OwningProcess -Unique)}
     return [pscustomobject]@{process=$process;listener_owners=$owners}

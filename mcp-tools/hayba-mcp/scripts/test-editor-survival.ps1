@@ -940,9 +940,9 @@ if ($Port -ne 0 -and ($Port -lt 52342 -or $Port -gt 52350)) {
 }
 
 function Get-ListenerOwner {
-    param([object[]]$Owners)
+    param([object[]]$Owners, [int]$TimeoutMs = 0)
     if (-not $PSBoundParameters.ContainsKey('Owners')) {
-        $proof = Invoke-HostProofQuery -IncludeListener
+        $proof = Invoke-HostProofQuery -IncludeListener -TimeoutMs $TimeoutMs
         Assert-EditorIdentity -ProcessRow $proof.process | Out-Null
         $Owners = @($proof.listener_owners)
     }
@@ -975,7 +975,7 @@ function Wait-EditorReady {
         $script:EditorIdentity = New-EditorIdentity $EditorPid
         while ($true) {
             Get-RemainingStartupMs | Out-Null
-            Assert-EditorIdentity | Out-Null
+            Assert-EditorIdentity -TimeoutMs (Get-RemainingStartupMs) | Out-Null
             if ($Port -eq 0) {
                 $script:Port = Find-OwnedMcpPort $EditorPid
                 if ($Port -eq 0) {
@@ -983,7 +983,7 @@ function Wait-EditorReady {
                     continue
                 }
             }
-            if ((Get-ListenerOwner) -ne $EditorPid) { throw 'startup listener ownership changed' }
+            if ((Get-ListenerOwner -TimeoutMs (Get-RemainingStartupMs)) -ne $EditorPid) { throw 'startup listener ownership changed' }
             $timeout = Get-RemainingStartupMs
             $StartupReadinessEvidence.attempts++
             try {
@@ -998,8 +998,8 @@ function Wait-EditorReady {
             $response = $text | ConvertFrom-Json
             if ($response.ok -isnot [bool] -or $response.ok -ne $true) { throw 'startup readiness ping was malformed or refused' }
             Get-RemainingStartupMs | Out-Null
-            Assert-EditorIdentity | Out-Null
-            if ((Get-ListenerOwner) -ne $EditorPid) { throw 'startup listener ownership changed' }
+            Assert-EditorIdentity -TimeoutMs (Get-RemainingStartupMs) | Out-Null
+            if ((Get-ListenerOwner -TimeoutMs (Get-RemainingStartupMs)) -ne $EditorPid) { throw 'startup listener ownership changed' }
             Get-RemainingStartupMs | Out-Null
             $StartupReadinessEvidence.ready = $true
             $StartupReadinessEvidence.request_id_correlated = $true
@@ -1581,9 +1581,13 @@ function Stop-OwnedEditorWithEvidence {
     }
 
     Assert-EditorIdentity | Out-Null
+    # Query/identity failure stops cleanup. Only listener availability may
+    # select the already-authorized owned-window fallback below.
+    $proof = Invoke-HostProofQuery -IncludeListener
+    Assert-EditorIdentity -ProcessRow $proof.process | Out-Null
     $listenerOwned = $false
     try {
-        $listenerOwned = (Get-ListenerOwner) -eq $EditorPid
+        $listenerOwned = (Get-ListenerOwner -Owners @($proof.listener_owners)) -eq $EditorPid
     }
     catch {}
     $state = $null
@@ -1609,14 +1613,17 @@ function Stop-OwnedEditorWithEvidence {
     if (-not $exited) {
         Assert-EditorIdentity | Out-Null
         $owned = Get-Process -Id $EditorPid -ErrorAction Stop
+        $windowCloseRequested = $false
         try {
-            if ($owned.CloseMainWindow()) {
-                $gracefulRequested = $true
-                $gracefulMethod = if ($gracefulMethod) { $gracefulMethod + '+wm_close' } else { 'wm_close' }
-                $exited = Wait-OwnedProcessExit $GracefulShutdownTimeoutMs
-            }
+            $windowCloseRequested = $owned.CloseMainWindow()
         }
         catch {}
+        if ($windowCloseRequested) {
+            $gracefulRequested = $true
+            $gracefulMethod = if ($gracefulMethod) { $gracefulMethod + '+wm_close' } else { 'wm_close' }
+            # A failed identity proof while waiting must not enable force.
+            $exited = Wait-OwnedProcessExit $GracefulShutdownTimeoutMs
+        }
     }
 
     $forced = $false
