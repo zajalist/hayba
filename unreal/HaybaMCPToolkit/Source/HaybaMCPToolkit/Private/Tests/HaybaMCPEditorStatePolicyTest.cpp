@@ -7,6 +7,10 @@
 #include "Modules/ModuleManager.h"
 #include "HaybaMCPEditorState.h"
 #include "HaybaMCPEditorHealth.h"
+#include "HaybaMCPLeaseManager.h"
+#include "HAL/IConsoleManager.h"
+#include "HAL/PlatformTime.h"
+#include "Misc/Guid.h"
 #include "Misc/ScopeExit.h"
 
 #if WITH_DEV_AUTOMATION_TESTS
@@ -218,6 +222,24 @@ bool FHaybaMCPStatePieTrackerTest::RunTest(const FString& Parameters)
 		TestEqual(TEXT("recorded"), T.State().Kind, EPieKind::User);
 		TestEqual(TEXT("running"), T.State().Phase, EPiePhase::Running);
 	}
+	// A vetoed Play (T10, and the unsafe veto, R-13). PreBeginPIE fires, the
+	// authorizer denies, and the engine cancels the request and broadcasts
+	// CancelPIE once. That is one end, and no PIE is left. A second press
+	// within the window starts a clean user session.
+	{
+		HaybaMCPState::FPieTracker Tracker;
+		const int32 EndsBefore = Tracker.EndSerial();
+		Tracker.OnPreBegin(false, 100.0);
+		Tracker.OnEnd(100.0);
+		TestEqual(TEXT("a vetoed press counts one end"), Tracker.EndSerial(), EndsBefore + 1);
+		TestEqual(TEXT("a vetoed press leaves no PIE"), Tracker.State().Kind, HaybaMCPState::EPieKind::None);
+		Tracker.OnPreBegin(false, 104.0);
+		Tracker.OnBegin(false, 104.0);
+		TestEqual(TEXT("the override press is the user's PIE"), Tracker.State().Kind, HaybaMCPState::EPieKind::User);
+		TestEqual(TEXT("and it runs"), Tracker.State().Phase, HaybaMCPState::EPiePhase::Running);
+		TestEqual(TEXT("starting it counts no end"), Tracker.EndSerial(), EndsBefore + 1);
+	}
+
 	return true;
 }
 
@@ -318,6 +340,207 @@ bool FHaybaMCPStateUserPlayDecisionTest::RunTest(const FString& Parameters)
 	}
 	TestFalse(TEXT("the health override left a clean process"), FHaybaEditorHealth::IsUnsafe());
 	TestFalse(TEXT("a healthy editor allows Play"), FHaybaMCPEditorState::Get().EvaluateUserPlayRequest(FPlatformTime::Seconds()).bDeny);
+	// ---- P0 T10 (D7): the build branch. Mode 1 is the default. ----
+	{
+		using namespace HaybaMCPState;
+		FBusyAsset Build;
+		Build.Asset = TEXT("/game/__haybatest__/bp_busy");
+		Build.Owner = TEXT("builder");
+		Build.Label = TEXT("build:bpgraph_7");
+		Build.Lane = TEXT("long");
+		const TArray<FBusyAsset> BuildBusy = { Build };
+		const TArray<FBusyAsset> NoBuild;
+		const double Now = 5000.0;
+		TArray<FString> Texts;
+
+		for (const int32 Mode : { 0, 1, 2 })
+		{
+			const FPlayDecision Free = DecideUserPlay(NoBuild, EPlayRequestKind::User, Mode, false, 0.0, Now);
+			TestFalse(*FString::Printf(TEXT("mode %d: nothing built, nothing said"), Mode),
+				Free.bDeny || Free.bNotifyOnly || Free.bOverrideAccepted);
+		}
+
+		// Mode 0: Play goes ahead with a notification that names the build.
+		const FPlayDecision Notify = DecideUserPlay(BuildBusy, EPlayRequestKind::User, 0, false, 0.0, Now);
+		TestFalse(TEXT("mode 0 never denies"), Notify.bDeny);
+		TestTrue(TEXT("mode 0 notifies"), Notify.bNotifyOnly);
+		TestTrue(TEXT("mode 0 names asset, owner and label"),
+			Notify.Reason.Contains(Build.Asset) && Notify.Reason.Contains(TEXT("'builder'")) && Notify.Reason.Contains(Build.Label));
+		Texts.Add(Notify.Reason);
+
+		// Mode 1: the first press is vetoed and says how to override.
+		const FPlayDecision First = DecideUserPlay(BuildBusy, EPlayRequestKind::User, 1, false, 0.0, Now);
+		TestTrue(TEXT("mode 1: the first press is vetoed"), First.bDeny);
+		TestFalse(TEXT("mode 1: no override yet"), First.bOverrideAccepted);
+		TestTrue(TEXT("mode 1: names the build"), First.Reason.Contains(Build.Asset) && First.Reason.Contains(Build.Label));
+		TestTrue(TEXT("mode 1: says how to override"), First.Reason.Contains(TEXT("Press Play again within 10 s")));
+		Texts.Add(First.Reason);
+
+		// The double press: within 10 s (inclusive) plays; after that, vetoed again.
+		const FPlayDecision Second = DecideUserPlay(BuildBusy, EPlayRequestKind::User, 1, false, Now - 4.0, Now);
+		TestTrue(TEXT("mode 1: a second press within 10 s plays"), !Second.bDeny && Second.bOverrideAccepted);
+		Texts.Add(Second.Reason);
+		TestTrue(TEXT("mode 1: exactly 10 s is inside the window"),
+			DecideUserPlay(BuildBusy, EPlayRequestKind::User, 1, false, Now - PlayVetoOverrideWindowSeconds, Now).bOverrideAccepted);
+		TestTrue(TEXT("mode 1: just past 10 s is vetoed"),
+			DecideUserPlay(BuildBusy, EPlayRequestKind::User, 1, false, Now - PlayVetoOverrideWindowSeconds - 0.01, Now).bDeny);
+		TestTrue(TEXT("mode 1: a veto time in the future is not a press"),
+			DecideUserPlay(BuildBusy, EPlayRequestKind::User, 1, false, Now + 1.0, Now).bDeny);
+
+		// Agents never get the override.
+		const FPlayDecision Agent = DecideUserPlay(BuildBusy, EPlayRequestKind::Agent, 1, false, Now - 1.0, Now);
+		TestTrue(TEXT("an agent request inside the window is still vetoed"), Agent.bDeny && !Agent.bOverrideAccepted);
+		TestTrue(TEXT("the agent text says there is no override"), Agent.Reason.Contains(TEXT("no override")));
+		Texts.Add(Agent.Reason);
+		TestTrue(TEXT("mode 0 only notifies an agent request too"),
+			DecideUserPlay(BuildBusy, EPlayRequestKind::Agent, 0, false, 0.0, Now).bNotifyOnly);
+
+		// Mode 2: strict, even inside the window.
+		const FPlayDecision Strict = DecideUserPlay(BuildBusy, EPlayRequestKind::User, 2, false, Now - 1.0, Now);
+		TestTrue(TEXT("mode 2 vetoes with no override"), Strict.bDeny && !Strict.bOverrideAccepted);
+		TestTrue(TEXT("mode 2 says why there is no override"), Strict.Reason.Contains(TEXT("hayba.PIEBuildVeto is 2")));
+		Texts.Add(Strict.Reason);
+
+		// Unknown CVar values normalise, failing toward the veto.
+		TestEqual(TEXT("0 stays 0"), NormalizePlayVetoMode(0), 0);
+		TestEqual(TEXT("1 stays 1"), NormalizePlayVetoMode(1), 1);
+		TestEqual(TEXT("2 stays 2"), NormalizePlayVetoMode(2), 2);
+		TestEqual(TEXT("negative reads as 1"), NormalizePlayVetoMode(-1), 1);
+		TestEqual(TEXT("above 2 reads as 2"), NormalizePlayVetoMode(7), 2);
+		TestTrue(TEXT("a negative mode still allows the double press"),
+			DecideUserPlay(BuildBusy, EPlayRequestKind::User, -1, false, Now - 1.0, Now).bOverrideAccepted);
+
+		// Several assets: the first is named and the rest are counted.
+		const TArray<FBusyAsset> Three = { Build, Build, Build };
+		TestTrue(TEXT("more assets are counted"),
+			DecideUserPlay(Three, EPlayRequestKind::User, 1, false, 0.0, Now).Reason.Contains(TEXT("and 2 more asset(s)")));
+
+		// The unsafe veto keeps precedence over a build and has no override.
+		const FPlayDecision Unsafe0 = DecideUserPlay(BuildBusy, EPlayRequestKind::User, 0, true, Now - 1.0, Now);
+		TestTrue(TEXT("unsafe beats mode 0"), Unsafe0.bDeny && !Unsafe0.bNotifyOnly && !Unsafe0.bOverrideAccepted);
+		const FPlayDecision Unsafe1 = DecideUserPlay(BuildBusy, EPlayRequestKind::User, 1, true, Now - 1.0, Now);
+		TestTrue(TEXT("unsafe beats the double press"), Unsafe1.bDeny && !Unsafe1.bOverrideAccepted);
+		TestTrue(TEXT("unsafe keeps the unsafe text"), Unsafe1.Reason.Contains(TEXT("unsafe after a contained native fault")));
+
+		for (const FString& Text : Texts)
+		{
+			TestFalse(TEXT("no Play text names a lease handle"), Text.Contains(TEXT("token")));
+			AddInfo(Text);   // spec 6.5 item 7: review the exact texts in the automation log
+		}
+	}
+	// ---- P0 T10 runtime: hayba.PIEBuildVeto and the authorizer's decision path ----
+	{
+		IConsoleVariable* Veto = IConsoleManager::Get().FindConsoleVariable(TEXT("hayba.PIEBuildVeto"));
+		if (!TestNotNull(TEXT("hayba.PIEBuildVeto is registered"), Veto))
+		{
+			return false;
+		}
+		TestEqual(TEXT("mode 1 is the shipped default (D7)"), Veto->GetDefaultValue(), FString(TEXT("1")));
+
+		FHaybaEditorHealth::FScopedOverrideForTests Health;
+		FHaybaMCPEditorState& State = FHaybaMCPEditorState::Get();
+		const int32 SavedMode = Veto->GetInt();
+		const double SavedVetoAt = State.LastUserPlayVetoAt();
+
+		const FString Tag = FGuid::NewGuid().ToString(EGuidFormats::Digits).Left(8).ToLower();
+		const FString Builder = TEXT("hayba-test-") + Tag + TEXT("-builder");
+		HaybaMCPLease::FRequest Request;
+		Request.Owner = Builder;
+		Request.Label = TEXT("build:test");
+		Request.Lane = HaybaMCPLease::ELane::Long;
+		Request.TtlSeconds = 120.0;
+		HaybaMCPAccess::FClaim Claim;
+		FString ClaimError;
+		TestTrue(TEXT("claim parses"), HaybaMCPAccess::ParseResource(TEXT("asset:/Game/__HaybaTest__/BP_PlayVeto_") + Tag, Claim.Resource, ClaimError));
+		Request.Claims.Add(Claim);
+		const HaybaMCPLease::FAcquireResult Lease = FHaybaMCPLeaseManager::Get().Table().Acquire(Request);
+		ON_SCOPE_EXIT
+		{
+			Veto->Set(SavedMode, ECVF_SetByCode);
+			if (SavedVetoAt > 0.0) State.NoteUserPlayVeto(SavedVetoAt); else State.ClearUserPlayVeto();
+			FString Error;
+			FHaybaMCPLeaseManager::Get().Table().Release(Lease.Token, Builder, Error);
+			FHaybaMCPLeaseManager::Get().ForgetOwnerForTests(Builder);
+		};
+		if (!TestEqual(TEXT("the build lease is granted"), Lease.Status, HaybaMCPLease::EStatus::Granted))
+		{
+			return false;
+		}
+
+		HaybaMCPState::FPieState UserStarting;
+		UserStarting.Kind = HaybaMCPState::EPieKind::User;
+		UserStarting.Phase = HaybaMCPState::EPiePhase::Starting;
+		const double Now = FPlatformTime::Seconds();
+		{
+			FHaybaMCPEditorState::FScopedPieOverride UserPlay{ UserStarting };
+
+			Veto->Set(1, ECVF_SetByCode);
+			State.ClearUserPlayVeto();
+			const HaybaMCPState::FPlayDecision First = State.EvaluateUserPlayRequest(Now);
+			TestTrue(TEXT("mode 1: the first press is vetoed"), First.bDeny);
+			TestTrue(TEXT("mode 1: the veto names the builder"), First.Reason.Contains(Builder));
+			TestEqual(TEXT("mode 1: the veto opens the double-press window"), State.LastUserPlayVetoAt(), Now);
+			const HaybaMCPState::FPlayDecision Second = State.EvaluateUserPlayRequest(Now + 3.0);
+			TestTrue(TEXT("mode 1: a second press within 10 s plays"), Second.bOverrideAccepted && !Second.bDeny);
+			TestEqual(TEXT("an accepted override closes the window"), State.LastUserPlayVetoAt(), 0.0);
+			TestTrue(TEXT("the next Play needs its own double press"), State.EvaluateUserPlayRequest(Now + 20.0).bDeny);
+			TestTrue(TEXT("11 s after that veto is outside the window"), State.EvaluateUserPlayRequest(Now + 31.0).bDeny);
+			TestEqual(TEXT("each veto restarts the window"), State.LastUserPlayVetoAt(), Now + 31.0);
+
+			State.NoteUserPlayVeto(Now);
+			TestTrue(TEXT("runtime: exactly 10 s accepts the override"), State.EvaluateUserPlayRequest(Now + 10.0).bOverrideAccepted);
+			State.NoteUserPlayVeto(Now + 1.0);
+			TestTrue(TEXT("runtime: a future veto time denies"), State.EvaluateUserPlayRequest(Now).bDeny);
+
+			Veto->Set(2, ECVF_SetByCode);
+			State.ClearUserPlayVeto();
+			TestTrue(TEXT("mode 2 vetoes"), State.EvaluateUserPlayRequest(Now).bDeny);
+			TestTrue(TEXT("mode 2 has no double press"), State.EvaluateUserPlayRequest(Now + 1.0).bDeny);
+			TestEqual(TEXT("mode 2 opens no window"), State.LastUserPlayVetoAt(), 0.0);
+
+			Veto->Set(0, ECVF_SetByCode);
+			const HaybaMCPState::FPlayDecision Notify = State.EvaluateUserPlayRequest(Now);
+			TestTrue(TEXT("mode 0 lets Play go ahead with a notification"), !Notify.bDeny && Notify.bNotifyOnly);
+		}
+		{
+			HaybaMCPState::FPieState AgentStarting = UserStarting;
+			AgentStarting.Kind = HaybaMCPState::EPieKind::Agent;
+			AgentStarting.Owner = TEXT("conn:900401");
+			FHaybaMCPEditorState::FScopedPieOverride AgentPlay{ AgentStarting };
+			Veto->Set(1, ECVF_SetByCode);
+			State.ClearUserPlayVeto();
+			TestTrue(TEXT("an agent's request is vetoed"), State.EvaluateUserPlayRequest(Now).bDeny);
+			TestTrue(TEXT("and never overridden"), State.EvaluateUserPlayRequest(Now + 1.0).bDeny);
+			TestEqual(TEXT("an agent veto opens no window"), State.LastUserPlayVetoAt(), 0.0);
+		}
+		{
+			FHaybaEditorHealth::FScopedOverrideForTests UnsafeHealth;
+			FHaybaMCPEditorState::FScopedPieOverride UserPlay{ UserStarting };
+			AddExpectedMessagePlain(TEXT("editor_unsafe: native fault"), ELogVerbosity::Error, EAutomationExpectedMessageFlags::Contains, 1);
+			FHaybaEditorHealth::RecordCaughtFault(EHaybaFaultSite::TestInjection, 0xC0000005u);
+			for (const int32 Mode : { 0, 1, 2 })
+			{
+				Veto->Set(Mode, ECVF_SetByCode);
+				State.NoteUserPlayVeto(Now - 1.0);
+				const FPlayDecision Unsafe = State.EvaluateUserPlayRequest(Now);
+				TestTrue(TEXT("runtime: unsafe beats a build and double press in every mode"),
+					Unsafe.bDeny && !Unsafe.bOverrideAccepted && !Unsafe.bNotifyOnly);
+				TestEqual(TEXT("runtime: unsafe keeps its exact refusal text"), Unsafe.Reason, FString(UnsafePlayVetoText));
+				TestEqual(TEXT("runtime: unsafe opens no build override window"), State.LastUserPlayVetoAt(), Now - 1.0);
+			}
+		}
+		{
+			FString Error;
+			FHaybaMCPLeaseManager::Get().Table().Release(Lease.Token, Builder, Error);
+			FHaybaMCPEditorState::FScopedPieOverride UserPlay{ UserStarting };
+			Veto->Set(1, ECVF_SetByCode);
+			State.ClearUserPlayVeto();
+			const HaybaMCPState::FPlayDecision Free = State.EvaluateUserPlayRequest(Now);
+			TestTrue(TEXT("with the build released, Play is allowed silently"),
+				!Free.bDeny && !Free.bNotifyOnly && !Free.bOverrideAccepted);
+		}
+	}
+
 	return true;
 }
 

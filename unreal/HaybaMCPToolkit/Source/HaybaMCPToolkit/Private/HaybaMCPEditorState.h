@@ -3,8 +3,8 @@
 // PIE hooks are bound at module startup, before the TCP server can deliver a
 // request and in owned automation children too. The PIE tracker is the pure
 // HaybaMCPState::FPieTracker; FHaybaPIEAuthorizer (defined in the .cpp) vetoes
-// the user's Play while the editor is unsafe. Game thread only. The module
-// holds no member for this: it is a function-local singleton.
+// Play while the editor is unsafe or an asset build is held. Game thread only.
+// The module holds no member for this: it is a function-local singleton.
 
 #pragma once
 
@@ -49,9 +49,21 @@ public:
 	/** Writes `building`. It is always an array, [] when nothing is built. */
 	void WriteBuildingJson(const TSharedRef<FJsonObject>& Out) const;
 
-	/** The Play authorizer's whole decision for one request made at Now. Non-const:
-	 *  IPIEAuthorizer's methods are const (C19), so T10.1 keeps its double-press
-	 *  state on this object and fills in the build branch here. */
+	/** When the user's last Play was vetoed for a build (mode 1). 0 = none.
+	 *  It lives here, because IPIEAuthorizer's methods are const (C19). */
+	double LastUserPlayVetoAt() const;
+	void NoteUserPlayVeto(double Now);
+	void ClearUserPlayVeto();
+
+	/**
+	 * The authorizer's whole decision for one Play request (P0 T2 unsafe
+	 * branch, T10 build branch). It reads CurrentPie() for the request's
+	 * kind, FHaybaEditorHealth::IsUnsafe(), BuildingAssets() and
+	 * hayba.PIEBuildVeto. It records or clears the double-press window, logs
+	 * every outcome, and posts Hayba's own notification for mode 0 and for an
+	 * accepted override. It never cancels the request; the engine does that
+	 * on a deny.
+	 */
 	HaybaMCPState::FPlayDecision EvaluateUserPlayRequest(double Now);
 
 	/** Sessions ended since startup (one per session, however many end delegates fired). */
@@ -73,6 +85,8 @@ public:
 private:
 	FHaybaMCPEditorState() = default;
 
+	/** See LastUserPlayVetoAt(). */
+	double LastUserPlayVeto = 0.0;
 	HaybaMCPState::FPieTracker Tracker;
 	FDelegateHandle PreBeginHandle;
 	FDelegateHandle BeginHandle;

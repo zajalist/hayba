@@ -8,6 +8,9 @@
 #include "Editor/EditorEngine.h"
 #include "Features/IModularFeatures.h"
 #include "Framework/Notifications/NotificationManager.h"
+#include "HAL/IConsoleManager.h"
+#include "Framework/Application/SlateApplication.h"
+#include "Misc/App.h"
 #include "HAL/PlatformTime.h"
 #include "IPIEAuthorizer.h"
 #include "Misc/EngineVersionComparison.h"
@@ -15,9 +18,36 @@
 #include "Widgets/Notifications/SNotificationList.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogHaybaMCPState, Log, All);
+DEFINE_LOG_CATEGORY_STATIC(LogHaybaMCPPlayVeto, Log, All);
+
+/** P0 T10 (D7). The only live switch for the build veto. The unsafe veto has
+ *  no switch. */
+static TAutoConsoleVariable<int32> CVarHaybaPIEBuildVeto(
+	TEXT("hayba.PIEBuildVeto"),
+	1,
+	TEXT("What Hayba does when Play is pressed while an agent holds an asset build lease (editor_get_state.building).\n")
+	TEXT(" 0: allow Play and show a notification.\n")
+	TEXT(" 1: stop Play; pressing Play again within 10 s plays anyway (default).\n")
+	TEXT(" 2: stop Play with no override.\n")
+	TEXT("The veto after a contained native fault (editor_unsafe) is separate and cannot be switched off."),
+	ECVF_Default);
+
+/** A transient editor notification for the Play outcomes the engine does not
+ *  announce itself: mode 0, an accepted override, and every veto on 5.7. It
+ *  is skipped headless and in automation children (-unattended). */
+static void PostPlayVetoNotification(const FString& Text)
+{
+	if (FApp::IsUnattended() || !FSlateApplication::IsInitialized())
+	{
+		return;
+	}
+	FNotificationInfo Info(FText::FromString(Text));
+	Info.ExpireDuration = 8.0f;
+	FSlateNotificationManager::Get().AddNotification(Info);
+}
 
 /**
- * Vetoes the user's Play button while the editor is unsafe (D2). It never
+ * Vetoes Play while the editor is unsafe (D2) or an asset build is held (D7). It never
  * greys the button out, and it never cancels the request itself: the engine
  * cancels a denied request (PlayLevel.cpp:2616-2632), and a second cancel from
  * here would broadcast CancelPIE twice and reset the request while the engine
@@ -30,16 +60,15 @@ public:
 	// UE 5.7: compiled behind this guard and unverified (the toolkit does not build on 5.7 today).
 	virtual bool RequestPIEPermission(bool /*bIsSimulateInEditor*/, FString& OutReason) const override
 	{
-		const HaybaMCPState::FPlayDecision Decision = FHaybaMCPEditorState::Get().EvaluateUserPlayRequest(FPlatformTime::Seconds());
-		if (!Decision.bDeny)
+		const HaybaMCPState::FPlayDecision Decision =
+			FHaybaMCPEditorState::Get().EvaluateUserPlayRequest(FPlatformTime::Seconds());
+		if (Decision.bDeny)
 		{
-			return true;
+			OutReason = Decision.Reason;
+			PostPlayVetoNotification(Decision.Reason);   // 5.7 does not show the reason itself
+			return false;
 		}
-		OutReason = Decision.Reason;
-		UE_LOG(LogHaybaMCPState, Warning, TEXT("Play vetoed: %s"), *Decision.Reason);
-		// 5.7's authorizer loop posts nothing itself, so Hayba does.
-		FSlateNotificationManager::Get().AddNotification(FNotificationInfo(FText::FromString(Decision.Reason)));
-		return false;
+		return true;
 	}
 #else
 protected:
@@ -50,13 +79,18 @@ protected:
 
 	virtual TValueOrError<bool, FText> RequestPIEPermissionInternal(bool /*bIsSimulateInEditor*/) const override
 	{
-		const HaybaMCPState::FPlayDecision Decision = FHaybaMCPEditorState::Get().EvaluateUserPlayRequest(FPlatformTime::Seconds());
-		if (!Decision.bDeny)
+		// Called after PreBeginPIE and before the pre-play compile. On a deny the
+		// engine logs and shows this text, then cancels the request itself
+		// (PlayLevel.cpp:2616-2632). Never call CancelRequestPlaySession here:
+		// that broadcasts CancelPIE twice and resets PlaySessionRequest while
+		// StartPlayInEditorSession still holds a reference into it (:1197).
+		const HaybaMCPState::FPlayDecision Decision =
+			FHaybaMCPEditorState::Get().EvaluateUserPlayRequest(FPlatformTime::Seconds());
+		if (Decision.bDeny)
 		{
-			return MakeValue(true);
+			return MakeError(FText::FromString(Decision.Reason));
 		}
-		UE_LOG(LogHaybaMCPState, Warning, TEXT("Play vetoed: %s"), *Decision.Reason);
-		return MakeError(FText::FromString(Decision.Reason));
+		return MakeValue(true);
 	}
 #endif
 };
@@ -212,15 +246,53 @@ void FHaybaMCPEditorState::WriteBuildingJson(const TSharedRef<FJsonObject>& Out)
 	Out->SetArrayField(TEXT("building"), HaybaMCPState::BusyAssetsToJson(BuildingAssets()));
 }
 
+double FHaybaMCPEditorState::LastUserPlayVetoAt() const
+{
+	return LastUserPlayVeto;
+}
+
+void FHaybaMCPEditorState::NoteUserPlayVeto(double Now)
+{
+	LastUserPlayVeto = Now;
+}
+
+void FHaybaMCPEditorState::ClearUserPlayVeto()
+{
+	LastUserPlayVeto = 0.0;
+}
+
 HaybaMCPState::FPlayDecision FHaybaMCPEditorState::EvaluateUserPlayRequest(double Now)
 {
-	const HaybaMCPState::FPieState Pie = CurrentPie();
-	const HaybaMCPState::EPlayRequestKind Kind = Pie.Kind == HaybaMCPState::EPieKind::Agent
-		? HaybaMCPState::EPlayRequestKind::Agent
-		: HaybaMCPState::EPlayRequestKind::User;
-	// T10 supplies the build leases, the hayba.PIEBuildVeto mode and the last veto time.
-	return HaybaMCPState::DecideUserPlay(TArray<HaybaMCPState::FBusyAsset>(), Kind, /*Mode=*/1,
-		FHaybaEditorHealth::IsUnsafe(), /*LastVetoAt=*/-1.0, Now);
+	using namespace HaybaMCPState;
+	const FPieState Pie = CurrentPie();
+	const EPlayRequestKind Kind = Pie.Kind == EPieKind::Agent ? EPlayRequestKind::Agent : EPlayRequestKind::User;
+	const bool bUnsafe = FHaybaEditorHealth::IsUnsafe();
+	const int32 Mode = CVarHaybaPIEBuildVeto.GetValueOnGameThread();
+	const TArray<FBusyAsset> Busy = bUnsafe ? TArray<FBusyAsset>() : BuildingAssets();
+	const FPlayDecision Decision = DecideUserPlay(Busy, Kind, Mode, bUnsafe, LastUserPlayVeto, Now);
+	const TCHAR* Who = Kind == EPlayRequestKind::Agent ? TEXT("agent") : TEXT("user");
+
+	if (Decision.bDeny)
+	{
+		if (!bUnsafe && Kind == EPlayRequestKind::User && NormalizePlayVetoMode(Mode) == 1)
+		{
+			NoteUserPlayVeto(Now);   // a second press within 10 s plays
+		}
+		UE_LOG(LogHaybaMCPPlayVeto, Warning, TEXT("Play vetoed (%s request, hayba.PIEBuildVeto %d%s): %s"),
+			Who, Mode, bUnsafe ? TEXT(", editor_unsafe") : TEXT(""), *Decision.Reason);
+	}
+	else if (Decision.bOverrideAccepted)
+	{
+		ClearUserPlayVeto();
+		UE_LOG(LogHaybaMCPPlayVeto, Warning, TEXT("%s"), *Decision.Reason);
+		PostPlayVetoNotification(Decision.Reason);
+	}
+	else if (Decision.bNotifyOnly)
+	{
+		UE_LOG(LogHaybaMCPPlayVeto, Warning, TEXT("Play allowed during a build (hayba.PIEBuildVeto %d): %s"), Mode, *Decision.Reason);
+		PostPlayVetoNotification(Decision.Reason);
+	}
+	return Decision;
 }
 
 #if WITH_DEV_AUTOMATION_TESTS

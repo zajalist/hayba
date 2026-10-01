@@ -5,6 +5,11 @@ All notable changes to Hayba MCP Toolkit are documented here. Format based on [K
 ## [Unreleased]
 
 ### Added
+- The Play button is vetoed while an agent holds an asset build lease (P0,
+  D7). `hayba.PIEBuildVeto` (console): `1` (default) stops Play and a second
+  press within 10 s plays anyway, `2` stops it with no override, `0` only
+  shows a notification. The veto after a contained native fault is separate
+  and always on.
 - Sticky `editor_unsafe` (ADR-0011). After Hayba contains a native fault, the
   editor refuses writes, Python, saves, compiles, PIE and batches with
   `code: "editor_unsafe_restart_required"` until it restarts; status commands

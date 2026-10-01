@@ -126,3 +126,36 @@ lease gate, so a PIE start against another owner's build answers
   - After T7, an orphaned build lease keeps `asset_busy` (and refuses
     `editor_start_pie`) for up to 60 s after the builder dies.
 - The user's Play button is covered separately (D7, T10).
+
+## Addendum: the Play button during a build (D7, P0 T10)
+
+D7 was approved on 2026-09-28. `FHaybaPIEAuthorizer` gains a build branch next
+to the unsafe branch. An `IPIEAuthorizer` runs after `PreBeginPIE` and
+before the pre-play Blueprint compile, so it can stop Play from compiling
+Blueprints while their assets are being built.
+
+- Any `asset:` X lock is a build (`BuildingAssets()`); the person at the
+  editor is never its owner.
+- `hayba.PIEBuildVeto` (console, live):
+  - `0` notifies only;
+  - `1` (default) vetoes, and a second press within 10 s plays;
+  - `2` vetoes with no override.
+  - Unknown values fail toward the veto.
+- Rollback: `hayba.PIEBuildVeto 0`.
+- A veto on 5.8 returns `MakeError(FText)` naming the asset, owner and label.
+  The engine shows it and cancels the request. Hayba never calls
+  `CancelRequestPlaySession`, which would double the `CancelPIE` broadcast
+  (the PIE tracker would count two ends) and reset `PlaySessionRequest` while
+  `StartPlayInEditorSession` still holds `InRequestParams`. The 5.7 branch
+  returns false with `OutReason` and posts Hayba's own notification. It is
+  compiled behind the version guard and is unverified.
+- The double-press time lives on `FHaybaMCPEditorState`, because the
+  authorizer's methods are `const`. An accepted override clears it, so every
+  Play session needs its own double press.
+- Agent requests never get the override. They normally never reach the build
+  branch, because slot 3 refuses `editor_start_pie` during any build first;
+  with `LeaseEnforcement` Off they do, and are vetoed without an override in
+  modes 1 and 2.
+- Dirty or uncompiled code Blueprints still refuse agent Play before it can
+  compile them; the build setting does not bypass that guard.
+- The unsafe veto (D2) keeps precedence and has no switch and no override.

@@ -498,21 +498,79 @@ namespace HaybaMCPState
 	inline const TCHAR* const UnsafePlayVetoText =
 		TEXT("Hayba: the editor is unsafe after a contained native fault. Save your work and restart; Play would compile Blueprints and run garbage collection in a damaged process.");
 
+	/** hayba.PIEBuildVeto as DecideUserPlay reads it. 0 notifies, 1 vetoes
+	 *  with a 10 s double-press override (the default, D7), and 2 vetoes
+	 *  strictly. An unknown value fails toward the veto: negative reads as 1,
+	 *  above 2 reads as 2. */
+	inline int32 NormalizePlayVetoMode(int32 Mode)
+	{
+		if (Mode == 0) return 0;
+		if (Mode >= 2) return 2;
+		return 1;
+	}
+
+	/** "<asset> is being built by '<owner>' (label <label>)[ and N more asset(s)]". */
+	inline FString DescribeBusyForPlay(const TArray<FBusyAsset>& Busy)
+	{
+		if (Busy.Num() == 0)
+		{
+			return FString();
+		}
+		const FBusyAsset& First = Busy[0];
+		FString Text = FString::Printf(TEXT("%s is being built by '%s' (label %s)"),
+			*First.Asset, *First.Owner, *LabelOrNone(First.Label));
+		if (Busy.Num() > 1)
+		{
+			Text += FString::Printf(TEXT(" and %d more asset(s)"), Busy.Num() - 1);
+		}
+		return Text;
+	}
+
 	/**
 	 * A Play request that reached the authorizer (the user's button, or an
 	 * agent request slot 1 did not refuse). The unsafe branch takes precedence
-	 * and has no override (D2). The build branch (Busy, Mode, LastVetoAt) is T10.
+	 * and has no override (D2). The build branch uses the mode and last veto time (D7).
 	 */
-	inline FPlayDecision DecideUserPlay(
-		const TArray<FBusyAsset>& Busy, EPlayRequestKind Kind, int32 Mode, bool bUnsafe, double LastVetoAt, double Now)
+	inline FPlayDecision DecideUserPlay(const TArray<FBusyAsset>& Busy, EPlayRequestKind Kind, int32 Mode, bool bUnsafe, double LastVetoAt, double Now)
 	{
 		FPlayDecision D;
 		if (bUnsafe)
 		{
 			D.bDeny = true;
 			D.Reason = UnsafePlayVetoText;
+			return D;
 		}
-		return D;
+		if (Busy.Num() == 0)
+		{
+			return D;
+		}
+		const FString What = DescribeBusyForPlay(Busy);
+		switch (NormalizePlayVetoMode(Mode))
+		{
+		case 0:
+			D.bNotifyOnly = true;
+			D.Reason = FString::Printf(
+				TEXT("Hayba: %s. Play goes ahead because hayba.PIEBuildVeto is 0; Blueprints compiled before play may be half-built."), *What);
+			return D;
+		case 1:
+			if (Kind == EPlayRequestKind::User && LastVetoAt > 0.0 && Now >= LastVetoAt
+				&& Now - LastVetoAt <= PlayVetoOverrideWindowSeconds)
+			{
+				D.bOverrideAccepted = true;
+				D.Reason = FString::Printf(TEXT("Hayba: Play override accepted while %s."), *What);
+				return D;
+			}
+			D.bDeny = true;
+			D.Reason = Kind == EPlayRequestKind::User
+				? FString::Printf(TEXT("Hayba stopped Play: %s. Playing now would compile it half-built. Press Play again within 10 s to play anyway."), *What)
+				: FString::Printf(TEXT("Hayba stopped an agent's Play request: %s. Agent requests have no override; retry when editor_get_state.building no longer lists it."), *What);
+			return D;
+		default:
+			D.bDeny = true;
+			D.Reason = FString::Printf(
+				TEXT("Hayba stopped Play: %s. Playing now would compile it half-built. hayba.PIEBuildVeto is 2, so there is no override; wait until the build finishes."), *What);
+			return D;
+		}
 	}
 
 	/** The loaded-Blueprint facts UE 5.8 PlayLevel.cpp ResolveDirtyBlueprints tests before play. */
