@@ -1,3 +1,5 @@
+import { createServer, type AddressInfo } from 'node:net';
+import { FrameDecoder } from './tcp-frame-decoder.js';
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -431,5 +433,40 @@ describe('envelope lease from the environment (R9)', () => {
     c.setLease(ID);
     c.noteReply({ id: 'x', ok: true, data: {}, lease_warning: { reason: 'lease_unknown' } });
     expect(c.getLease()).toBe(ID);
+  });
+});
+
+describe('envelope owner (T8)', () => {
+  it('every envelope the client sends carries an owner', async () => {
+    const frames: Array<Record<string, unknown>> = [];
+    const server = createServer((socket) => {
+      const decoder = new FrameDecoder();
+      socket.on('data', (chunk: Buffer) => {
+        for (const message of decoder.push(chunk)) {
+          const envelope = JSON.parse(message.toString('utf-8')) as Record<string, unknown>;
+          frames.push(envelope);
+          const reply = Buffer.from(JSON.stringify({ id: envelope.id, ok: true, data: {} }), 'utf-8');
+          const header = Buffer.alloc(4);
+          header.writeUInt32BE(reply.length, 0);
+          socket.write(Buffer.concat([header, reply]));
+        }
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as AddressInfo).port; // an ephemeral port, never the editor's 52342
+    const client = new UETcpClient('127.0.0.1', port);
+    try {
+      await client.connect();
+      await client.send('ping', {});
+      client.setOwner('   '); // a blank owner falls back to a per-process one, never to nothing
+      await client.send('actor_spawn', { a: 1 });
+    } finally {
+      client.disconnect();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+    expect(frames).toHaveLength(2);
+    for (const frame of frames) {
+      expect(typeof frame.owner === 'string' && (frame.owner as string).length > 0, JSON.stringify(frame)).toBe(true);
+    }
   });
 });

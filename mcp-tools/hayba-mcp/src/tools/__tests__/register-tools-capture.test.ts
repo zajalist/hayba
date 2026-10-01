@@ -88,7 +88,7 @@ describe('registerTools capture', () => {
 
     expect(Object.keys(sig.schema)).toEqual(['command']);
     expect(Object.keys(sig.wireSchema ?? {})).toEqual(['command', 'name']);
-    expect(Object.keys(python.schema)).toEqual(['script', 'allow_unsafe', 'deadline_s', 'world_partition', 'transaction']);
+    expect(Object.keys(python.schema)).toEqual(['script', 'allow_unsafe', 'deadline_s', 'world_partition', 'transaction', 'read_only', 'resources']);
     expect(Object.keys(python.wireSchema ?? {})).toEqual([
       'script',
       'code',
@@ -96,6 +96,8 @@ describe('registerTools capture', () => {
       'deadline_s',
       'world_partition',
       'transaction',
+      'read_only',
+      'resources',
     ]);
   });
 

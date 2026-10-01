@@ -329,6 +329,7 @@ export const niagaraSystemsDescriptor: PyToolDescriptor<typeof niagaraSystemsSch
   returns: '{ok, systems:[{path,name}], count, has_more, next_offset}',
   schema: niagaraSystemsSchema.shape,
   meta: readMeta,
+  readOnly: true,
   buildScript: niagaraSystemsScript,
   timeoutMs: 30_000,
 };
@@ -379,6 +380,7 @@ export const niagaraSystemInspectDescriptor: PyToolDescriptor<typeof niagaraSyst
     '{ok, system_path, emitters:[{name,enabled,sim_target}], user_params:[{name,type,is_data_interface}], data_interfaces[], fixed_bounds, warmup_time, effect_type, warnings[]}',
   schema: niagaraSystemInspectSchema.shape,
   meta: readMeta,
+  readOnly: true,
   buildScript: niagaraSystemInspectScript,
   timeoutMs: 30_000,
 };
@@ -412,6 +414,7 @@ export const niagaraParamListDescriptor: PyToolDescriptor<typeof niagaraParamLis
   returns: '{ok, system_path, user_params:[{name,type,is_data_interface}], count, warnings[]}',
   schema: niagaraParamListSchema.shape,
   meta: readMeta,
+  readOnly: true,
   buildScript: niagaraParamListScript,
   timeoutMs: 30_000,
 };
@@ -708,6 +711,7 @@ export const niagaraComponentInspectDescriptor: PyToolDescriptor<typeof niagaraC
   returns: '{ok, component_path, active, paused, age, system_path}',
   schema: niagaraComponentInspectSchema.shape,
   meta: readMeta,
+  readOnly: true,
   buildScript: niagaraComponentInspectScript,
   timeoutMs: 30_000,
 };
@@ -771,6 +775,7 @@ export const niagaraListComponentsDescriptor: PyToolDescriptor<typeof niagaraLis
   returns: '{ok, components:[{path,actor,system,active}], count, has_more, next_offset}',
   schema: niagaraListComponentsSchema.shape,
   meta: readMeta,
+  readOnly: true,
   buildScript: niagaraListComponentsScript,
   timeoutMs: 30_000,
 };
@@ -987,6 +992,7 @@ export const niagaraValidateDescriptor: PyToolDescriptor<typeof niagaraValidateS
   returns: '{ok, system_path, violations:[{code,severity,detail}], fixed, error_count, warning_count}',
   schema: niagaraValidateSchema.shape,
   meta: readMeta,
+  readOnly: true,
   buildScript: niagaraValidateScript,
   timeoutMs: 30_000,
 };

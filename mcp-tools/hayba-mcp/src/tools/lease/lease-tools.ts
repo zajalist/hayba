@@ -279,11 +279,11 @@ export const LEASE_DESCRIPTORS: ToolDescriptor[] = [
   {
     name: 'lease_status',
     description:
-      'Who holds or waits for which editor resources, the enforcement mode, and which of your leases this server is renewing.',
+      'Who holds or waits for which editor resources, the enforcement mode (off / advisory / enforced_for_writes / enforced), the identified agents the editor sees as connected (active_owners), and which of your leases this server is renewing.',
     meta: statusMeta,
     handler: async () => handleLeaseStatus() as never,
     cost: 'low',
-    returns: '{enforcement, caller_owner, current_world, max_ttl_s, orphan_grace_s, leases:[{owner, mine, lease_id?, label?, resources, lane, held_s, expires_in_s, bound_to_connection, orphaned, bind_connection, ttl_s}], waiters:[...], renewing_lease_ids}',
+    returns: '{enforcement, caller_owner, current_world, max_ttl_s, orphan_grace_s, active_owners, leases:[{owner, mine, lease_id?, label?, resources, lane, held_s, expires_in_s, bound_to_connection, orphaned, bind_connection, ttl_s}], waiters:[...], renewing_lease_ids}',
     schema: {},
   },
 ];

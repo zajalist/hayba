@@ -234,6 +234,24 @@ export const executionFields = {
     .boolean()
     .optional()
     .describe('false = do not wrap this call in an editor undo transaction (no Ctrl+Z for it). Default true.'),
+  read_only: z
+    .boolean()
+    .optional()
+    .describe(
+      'Declare that the script only reads. The editor then treats it as a read for leases. Undeclared scripts conflict with every other owner\'s lease (X on global) under EnforcedForWrites.',
+    ),
+  resources: z
+    .array(
+      z.union([
+        z.string().min(1).max(512),
+        z.object({ resource: z.string().min(1).max(512), mode: z.enum(['shared', 'exclusive']).optional() }).strict(),
+      ]),
+    )
+    .max(32)
+    .optional()
+    .describe(
+      'Declare what the script writes (same forms as lease_acquire, e.g. "asset:/Game/Props/SM_Rock"). A declared script conflicts only with leases on those resources.',
+    ),
 };
 
 export const schema = z.object({

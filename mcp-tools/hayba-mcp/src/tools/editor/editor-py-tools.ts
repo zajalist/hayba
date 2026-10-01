@@ -147,6 +147,7 @@ export const editorGetCameraDescriptor: PyToolDescriptor<typeof editorGetCameraS
   returns: '{ok, location:[x,y,z], rotation:[roll,pitch,yaw]}',
   schema: editorGetCameraSchema.shape,
   meta: readMeta,
+  readOnly: true,
   buildScript: editorGetCameraScript,
   timeoutMs: 30_000,
 };
@@ -216,6 +217,7 @@ export const editorCvarGetDescriptor: PyToolDescriptor<typeof editorCvarGetSchem
   returns: '{ok, name, type, type_assumed, value, verified, string_value, note}',
   schema: editorCvarGetSchema.shape,
   meta: readMeta,
+  readOnly: true,
   buildScript: editorCvarGetScript,
   timeoutMs: 30_000,
 };
@@ -313,6 +315,7 @@ export const selectionGetDescriptor: PyToolDescriptor<typeof selectionGetSchema.
   returns: '{ok, actors:[{actor_id,path,class}], assets[], components:[{class,name}], actor_count, asset_count}',
   schema: selectionGetSchema.shape,
   meta: readMeta,
+  readOnly: true,
   buildScript: selectionGetScript,
   timeoutMs: 30_000,
 };
@@ -369,6 +372,7 @@ export const assetInspectDescriptor: PyToolDescriptor<typeof assetInspectSchema.
   returns: '{ok, asset_path, class, dirty, dep_count, ref_count, disk_size}',
   schema: assetInspectSchema.shape,
   meta: readMeta,
+  readOnly: true,
   buildScript: assetInspectScript,
   timeoutMs: 30_000,
 };
@@ -428,6 +432,7 @@ export const outlinerTreeDescriptor: PyToolDescriptor<typeof outlinerTreeSchema.
   returns: '{ok, nodes:[{actor_id,path,class,folder,attach_parent}], total, has_more, next_offset}',
   schema: outlinerTreeSchema.shape,
   meta: readMeta,
+  readOnly: true,
   buildScript: outlinerTreeScript,
   timeoutMs: 30_000,
 };
@@ -490,6 +495,7 @@ export const objectInspectDescriptor: PyToolDescriptor<typeof objectInspectSchem
   returns: '{ok, object, class, properties:[{name,type,value}], total, has_more, next_offset}',
   schema: objectInspectSchema.shape,
   meta: readMeta,
+  readOnly: true,
   buildScript: objectInspectScript,
   timeoutMs: 30_000,
 };
@@ -535,6 +541,7 @@ export const objectExistsDescriptor: PyToolDescriptor<typeof objectExistsSchema.
   returns: '{ok, exists, kind, path}',
   schema: objectExistsSchema.shape,
   meta: readMeta,
+  readOnly: true,
   buildScript: objectExistsScript,
   timeoutMs: 30_000,
 };
@@ -631,6 +638,7 @@ export const reflectSearchTypesDescriptor: PyToolDescriptor<typeof reflectSearch
   returns: '{ok, matches:[{name,kind}], total, has_more}',
   schema: reflectSearchTypesSchema.shape,
   meta: readMeta,
+  readOnly: true,
   buildScript: reflectSearchTypesScript,
   timeoutMs: 30_000,
 };
@@ -684,6 +692,7 @@ export const reflectClassDescriptor: PyToolDescriptor<typeof reflectClassSchema.
   returns: '{ok, class, super_chain[], cdo_summary:[{name, value?}]}',
   schema: reflectClassSchema.shape,
   meta: readMeta,
+  readOnly: true,
   buildScript: reflectClassScript,
   timeoutMs: 30_000,
 };

@@ -284,3 +284,42 @@ describe('LeaseKeeper lifetime (T7)', () => {
     expect(intervals).toEqual([20_000]);
   });
 });
+
+describe('lease enforcement replies (T8)', () => {
+  it('maps an owner_required refusal to its own code', async () => {
+    const { send } = fakeEditor(() => ({
+      ok: false,
+      code: 'owner_required',
+      error: "owner_required: 'level_save' (write_world) names no owner while 1 other agents are connected (lane-3).",
+      lease: { reason: 'owner_missing', other_owners: ['lane-3'] },
+    }));
+    await expect(executeCommand('level_save', {}, { sender: send })).rejects.toMatchObject({
+      name: 'UeToolError',
+      code: 'owner_required',
+    });
+  });
+
+  it('keeps lease_unknown as a lease_conflict reason, not a code of its own', async () => {
+    const { send } = fakeEditor(() => ({
+      ok: false,
+      code: 'lease_conflict',
+      error: "lease_conflict: 'level_save': the envelope's lease_id is unknown or expired",
+      lease: { reason: 'lease_unknown', lease_id_error: 'unknown_or_expired' },
+    }));
+    await expect(executeCommand('level_save', {}, { sender: send })).rejects.toMatchObject({
+      code: 'lease_conflict',
+      uePayload: { lease: { reason: 'lease_unknown' } },
+    });
+  });
+
+  it('passes repeats_in_window through an advisory warning', async () => {
+    const { send } = fakeEditor(() => ({
+      ok: true,
+      data: { ran: true },
+      lease_warning: { code: 'lease_conflict', reason: 'held', enforcement: 'advisory', repeats_in_window: 7 },
+    }));
+    await expect(executeCommand('actor_spawn', {}, { sender: send })).resolves.toMatchObject({
+      lease_warning: { repeats_in_window: 7 },
+    });
+  });
+});

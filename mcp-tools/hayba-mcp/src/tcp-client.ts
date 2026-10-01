@@ -14,7 +14,7 @@ export interface TcpCommand {
   /** Which agent is calling. Optional on the wire; the editor falls back to
    *  one owner per connection. Leases and Plan-Mode approval are per owner. */
   owner?: string;
-  /** A held lease_id to act under (HAYBA_LEASE_ID, an explicit opt-in; see resolveEnvLease). */
+  /** A held lease_id to act under (helper processes only; an MCP server sends its owner instead). */
   lease?: string;
 }
 
@@ -27,9 +27,9 @@ export interface TcpResponse {
    *  and tool-disabled rejections so the TS ToolExecutor can map them onto a
    *  UeToolError code without string-matching UE's `error` text. */
   code?: string;
-  /** Advisory lease mode: the command ran but collided with another owner's lease. */
+  /** The command ran but collided with another owner's lease, or named a dead or redacted lease (Advisory, or a read under EnforcedForWrites). */
   lease_warning?: Record<string, unknown>;
-  /** Enforced lease mode: the conflict that refused the command (code lease_conflict). */
+  /** The lease-gate refusal detail (code lease_conflict or owner_required): reason, holder, other_owners, hint. Never a handle. */
   lease?: Record<string, unknown>;
   /** Sticky editor health on editor_unsafe_restart_required and native_fault_contained (ADR-0011). */
   editor_health?: Record<string, unknown>;

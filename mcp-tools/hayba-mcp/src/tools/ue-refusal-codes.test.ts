@@ -181,3 +181,23 @@ describe('T5: package_read_only', () => {
     });
   });
 });
+
+describe('T8: owner_required', () => {
+  it('maps owner_required to its own code and keeps the lease detail', async () => {
+    const send: Sender = async () => ({
+      id: 'x',
+      ok: false,
+      code: 'owner_required',
+      error:
+        "owner_required: 'blueprint_add_node' (write_scoped) names no owner while 2 other agents are connected (lane-3, node-4312-a1b2c3). Send the envelope 'owner' (HAYBA_AGENT_ID) or a valid lease handle, then retry.",
+      lease: { code: 'owner_required', enforcement: 'enforced_for_writes', reason: 'owner_missing', other_owners: ['lane-3', 'node-4312-a1b2c3'] },
+    });
+    const err = (await executeCommand('blueprint_add_node', {}, { sender: send }).catch((e: unknown) => e)) as {
+      name: string;
+      code: string;
+      uePayload: { lease?: Record<string, unknown> };
+    };
+    expect(err).toMatchObject({ name: 'UeToolError', code: 'owner_required' });
+    expect(err.uePayload.lease).toMatchObject({ reason: 'owner_missing' });
+  });
+});

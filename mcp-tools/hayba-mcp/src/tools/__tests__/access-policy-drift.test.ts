@@ -110,3 +110,29 @@ describe('lease access-class tables name real commands', () => {
     }
   });
 });
+
+describe('write detection fails closed (T8)', () => {
+  const available = existsSync(POLICY);
+  const MANAGER = join(PRIVATE, 'HaybaMCPLeaseManager.cpp');
+
+  it.runIf(available)('ClassifyCommand returns Read only through the R12 read sets', () => {
+    const src = readFileSync(POLICY, 'utf-8').replace(/\r\n/g, '\n');
+    const start = src.indexOf('inline FClassification ClassifyCommand(');
+    expect(start).toBeGreaterThan(-1);
+    const end = src.indexOf('\n\t}\n', start);
+    expect(end).toBeGreaterThan(start);
+    const body = src.slice(start, end);
+    expect(body).toContain('HaybaMCPCommandSets::IsReadSetCommand(Cmd)');
+    expect(body).not.toMatch(/bIsDestructive\s*\?\s*EAccessClass::WriteScoped\s*:\s*EAccessClass::Read/);
+    expect([...body.matchAll(/EAccessClass::Read\b/g)]).toHaveLength(1);
+  });
+
+  it.runIf(available)('python_run is Read only when declared, and undeclared takes global X', () => {
+    const policy = readFileSync(POLICY, 'utf-8');
+    expect(policy).toContain('inline EAccessClass ClassifyPythonRun(bool bDeclaredReadOnly, bool bTouchesWorldPartition, bool bDeclaredResources)');
+    expect(policy).toContain('inline TArray<FLock> UndeclaredPythonRunLocks()');
+    const manager = readFileSync(MANAGER, 'utf-8');
+    expect(manager).toContain('HaybaMCPAccess::UndeclaredPythonRunLocks()');
+    expect(manager).not.toContain('IsReadOnlyScriptForAccess');
+  });
+});

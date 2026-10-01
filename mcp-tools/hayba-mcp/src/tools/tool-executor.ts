@@ -23,7 +23,9 @@ export type UeToolErrorCode =
   // Another owner is building an asset this command would use half-built; nothing ran (P0 T3).
   | 'asset_busy'
   // A handler preflight found a read-only package file (T5); data.make_writable_hint says how to fix it.
-  | 'package_read_only';
+  | 'package_read_only'
+  // A write named no owner while other agents are connected (EnforcedForWrites, T8).
+  | 'owner_required';
 
 export class UeToolError extends Error {
   readonly code: UeToolErrorCode;
@@ -46,6 +48,7 @@ const KNOWN_UE_CODES = new Set<UeToolErrorCode>([
   'pie_blocked',
   'asset_busy',
   'package_read_only',
+  'owner_required',
 ]);
 function mapUeCode(raw: string | undefined): UeToolErrorCode {
   if (raw && KNOWN_UE_CODES.has(raw as UeToolErrorCode)) return raw as UeToolErrorCode;
