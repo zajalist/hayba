@@ -196,12 +196,15 @@ export async function runSteps(steps, ctx, { only = null, manual = false } = {})
       continue;
     }
     const started = Date.now();
+    const retainedBefore = ctx.retainedFixtures?.length ?? 0;
     try {
       await step.run(ctx);
       results.push({ id: step.id, title: step.title, status: 'PASS', ms: Date.now() - started });
     } catch (e) {
       results.push({ id: step.id, title: step.title, status: 'FAIL', error: String(e?.message ?? e) });
     }
+    const retained = ctx.retainedFixtures?.slice(retainedBefore);
+    if (retained?.length) results.at(-1).retained_fixtures = retained;
   }
   return results;
 }
@@ -237,8 +240,9 @@ export function makeCtx({ port, hostDir, rl }) {
     conn: (opts = {}) => new Conn(ctx.port, opts).open(),
     state: async () => (await ctx.call('editor_get_state', { include_dirty: false })).data ?? {},
     contentFile: (pkg, ext) => path.join(hostDir, 'Content', ...pkg.replace(/^\/Game\//, '').split('/')) + ext,
-    human: async (instruction) => {
-      const answer = await rl.question(`\n  >> ${instruction}\n     Press Enter when done, or type fail: `);
+    human: async (instruction, { timeoutMs } = {}) => {
+      const answer = await rl.question(`\n  >> ${instruction}\n     Press Enter when done, or type fail: `,
+        timeoutMs ? { signal: AbortSignal.timeout(timeoutMs) } : {});
       check(answer.trim().toLowerCase() !== 'fail', `the person at the editor reported a failure: ${instruction}`);
     },
   };
@@ -429,7 +433,316 @@ const A_STEPS = [
   },
 ];
 
-export const STEPS = { a: A_STEPS, b: [], c: [] };
+// ----------------------------------------------------------------------------- Deploy B (B1-B10)
+
+const bNow = (ctx) => ctx.now ? ctx.now() : Date.now();
+const bSleep = (ctx, ms) => ctx.sleep ? ctx.sleep(ms) : sleep(ms);
+const bTail = (ctx) => ctx.logTail ? ctx.logTail() : new LogTail(ctx.logFile);
+const bName = (id) => `ladder-${id.toLowerCase()}-${randomUUID().replaceAll('-', '')}`;
+const bParams = { instance_path: '/Game/__HaybaTest__/MI_None', param_name: 'X', value: 1 };
+
+async function bWait(ctx, what, probe, capMs = 20_000, everyMs = 500) {
+  const deadline = bNow(ctx) + capMs;
+  for (;;) {
+    const value = await probe();
+    if (value) return value;
+    check(bNow(ctx) < deadline, `timed out after ${capMs} ms waiting for ${what}`);
+    await bSleep(ctx, everyMs);
+  }
+}
+
+// Keep the original failure and every cleanup failure visible in the step result.
+async function bWithCleanup(work, cleanup) {
+  let failure;
+  try { await work(); } catch (e) { failure = e; }
+  const errors = [];
+  for (const action of cleanup) {
+    try { await action(); } catch (e) { errors.push(String(e?.message ?? e)); }
+  }
+  if (errors.length) throw new Error(`${failure ? `${failure.message}; ` : ''}cleanup failed: ${errors.join('; ')}`);
+  if (failure) throw failure;
+}
+
+function bGrant(r, owner, bound, held = {}) {
+  // Remember only this unique owner's handle before further assertions can fail.
+  if (r.ok === true && r.data?.owner === owner) {
+    if (r.data.status === 'granted' && LEASE_ID_RE.test(r.data.lease_id ?? '')) held.lease_id = r.data.lease_id;
+    if (r.data.status === 'queued' && typeof r.data.ticket === 'string' && r.data.ticket) held.ticket = r.data.ticket;
+  }
+  check(r.ok === true && r.data?.status === 'granted' && LEASE_ID_RE.test(r.data?.lease_id ?? ''), `lease_acquire did not grant: ${JSON.stringify(r)}`);
+  check(r.data.owner === owner, 'lease_acquire returned another owner');
+  check(!('token' in r.data), 'lease_acquire returned a token');
+  if (bound !== undefined) check(r.data.bound_to_connection === bound, `lease_acquire bound_to_connection must be ${bound}`);
+  return r.data.lease_id;
+}
+
+async function bRelease(send, handle) {
+  const params = typeof handle === 'string' ? { lease_id: handle } : handle;
+  const field = params.lease_id ? 'lease_id' : 'ticket';
+  if (!params[field]) return;
+  const r = await send('lease_release', params);
+  check(r.ok === true && r.data?.released === true && r.data?.[field] === params[field], `lease_release failed: ${JSON.stringify(r)}`);
+}
+
+function bPython(r) {
+  check(r.ok === true && r.data?.ok === true, `python_run failed: ${r.code ?? r.error ?? JSON.stringify(r.data)}`);
+  check(typeof r.data.stdout === 'string' && !(r.data.stderr ?? '').trim(), `python_run has missing stdout or stderr: ${r.data.stderr}`);
+  check(!r.data.stdout_truncated && !r.data.stderr_truncated, 'Python output was truncated');
+  return r.data.stdout.split(/\r?\n/);
+}
+
+function bReadOnly(r, file, compile = false) {
+  check(r.ok === false && r.code === 'package_read_only' && r.data?.code === 'package_read_only', `expected package_read_only refusal: ${JSON.stringify(r)}`);
+  check(typeof r.data.make_writable_hint === 'string' && r.data.make_writable_hint.trim().length > 0, 'missing make_writable_hint');
+  if (compile) check(/save\s*:\s*false/.test(r.data.make_writable_hint), 'compile hint lacks save:false alternative');
+  check(Array.isArray(r.data.read_only_files) && r.data.read_only_files.some((f) => path.resolve(f).toLowerCase() === path.resolve(file).toLowerCase()), 'read_only_files does not name the fixture');
+}
+
+function bFileMode(file) {
+  check(fs.existsSync(file), `fixture file is missing: ${file}`);
+  return fs.statSync(file).mode & 0o777;
+}
+function bSetMode(file, mode) {
+  fs.chmodSync(file, mode);
+  // On Windows Node derives write bits from the observed READONLY attribute.
+  check((bFileMode(file) & 0o200) === (mode & 0o200), `file attribute did not change as requested: ${file}`);
+}
+
+const MAP_STATE_SCRIPT = "import unreal, json\nw = unreal.get_editor_subsystem(unreal.UnrealEditorSubsystem).get_editor_world()\np = w.get_path_name().split('.')[0]\nprint('HAYBA_MAP_STATE ' + json.dumps({'path': p, 'dirty': any(x.get_path_name() == p for x in unreal.EditorLoadingAndSavingUtils.get_dirty_map_packages())}))";
+
+async function bMapState(ctx, pkg, owner, dirty) {
+  const r = await ctx.call('python_run', { script: MAP_STATE_SCRIPT }, { owner, timeoutMs: 30_000 });
+  const lines = bPython(r).filter((line) => line.startsWith('HAYBA_MAP_STATE '));
+  check(lines.length === 1, 'missing unique map state marker');
+  const state = JSON.parse(lines[0].slice('HAYBA_MAP_STATE '.length));
+  check(state.path === pkg, `current map is ${state.path}, expected ${pkg}`);
+  if (dirty !== undefined) check(state.dirty === dirty, `current map dirty=${state.dirty}, expected ${dirty}`);
+}
+
+async function bMap(ctx, id, refuse) {
+  const name = `L_${bName(id).replaceAll('-', '_')}`;
+  const pkg = `/Game/__HaybaTest__/${name}`;
+  const owner = bName(id);
+  const opts = { owner, timeoutMs: 30_000 };
+  const file = ctx.contentFile(pkg, '.umap');
+  let originalMode;
+  let created = false;
+  await bWithCleanup(async () => {
+    const made = await ctx.call('level_create', { path: pkg }, opts);
+    created = made.ok === true && made.data?.world_changed === true;
+    // Record any changed world, even a partial create, for controller recovery.
+    if (made.data?.world_changed || made.data?.created) {
+      created = true;
+      (ctx.retainedFixtures ??= []).push({ step: id, package: pkg, file, saved_clean: false });
+    }
+    check(made.ok === true && made.data?.created === true && made.data?.saved === true && made.data?.verified === true
+      && made.data.path === pkg && made.data.observed_path === pkg, `level_create did not verify ${pkg}: ${JSON.stringify(made)}`);
+    originalMode = bFileMode(file);
+    check((originalMode & 0o200) !== 0, `new map unexpectedly read-only: ${file}`);
+    await bMapState(ctx, pkg, owner, false);
+    bSetMode(file, originalMode & ~0o222);
+    bPython(await ctx.call('python_run', { script: 'import unreal\nunreal.EditorLevelLibrary.spawn_actor_from_class(unreal.Actor, unreal.Vector(0, 0, 0))' }, opts));
+    await bMapState(ctx, pkg, owner, true);
+    check((bFileMode(file) & 0o200) === 0, 'dirty target map is no longer read-only');
+    await refuse({ pkg, file, opts });
+  }, [
+    async () => { if (originalMode !== undefined) bSetMode(file, originalMode); },
+    async () => {
+      if (!created) return;
+      await bMapState(ctx, pkg, owner);
+      const saved = await ctx.call('level_save', {}, opts);
+      check(saved.ok === true && saved.data?.saved === true && saved.data?.verified === true && saved.data?.dirty === false, `level_save did not restore saved/verified state for ${pkg}: ${JSON.stringify(saved)}`);
+      bFileMode(file);
+      await bMapState(ctx, pkg, owner, false);
+      const retained = ctx.retainedFixtures.find((f) => f.package === pkg);
+      if (retained) retained.saved_clean = true;
+    },
+  ]);
+}
+
+function bRefusal(r, holder, caller) {
+  const code = caller ? 'lease_conflict' : 'owner_required';
+  const reason = caller ? 'held' : 'owner_missing';
+  const d = r.lease;
+  check(r.ok === false && r.code === code && d?.code === code && d.enforcement === 'enforced_for_writes'
+    && d.reason === reason && d.command === 'material_set_param' && d.access_class === 'write_scoped'
+    && d.holder_owner === holder, `incorrect ${code} detail: ${JSON.stringify(r)}`);
+  check(!('token' in r) && !('token' in d) && !('lease_id' in d), 'refusal leaks a holder handle');
+  if (caller) check(d.caller_owner === caller, 'conflict names the wrong caller');
+  else check(/^conn:\d+$/.test(d.caller_owner ?? '') && d.other_owners?.includes(holder), 'anonymous refusal lacks synthetic caller or holder presence');
+  return d;
+}
+
+async function bState(ctx) {
+  const r = await ctx.call('editor_get_state', { include_dirty: false });
+  check(r.ok === true && r.data, `editor_get_state failed: ${r.error}`);
+  return r.data;
+}
+
+async function bVetoMode(ctx, mode, opts) {
+  check((await bState(ctx)).pie === 'none', 'CVar readback requires PIE stopped');
+  const r = await ctx.call('editor_run_console_command', { command: `hayba.PIEBuildVeto ${mode}` }, opts);
+  check(r.ok === true && r.data?.executed === true, `CVar command failed: ${JSON.stringify(r)}`);
+  const read = await ctx.call('python_run', { script: "import unreal\nprint('HAYBA_PIE_VETO', unreal.SystemLibrary.get_console_variable_int_value('hayba.PIEBuildVeto'))" }, opts);
+  check(bPython(read).filter((l) => l === `HAYBA_PIE_VETO ${mode}`).length === 1, `CVar readback is not ${mode}`);
+}
+
+const B_STEPS = [
+  { id: 'B1', title: 'ping reports lease_id, enforced_for_writes and owner_required', run: async (ctx) => {
+    const r = await ctx.call('ping');
+    check(r.ok === true, `ping failed: ${r.error}`);
+    const caps = r.data?.capabilities;
+    check(caps?.lease_id === true && caps.lease_enforcement === 'enforced_for_writes' && caps.owner_required === true, `incorrect capabilities: ${JSON.stringify(caps)}`);
+  } },
+  { id: 'B2', title: 'lease id renewals, one executed ping batch and checked release', run: async (ctx) => {
+    const owner = bName('B2'); const tail = bTail(ctx);
+    const c = await ctx.conn({ owner }); let id; const held = {};
+    await bWithCleanup(async () => {
+      id = bGrant(await c.send('lease_acquire', { resources: [`asset:/Game/__HaybaTest__/${owner}`], ttl_s: 60 }), owner, undefined, held);
+      const byId = await c.send('lease_renew', { lease_id: id, ttl_s: 60 });
+      check(byId.ok === true && byId.data?.renewed === true && byId.data.lease_id === id, 'renew by id failed or changed the id');
+      const byOwner = await c.send('lease_renew', {});
+      check(byOwner.ok === true && typeof byOwner.data?.renewed === 'number' && byOwner.data.renewed >= 1
+        && byOwner.data.owner === owner && byOwner.data.leases?.some((l) => l.lease_id === id), 'renew by owner lacks numeric count/own lease');
+      const batch = await c.send('editor_batch', { lease_id: id, steps: [{ cmd: 'ping', fence_after: 'none' }] });
+      check(batch.ok === true && typeof batch.data?.job_id === 'string' && batch.data.job_id.length > 0, 'editor_batch failed');
+      const done = await bWait(ctx, 'the ping batch finishes', async () => {
+        const s = await c.send('batch_status', { job_id: batch.data.job_id });
+        check(s.ok === true && s.data?.job_id === batch.data.job_id && s.data.owner === owner, 'batch_status failed or returned another job');
+        return ['succeeded', 'failed'].includes(s.data.status) ? s.data : null;
+      }, 30_000);
+      check(done.status === 'succeeded' && done.steps_total === 1 && done.steps_run === 1 && done.steps?.length === 1
+        && done.steps[0].index === 0 && done.steps[0].cmd === 'ping' && done.steps[0].state === 'ok' && done.steps[0].data?.capabilities?.lease_id === true, 'batch did not execute exactly one successful ping');
+    }, [async () => { await bRelease(c.send.bind(c), held); }, () => c.close()]);
+    check(tail.lines(/unknown or expired/).length === 0, 'attempt log contains unknown or expired');
+  } },
+  { id: 'B3', title: 'read-only Blueprint save refusal and save:false compile', run: async (ctx) => {
+    const name = `BP_${bName('B3').replaceAll('-', '_')}`; const pkg = `/Game/__HaybaTest__/${name}`;
+    const opts = { owner: bName('B3') }; const file = ctx.contentFile(pkg, '.uasset');
+    let objectPath; let originalMode; let owned = false;
+    await bWithCleanup(async () => {
+      const made = await ctx.call('blueprint_create', { name, package_path: pkg, parent_class_path: '/Script/Engine.Actor' }, opts);
+      objectPath = made.data?.path;
+      owned = made.ok === true && objectPath === `${pkg}.${name}`;
+      check(owned && made.data.saved === true && made.data.dirty === false, `Blueprint was not saved at the owned path: ${JSON.stringify(made)}`);
+      originalMode = bFileMode(file);
+      check((originalMode & 0o200) !== 0, 'new Blueprint is unexpectedly read-only');
+      bSetMode(file, originalMode & ~0o222);
+      bReadOnly(await ctx.call('blueprint_compile', { path: objectPath, save: true }, opts), file, true);
+      const compiled = await ctx.call('blueprint_compile', { path: objectPath, save: false }, opts);
+      check(compiled.ok === true && compiled.data?.ok === true && compiled.data.compiled === true && compiled.data.save_requested === false, `save:false compile failed: ${JSON.stringify(compiled)}`);
+    }, [
+      async () => { if (originalMode !== undefined) bSetMode(file, originalMode); },
+      async () => {
+        if (!owned) return;
+        if (fs.existsSync(file)) check((bFileMode(file) & 0o200) !== 0, `restore writability before deleting owned asset: ${pkg}`);
+        const deleted = await ctx.call('python_run', { script: `import unreal\np = ${JSON.stringify(pkg)}\nprint('HAYBA_DELETE_RESULT', unreal.EditorAssetLibrary.delete_asset(p) and not unreal.EditorAssetLibrary.does_asset_exist(p))` }, opts);
+        check(bPython(deleted).includes('HAYBA_DELETE_RESULT True') && !fs.existsSync(file), `owned asset deletion failed: ${pkg}`);
+      },
+    ]);
+  } },
+  { id: 'B4', title: 'Python read-only dirty map save returns False without a modal', run: async (ctx) => {
+    await bMap(ctx, 'B4', async ({ opts }) => {
+      const r = await ctx.call('python_run', { script: "import unreal\nprint('SAVE_RESULT', unreal.EditorLevelLibrary.save_current_level())" }, opts);
+      check(bPython(r).filter((l) => l === 'SAVE_RESULT False').length === 1, 'Python stdout lacks exact SAVE_RESULT False');
+    });
+  } },
+  { id: 'B5', title: 'level_save refuses its own read-only dirty map without a modal', run: async (ctx) => {
+    await bMap(ctx, 'B5', async ({ file, opts }) => bReadOnly(await ctx.call('level_save', {}, opts), file));
+  } },
+  { id: 'B6', title: 'direct framed TCP idle drop, orphan and owner-renew rebind', run: async (ctx) => {
+    const owner = bName('B6'); let c1; let c2; let id; const held = {};
+    await bWithCleanup(async () => {
+      c1 = await ctx.conn({ owner });
+      id = bGrant(await c1.send('lease_acquire', { resources: [`asset:/Game/__HaybaTest__/${owner}`], ttl_s: 120 }), owner, true, held);
+      await bSleep(ctx, 10_000);
+      check(c1.closed, 'raw connection was not dropped after 10 s idle allowance');
+      c2 = await ctx.conn({ owner });
+      const find = async () => { const s = await c2.send('lease_status'); check(s.ok === true, 'lease_status failed'); return s.data?.leases?.find((l) => l.lease_id === id); };
+      const orphan = await find();
+      check(orphan?.orphaned === true && orphan.bound_to_connection === false, 'idle lease is missing or not orphaned/unbound');
+      const renewed = await c2.send('lease_renew', {});
+      check(renewed.ok === true && typeof renewed.data?.renewed === 'number' && renewed.data.renewed >= 1 && renewed.data.owner === owner, 'owner renewal failed');
+      const revived = await find();
+      check(revived?.orphaned === false && revived.bound_to_connection === true, 'lease did not rebind');
+    }, [async () => { await bRelease(c2 ? c2.send.bind(c2) : (cmd, params) => ctx.call(cmd, params, { owner }), held); }, () => c2?.close(), () => c1?.close()]);
+  } },
+  { id: 'B7', title: 'Project Settings lease enforcement switches live', manual: true, run: async (ctx) => {
+    let restored = false;
+    try {
+      await ctx.human('Project Settings > Hayba MCP Toolkit > Lease Enforcement = Advisory.');
+      const a = await ctx.call('ping'); check(a.ok === true && a.data?.capabilities?.lease_enforcement === 'advisory', 'ping does not report advisory');
+      await ctx.human('Set Lease Enforcement back to Enforced For Writes.');
+      const e = await ctx.call('ping'); check(e.ok === true && e.data?.capabilities?.lease_enforcement === 'enforced_for_writes', 'ping does not report enforced_for_writes');
+      restored = true;
+    } catch (e) { throw new Error(`${e.message}${restored ? '' : '; restore Project Settings > Hayba MCP Toolkit > Lease Enforcement to Enforced For Writes and verify ping before continuing'}`); }
+  } },
+  { id: 'B8', title: 'human Play veto/second press and mode-zero notification', manual: true, run: async (ctx) => {
+    const owner = bName('B8'); const label = `build:${owner}`; const opts = { owner }; let id; const held = {};
+    const live = async () => {
+      const r = await ctx.call('lease_renew', { lease_id: id, ttl_s: 300 }, opts);
+      check(r.ok === true && r.data?.renewed === true && r.data.lease_id === id, 'build lease renewal failed');
+      const state = await bState(ctx);
+      check(state.building?.some((b) => b.owner === owner && b.label === label && b.expires_in_s > 0), 'live building state no longer names owner/label');
+      return state;
+    };
+    const prompt = async (text, timeoutMs = 120_000) => { await live(); await ctx.human(text, { timeoutMs }); await live(); };
+    await bWithCleanup(async () => {
+      await bVetoMode(ctx, 1, opts);
+      id = bGrant(await ctx.call('lease_acquire', { resources: ['asset:/Game/__HaybaTest__/B8'], mode: 'exclusive', ttl_s: 300, bind_connection: false, label, lane: 'long' }, opts), owner, false, held);
+      await prompt(`Press Play once. Confirm refusal naming ${owner} and ${label}; leave PIE stopped.`, 120_000);
+      check((await live()).pie === 'none', 'first user Play started PIE');
+      await prompt('Press Play again within 10 s of the refused press. Leave PIE running.', 10_000);
+      await bWait(ctx, 'second press user PIE', async () => (await live()).pie === 'user');
+      await prompt('Stop PIE.');
+      await bWait(ctx, 'PIE stopped', async () => (await live()).pie === 'none');
+      await bVetoMode(ctx, 0, opts);
+      await prompt(`In mode 0, Press Play once. Confirm notification naming ${owner} and ${label}; leave PIE running.`);
+      await bWait(ctx, 'mode 0 user PIE running before Stop', async () => (await live()).pie === 'user');
+      await prompt('Stop PIE.');
+      await bWait(ctx, 'mode 0 PIE stopped', async () => (await live()).pie === 'none');
+    }, [async () => { await bVetoMode(ctx, 1, opts); }, async () => { await bRelease((cmd, params) => ctx.call(cmd, params, opts), held); }]);
+  } },
+  { id: 'B9', title: 'global holder refuses named and anonymous scoped writes', run: async (ctx) => {
+    const owner = bName('B9'); const caller = bName('B9-caller'); const opts = { owner }; const held = {};
+    await bWithCleanup(async () => {
+      bGrant(await ctx.call('lease_acquire', { resources: ['global'], mode: 'exclusive', ttl_s: 60, bind_connection: false }, opts), owner, undefined, held);
+      bRefusal(await ctx.call('material_set_param', bParams, { owner: caller }), owner, caller);
+      bRefusal(await ctx.call('material_set_param', bParams, { owner: null, lease: null }), owner);
+    }, [async () => { await bRelease((cmd, params) => ctx.call(cmd, params, opts), held); }]);
+  } },
+  { id: 'B10', title: 'fifty fresh raw refusals and isolated ticker-only warning drain', run: async (ctx) => {
+    const owner = bName('B10'); const opts = { owner }; const held = {};
+    await bWithCleanup(async () => {
+      bGrant(await ctx.call('lease_acquire', { resources: ['global'], mode: 'exclusive', ttl_s: 180, bind_connection: false }, opts), owner, undefined, held);
+      const tail = bTail(ctx); const started = bNow(ctx); const callers = new Set(); const ids = new Set();
+      for (let i = 1; i <= 50; i++) {
+        // makeCtx.call -> once -> a new Conn for each request; no owner/lease envelope.
+        const r = await ctx.call('material_set_param', bParams, { owner: null, lease: null });
+        const d = bRefusal(r, owner);
+        check(d.repeats_in_window === i, `call ${i}: repeats_in_window is ${d.repeats_in_window}`);
+        check(typeof r.id === 'string' && !ids.has(r.id) && !callers.has(d.caller_owner), 'per-call correlation/connection identity repeated');
+        ids.add(r.id); callers.add(d.caller_owner);
+        check(bNow(ctx) - started < 30_000, 'fifty-call burst exceeded the single 30 s window');
+      }
+      const scoped = () => {
+        const lines = tail.read().split(/\r?\n/);
+        const first = lines.filter((l) => l.includes('Warning:') && l.includes('[enforced_for_writes]')
+          && l.includes("owner_required: 'material_set_param' (write_scoped) names no owner") && l.includes(owner) && !/repeated \d+ more times/.test(l));
+        const drained = lines.filter((l) => l.includes('Warning:') && l.includes('[enforced_for_writes] owner_required/owner_missing repeated ')
+          && l.includes("owner='conn:*'") && l.includes("cmd='material_set_param'") && l.includes(`holder='${owner}'`));
+        check(first.length === 1, `expected one scoped first-hit Warning, found ${first.length}`);
+        check(drained.length <= 1, `expected one scoped drain, found ${drained.length}`);
+        if (drained.length) check(drained[0].includes('repeated 49 more times in 30 s:'), `incorrect scoped drain: ${drained[0]}`);
+        return drained.length === 1;
+      };
+      // Only read the log while waiting: another conflicting call would force a drain.
+      await bWait(ctx, 'the ticker-only scoped 49-hit drain', scoped, 65_000, 1_000);
+    }, [async () => { await bRelease((cmd, params) => ctx.call(cmd, params, opts), held); }]);
+  } },
+];
+
+export const STEPS = { a: A_STEPS, b: B_STEPS, c: [] };
 
 async function main(argv) {
   let args;

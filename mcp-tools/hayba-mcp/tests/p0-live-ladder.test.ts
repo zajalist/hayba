@@ -95,6 +95,285 @@ describe('p0-live-ladder transport', () => {
   });
 });
 
+// Native-shaped fixtures: LeaseHandler, BatchHandler, LevelHandler and SaveVerify.
+// The deterministic B suite never opens a socket or waits on wall-clock time.
+type Reply = Record<string, any>;
+type Call = { cmd: string; params: Reply; opts: Reply };
+const success = (data: Reply = {}) => ({ ok: true, data });
+const grant = (owner: string, extra: Reply = {}) => success({ status: 'granted', owner, lease_id: 'ls_2_fixture', ...extra });
+const release = () => success({ released: true, lease_id: 'ls_2_fixture' });
+function bStep(id: string) {
+  const step = STEPS.b.find((s: { id: string }) => s.id === id);
+  expect(step, `${id} must be implemented`).toBeDefined();
+  return step;
+}
+function bContext(answer: (c: Call) => Reply | Promise<Reply>) {
+  const calls: Call[] = [];
+  let clock = 0;
+  const ctx: any = {
+    calls, retainedFixtures: [],
+    now: () => clock,
+    sleep: async (ms: number) => { clock += ms; },
+    logTail: () => ({ read: () => '', lines: () => [] }),
+    call: async (cmd: string, params: Reply = {}, opts: Reply = {}) => {
+      const c = { cmd, params, opts }; calls.push(c); return answer(c);
+    },
+  };
+  return ctx;
+}
+function refusal(owner: string, caller = 'conn:1', code = 'owner_required', reason = 'owner_missing', repeats = 1) {
+  return { ok: false, code, lease: { code, enforcement: 'enforced_for_writes', reason,
+    command: 'material_set_param', access_class: 'write_scoped', caller_owner: caller,
+    holder_owner: owner, other_owners: [owner], repeats_in_window: repeats } };
+}
+function fileContext(kind: 'asset' | 'map', change?: (c: Call, r: Reply) => Reply) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ladder-b-fixture-'));
+  let pkg = ''; let dirty = false;
+  const ctx = bContext(({ cmd, params, opts }) => {
+    let r: Reply;
+    if (cmd === 'blueprint_create' || cmd === 'level_create') {
+      pkg = params.package_path ?? params.path;
+      fs.writeFileSync(ctx.contentFile(pkg, kind === 'asset' ? '.uasset' : '.umap'), 'fixture');
+      ctx.createdMode = fs.statSync(ctx.contentFile(pkg, kind === 'asset' ? '.uasset' : '.umap')).mode & 0o777;
+      r = kind === 'asset' ? success({ path: `${pkg}.${params.name}`, saved: true, dirty: false })
+        : success({ path: pkg, observed_path: pkg, created: true, saved: true, verified: true, dirty: false });
+    } else if (cmd === 'blueprint_compile') {
+      r = params.save ? { ok: false, code: 'package_read_only', data: { code: 'package_read_only',
+        make_writable_hint: 'Make writable or use save:false', read_only_files: [ctx.contentFile(pkg, '.uasset')] } }
+        : success({ ok: true, compiled: true, save_requested: false });
+    } else if (cmd === 'python_run') {
+      if (params.script.includes('spawn_actor_from_class')) dirty = true;
+      if (params.script.includes('HAYBA_DELETE_RESULT')) {
+        ctx.onDelete?.();
+        fs.unlinkSync(ctx.contentFile(pkg, '.uasset')); r = success({ ok: true, stdout: 'HAYBA_DELETE_RESULT True\n', stderr: '' });
+      } else if (params.script.includes('SAVE_RESULT')) {
+        r = success({ ok: true, stdout: 'SAVE_RESULT False\n', stderr: '' });
+      } else {
+        r = success({ ok: true, stdout: `HAYBA_MAP_STATE ${JSON.stringify({ path: pkg, dirty })}\n`, stderr: '' });
+      }
+    } else if (cmd === 'level_get_info') r = success({ package_path: pkg });
+    else if (cmd === 'level_save') {
+      if ((fs.statSync(ctx.contentFile(pkg, '.umap')).mode & 0o200) === 0) {
+        r = { ok: false, code: 'package_read_only', data: { code: 'package_read_only', make_writable_hint: 'Make writable', read_only_files: [ctx.contentFile(pkg, '.umap')] } };
+      } else { dirty = false; r = success({ saved: true, verified: true, dirty: false }); }
+    } else throw new Error(`unexpected fixture command ${cmd}`);
+    return change ? change({ cmd, params, opts }, r) : r;
+  });
+  ctx.contentFile = (_pkg: string, ext: string) => path.join(dir, `fixture${ext}`);
+  ctx.file = () => ctx.contentFile(pkg, kind === 'asset' ? '.uasset' : '.umap');
+  ctx.dispose = () => { for (const name of fs.readdirSync(dir)) fs.chmodSync(path.join(dir, name), 0o666); fs.rmSync(dir, { recursive: true }); };
+  return ctx;
+}
+
+describe('Deploy B deterministic behavior', () => {
+  it('keeps B1-B10 and only B7/B8 manual', () => {
+    expect(STEPS.b.map((s: { id: string }) => s.id)).toEqual(['B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B9', 'B10']);
+    expect(STEPS.b.filter((s: { manual?: boolean }) => s.manual).map((s: { id: string }) => s.id)).toEqual(['B7', 'B8']);
+  });
+  it.each([false, true])('B1 rejects failed ping or advisory mode (%s)', async (ok) => {
+    await expect(bStep('B1').run(bContext(() => ({ ok, data: { capabilities: { lease_id: true, lease_enforcement: 'advisory', owner_required: true } } })))).rejects.toThrow();
+  });
+  it.each(['valid', 'boolean-renew', 'queued', 'output-token', 'pending-ping', 'bad-release', 'failed-status'])('B2 validates native renew, executed ping and checked cleanup: %s', async (variant) => {
+    let owner = ''; let closed = false;
+    const ctx = bContext(({ cmd, params }) => {
+      if (cmd === 'lease_acquire') return variant === 'queued' ? success({ owner, status: 'queued', ticket: 'lt_fixture' })
+        : grant(owner, variant === 'output-token' ? { token: 'forbidden' } : {});
+      if (cmd === 'lease_renew') return params.lease_id ? success({ lease_id: params.lease_id, renewed: true }) : success({ owner, renewed: variant === 'boolean-renew' ? true : 1, leases: [{ lease_id: 'ls_2_fixture' }] });
+      if (cmd === 'editor_batch') return success({ job_id: 'batch_fixture', steps_total: 1 });
+      if (cmd === 'batch_status') return { ok: variant !== 'failed-status', data: { job_id: 'batch_fixture', owner, status: 'succeeded', steps_total: 1, steps_run: 1,
+        steps: [{ index: 0, cmd: 'ping', state: variant === 'pending-ping' ? 'pending' : 'ok', data: { capabilities: { lease_id: true } } }] } };
+      if (cmd === 'lease_release') return variant === 'bad-release' ? success({ released: false })
+        : params.ticket ? success({ ticket: params.ticket, released: true }) : release();
+      throw new Error(cmd);
+    });
+    ctx.conn = async (opts: Reply) => { owner = opts.owner; return { send: ctx.call, close: () => { closed = true; } }; };
+    if (variant === 'valid') await bStep('B2').run(ctx);
+    else await expect(bStep('B2').run(ctx)).rejects.toThrow();
+    expect(closed).toBe(true);
+    expect(ctx.calls.some((c: Call) => c.cmd === 'lease_release')).toBe(true);
+  });
+  it.each(['valid', 'unsaved', 'fake-refusal', 'bad-compile'])('B3 verifies disk persistence and safely deletes its asset: %s', async (variant) => {
+    const ctx = fileContext('asset', ({ cmd }, r) => {
+      if (variant === 'unsaved' && cmd === 'blueprint_create') return success({ ...r.data, saved: false });
+      if (variant === 'fake-refusal' && cmd === 'blueprint_compile' && r.code) return { ...r, ok: true };
+      if (variant === 'bad-compile' && cmd === 'blueprint_compile' && !r.code) return success({ compiled: false, save_requested: false });
+      return r;
+    });
+    try {
+      if (variant === 'valid') await bStep('B3').run(ctx);
+      else await expect(bStep('B3').run(ctx)).rejects.toThrow();
+      expect(fs.existsSync(ctx.file())).toBe(false);
+    } finally { ctx.dispose(); }
+  });
+  it.each(['B4', 'B5'])('%s independently creates, dirties, restores and retains a saved clean map', async (id) => {
+    const ctx = fileContext('map');
+    try {
+      await bStep(id).run(ctx);
+      expect(ctx.calls[0].cmd).toBe('level_create');
+      expect(ctx.calls.some((c: Call) => c.cmd === 'level_save')).toBe(true);
+      expect(fs.statSync(ctx.file()).mode & 0o200).toBe(0o200);
+      expect(ctx.retainedFixtures).toHaveLength(1);
+      expect(ctx.calls.some((c: Call) => /delete_asset/.test(c.params.script ?? ''))).toBe(false);
+    } finally { ctx.dispose(); }
+  });
+  it.each(['error-marker', 'wrong-map', 'clean-map', 'cleanup-failure'])('B4/B5 cannot pass false output or stale targets and report cleanup: %s', async (variant) => {
+    const id = variant === 'error-marker' ? 'B4' : 'B5';
+    const ctx = fileContext('map', ({ cmd, params }, r) => {
+      if (variant === 'error-marker' && cmd === 'python_run' && params.script.includes('SAVE_RESULT')) return { ok: false, error: 'SAVE_RESULT False', data: { stdout: '', stderr: 'error' } };
+      if (cmd === 'python_run' && params.script.includes('HAYBA_MAP_STATE')) {
+        if (variant === 'wrong-map') return success({ ok: true, stdout: 'HAYBA_MAP_STATE {"path":"/Game/Wrong","dirty":true}\n', stderr: '' });
+        if (variant === 'clean-map') return success({ ok: true, stdout: `HAYBA_MAP_STATE ${JSON.stringify({ path: ctx.calls[0].params.path, dirty: false })}\n`, stderr: '' });
+      }
+      if (variant === 'cleanup-failure' && cmd === 'level_save' && r.ok) return success({ saved: false, verified: false });
+      return r;
+    });
+    try {
+      await expect(bStep(id).run(ctx)).rejects.toThrow(variant === 'cleanup-failure' ? /cleanup/ : /./);
+      expect(fs.statSync(ctx.file()).mode & 0o200).toBe(0o200);
+    } finally { ctx.dispose(); }
+  });
+  it.each(['valid', 'not-orphaned', 'not-rebound', 'failed-release', 'reconnect-failure'])('B6 direct TCP lifecycle closes both connections on every path: %s', async (variant) => {
+    let connections = 0; let renewed = false;
+    const sockets: any[] = [];
+    const ctx = bContext(({ cmd }) => {
+      if (cmd === 'lease_acquire') return grant(ctx.owner, { bound_to_connection: true });
+      if (cmd === 'lease_status') return success({ leases: [{ lease_id: 'ls_2_fixture', orphaned: renewed ? false : variant !== 'not-orphaned', bound_to_connection: renewed ? variant !== 'not-rebound' : connections === 1 }] });
+      if (cmd === 'lease_renew') { renewed = true; return success({ owner: ctx.owner, renewed: 1 }); }
+      if (cmd === 'lease_release') return variant === 'failed-release' ? success({ released: false }) : release();
+      throw new Error(cmd);
+    });
+    ctx.conn = async ({ owner }: Reply) => {
+      ctx.owner = owner; connections++;
+      if (variant === 'reconnect-failure' && connections === 2) throw new Error('reconnect failed');
+      const c = { closed: false, send: ctx.call, close: () => { c.closed = true; } }; sockets.push(c); return c;
+    };
+    ctx.sleep = async () => { sockets[0].closed = true; };
+    if (variant === 'valid') await bStep('B6').run(ctx); else await expect(bStep('B6').run(ctx)).rejects.toThrow();
+    expect(sockets.every((s) => s.closed)).toBe(true);
+  });
+  it.each(['valid', 'nested', 'wrong-access', 'wrong-holder', 'ok-true', 'bad-release'])('B9 requires root native refusal details: %s', async (variant) => {
+    let owner = '';
+    const ctx = bContext(({ cmd, opts }) => {
+      if (cmd === 'lease_acquire') { owner = opts.owner; return grant(owner); }
+      if (cmd === 'lease_release') return variant === 'bad-release' ? success({ released: false }) : release();
+      const r = opts.owner ? refusal(owner, opts.owner, 'lease_conflict', 'held') : refusal(owner);
+      if (variant === 'nested') return { ok: false, code: r.code, data: { lease: r.lease } };
+      if (variant === 'wrong-access') r.lease.access_class = 'write_global';
+      if (variant === 'wrong-holder') r.lease.holder_owner = 'wrong';
+      if (variant === 'ok-true') r.ok = true;
+      return r;
+    });
+    if (variant === 'valid') await bStep('B9').run(ctx); else await expect(bStep('B9').run(ctx)).rejects.toThrow();
+    expect(ctx.calls.at(-1).cmd).toBe('lease_release');
+  });
+  it.each(['valid', 'wrong-repeats', 'duplicate-caller', 'missing-drain', 'wrong-drain', 'slow-burst'])('B10 enforces fifty fresh raw refusals and isolated ticker drain: %s', async (variant) => {
+    let owner = ''; let count = 0; let time = 0;
+    const ctx = bContext(({ cmd, opts }) => {
+      if (cmd === 'lease_acquire') { owner = opts.owner; return grant(owner); }
+      if (cmd === 'lease_release') return release();
+      count++; time += variant === 'slow-burst' ? 700 : 1;
+      return { id: `response_${count}`, ...refusal(owner, variant === 'duplicate-caller' ? 'conn:1' : `conn:${count}`, 'owner_required', 'owner_missing', variant === 'wrong-repeats' ? count - 1 : count) };
+    });
+    ctx.now = () => time;
+    ctx.sleep = async (ms: number) => { time += ms; };
+    ctx.logTail = () => ({ read: () => {
+      const unrelated = "Warning: [enforced_for_writes] owner_required/owner_missing repeated 49 more times in 30 s: owner='conn:*' cmd='material_set_param' holder='unrelated-b9'\n";
+      const first = `Warning: [enforced_for_writes] owner_required: 'material_set_param' (write_scoped) names no owner while 1 other agents are connected (${owner}).\n`;
+      const drain = `Warning: [enforced_for_writes] owner_required/owner_missing repeated ${variant === 'wrong-drain' ? 48 : 49} more times in 30 s: owner='conn:*' cmd='material_set_param' holder='${owner}' conflict='global'\n`;
+      return unrelated + first + (time >= 30_000 && variant !== 'missing-drain' ? drain : '');
+    } });
+    if (variant === 'valid') {
+      await bStep('B10').run(ctx);
+      const writes = ctx.calls.filter((c: Call) => c.cmd === 'material_set_param');
+      expect(writes).toHaveLength(50);
+      expect(new Set(writes.map((c: Call) => JSON.stringify(c.params))).size).toBe(1);
+      expect(writes.every((c: Call) => !c.opts.owner && !c.opts.lease)).toBe(true);
+    } else await expect(bStep('B10').run(ctx)).rejects.toThrow();
+    expect(ctx.calls.at(-1).cmd).toBe('lease_release');
+  });
+  it('B7 failure after advisory gives an explicit restoration instruction', async () => {
+    const ctx = bContext(() => success({ capabilities: { lease_enforcement: 'advisory' } }));
+    let prompts = 0; ctx.human = async () => { prompts++; if (prompts > 1) throw new Error('person failed'); };
+    await expect(bStep('B7').run(ctx)).rejects.toThrow(/restore.*Enforced For Writes/i);
+  });
+  it.each([true, false])('B8 observes mode-zero user PIE before asking Stop (%s)', async (starts) => {
+    let mode = 1; let pie = 'none'; let owner = ''; let label = ''; const prompts: string[] = [];
+    const ctx = bContext(({ cmd, params, opts }) => {
+      if (cmd === 'lease_acquire') { owner = opts.owner; label = params.label; return grant(owner, { bound_to_connection: false }); }
+      if (cmd === 'lease_renew') return success({ lease_id: 'ls_2_fixture', renewed: true });
+      if (cmd === 'lease_release') return release();
+      if (cmd === 'editor_run_console_command') { mode = Number(params.command.split(' ').at(-1)); return success({ executed: true }); }
+      if (cmd === 'python_run') return success({ ok: true, stdout: `HAYBA_PIE_VETO ${mode}\n`, stderr: '' });
+      if (cmd === 'editor_get_state') return success({ pie, building: [{ owner, label, asset: params.asset ?? '/game/__haybatest__/b8', expires_in_s: 250 }] });
+      throw new Error(cmd);
+    });
+    ctx.state = async () => (await ctx.call('editor_get_state')).data;
+    ctx.human = async (instruction: string, options: Reply) => {
+      expect(options.timeoutMs).toBeGreaterThan(0); prompts.push(instruction);
+      if (/Press Play again/.test(instruction)) pie = 'user';
+      if (/mode 0.*Press Play/.test(instruction) && starts) pie = 'user';
+      if (/Stop PIE/.test(instruction)) pie = 'none';
+    };
+    if (starts) await bStep('B8').run(ctx); else await expect(bStep('B8').run(ctx)).rejects.toThrow();
+    expect(mode).toBe(1);
+    expect(ctx.calls.at(-1).cmd).toBe('lease_release');
+    const mode0 = prompts.findIndex((p) => /mode 0.*Press Play/.test(p));
+    expect(prompts.slice(mode0 + 1).some((p) => /Stop PIE/.test(p))).toBe(starts);
+    expect(ctx.calls.some((c: Call) => c.cmd === 'editor_start_pie')).toBe(false);
+  });
+  it('B4 preserves the refusal failure together with cleanup errors', async () => {
+    const ctx = fileContext('map', ({ cmd, params }, r) => {
+      if (cmd === 'python_run' && params.script.includes('SAVE_RESULT')) throw new Error('modal reply timeout');
+      if (cmd === 'level_save') throw new Error('cleanup reply timeout');
+      return r;
+    });
+    try {
+      await expect(bStep('B4').run(ctx)).rejects.toThrow(/modal reply timeout; cleanup failed: cleanup reply timeout/);
+      expect(fs.statSync(ctx.file()).mode & 0o200).toBe(0o200);
+      expect(ctx.retainedFixtures[0].saved_clean).toBe(false);
+    } finally { ctx.dispose(); }
+  });
+  it('B3 restores the observed mode before deleting after compile failure', async () => {
+    const ctx = fileContext('asset', ({ cmd, params }, r) => {
+      if (cmd === 'blueprint_compile' && params.save === false) throw new Error('compile failed');
+      return r;
+    });
+    ctx.onDelete = () => expect(fs.statSync(ctx.file()).mode & 0o777).toBe(ctx.createdMode);
+    try { await expect(bStep('B3').run(ctx)).rejects.toThrow(/compile failed/); } finally { ctx.dispose(); }
+  });
+  it('manual B7/B8 remain skipped without claiming a person checked them', async () => {
+    const results = await runSteps(STEPS.b, {}, { only: ['B7', 'B8'] });
+    expect(results.map((r: { status: string }) => r.status)).toEqual(['SKIP-MANUAL', 'SKIP-MANUAL']);
+    expect(exitCodeFor(results)).toBe(3);
+  });
+});
+
+describe('Deploy B framed TCP integration', () => {
+  it('B10 uses fifty fresh sockets, unique correlation ids and omitted owner/lease envelopes', async () => {
+    let holder = ''; let count = 0; let clock = 0;
+    const ed = await fakeEditor((env) => {
+      if (env.cmd === 'lease_acquire') { holder = env.owner!; return grant(holder); }
+      if (env.cmd === 'lease_release') return release();
+      count++; return refusal(holder, `conn:${count}`, 'owner_required', 'owner_missing', count);
+    });
+    const ctx = {
+      now: () => clock, sleep: async (ms: number) => { clock += ms; },
+      call: (cmd: string, params: Reply, opts: Reply) => once(ed.port, cmd, params, opts),
+      logTail: () => ({ read: () => `Warning: [enforced_for_writes] owner_required: 'material_set_param' (write_scoped) names no owner while 1 other agents are connected (${holder}).\n`
+        + (clock >= 30_000 ? `Warning: [enforced_for_writes] owner_required/owner_missing repeated 49 more times in 30 s: owner='conn:*' cmd='material_set_param' holder='${holder}' conflict='global'\n` : '') }),
+    };
+    try {
+      await bStep('B10').run(ctx);
+      const writes = ed.seen.filter((env) => env.cmd === 'material_set_param');
+      expect(writes).toHaveLength(50);
+      expect(ed.connections()).toBe(52);
+      expect(new Set(writes.map((env) => env.id)).size).toBe(50);
+      expect(new Set(writes.map((env) => JSON.stringify(env.params))).size).toBe(1);
+      expect(writes.every((env) => !('owner' in env) && !('lease' in env))).toBe(true);
+    } finally { await ed.close(); }
+  });
+});
+
 describe('p0-live-ladder scratch-host guard (R-5)', () => {
   it('returns the live heartbeat port of a scratch host', () => {
     expect(findScratchPort(scratchTree(52343))).toBe(52343);
