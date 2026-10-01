@@ -8,7 +8,7 @@ if ($errors.Count) { throw 'Survival harness did not parse' }
 # Definitions and the three actual case actions only; never evaluate launch,
 # health, cleanup, or any connection to an existing editor.
 foreach ($name in @('Get-BigEndianHeader', 'Read-BoundedExact', 'Wait-RawTask', 'Get-RemainingCaseMs',
-    'Open-BoundedClient', 'Write-BoundedBytes', 'New-RawCommandFrame', 'Get-RawCloseEvidence',
+    'Open-BoundedClient', 'Write-BoundedBytes', 'New-RawCommandFrame', 'Get-RawTerminalSocketError', 'Get-RawCloseEvidence',
     'Initialize-RawCloseObservation', 'New-AdmittedRawHolder', 'New-PartialFrameHolders',
     'Assert-PartialHoldersActive', 'Invoke-PartialFrameCapacityProbe', 'Invoke-SlowlorisDeadlineProbe')) {
     $definitions = @($ast.FindAll({ param($node)
@@ -18,6 +18,7 @@ foreach ($name in @('Get-BigEndianHeader', 'Read-BoundedExact', 'Wait-RawTask', 
     . ([scriptblock]::Create($definitions[0].Extent.Text))
 }
 $actions = @{}
+$actualWriteBoundedBytes = (Get-Item Function:Write-BoundedBytes).ScriptBlock
 foreach ($command in $ast.FindAll({ param($node)
     $node -is [Management.Automation.Language.CommandAst] -and $node.GetCommandName() -ceq 'Test-RawCase'
 }, $true)) {
@@ -31,6 +32,7 @@ if ($actions.Count -ne 3) { throw 'Expected exactly three client probe actions' 
 Add-Type -TypeDefinition @'
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Net;
 using System.Net.Sockets;
@@ -120,7 +122,9 @@ public sealed class HaybaClientProbePeer : IDisposable {
                 if (await stream.ReadAsync(first,0,1,cancel.Token) == 0) return;
                 Interlocked.Increment(ref Partials);
                 using (var expiry = CancellationTokenSource.CreateLinkedTokenSource(cancel.Token)) {
-                    expiry.CancelAfter(mode == "premature" ? 60 : frameMs);
+                    int expiryMs = mode == "premature" ? 60 : frameMs;
+                    var frameClock = Stopwatch.StartNew();
+                    expiry.CancelAfter(expiryMs);
                     var buffer = new byte[64];
                     try {
                         while (true) {
@@ -128,7 +132,13 @@ public sealed class HaybaClientProbePeer : IDisposable {
                             if (n == 0) break;
                             Interlocked.Increment(ref Drips);
                         }
-                    } catch (OperationCanceledException) when (!cancel.IsCancellationRequested) { }
+                    } catch (OperationCanceledException) when (!cancel.IsCancellationRequested) {
+                        // CancelAfter can fire just before its nominal interval.
+                        // This synthetic peer must not pretend that early timer
+                        // scheduling is a correctly enforced total-frame expiry.
+                        while (frameClock.ElapsedMilliseconds < expiryMs)
+                            await Task.Delay((int)Math.Max(1,expiryMs-frameClock.ElapsedMilliseconds),cancel.Token);
+                    }
                 }
             }
         } catch (IOException) { }
@@ -154,6 +164,8 @@ foreach ($test in @(
     @{ name='limit_admission_and_capacity'; action='client_limit_accounting_recovery'; mode='capacity'; expected='success' },
     @{ name='limit_reset_capacity'; action='client_limit_accounting_recovery'; mode='reset_overflow'; expected='success' },
     @{ name='slowloris_admitted_expiry'; action='slowloris_total_frame_deadline'; mode='capacity'; expected='success' },
+    @{ name='slowloris_delayed_successful_drip_rejected'; action='slowloris_total_frame_deadline'; mode='capacity'; expected='drip interval exceeded'; clients=1; peer_frame_ms=900; drip_delay_ms=450 },
+    @{ name='slowloris_delayed_successful_drip_gap_recorded'; action='slowloris_total_frame_deadline'; mode='capacity'; expected='success'; clients=1; drip_delay_ms=80 },
     @{ name='slowloris_premature_close'; action='slowloris_total_frame_deadline'; mode='premature'; expected='premature' },
     @{ name='uncorrelated_admission_cleanup'; action='client_limit_accounting_recovery'; mode='wrong_id'; expected='admission' },
     @{ name='overflow_response_is_not_rejection'; action='client_limit_accounting_recovery'; mode='admit_overflow'; expected='response bytes' },
@@ -167,22 +179,51 @@ foreach ($test in @(
     $timeout = if ($test.mode -ceq 'silent') { 250 } elseif ($test.frame_ms) { $MaxCaseMs } else { 2500 }
     $CaseDeadline = [DateTime]::UtcNow.AddMilliseconds($timeout)
     $RawProbeEvidence = $null
-    $peer = [HaybaClientProbePeer]::new($test.mode, $ConfiguredMaxClients, $FrameReadTimeoutMs)
+    $peerFrameMs = if ($test.peer_frame_ms) { $test.peer_frame_ms } else { $FrameReadTimeoutMs }
+    $peer = [HaybaClientProbePeer]::new($test.mode, $ConfiguredMaxClients, $peerFrameMs)
     $Port = $peer.Listener.LocalEndpoint.Port
     $timer = [Diagnostics.Stopwatch]::StartNew()
     $diagnostic = ''
     $threw = $false
+    $script:DelayedDripGapMs = $null
+    $script:DelayedDripReadPending = $false
+    if ($test.drip_delay_ms) {
+        # Exercise the actual extracted action/write helper. One-byte socket
+        # backpressure is not deterministic: explicitly delay the first successful
+        # helper return, after its real socket write, while its close read is pending.
+        function Write-BoundedBytes([Net.Sockets.NetworkStream]$Stream, [byte[]]$Bytes, [string]$Operation) {
+            & $actualWriteBoundedBytes $Stream $Bytes $Operation
+            if ($Operation -ceq 'slowloris drip byte' -and $null -eq $script:DelayedDripGapMs) {
+                Wait-RawTask ([Threading.Tasks.Task]::Delay($test.drip_delay_ms)) 'controlled successful drip delay' | Out-Null
+                $script:DelayedDripGapMs = $holder.clock.ElapsedMilliseconds - $holder.last_progress_ms
+                $script:DelayedDripReadPending = -not $holder.close_task.IsCompleted
+            }
+        }
+    }
     try { & $actions[$test.action] | Out-Null }
     catch { $threw = $true; $diagnostic = $_.Exception.Message }
-    finally { $peer.Dispose(); $CaseDeadline = $null }
+    finally {
+        Set-Item Function:Write-BoundedBytes $actualWriteBoundedBytes
+        $peer.Dispose(); $CaseDeadline = $null
+    }
     $passed = if ($test.expected -ceq 'success') {
         -not $threw -and $peer.Pings -eq $ConfiguredMaxClients -and $peer.Partials -eq $ConfiguredMaxClients -and $peer.SawAuth
     } else { $threw -and $diagnostic -match $test.expected }
     if ($test.name -ceq 'slowloris_admitted_expiry') { $passed = $passed -and $peer.Drips -ge 4 }
+    if ($test.drip_delay_ms) {
+        $passed = $passed -and $null -ne $script:DelayedDripGapMs -and $script:DelayedDripReadPending
+        if ($test.expected -ceq 'success') {
+            $passed = $passed -and $script:DelayedDripGapMs -lt $FrameReadTimeoutMs -and
+                $RawProbeEvidence.closures[0].max_progress_gap_ms -ge $script:DelayedDripGapMs
+        } else {
+            $passed = $passed -and $script:DelayedDripGapMs -ge $FrameReadTimeoutMs -and $RawProbeEvidence.drips -eq 0
+        }
+    }
     if ($test.name -ceq 'uncorrelated_admission_cleanup') { $passed = $passed -and $peer.ClosedClients -eq 1 }
     if ($test.mode -ceq 'reset_overflow') { $passed = $passed -and $RawProbeEvidence.closures[0].kind -ceq 'socket_error' }
     $results.Add([pscustomobject]@{ name=$test.name; passed=$passed; elapsed_ms=$timer.ElapsedMilliseconds;
         port=$Port; diagnostic=$diagnostic; pings=$peer.Pings; partials=$peer.Partials; drips=$peer.Drips;
+        controlled_drip_gap_ms=$script:DelayedDripGapMs; controlled_drip_read_pending=$script:DelayedDripReadPending;
         closed_clients=$peer.ClosedClients; evidence=$RawProbeEvidence })
 }
 $clients = [Collections.Generic.List[Net.Sockets.TcpClient]]::new()
@@ -214,6 +255,23 @@ foreach ($test in @(
     $diagnostic = ''
     try { Get-RawCloseEvidence $test.task 'synthetic close' | Out-Null }
     catch { $passed = $true; $diagnostic = $_.Exception.Message }
+    $results.Add([pscustomobject]@{ name=$test.name; passed=$passed; diagnostic=$diagnostic })
+}
+foreach ($test in @(
+    @{ name='wrapped_reset_is_close_evidence'; code=10054; expected='ConnectionReset' },
+    @{ name='wrapped_aborted_is_close_evidence'; code=10053; expected='ConnectionAborted' }
+)) {
+    $terminalException = [IO.IOException]::new('synthetic terminal socket error', [Net.Sockets.SocketException]::new($test.code))
+    $task = [Threading.Tasks.Task]::FromException($terminalException)
+    $CaseDeadline = [DateTime]::UtcNow.AddMilliseconds(1000)
+    $passed = $false
+    $diagnostic = ''
+    try {
+        $closure = Get-RawCloseEvidence $task 'synthetic terminal close'
+        $passed = $closure.kind -ceq 'socket_error' -and $closure.socket_error -ceq $test.expected
+    }
+    catch { $diagnostic = $_.Exception.Message }
+    finally { $CaseDeadline = $null }
     $results.Add([pscustomobject]@{ name=$test.name; passed=$passed; diagnostic=$diagnostic })
 }
 $results | ConvertTo-Json -Depth 10 -Compress

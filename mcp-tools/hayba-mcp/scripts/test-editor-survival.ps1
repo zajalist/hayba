@@ -1126,6 +1126,14 @@ function Wait-ForBoundedPeerClose([Net.Sockets.NetworkStream]$Stream, [string]$O
     }
 }
 
+function Get-RawTerminalSocketError([Exception]$Exception) {
+    $cause = $Exception
+    while ($null -ne $cause -and $cause -isnot [Net.Sockets.SocketException]) { $cause = $cause.InnerException }
+    if ($null -ne $cause -and $cause.SocketErrorCode -in @(
+        [Net.Sockets.SocketError]::ConnectionReset, [Net.Sockets.SocketError]::ConnectionAborted)) { return $cause }
+    return $null
+}
+
 function Get-RawCloseEvidence([Threading.Tasks.Task]$Task, [string]$Operation) {
     try {
         $count = Wait-RawTask $Task $Operation
@@ -1133,10 +1141,8 @@ function Get-RawCloseEvidence([Threading.Tasks.Task]$Task, [string]$Operation) {
     catch {
         # Only demonstrated terminal socket errors are close evidence. Deadline,
         # binding, disposal, and unrelated helper failures must remain fatal.
-        $cause = $_.Exception
-        while ($null -ne $cause -and $cause -isnot [Net.Sockets.SocketException]) { $cause = $cause.InnerException }
-        if ($null -eq $cause -or $cause.SocketErrorCode -notin @(
-            [Net.Sockets.SocketError]::ConnectionReset, [Net.Sockets.SocketError]::ConnectionAborted)) { throw }
+        $cause = Get-RawTerminalSocketError $_.Exception
+        if ($null -eq $cause) { throw }
         return [pscustomobject]@{ kind='socket_error'; socket_error=[string]$cause.SocketErrorCode }
     }
     if ($count -ne 0) { throw "$Operation received response bytes instead of peer closure" }
@@ -1243,10 +1249,7 @@ function Invoke-PartialFrameCapacityProbe([int]$OverflowCount, [string]$Operatio
             catch {
                 # A terminal write error is not by itself rejection evidence;
                 # still require EOF/reset from the retained valid stream.
-                $cause = $_.Exception
-                while ($null -ne $cause -and $cause -isnot [Net.Sockets.SocketException]) { $cause = $cause.InnerException }
-                if ($null -eq $cause -or $cause.SocketErrorCode -notin @(
-                    [Net.Sockets.SocketError]::ConnectionReset, [Net.Sockets.SocketError]::ConnectionAborted)) { throw }
+                if ($null -eq (Get-RawTerminalSocketError $_.Exception)) { throw }
             }
             $closure = Get-RawCloseEvidence $closeTask "$Operation overflow close"
             Assert-PartialHoldersActive $holders $Operation
@@ -1290,21 +1293,21 @@ function Invoke-SlowlorisDeadlineProbe {
                 }
                 if ($clock.ElapsedMilliseconds -ge $nextDrip) {
                     try {
-                        $gap = $holder.clock.ElapsedMilliseconds - $holder.last_progress_ms
-                        if ($gap -ge $FrameReadTimeoutMs) { throw 'slowloris drip interval exceeded the active frame timeout' }
                         Write-BoundedBytes $holder.stream ([byte[]]@(0x20)) 'slowloris drip byte'
+                        $completedMs = $holder.clock.ElapsedMilliseconds
                         if (-not $holder.close_task.IsCompleted) {
+                            # The gap spans successful completions, including
+                            # all time spent awaiting this write.
+                            $gap = $completedMs - $holder.last_progress_ms
+                            if ($gap -ge $FrameReadTimeoutMs) { throw 'slowloris drip interval exceeded the active frame timeout' }
                             $holder.max_progress_gap_ms = [Math]::Max($gap, $holder.max_progress_gap_ms)
-                            $holder.last_progress_ms = $holder.clock.ElapsedMilliseconds
+                            $holder.last_progress_ms = $completedMs
                             $holder.drips++
                             $script:RawProbeEvidence.drips++
                         }
                     }
                     catch {
-                        $cause = $_.Exception
-                        while ($null -ne $cause -and $cause -isnot [Net.Sockets.SocketException]) { $cause = $cause.InnerException }
-                        if ($null -eq $cause -or $cause.SocketErrorCode -notin @(
-                            [Net.Sockets.SocketError]::ConnectionReset, [Net.Sockets.SocketError]::ConnectionAborted)) { throw }
+                        if ($null -eq (Get-RawTerminalSocketError $_.Exception)) { throw }
                         # The pending read and its completion time must prove expiry.
                     }
                 }

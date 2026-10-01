@@ -43,9 +43,11 @@ describe('survival harness client admission and closure probes', () => {
   const scenarios = [
     'flood_admission_and_capacity', 'limit_admission_and_capacity', 'limit_reset_capacity',
     'slowloris_admitted_expiry', 'slowloris_premature_close', 'uncorrelated_admission_cleanup',
+    'slowloris_delayed_successful_drip_rejected', 'slowloris_delayed_successful_drip_gap_recorded',
     'overflow_response_is_not_rejection', 'expired_holders_are_not_capacity_proof', 'flood_deadline_is_not_rejection',
     'slowloris_default_limits', 'limit_minimum_client_count', 'null_close_task_is_not_closure',
     'unrelated_error_is_not_closure', 'early_close_completion_timestamp', 'socket_timeout_is_not_closure',
+    'wrapped_reset_is_close_evidence', 'wrapped_aborted_is_close_evidence',
   ];
   let results: Array<{ name: string; passed: boolean; elapsed_ms?: number }>;
   let exitStatus: number | null;
