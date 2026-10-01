@@ -440,6 +440,7 @@ bool FHaybaMCPStateUserPlayDecisionTest::RunTest(const FString& Parameters)
 		FHaybaEditorHealth::FScopedOverrideForTests Health;
 		FHaybaMCPEditorState& State = FHaybaMCPEditorState::Get();
 		const int32 SavedMode = Veto->GetInt();
+		const uint32 SavedFlags = static_cast<uint32>(Veto->GetFlags());
 		const double SavedVetoAt = State.LastUserPlayVetoAt();
 
 		const FString Tag = FGuid::NewGuid().ToString(EGuidFormats::Digits).Left(8).ToLower();
@@ -457,6 +458,8 @@ bool FHaybaMCPStateUserPlayDecisionTest::RunTest(const FString& Parameters)
 		ON_SCOPE_EXIT
 		{
 			Veto->Set(SavedMode, ECVF_SetByCode);
+			TestEqual(TEXT("the mode is restored"), Veto->GetInt(), SavedMode);
+			TestEqual(TEXT("the CVar priority and flags are restored"), static_cast<uint32>(Veto->GetFlags()), SavedFlags);
 			if (SavedVetoAt > 0.0) State.NoteUserPlayVeto(SavedVetoAt); else State.ClearUserPlayVeto();
 			FString Error;
 			FHaybaMCPLeaseManager::Get().Table().Release(Lease.Token, Builder, Error);
@@ -475,6 +478,7 @@ bool FHaybaMCPStateUserPlayDecisionTest::RunTest(const FString& Parameters)
 			FHaybaMCPEditorState::FScopedPieOverride UserPlay{ UserStarting };
 
 			Veto->Set(1, ECVF_SetByCode);
+			TestEqual(TEXT("temporary mode preserves CVar priority and flags"), static_cast<uint32>(Veto->GetFlags()), SavedFlags);
 			State.ClearUserPlayVeto();
 			const HaybaMCPState::FPlayDecision First = State.EvaluateUserPlayRequest(Now);
 			TestTrue(TEXT("mode 1: the first press is vetoed"), First.bDeny);
@@ -508,6 +512,7 @@ bool FHaybaMCPStateUserPlayDecisionTest::RunTest(const FString& Parameters)
 			AgentStarting.Owner = TEXT("conn:900401");
 			FHaybaMCPEditorState::FScopedPieOverride AgentPlay{ AgentStarting };
 			Veto->Set(1, ECVF_SetByCode);
+			TestEqual(TEXT("temporary mode preserves CVar priority and flags"), static_cast<uint32>(Veto->GetFlags()), SavedFlags);
 			State.ClearUserPlayVeto();
 			TestTrue(TEXT("an agent's request is vetoed"), State.EvaluateUserPlayRequest(Now).bDeny);
 			TestTrue(TEXT("and never overridden"), State.EvaluateUserPlayRequest(Now + 1.0).bDeny);
@@ -534,10 +539,36 @@ bool FHaybaMCPStateUserPlayDecisionTest::RunTest(const FString& Parameters)
 			FHaybaMCPLeaseManager::Get().Table().Release(Lease.Token, Builder, Error);
 			FHaybaMCPEditorState::FScopedPieOverride UserPlay{ UserStarting };
 			Veto->Set(1, ECVF_SetByCode);
-			State.ClearUserPlayVeto();
-			const HaybaMCPState::FPlayDecision Free = State.EvaluateUserPlayRequest(Now);
+			TestEqual(TEXT("temporary mode preserves CVar priority and flags"), static_cast<uint32>(Veto->GetFlags()), SavedFlags);
+			State.NoteUserPlayVeto(Now);
+			const HaybaMCPState::FPlayDecision Free = State.EvaluateUserPlayRequest(Now + 1.0);
 			TestTrue(TEXT("with the build released, Play is allowed silently"),
 				!Free.bDeny && !Free.bNotifyOnly && !Free.bOverrideAccepted);
+			TestEqual(TEXT("ordinary successful user Play clears the earlier veto"), State.LastUserPlayVetoAt(), 0.0);
+
+			// A short user session can end before the old 10 s window. A new
+			// build still needs its own first veto, not an automatic override.
+			const HaybaMCPLease::FAcquireResult Rebuild = FHaybaMCPLeaseManager::Get().Table().Acquire(Request);
+			ON_SCOPE_EXIT
+			{
+				FString CleanupError;
+				FHaybaMCPLeaseManager::Get().Table().Release(Rebuild.Token, Builder, CleanupError);
+			};
+			if (!TestEqual(TEXT("the new build lease is granted"), Rebuild.Status, HaybaMCPLease::EStatus::Granted))
+			{
+				return false;
+			}
+			const FPlayDecision NewBuild = State.EvaluateUserPlayRequest(Now + 3.0);
+			TestTrue(TEXT("a fresh build requires a first veto after ordinary successful Play"), NewBuild.bDeny && !NewBuild.bOverrideAccepted);
+
+			State.NoteUserPlayVeto(Now + 3.0);
+			Veto->Set(0, ECVF_SetByCode);
+			const FPlayDecision Allowed = State.EvaluateUserPlayRequest(Now + 4.0);
+			TestTrue(TEXT("mode 0 still allows the user with a notification"), !Allowed.bDeny && Allowed.bNotifyOnly);
+			TestEqual(TEXT("mode 0 successful user Play clears the earlier veto"), State.LastUserPlayVetoAt(), 0.0);
+			Veto->Set(1, ECVF_SetByCode);
+			const FPlayDecision AfterModeZero = State.EvaluateUserPlayRequest(Now + 5.0);
+			TestTrue(TEXT("mode 1 requires its first veto after mode 0 Play"), AfterModeZero.bDeny && !AfterModeZero.bOverrideAccepted);
 		}
 	}
 
