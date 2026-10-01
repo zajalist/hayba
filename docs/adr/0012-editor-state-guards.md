@@ -150,8 +150,9 @@ Blueprints while their assets are being built.
   returns false with `OutReason` and posts Hayba's own notification. It is
   compiled behind the version guard and is unverified.
 - The double-press time lives on `FHaybaMCPEditorState`, because the
-  authorizer's methods are `const`. An accepted override clears it, so every
-  Play session needs its own double press.
+  authorizer's methods are `const`. Every allowed user Play clears it,
+  including mode 0 and Play after a build releases, so a later session
+  needs its own double press.
 - Agent requests never get the override. They normally never reach the build
   branch, because slot 3 refuses `editor_start_pie` during any build first;
   with `LeaseEnforcement` Off they do, and are vetoed without an override in

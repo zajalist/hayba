@@ -272,6 +272,12 @@ HaybaMCPState::FPlayDecision FHaybaMCPEditorState::EvaluateUserPlayRequest(doubl
 	const FPlayDecision Decision = DecideUserPlay(Busy, Kind, Mode, bUnsafe, LastUserPlayVeto, Now);
 	const TCHAR* Who = Kind == EPlayRequestKind::Agent ? TEXT("agent") : TEXT("user");
 
+	// Every allowed user session consumes any earlier build-veto window,
+	// including ordinary Play after a release and mode-0 notification.
+	if (!Decision.bDeny && Kind == EPlayRequestKind::User)
+	{
+		ClearUserPlayVeto();
+	}
 	if (Decision.bDeny)
 	{
 		if (!bUnsafe && Kind == EPlayRequestKind::User && NormalizePlayVetoMode(Mode) == 1)
@@ -283,7 +289,6 @@ HaybaMCPState::FPlayDecision FHaybaMCPEditorState::EvaluateUserPlayRequest(doubl
 	}
 	else if (Decision.bOverrideAccepted)
 	{
-		ClearUserPlayVeto();
 		UE_LOG(LogHaybaMCPPlayVeto, Warning, TEXT("%s"), *Decision.Reason);
 		PostPlayVetoNotification(Decision.Reason);
 	}
