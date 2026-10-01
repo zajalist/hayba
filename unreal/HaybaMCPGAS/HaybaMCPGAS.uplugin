@@ -1,7 +1,7 @@
 {
   "FileVersion": 3,
-  "Version": 1,
-  "VersionName": "0.3.0",
+  "Version": 3,
+  "VersionName": "0.4.0-rc.2",
   "FriendlyName": "Hayba MCP — GAS",
   "Description": "Optional GameplayAbilities (gas_*) command satellite for HaybaMCPToolkit. Auto-disabled by UE when GameplayAbilities is off, leaving the core plugin to load normally.",
   "Category": "Editor",

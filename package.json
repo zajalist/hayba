@@ -1,6 +1,6 @@
 {
   "name": "hayba",
-  "version": "1.0.0",
+  "version": "0.4.0-rc.2",
   "private": true,
   "description": "Agentic spatial & procedural world-building for Unreal Engine 5 — MCP server + UE5 plugin + worldbuilding packages + website.",
   "keywords": ["mcp", "unreal-engine", "ue5", "procedural-generation", "pcg", "worldbuilding", "ai-agents", "conlang"],

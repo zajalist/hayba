@@ -1,6 +1,6 @@
 # P0 Deploy B: product candidate handoff
 
-**Candidate preparation; do not treat this as a published release or completed deployment.** The target is `v0.4.0-rc.2`, subject to remaining gates and coordinated release metadata alignment. No tag is created or certified by this document. P0 completion, main finalization and `v0.4.0` remain later acceptance work. See [Versioning](../VERSIONING.md) and the [historical A verification status](HANDOFF-p0-deploy-a-consumer.md#historical-provenance-and-verification-status).
+**Candidate preparation; do not treat this as a published release or completed deployment.** The target is `v0.4.0-rc.2`, subject to remaining gates. Source release metadata is aligned to this candidate. No tag is created or certified by this document. P0 completion, main finalization and `v0.4.0` remain later acceptance work. See [Versioning](../VERSIONING.md) and the [historical A verification status](HANDOFF-p0-deploy-a-consumer.md#historical-provenance-and-verification-status).
 
 ## Source provenance and measured evidence
 
@@ -16,7 +16,7 @@ These are measured results already supplied for their stated source; writing thi
 
 The controller subsequently completed actual GUI B1–B6 / B9–B10: **8/8 passed, actual client exit 0**, on the verified disposable GUI host using script source `9d7de2ff` and native source `d376c162`, without unattended or null-RHI launch flags. Postflight reported no unsafe/Python-unhealthy state, no PIE, no building assets and zero dirty packages. Human B7/B8 are **UNPERFORMED**. Historical A3/A7b/A8, handoff approval and consumer verification remain pending. B6 used direct framed TCP and is not evidence of the Node environment route. Automated passes do not settle these remaining checks.
 
-The three plugin `VersionName` fields and root/server package versions are not aligned to the target release in this pass. Their coordinated alignment and packaging provenance are separate pending work; the target label does not imply current fields or artifacts are rc2.
+The three plugin `VersionName` fields, root/server package versions, root lock product entries and shipped dashboard metadata are aligned to `0.4.0-rc.2`. UE integer distribution revisions are Toolkit 5, MetaSound 3 and GAS 3. The MCP server's advertised version and startup diagnostic read its package version; focused source/built runtime checks, typecheck and server build validate this alignment. Packaging provenance and live metadata readback remain separate pending work; aligned source fields do not certify rc2 artifacts or settle the pending acceptance checks.
 
 ## User-visible changes
 

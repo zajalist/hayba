@@ -1,6 +1,7 @@
 // mcp_server/src/index.ts
 import { McpServer, ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { HAYBA_VERSION } from './version.js';
 import { config } from './config.js';
 import { listCatalogResources, readCatalogResource } from './resources.js';
 import { registerTools } from './tools/index.js';
@@ -17,7 +18,7 @@ installConsoleSecretRedaction();
 // ── MCP server setup ─────────────────────────────────────────────────────────
 const server = new McpServer({
   name: 'hayba-mcp',
-  version: '1.0.0'
+  version: HAYBA_VERSION
 });
 
 // Register catalog resources (PCGEx node catalog)
@@ -64,7 +65,7 @@ async function main() {
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error(`Hayba MCP Toolkit v1.0.0 started on stdio`);
+  console.error(`Hayba MCP Toolkit v${HAYBA_VERSION} started on stdio`);
   console.error(`UE TCP target: ${config.ueTcpHost}:${config.ueTcpPort}`);
 
   // Probe visual sidecar in the background — populates the cache so subsequent

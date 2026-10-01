@@ -5,6 +5,17 @@ One product version tracks across the three plugins' `VersionName`
 (`mcp-tools/hayba-mcp/package.json`) and the root `package.json`. Bump all
 of them together; they never drift from each other.
 
+Candidate fields use the full prerelease version without a leading `v`
+(for Deploy B, `0.4.0-rc.2`). Root lockfile product entries and the shipped
+private dashboard package and its root lock metadata follow the same version.
+The MCP server reads its own package version once, relative to its module,
+for both `serverInfo.version` and the startup diagnostic in source and built code.
+
+Each UE plugin's integer `Version` is a plugin-local, monotonically increasing
+distribution revision, not an encoded semver value. Deploy B advances Toolkit
+to 5, MetaSound to 3 and GAS to 3; subsequent distributed descriptor revisions
+must increase each affected plugin's integer.
+
 Semver applies while the product is 0.x, with one addition: because the
 product is pre-1.0, a **minor** version bump (`0.X.0`) may change the
 wire protocol between the server and the plugin, not just add features.
