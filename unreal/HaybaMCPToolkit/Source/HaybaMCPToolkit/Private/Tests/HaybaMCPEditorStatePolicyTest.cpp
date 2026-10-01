@@ -440,8 +440,10 @@ bool FHaybaMCPStateUserPlayDecisionTest::RunTest(const FString& Parameters)
 		FHaybaEditorHealth::FScopedOverrideForTests Health;
 		FHaybaMCPEditorState& State = FHaybaMCPEditorState::Get();
 		const int32 SavedMode = Veto->GetInt();
-		// Keep the initial priority, including an interactive Console override.
+		// Explicit priority also supports the constructor default and Console overrides.
 		const uint32 SavedFlags = static_cast<uint32>(Veto->GetFlags());
+		const EConsoleVariableFlags SavedPriority = static_cast<EConsoleVariableFlags>(SavedFlags & ECVF_SetByMask);
+		AddInfo(FString::Printf(TEXT("PIEBuildVeto fixture baseline: mode=%d flags=0x%08x"), SavedMode, SavedFlags));
 		const double SavedVetoAt = State.LastUserPlayVetoAt();
 
 		const FString Tag = FGuid::NewGuid().ToString(EGuidFormats::Digits).Left(8).ToLower();
@@ -458,7 +460,7 @@ bool FHaybaMCPStateUserPlayDecisionTest::RunTest(const FString& Parameters)
 		const HaybaMCPLease::FAcquireResult Lease = FHaybaMCPLeaseManager::Get().Table().Acquire(Request);
 		ON_SCOPE_EXIT
 		{
-			Veto->SetWithCurrentPriority(SavedMode);
+			Veto->Set(SavedMode, SavedPriority);
 			TestEqual(TEXT("the mode is restored"), Veto->GetInt(), SavedMode);
 			TestEqual(TEXT("the CVar priority and flags are restored"), static_cast<uint32>(Veto->GetFlags()), SavedFlags);
 			if (SavedVetoAt > 0.0) State.NoteUserPlayVeto(SavedVetoAt); else State.ClearUserPlayVeto();
@@ -478,7 +480,7 @@ bool FHaybaMCPStateUserPlayDecisionTest::RunTest(const FString& Parameters)
 		{
 			FHaybaMCPEditorState::FScopedPieOverride UserPlay{ UserStarting };
 
-			Veto->SetWithCurrentPriority(1);
+			Veto->Set(1, SavedPriority);
 			TestEqual(TEXT("temporary mode preserves CVar priority and flags"), static_cast<uint32>(Veto->GetFlags()), SavedFlags);
 			State.ClearUserPlayVeto();
 			const HaybaMCPState::FPlayDecision First = State.EvaluateUserPlayRequest(Now);
@@ -497,13 +499,13 @@ bool FHaybaMCPStateUserPlayDecisionTest::RunTest(const FString& Parameters)
 			State.NoteUserPlayVeto(Now + 1.0);
 			TestTrue(TEXT("runtime: a future veto time denies"), State.EvaluateUserPlayRequest(Now).bDeny);
 
-			Veto->SetWithCurrentPriority(2);
+			Veto->Set(2, SavedPriority);
 			State.ClearUserPlayVeto();
 			TestTrue(TEXT("mode 2 vetoes"), State.EvaluateUserPlayRequest(Now).bDeny);
 			TestTrue(TEXT("mode 2 has no double press"), State.EvaluateUserPlayRequest(Now + 1.0).bDeny);
 			TestEqual(TEXT("mode 2 opens no window"), State.LastUserPlayVetoAt(), 0.0);
 
-			Veto->SetWithCurrentPriority(0);
+			Veto->Set(0, SavedPriority);
 			const HaybaMCPState::FPlayDecision Notify = State.EvaluateUserPlayRequest(Now);
 			TestTrue(TEXT("mode 0 lets Play go ahead with a notification"), !Notify.bDeny && Notify.bNotifyOnly);
 		}
@@ -512,7 +514,7 @@ bool FHaybaMCPStateUserPlayDecisionTest::RunTest(const FString& Parameters)
 			AgentStarting.Kind = HaybaMCPState::EPieKind::Agent;
 			AgentStarting.Owner = TEXT("conn:900401");
 			FHaybaMCPEditorState::FScopedPieOverride AgentPlay{ AgentStarting };
-			Veto->SetWithCurrentPriority(1);
+			Veto->Set(1, SavedPriority);
 			TestEqual(TEXT("temporary mode preserves CVar priority and flags"), static_cast<uint32>(Veto->GetFlags()), SavedFlags);
 			State.ClearUserPlayVeto();
 			TestTrue(TEXT("an agent's request is vetoed"), State.EvaluateUserPlayRequest(Now).bDeny);
@@ -526,7 +528,7 @@ bool FHaybaMCPStateUserPlayDecisionTest::RunTest(const FString& Parameters)
 			FHaybaEditorHealth::RecordCaughtFault(EHaybaFaultSite::TestInjection, 0xC0000005u);
 			for (const int32 Mode : { 0, 1, 2 })
 			{
-				Veto->SetWithCurrentPriority(Mode);
+				Veto->Set(Mode, SavedPriority);
 				State.NoteUserPlayVeto(Now - 1.0);
 				const FPlayDecision Unsafe = State.EvaluateUserPlayRequest(Now);
 				TestTrue(TEXT("runtime: unsafe beats a build and double press in every mode"),
@@ -539,7 +541,7 @@ bool FHaybaMCPStateUserPlayDecisionTest::RunTest(const FString& Parameters)
 			FString Error;
 			FHaybaMCPLeaseManager::Get().Table().Release(Lease.Token, Builder, Error);
 			FHaybaMCPEditorState::FScopedPieOverride UserPlay{ UserStarting };
-			Veto->SetWithCurrentPriority(1);
+			Veto->Set(1, SavedPriority);
 			TestEqual(TEXT("temporary mode preserves CVar priority and flags"), static_cast<uint32>(Veto->GetFlags()), SavedFlags);
 			State.NoteUserPlayVeto(Now);
 			const HaybaMCPState::FPlayDecision Free = State.EvaluateUserPlayRequest(Now + 1.0);
@@ -563,11 +565,11 @@ bool FHaybaMCPStateUserPlayDecisionTest::RunTest(const FString& Parameters)
 			TestTrue(TEXT("a fresh build requires a first veto after ordinary successful Play"), NewBuild.bDeny && !NewBuild.bOverrideAccepted);
 
 			State.NoteUserPlayVeto(Now + 3.0);
-			Veto->SetWithCurrentPriority(0);
+			Veto->Set(0, SavedPriority);
 			const FPlayDecision Allowed = State.EvaluateUserPlayRequest(Now + 4.0);
 			TestTrue(TEXT("mode 0 still allows the user with a notification"), !Allowed.bDeny && Allowed.bNotifyOnly);
 			TestEqual(TEXT("mode 0 successful user Play clears the earlier veto"), State.LastUserPlayVetoAt(), 0.0);
-			Veto->SetWithCurrentPriority(1);
+			Veto->Set(1, SavedPriority);
 			const FPlayDecision AfterModeZero = State.EvaluateUserPlayRequest(Now + 5.0);
 			TestTrue(TEXT("mode 1 requires its first veto after mode 0 Play"), AfterModeZero.bDeny && !AfterModeZero.bOverrideAccepted);
 		}
