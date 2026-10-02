@@ -356,6 +356,9 @@ void SHaybaMCPMainPanel::ShowPanel(EHaybaPanel Panel)
     const EHaybaSection* Remembered = LastSectionByPanel.Find(Panel);
     const EHaybaSection Target = Remembered && Sections.Contains(*Remembered)
         ? *Remembered : Sections[0];
+    // Re-selecting the open view must not restart an in-progress World scan.
+    // World has an explicit refresh control when the user wants a new scan.
+    if (CurrentPanel == Panel && CurrentSection == Target && PanelCache.Contains(Target)) return;
     CurrentPanel = Panel;
     ShowSection(Target);
 }
