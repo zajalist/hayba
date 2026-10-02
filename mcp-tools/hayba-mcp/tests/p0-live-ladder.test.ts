@@ -462,7 +462,8 @@ describe('Deploy C framed behavior', () => {
   });
 
   it.each(['valid', 'postterminal-absent', 'missing-envelope', 'accepted-no-id', 'wrong-job', 'wrong-caller', 'missing-orphan', 'missing-native-close',
-    'truncated-step', 'pending-step', 'wrong-sentinel', 'wrong-lease-id', 'cleanup-timeout', 'timeout-batch'])(
+    'truncated-step', 'pending-step', 'wrong-sentinel', 'wrong-lease-id', 'cleanup-timeout', 'initial-query-failure',
+    'invalid-postterminal-expiry', 'timeout-batch'])(
     'C3 requires a framed close, exact final step witness, and bounded cleanup: %s', async (variant) => {
       let clock = 0; let watcher = ''; let batchConn = 0; let closed = false; let batchAccepted = false;
       let statusCalls = 0; let releases = 0;
@@ -483,8 +484,16 @@ describe('Deploy C framed behavior', () => {
           return success({ capabilities: { lease_id: true } });
         }
         if (env.cmd === 'editor_get_state') return success({ pie: 'none', editor_unsafe: false });
-        if (env.cmd === 'lease_status') return success({ caller_owner: caller, connection_owner: '',
-          enforcement: 'enforced_for_writes', leases: withLeases(caller) });
+        if (env.cmd === 'lease_status') {
+          if (variant === 'initial-query-failure' && statusCalls > 0 && caller === watcher)
+            return { ok: false, code: 'query_failure', error: 'watcher status unavailable' };
+          const visible = withLeases(caller);
+          if (variant === 'invalid-postterminal-expiry' && statusCalls > 0 && caller === watcher) {
+            for (const lease of visible) if (lease.bind_connection) lease.expires_in_s = null;
+          }
+          return success({ caller_owner: caller, connection_owner: '',
+            enforcement: 'enforced_for_writes', leases: visible });
+        }
         if (env.cmd === 'lease_acquire') {
           batchConn = conn; const bind = env.params.bind_connection === true;
           const l = { owner: caller, label: env.params.label, lease_id: bind ? 'ls_2_sentinel' : 'ls_2_batch',
@@ -542,7 +551,10 @@ describe('Deploy C framed behavior', () => {
           expect(releases).toBe(0);
           expect(watcher).toMatch(/^ladder-c3-watch-/);
         } else {
-          await expect(cStep('C3').run(ctx)).rejects.toThrow();
+          if (variant === 'initial-query-failure' || variant === 'invalid-postterminal-expiry')
+            await expect(cStep('C3').run(ctx)).rejects.toThrow(variant === 'initial-query-failure'
+              ? /cleanup failed: incorrect lease_status/ : /cleanup failed: C3 post-terminal expiry unreadable/);
+          else await expect(cStep('C3').run(ctx)).rejects.toThrow();
           if (variant === 'missing-envelope') expect(releases).toBe(2);
           else if (variant !== 'accepted-no-id') expect(batchAccepted).toBe(true);
           if (variant === 'accepted-no-id') {
@@ -562,6 +574,23 @@ describe('Deploy C framed behavior', () => {
               already_absent: [{ label: expect.stringMatching(/^batch:/), lease_id: 'ls_2_batch' }],
             }]);
             expect(ctx.retainedFixtures[0].observed_post_terminal[0].expires_in_s).toBeGreaterThan(0);
+          }
+          if (variant === 'initial-query-failure' || variant === 'invalid-postterminal-expiry') {
+            expect(ctx.retainedFixtures).toMatchObject([{
+              step: 'C3', owner: `conn:${batchConn}`, job_id: 'job_c3',
+              reason: expect.stringContaining(variant === 'initial-query-failure'
+                ? 'incorrect lease_status' : 'post-terminal expiry unreadable'),
+              known: [
+                { label: expect.stringMatching(/^batch:/), resource: expect.stringMatching(/^asset:\/Game\/__HaybaTest__/),
+                  lease_id: 'ls_2_batch' },
+                { label: expect.stringMatching(/^sentinel:/), resource: expect.stringMatching(/^asset:\/Game\/__HaybaTest__/),
+                  lease_id: 'ls_2_sentinel' },
+              ],
+              current_state: variant === 'initial-query-failure' ? 'unknown' : 'observed',
+            }]);
+            if (variant === 'invalid-postterminal-expiry')
+              expect(ctx.retainedFixtures[0].remaining).toMatchObject([{ label: expect.stringMatching(/^batch:/) },
+                { label: expect.stringMatching(/^sentinel:/), expires_in_s: null }]);
           }
         }
       } finally { await ed.close(); }

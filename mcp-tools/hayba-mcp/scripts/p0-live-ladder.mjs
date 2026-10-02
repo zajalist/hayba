@@ -967,41 +967,41 @@ const C_STEPS = [
         }
         const held = [batchHeld, sentinelHeld].filter((lease) => lease.lease_id || lease.ticket);
         if (!held.length) return;
-        let latest = await watch();
-        const observed = held.map((lease) => {
-          const item = cLease(latest, lease);
-          return { label: lease.label, resource: lease.resource, lease_id: lease.lease_id,
-            ticket: lease.ticket, state: item ? 'visible' : 'absent',
-            expires_in_s: item?.expires_in_s };
-        });
-        const remaining = observed.filter((lease) => lease.state === 'visible');
-        if (!remaining.length) return;
-        const waiting = held.filter((lease) => cLease(latest, lease));
-        check(remaining.every((lease) => Number.isFinite(lease.expires_in_s) && lease.expires_in_s > 0),
-          `C3 post-terminal expiry unreadable: ${JSON.stringify(observed)}`);
-        // The pump may have renewed the unbound batch lease, so measure now,
-        // after completion. Allow 15 s for editor ticks and status polling.
-        const expiryMs = Math.ceil(Math.max(...remaining.map((lease) => lease.expires_in_s)) * 1000);
+        const known = held.map((lease) => ({ label: lease.label, resource: lease.resource,
+          lease_id: lease.lease_id, ticket: lease.ticket }));
         const allowanceMs = 15_000;
-        const capMs = Math.min(180_000, expiryMs + allowanceMs);
+        let latest; let observed = []; let capMs;
+        const fixture = (lease) => {
+          const item = latest && cLease(latest, lease);
+          return { label: lease.label, resource: lease.resource, lease_id: lease.lease_id,
+            ticket: lease.ticket, state: latest ? (item ? 'visible' : 'absent') : 'unknown',
+            expires_in_s: item?.expires_in_s, orphaned: item?.orphaned,
+            bound_to_connection: item?.bound_to_connection };
+        };
         try {
+          latest = await watch();
+          observed = held.map(fixture);
+          const remaining = observed.filter((lease) => lease.state === 'visible');
+          if (!remaining.length) return;
+          const waiting = held.filter((lease) => cLease(latest, lease));
+          check(remaining.every((lease) => Number.isFinite(lease.expires_in_s) && lease.expires_in_s > 0),
+            `C3 post-terminal expiry unreadable: ${JSON.stringify(observed)}`);
+          // The pump may have renewed the unbound batch lease, so measure now,
+          // after completion. Allow 15 s for editor ticks and status polling.
+          const expiryMs = Math.ceil(Math.max(...remaining.map((lease) => lease.expires_in_s)) * 1000);
+          capMs = Math.min(180_000, expiryMs + allowanceMs);
           await bWait(ctx, 'both C3 leases expire naturally', async () => {
             latest = await watch();
             return waiting.every((lease) => !cLease(latest, lease));
           }, capMs, 1_000);
         } catch (e) {
-          const fixture = (lease) => {
-            const item = cLease(latest, lease);
-            return { label: lease.label, resource: lease.resource, lease_id: lease.lease_id,
-              ticket: lease.ticket, state: item ? 'visible' : 'absent',
-              expires_in_s: item?.expires_in_s, orphaned: item?.orphaned,
-              bound_to_connection: item?.bound_to_connection };
-          };
+          const current = held.map(fixture);
           (ctx.retainedFixtures ??= []).push({
             step: 'C3', owner: caller, job_id: job, reason: `post-terminal cleanup failed: ${e.message}`,
+            known, current_state: latest ? 'observed' : 'unknown',
             observed_post_terminal: observed, allowance_ms: allowanceMs, cap_ms: capMs,
-            remaining: held.map(fixture).filter((lease) => lease.state === 'visible'),
-            already_absent: held.map(fixture).filter((lease) => lease.state === 'absent'),
+            remaining: current.filter((lease) => lease.state === 'visible'),
+            already_absent: current.filter((lease) => lease.state === 'absent'),
           });
           throw e;
         }
