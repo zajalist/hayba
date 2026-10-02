@@ -3,7 +3,7 @@ import express from 'express';
 import type { AddressInfo } from 'node:net';
 import type { Server } from 'node:http';
 import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   registerChatRoutes,
@@ -380,18 +380,22 @@ describe('sidecar SSE chat server', () => {
 
   it('uses per-user project-keyed state and supports Windows reserved session ids', () => {
     const original = process.env.HAYBA_CHAT_SESSION_DIR;
-    const previousLocal = process.env.LOCALAPPDATA;
+    const stateVariable = process.platform === 'win32' ? 'LOCALAPPDATA' : 'XDG_STATE_HOME';
+    const previousState = process.env[stateVariable];
     try {
       delete process.env.HAYBA_CHAT_SESSION_DIR;
-      process.env.LOCALAPPDATA = sessionDir;
+      process.env[stateVariable] = sessionDir;
       const resolved = chatSessionDir();
       expect(resolved).toMatch(/HaybaMCP[\\/]chat-context[\\/][a-f0-9]{32}$/);
-      expect(resolved.startsWith(sessionDir)).toBe(true);
+      const userState = process.platform === 'darwin'
+        ? join(homedir(), 'Library', 'Application Support')
+        : sessionDir;
+      expect(resolved.startsWith(userState)).toBe(true);
     } finally {
       if (original === undefined) delete process.env.HAYBA_CHAT_SESSION_DIR;
       else process.env.HAYBA_CHAT_SESSION_DIR = original;
-      if (previousLocal === undefined) delete process.env.LOCALAPPDATA;
-      else process.env.LOCALAPPDATA = previousLocal;
+      if (previousState === undefined) delete process.env[stateVariable];
+      else process.env[stateVariable] = previousState;
     }
     saveChatContext(sessionDir, 'CON', [{ role: 'user', content: 'safe' }]);
     expect(readdirSync(sessionDir)).toContain('ctx_CON.json');

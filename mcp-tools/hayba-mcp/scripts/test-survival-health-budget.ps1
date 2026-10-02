@@ -152,6 +152,18 @@ try {
     }
     'fresh_owned_helper_query' {
      Initialize-HostProofCapture
+     $fixtureHelper=$helperPath
+     if([OperatingSystem]::IsLinux()){
+      # The production helper uses Windows CIM. Inject only a live /proc CIM
+      # adapter into a temporary copy, retaining its validation and event path.
+      $fixtureHelper=Join-Path ([IO.Path]::GetTempPath()) ('hayba-host-proof-linux-'+[guid]::NewGuid().ToString('N')+'.ps1')
+      $fixtureFiles.Add($fixtureHelper)
+      $source=Get-Content -Raw -LiteralPath $helperPath
+      $insertion='$ErrorActionPreference=''Stop'''
+      Require ([regex]::Matches($source,[regex]::Escape($insertion)).Count -eq 1) 'Host proof adapter insertion point changed'
+      $adapter=Get-Content -Raw -LiteralPath (Join-Path (Split-Path -Parent $HarnessPath) 'test-survival-cim-linux-adapter.ps1')
+      Set-Content -LiteralPath $fixtureHelper -Value ($source.Replace($insertion,"$insertion`n$adapter")) -Encoding utf8
+     }
      $info=[Diagnostics.ProcessStartInfo]::new((Get-Command node -ErrorAction Stop).Source)
      $info.UseShellExecute=$false;$info.CreateNoWindow=$true;$info.RedirectStandardOutput=$true
      $info.ArgumentList.Add('-e')
@@ -168,8 +180,8 @@ try {
       }
       $ready=$capture.Snapshot().Trim()|ConvertFrom-Json
       Require ($ready.port -gt 0 -and $ready.port -notin 52342..52350) 'Fixture selected a real MCP port'
-      $EditorPid=$fixture.Id;$EditorExe=$info.FileName;$Port=[int]$ready.port
-      $HostProofHelper=$helperPath;$CaseClock=$null
+      $EditorPid=$fixture.Id;$EditorExe=$fixture.MainModule.FileName;$Port=[int]$ready.port
+      $HostProofHelper=$fixtureHelper;$CaseClock=$null
       $proof=Invoke-HostProofQuery -IncludeListener -TimeoutMs 7000
       $EditorIdentity=New-EditorIdentity $EditorPid -ProcessRow $proof.process
       Require ((Get-ListenerOwner -Owners $proof.listener_owners) -eq $EditorPid -and $LastHostQueryEvidence.exit_confirmed) 'Exact listener or helper exit absent'

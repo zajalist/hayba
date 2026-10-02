@@ -87,12 +87,27 @@ public sealed class HaybaClientProbePeer : IDisposable {
             using (client)
             using (var stream = client.GetStream()) {
                 if (!admitted && mode == "reset_overflow") {
-                    await ReadExact(stream,4);
+                    var resetHeader = await ReadExact(stream,4);
+                    if (resetHeader == null) return;
+                    int resetLength = (resetHeader[0]<<24)|(resetHeader[1]<<16)|(resetHeader[2]<<8)|resetHeader[3];
+                    if (resetLength < 1 || resetLength > 4096) return;
+                    await ReadExact(stream,resetLength);
                     client.Client.LingerState = new LingerOption(true,0);
                     client.Client.Close();
                     return;
                 }
                 if (!admitted && mode == "late_overflow") { await Task.Delay(frameMs+100,cancel.Token); return; }
+                if (!admitted && mode == "capacity") {
+                    // Drain the request before graceful rejection. An immediate
+                    // close races the two client writes and can produce EPIPE on
+                    // Linux before the probe observes the required peer closure.
+                    var rejectedHeader = await ReadExact(stream, 4);
+                    if (rejectedHeader == null) return;
+                    int rejectedLength = (rejectedHeader[0]<<24)|(rejectedHeader[1]<<16)|(rejectedHeader[2]<<8)|rejectedHeader[3];
+                    if (rejectedLength < 1 || rejectedLength > 4096) return;
+                    await ReadExact(stream, rejectedLength);
+                    return;
+                }
                 if (!admitted && mode != "admit_overflow") return;
                 if (mode == "silent") { await Task.Delay(-1, cancel.Token); return; }
                 var header = await ReadExact(stream, 4);
