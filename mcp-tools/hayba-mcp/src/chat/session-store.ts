@@ -15,7 +15,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import type { LLMMessage } from '../agents/llm-client.js';
@@ -232,8 +232,13 @@ export function chatSessionDir(): string {
 }
 
 function filePath(dir: string, id: string): string {
-  // Prefix also makes Windows device names (CON, NUL, COM1, …) safe filenames.
-  return join(dir, `ctx_${id}.json`);
+  // Validate at the filesystem boundary, including callers that bypass the
+  // HTTP route. The prefix makes Windows device names safe filenames.
+  if (!ID_RE.test(id) || basename(id) !== id) throw new Error('invalid chat session id');
+  const root = resolve(dir);
+  const path = resolve(root, `ctx_${id}.json`);
+  if (dirname(path) !== root) throw new Error('chat session path escaped its directory');
+  return path;
 }
 
 function textOnly(messages: LLMMessage[]): LLMMessage[] {
@@ -380,7 +385,7 @@ export function pruneChatContexts(dir: string, now = Date.now()): void {
     if (!entry.isFile() || !entry.name.startsWith('ctx_') || !entry.name.endsWith('.json')) continue;
     const id = entry.name.slice(4, -5);
     if (!ID_RE.test(id)) continue;
-    const path = join(dir, entry.name);
+    const path = filePath(dir, id);
     try {
       const stat = statSync(path);
       const valid =
@@ -406,7 +411,7 @@ export function saveChatContext(dir: string, id: string, messages: LLMMessage[],
     payload = JSON.stringify({ version: 1, id, savedAt: now, messages: clean, warnings: safeWarnings });
   }
   mkdirSync(dir, { recursive: true, mode: 0o700 });
-  const temp = join(dir, `.${id}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`);
+  const temp = join(dir, `.${randomUUID()}.tmp`);
   try {
     const fd = openSync(temp, 'wx', 0o600);
     try {
