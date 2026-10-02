@@ -31,8 +31,8 @@
   },
   "overrides": {
     "esbuild": "^0.25.0",
-    "hono": "^4.12.34",
-    "undici": "^7.29.0",
+    "hono": "^4.13.7",
+    "undici": "^7.29.1",
     "protobufjs": "^7.6.5",
     "postcss": "^8.5.10"
   },
