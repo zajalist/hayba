@@ -34,13 +34,32 @@ resources that the editor checks but never waits on.**
 
 ### Callers have an identity
 
-The TCP envelope gains two optional fields, both back-compatible:
+The TCP envelope has two optional fields, both back-compatible:
 
 - `owner` — which agent is calling. The Node client sends `HAYBA_AGENT_ID`, or
-  a per-process id. An envelope without one gets `conn:<id>` (one owner per
-  connection); an in-process call gets `local`.
-- `lease` — a held `lease_id`. The command then acts as that lease's owner,
-  so a lease can be handed to a helper process.
+  a per-process id.
+- `lease` — a held `lease_id`.
+
+The editor resolves the caller once per request (`FHaybaMCPLeaseManager::ResolveCaller`),
+owner first: the envelope `owner`, then the owner this connection adopted
+(`lease_adopt`, or its first granted `lease_acquire` with an explicit owner),
+then `conn:<id>` for TCP or `local` in-process. `conn:<id>` and `local` are
+reserved: a TCP connection can name only its own `conn:<id>` and cannot name
+`local`. An invalid claim is refused before the command runs with
+`owner_reserved`. Batch steps keep the owner checked when `editor_batch` was
+accepted; they cannot forge a different one.
+
+The envelope `lease` never changes the caller's identity. A lease belonging
+to another owner is not bound to the caller. The request is judged under its
+resolved caller, with `lease_binding` explaining the named lease owner, caller
+owner and fix. An actual lock conflict can refuse with `lease_conflict`; a
+write that otherwise runs may instead carry `lease_warning` with reason
+`lease_not_bound`. A helper acting for a lease owner must send that owner on
+each envelope, or call `lease_adopt {owner, lease_id}` on its persistent
+connection. Adoption requires a live matching lease, lasts only for that
+connection and is repeated after reconnect. It revives only that owner's
+orphaned connection-bound leases; live bindings and unbound lease lifetimes
+remain unchanged. Identity coordinates agents; authentication remains separate.
 
 Each connection has a `ConnId`, carried with every pending command. Reader
 threads report a closed connection through an MPSC queue that the game-thread
@@ -148,7 +167,9 @@ three rules instead, pinned by `Hayba.MCP.Lease.IdSurvivesRedaction`,
 `lease_release`. The reply then carries `deprecation`, and the editor logs one
 Warning per command, param and owner (`lease_renew: deprecated param 'token'
 from owner 'X'; send lease_id`); that line is the removal metric. A redaction
-marker under `lease_id` is refused with `[lease_id_redacted]`. `editor_batch`
+marker under `lease_id` is refused with `[lease_id_redacted]`. An envelope
+redaction marker counts as an absent lease; a marker explicitly supplied as
+`editor_batch.lease_id` is refused. `editor_batch`
 takes `lease_id`, or `lease`, which is permanent because it is not
 secret-shaped. `ping` reports `capabilities.lease_id: true`; host tools use
 leases only when it is set. The Node server seeds its envelope lease only from
@@ -156,7 +177,8 @@ leases only when it is set. The Node server seeds its envelope lease only from
 
 ### EnforcedForWrites by default
 
-After authentication, `ProcessCommand` records the caller's presence and then
+After authentication, `ProcessCommand` resolves the caller, checks reserved
+owner names and records presence before
 checks the command's locks against other owners' leases. `LeaseEnforcement`
 is read on every check (Project Settings > Hayba MCP Toolkit), so a change
 applies at once:
@@ -173,10 +195,10 @@ applies at once:
 - **Enforced** — as EnforcedForWrites, and a read that names a dead lease is
   refused too.
 
-Precedence is `owner_missing` > `lease_unknown` > `held`. Only an owner named
-in the envelope, or proven by a valid lease handle, counts as present; the
-synthetic `conn:<n>` and `local` owners never do, and presence never extends a
-lease. A redaction marker in the envelope `lease` counts as absent. Every
+Precedence is `owner_missing` > `lease_unknown` > `held`. An explicitly named
+or adopted owner counts as present; a lease handle alone does not. Synthetic
+`conn:<n>` and `local` owners never count as named presence, and presence never
+extends a lease. A redaction marker in the envelope `lease` counts as absent. Every
 lease warning is rate-limited: the first per (reason, owner, command, holder)
 per 30 s is logged, the next window's first line says `(+N identical …)`, and
 a closed window is summed as `repeated N more times in 30 s`; each response
@@ -215,8 +237,9 @@ restart fallback is `Config/DefaultHaybaMCP.ini` with the
 - An agent that wants a safe multi-step sequence asks for it and learns who is
   in the way and for how long, instead of discovering it from a crash.
 - Leases are **coordination, not security**. `owner` is self-declared; the
-  capability token remains the auth boundary. Tokens are salted and shown only
-  to their owner, because an envelope `lease` acts as that owner.
+  capability token remains the auth boundary. Lease ids are shown only to
+  their owner. An envelope `lease` does not act as that owner; `lease_adopt`
+  requires both a live id and its matching owner.
 - The table lives in editor memory. An editor restart forgets every lease;
   a TCP-server restart orphans bound leases until their earlier expiry or
   orphan grace limit, unless their owner renews them.
@@ -302,12 +325,11 @@ than one tick.
 1. **`wait_for_idle` as a real wait.** It still snapshots the busy predicates
    once. The batch fence now waits across ticks without blocking; the
    standalone command can reuse the same fence (a one-step batch, or a job).
-2. **Migrate `editor_gate.py` in the host project.** The proposed version
-   ships with the first consumer project's host tools (patch plus tests,
-   file-lock fallback kept). Install it when the consumer's editor is
-   closed, then move
-   `apply_look.py` and `bpgraph.mjs` to one connection per client with the
-   `lease` envelope field, then retire the file lock.
+2. **Integrate clients.** Clients that use an external lease must carry a
+   stable `owner` on each envelope. Persistent clients can adopt a matching
+   live lease when they cannot supply owner per request; they must repeat
+   adoption after reconnect. An envelope lease alone never establishes
+   identity.
 3. **Batch cancel.** A running batch stops only on error, lease loss or
    completion. A `batch_cancel` would be a machine input like `bLeaseValid`.
 4. **Fair scheduling of the drain itself.** Fences serve lease waiters. The

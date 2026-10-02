@@ -69,7 +69,10 @@ Agent host ──stdio──▶ Node MCP server ──TCP──▶ UE5 C++ plugi
   (`global`, `world:`, `wp-region:`, `asset:`, `actor:`, `pie`) that lets
   several agents share one editor. The editor checks leases but never waits on
   them: `lease_acquire` answers granted or queued. **Owner** is the envelope
-  `owner` field (else one per connection); Plan-Mode approval is per owner too.
+  `owner` field, else the connection's adopted owner (`lease_adopt`), else one
+  owner per connection (`conn:<id>`, or `local` in-process). Those synthetic
+  names are reserved; the envelope `lease` never changes the owner. Plan-Mode
+  approval is per owner too.
   See ADR-0010.
 - **Lease id** — the handle of a granted lease, `ls_<seq>_<mac12>` (a queued
   request's ticket is `lq_…`). Always named `lease_id`, never `token`, because

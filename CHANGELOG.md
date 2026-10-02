@@ -5,6 +5,11 @@ All notable changes to Hayba MCP Toolkit are documented here. Format based on [K
 ## [Unreleased]
 
 ### Added
+- `lease_adopt {owner, lease_id}` lets a persistent connection use the owner
+  of a live matching lease until that connection closes. It revives that
+  owner's orphaned connection-bound leases without moving live bindings or
+  extending unbound leases. A granted `lease_acquire` with an explicit owner
+  also adopts its connection.
 - The Play button is vetoed while an agent holds an asset build lease (P0,
   D7). `hayba.PIEBuildVeto` (console): `1` (default) stops Play and a second
   press within 10 s plays anyway, `2` stops it with no override, `0` only
@@ -23,9 +28,10 @@ All notable changes to Hayba MCP Toolkit are documented here. Format based on [K
   `asset:`, `actor:` or `pie` resources. Acquire never blocks: it answers
   granted or queued with position, holder and ETA. The envelope gains optional
   `owner` and `lease` fields; the Node client sends `HAYBA_AGENT_ID` (or a
-  per-process id) and renews granted leases in the background. The new
-  `LeaseEnforcement` setting is `Advisory` by default (commands run and carry a
-  `lease_warning`); `Enforced` refuses them with `code: "lease_conflict"`.
+  per-process id) and renews granted leases in the background. The
+  `LeaseEnforcement` setting supports `Advisory` (commands run and carry a
+  `lease_warning`) and `Enforced` (conflicts can be refused with
+  `code: "lease_conflict"`); the shipped default is described under Changed.
 - `python_run` accepts `deadline_s` (5 to 60 s) from a caller holding an
   exclusive lease on the current world, `transaction: false`, and
   `world_partition: true`.
@@ -42,8 +48,6 @@ All notable changes to Hayba MCP Toolkit are documented here. Format based on [K
   after 3 yields or 60 s.
 - `ping` reports `capabilities.lease_manager`, `editor_batch` and
   `wp_region_steps`, so host scripts can switch from a file lock to leases.
-- A proposed lease-based `editor_gate.py` for the first consumer project,
-  with tests and a patch, kept with that project's host tools.
 - `asset_busy` (P0). While any owner holds an `asset:<path>` exclusive lease
   (a build), `editor_start_pie` and `editor_save_all_and_quit` are refused with
   `code: "asset_busy"` and a `busy` detail naming the asset, owner, label and
@@ -57,6 +61,12 @@ All notable changes to Hayba MCP Toolkit are documented here. Format based on [K
 - `ping` reports `capabilities.lease_id`.
 
 ### Changed
+- Callers resolve owner first (P0 T9, ADR-0010): envelope `owner`, then an
+  adopted connection owner, then `conn:<id>` or in-process `local`. The
+  envelope `lease` never acts as its owner. A foreign synthetic-owner claim
+  is refused with `owner_reserved`; naming another owner's lease adds
+  `lease_binding` to a conflict or warning. Batch steps retain the accepted
+  batch owner, and `lease_status` includes `connection_owner`.
 - Lease enforcement defaults to `EnforcedForWrites` (ADR-0010), shipped
   together with `lease_id`: a conflicting write is refused with
   `lease_conflict`, and a write that names no owner while other agents are
