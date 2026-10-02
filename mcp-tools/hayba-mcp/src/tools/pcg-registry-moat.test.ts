@@ -1,4 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { describe, expect, it, vi } from 'vitest';
+import { parseCatalogData } from '../catalog.js';
 import type { CatalogNode, NodeCatalog } from '../types.js';
 import {
   compatiblePins,
@@ -6,6 +8,11 @@ import {
   getPatternTemplate,
   searchNodeCatalogSemantic,
 } from './pcg-registry-moat.js';
+
+vi.mock('node:fs', async importOriginal => ({
+  ...(await importOriginal<typeof import('node:fs')>()),
+  writeFileSync: vi.fn(),
+}));
 
 const node = (overrides: Partial<CatalogNode>): CatalogNode => ({
   class: '',
@@ -92,8 +99,12 @@ describe('pin compatibility', () => {
 });
 
 describe('common-pattern templates', () => {
+  const shippedCatalog = parseCatalogData(JSON.parse(readFileSync(
+    new URL('../../../../unreal/HaybaMCPToolkit/Resources/node_catalog.json', import.meta.url), 'utf8',
+  )));
+
   it('selects a road/path template by intent and explains when to use it', () => {
-    const result = getPatternTemplate('build roads between settlements');
+    const result = getPatternTemplate('build roads between settlements', shippedCatalog);
 
     expect('id' in result).toBe(true);
     if (!('id' in result)) throw new Error('expected a matching template');
@@ -101,6 +112,88 @@ describe('common-pattern templates', () => {
     expect(result.use_when).toMatch(/route|road/i);
     expect(result.nodes.length).toBeGreaterThan(1);
     expect(result.edges.length).toBeGreaterThan(0);
+    expect(result.preflight.requiresLiveValidation).toBe(true);
+    expect(result.preflight.scope).toBe('catalog_only');
+    expect(result.preflight.edge_checks.map(edge => edge.status)).toEqual(['absent', 'unknown']);
+    expect(result.preflight.pin_checks).toContainEqual({
+      node: 'pathfind', direction: 'input', pin: 'Cluster', status: 'absent',
+    });
+    expect(result.preflight.pin_checks).toContainEqual({
+      node: 'spline', direction: 'input', pin: 'Paths', status: 'unknown',
+    });
+  });
+
+  it('exposes shipped refinement mismatch without asserting live plugin state', () => {
+    const result = getPatternTemplate('refine cluster edges', shippedCatalog);
+    if (!('id' in result)) throw new Error('expected a matching template');
+    expect(result.id).toBe('cluster-refinement');
+    expect(result.preflight.class_checks.every(check => check.status === 'confirmed')).toBe(true);
+    expect(result.preflight.pin_checks.find(check => check.node === 'refine' && check.pin === 'Cluster')?.status).toBe('absent');
+    expect(result.preflight.edge_checks[0].status).toBe('absent');
+  });
+
+  it('marks classes outside the shipped catalog absent from catalog evidence only', () => {
+    const result = getPatternTemplate('scatter points across terrain', shippedCatalog);
+    if (!('id' in result)) throw new Error('expected a matching template');
+    expect(result.id).toBe('surface-scatter');
+    expect(result.preflight.class_checks.map(check => check.status)).toEqual(['absent', 'absent', 'absent']);
+    expect(result.preflight.pin_checks.every(check => check.status === 'unknown')).toBe(true);
+    expect(result.preflight.edge_checks.every(check => check.status === 'unknown')).toBe(true);
+    expect(result.preflight.requiresLiveValidation).toBe(true);
+  });
+
+  it('confirms complete catalog pins while retaining live validation', () => {
+    const complete: NodeCatalog = { version: 'fixture-complete', categories: [], nodes: [
+      node({ class: 'UPCGExBuildDelaunayGraph2DSettings', outputs: [{ pin: 'Edges', type: 'points' }] }),
+      node({ class: 'UPCGExPathfindingEdgesSettings', inputs: [{ pin: 'Cluster', type: 'points' }], outputs: [{ pin: 'Paths', type: 'points' }] }),
+      node({ class: 'UPCGExCreateSplineSettings', inputs: [{ pin: 'Paths', type: 'points' }] }),
+    ] };
+    const result = getPatternTemplate('roads between settlements', complete);
+    if (!('id' in result)) throw new Error('expected a matching template');
+    expect(result.preflight.class_checks.map(check => check.status)).toEqual(['confirmed', 'confirmed', 'confirmed']);
+    expect(result.preflight.pin_checks.map(check => check.status)).toEqual(['confirmed', 'confirmed', 'confirmed', 'confirmed']);
+    expect(result.preflight.edge_checks.map(check => check.status)).toEqual(['confirmed', 'confirmed']);
+    expect(result.preflight.edge_checks.map(check => check.type_compatibility)).toEqual(['compatible', 'compatible']);
+    expect(result.preflight.requiresLiveValidation).toBe(true);
+  });
+
+  it('does not confirm an edge whose catalog pin types conflict', () => {
+    const mismatched: NodeCatalog = { version: 'fixture-mismatch', categories: [], nodes: [
+      node({ class: 'UPCGExBuildDelaunayGraph2DSettings', outputs: [{ pin: 'Edges', type: 'points' }] }),
+      node({ class: 'UPCGExRefineEdgesSettings', inputs: [{ pin: 'Cluster', type: 'spline' }] }),
+    ] };
+    const result = getPatternTemplate('refine cluster edges', mismatched);
+    if (!('id' in result)) throw new Error('expected a matching template');
+    expect(result.preflight.pin_checks.map(check => check.status)).toEqual(['confirmed', 'confirmed']);
+    expect(result.preflight.edge_checks[0]).toMatchObject({
+      status: 'unknown', type_compatibility: 'incompatible',
+    });
+    expect(result.preflight.requiresLiveValidation).toBe(true);
+  });
+
+  it('returns the template with unknown checks when catalog evidence is unavailable', () => {
+    const result = getPatternTemplate('roads between settlements', null);
+    if (!('id' in result)) throw new Error('expected a matching template');
+    expect(result.id).toBe('road-network');
+    expect(result.preflight.catalog_version).toBeNull();
+    expect(result.preflight.class_checks.every(check => check.status === 'unknown')).toBe(true);
+    expect(result.preflight.pin_checks.every(check => check.status === 'unknown')).toBe(true);
+    expect(result.preflight.edge_checks.every(check => check.status === 'unknown' && check.type_compatibility === 'unknown')).toBe(true);
+    expect(result.preflight.requiresLiveValidation).toBe(true);
+  });
+
+  it('treats empty and dynamic pin lists as unknown and does not write a graph', () => {
+    const dynamic: NodeCatalog = { version: 'fixture-dynamic', categories: [], nodes: [
+      node({ class: 'UPCGExBuildDelaunayGraph2DSettings', outputs: [{ pin: 'GetMainOutputPin(', type: 'points' }] }),
+      node({ class: 'UPCGExRefineEdgesSettings', inputs: [] }),
+    ] };
+    const before = JSON.stringify(dynamic);
+    const result = getPatternTemplate('refine cluster edges', dynamic);
+    if (!('id' in result)) throw new Error('expected a matching template');
+    expect(result.preflight.pin_checks.map(check => check.status)).toEqual(['unknown', 'unknown']);
+    expect(result.preflight.edge_checks[0].status).toBe('unknown');
+    expect(JSON.stringify(dynamic)).toBe(before);
+    expect(writeFileSync).not.toHaveBeenCalled();
   });
 
   it('returns a ranked discovery list when no intent has meaningful overlap', () => {

@@ -12,6 +12,7 @@
 #include "IAssetTools.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "HaybaMCPAssetGuard.h"
+#include "HaybaMCPSaveVerify.h"
 #include "AssetRegistry/IAssetRegistry.h"
 #include "Components/StaticMeshComponent.h"
 #include "GameFramework/Actor.h"
@@ -155,19 +156,15 @@ static bool HaybaPersistAsset(UObject* Asset, FString& OutError)
 {
     if (!Asset) { OutError = TEXT("null asset"); return false; }
     Asset->MarkPackageDirty();
-    UPackage* Pkg = Asset->GetOutermost();
-    if (!Pkg) { OutError = TEXT("no package"); return false; }
-
-    const FString FileName = FPackageName::LongPackageNameToFilename(
-        Pkg->GetName(), FPackageName::GetAssetPackageExtension());
-
-    FSavePackageArgs Args;
-    Args.TopLevelFlags = RF_Public | RF_Standalone;
-    Args.SaveFlags = SAVE_NoError;
-    const bool bOk = UPackage::SavePackage(Pkg, nullptr, *FileName, Args);
-    if (!bOk)
+    const HaybaSaveVerify::FResult Saved = HaybaSaveVerify::SaveAndVerify(Asset);
+    if (Saved.bRefusedReadOnly)
     {
-        OutError = FString::Printf(TEXT("SavePackage failed for %s"), *Pkg->GetName());
+        OutError = TEXT("[package_read_only] ") + Saved.Note;
+        return false;
+    }
+    if (!Saved.DidReachDisk())
+    {
+        OutError = FString::Printf(TEXT("SavePackage failed for %s. %s"), *Asset->GetOutermost()->GetName(), *Saved.Note);
         return false;
     }
     return true;
@@ -1338,6 +1335,15 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatSetParam(const TSharedPtr<FJson
 
     TSharedPtr<FJsonValue> Val = P->TryGetField(TEXT("value"));
     if (!Val.IsValid()) return FHaybaHandlerResult::Err(TEXT("material_set_param: missing value"));
+
+    // Before the first MIC->Modify() below.
+    {
+        FHaybaHandlerResult ReadOnly;
+        if (HaybaSaveVerify::RefuseIfReadOnly(TEXT("material_set_param"), MIC->GetOutermost()->GetName(), ReadOnly))
+        {
+            return ReadOnly;
+        }
+    }
 
     FName PName(*ParamName);
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
@@ -3065,6 +3071,15 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatCompile(const TSharedPtr<FJsonO
         UMaterialFunction* Fn = LoadObject<UMaterialFunction>(nullptr, *FuncPath);
         if (!Fn) return FHaybaHandlerResult::Err(TEXT("material_compile: function not found"));
 
+        // Before UpdateMaterialFunction: the compile writes the function.
+        {
+            FHaybaHandlerResult ReadOnly;
+            if (HaybaSaveVerify::RefuseIfReadOnly(TEXT("material_compile"), Fn->GetOutermost()->GetName(), ReadOnly))
+            {
+                return ReadOnly;
+            }
+        }
+
         // Refuse to translate a crash-prone graph (uncatchable translator assert).
         TArray<FString> Problems;
         CollectMaterialGraphProblems(Fn->GetExpressions(), {}, Problems);
@@ -3096,8 +3111,8 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatCompile(const TSharedPtr<FJsonO
             Bad->SetBoolField(TEXT("saved"), false);
             Bad->SetBoolField(TEXT("has_errors"), true);
             Bad->SetBoolField(TEXT("session_suspect"), true);
-            Bad->SetStringField(TEXT("error"), TEXT("material_compile: native function compilation failed; the function was not saved. Restart the editor before another mutation."));
-            Bad->SetStringField(TEXT("crash_guarded"), TEXT("material_compile(function): native access violation during UpdateMaterialFunction — commonly a stale Python-registered editor delegate firing on a GC'd target. Editor kept alive by the SEH guard; function NOT saved. Restart the editor before another mutation."));
+            Bad->SetStringField(TEXT("error"), TEXT("material_compile: native function compilation failed; the function was not saved. Fault contained; restart the editor before further work."));
+            Bad->SetStringField(TEXT("crash_guarded"), TEXT("material_compile(function): native access violation during UpdateMaterialFunction — commonly a stale Python-registered editor delegate firing on a GC'd target. Fault contained; the function was NOT saved. Restart the editor before further work."));
             return FHaybaHandlerResult::Ok(Bad);
         }
         FString FnSaveErr;
@@ -3120,6 +3135,15 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatCompile(const TSharedPtr<FJsonO
 
     UMaterial* Mat = LoadObject<UMaterial>(nullptr, *MatPath);
     if (!Mat) return FHaybaHandlerResult::Err(TEXT("material_compile: material not found"));
+
+    // Before RecompileMaterial: material_compile is the translate-and-save boundary.
+    {
+        FHaybaHandlerResult ReadOnly;
+        if (HaybaSaveVerify::RefuseIfReadOnly(TEXT("material_compile"), Mat->GetOutermost()->GetName(), ReadOnly))
+        {
+            return ReadOnly;
+        }
+    }
 
     // Refuse to translate a crash-prone graph: RecompileMaterial below runs the
     // HLSL translator, whose 'Default != nullptr' assert is uncatchable and kills
@@ -3174,8 +3198,8 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatCompile(const TSharedPtr<FJsonO
             Bad->SetBoolField(TEXT("has_errors"), true);
             Bad->SetBoolField(TEXT("compiled_clean"), false);
             Bad->SetBoolField(TEXT("session_suspect"), true);
-            Bad->SetStringField(TEXT("error"), TEXT("material_compile: native material compilation failed; the material was not saved. Restart the editor before another mutation."));
-            Bad->SetStringField(TEXT("crash_guarded"), TEXT("material_compile: native access violation during recompile/PostEditChange — commonly a stale Python-registered editor delegate firing on a garbage-collected target, or a re-entrant property broadcast. The editor was kept alive by the SEH guard and the material was NOT saved. Restart the editor before another mutation. Do not register UE editor delegates from python_run whose targets can be GC'd."));
+            Bad->SetStringField(TEXT("error"), TEXT("material_compile: native material compilation failed; the material was not saved. Fault contained; restart the editor before further work."));
+            Bad->SetStringField(TEXT("crash_guarded"), TEXT("material_compile: native access violation during recompile/PostEditChange — commonly a stale Python-registered editor delegate firing on a garbage-collected target, or a re-entrant property broadcast. Fault contained; the material was NOT saved. Restart the editor before further work. Do not register UE editor delegates from python_run whose targets can be GC'd."));
             return FHaybaHandlerResult::Ok(Bad);
         }
 
@@ -3258,7 +3282,7 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatCompile(const TSharedPtr<FJsonO
             Out->SetBoolField(TEXT("session_suspect"), true);
             Out->SetStringField(TEXT("error"), TEXT(
                 "material_compile: native access violation while reading optimization statistics after compile/save. "
-                "No further FMaterialResource access was attempted; restart the editor before another mutation."));
+                "No further FMaterialResource access was attempted. Fault contained; restart the editor before further work."));
             Out->SetStringField(TEXT("crash_guarded"), TEXT(
                 "material_compile(stats): ExtractMatertialStatsInfo faulted under SEH after the material compile/save lifecycle completed."));
             return FHaybaHandlerResult::Ok(Out);

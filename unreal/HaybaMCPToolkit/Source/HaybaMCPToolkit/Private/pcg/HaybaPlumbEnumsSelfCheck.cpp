@@ -17,7 +17,7 @@
 // EHaybaPrimitive: 13 entries (indices 0..12), last = MaxStraightRun
 static_assert((int)EHaybaPrimitive::MaxStraightRun == 12,
     "PRIMITIVES drifted: expected 13 entries (0..12). "
-    "Regenerate via: cd D:/Hackathons/hayba/mcp-tools/hayba-mcp && npm run gen:plumb-enums");
+    "Regenerate via: cd mcp-tools/hayba-mcp && npm run gen:plumb-enums");
 
 // EHaybaEmitOp: 6 entries (indices 0..5), last = Fill
 static_assert((int)EHaybaEmitOp::Fill == 5,

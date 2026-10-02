@@ -2,15 +2,29 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import express from 'express';
 import type { AddressInfo } from 'node:net';
 import type { Server } from 'node:http';
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   registerChatRoutes,
   __resetChatState,
   __sweepSessions,
+  __sweepChatContexts,
+  __contextPrunerCount,
   __sessionCount,
   isLoopback,
+  getConfigEntry,
 } from '../../src/chat/chat-server.js';
-import type { LLMClient, LLMStreamEvent } from '../../src/agents/llm-client.js';
+import { resolveConfig, type LLMClient, type LLMStreamEvent } from '../../src/agents/llm-client.js';
 import { temporarySessionStore } from '../../src/chat/session-store.test-helpers.js';
+import {
+  CHAT_CONTEXT_TTL_MS,
+  chatSessionDir,
+  loadChatContext,
+  loadChatState,
+  pruneChatContexts,
+  saveChatContext,
+} from '../../src/chat/session-store.js';
 
 // A distinctive fake key we assert never leaks into any SSE frame or config read.
 const FAKE_KEY = 'sk-ant-LEAK-CANARY-000111222333';
@@ -128,9 +142,16 @@ function startApp(opts: Parameters<typeof registerChatRoutes>[1]): {
 describe('sidecar SSE chat server', () => {
   let server: Server;
   let url: string;
+  let sessionDir: string;
 
-  beforeEach(() => __resetChatState());
-  afterEach(() => server?.close());
+  beforeEach(() => {
+    __resetChatState();
+    sessionDir = mkdtempSync(join(tmpdir(), 'hayba-chat-test-'));
+  });
+  afterEach(() => {
+    server?.close();
+    rmSync(sessionDir, { recursive: true, force: true });
+  });
 
   it('isLoopback recognises loopback addresses only', () => {
     expect(isLoopback('127.0.0.1')).toBe(true);
@@ -209,9 +230,7 @@ describe('sidecar SSE chat server', () => {
         },
         { deltas: ['Hello ', 'world'], content: 'Hello world', toolCalls: [], stopReason: 'end_turn' },
       ]) as never,
-      tools: [
-        { name: 'get_thing', description: 'read a thing', input_schema: { type: 'object', properties: {} } },
-      ],
+      tools: [{ name: 'get_thing', description: 'read a thing', input_schema: { type: 'object', properties: {} } }],
       dispatchTool: async () => {
         dispatchCount++;
         return { ok: true, value: 42 };
@@ -249,6 +268,258 @@ describe('sidecar SSE chat server', () => {
     // seq ids are monotonic
     const ids = frames.map((f) => f.id!).filter((n) => Number.isFinite(n));
     for (let i = 1; i < ids.length; i++) expect(ids[i]).toBeGreaterThan(ids[i - 1]);
+  });
+
+  it('restores the same session context after restart and keeps a new session clean', async () => {
+    const seen: Array<Array<{ role: string; content: unknown }>> = [];
+    let reply = 0;
+    const createClient = () =>
+      ({
+        provider: 'mock',
+        model: 'fake',
+        protocol: 'anthropic',
+        async complete() {
+          throw new Error('not used');
+        },
+        async *stream(params: { messages: Array<{ role: string; content: unknown }> }) {
+          seen.push(params.messages.map((m) => ({ ...m })));
+          const content = `answer ${++reply}`;
+          yield { type: 'text_delta' as const, text: content };
+          yield { type: 'done' as const, response: { content, toolCalls: [], stopReason: 'end_turn' as const } };
+        },
+      }) as unknown as LLMClient;
+    const ask = async (id: string, prompt: string) => {
+      const res = await fetch(`${url}/chat/stream`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ session_id: id, prompt, provider: 'mock' }),
+      });
+      expect(res.status).toBe(200);
+      expect((await readAllFrames(res.body!)).at(-1)?.event).toBe('done');
+    };
+    ({ server, url } = startApp({ createClient: createClient as never, sessionDir, tools: [] }));
+    await ask('ue_abc123', 'first question');
+    expect(readdirSync(sessionDir)).toContain('ctx_ue_abc123.json');
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    __resetChatState(); // models a fresh sidecar process
+    ({ server, url } = startApp({ createClient: createClient as never, sessionDir, tools: [] }));
+    const staleResume = await fetch(`${url}/chat/stream`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ session_id: 'ue_abc123', last_seq: 1, prompt: 'follow up' }),
+    });
+    expect(staleResume.status).toBe(409);
+    expect(seen).toHaveLength(1);
+    await ask('ue_abc123', 'follow up');
+    await ask('ue_different', 'unrelated');
+    expect(seen[1]).toEqual([
+      { role: 'user', content: 'first question' },
+      { role: 'assistant', content: 'answer 1' },
+      { role: 'user', content: 'follow up' },
+    ]);
+    expect(seen[2]).toEqual([{ role: 'user', content: 'unrelated' }]);
+  });
+
+  it('rejects unsafe session ids before creating a file', async () => {
+    ({ server, url } = startApp({ sessionDir, tools: [] }));
+    const res = await fetch(`${url}/chat/stream`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ session_id: '../escape', prompt: 'hello' }),
+    });
+    expect(res.status).toBe(400);
+    expect(readdirSync(sessionDir)).toEqual([]);
+  });
+
+  it('ignores corrupt or partial snapshots and prunes expired context', () => {
+    writeFileSync(join(sessionDir, 'ctx_broken.json'), '{"version":1,');
+    expect(loadChatContext(sessionDir, 'broken')).toEqual([]);
+    expect(readdirSync(sessionDir)).not.toContain('ctx_broken.json');
+    saveChatContext(sessionDir, 'old', [{ role: 'user', content: 'old' }], Date.now() - CHAT_CONTEXT_TTL_MS - 1);
+    expect(loadChatContext(sessionDir, 'old')).toEqual([]);
+    pruneChatContexts(sessionDir, Date.now() + CHAT_CONTEXT_TTL_MS + 1);
+    expect(readdirSync(sessionDir)).not.toContain('ctx_old.json');
+  });
+
+  it('removes an expired snapshot on load and at route registration without a new save', () => {
+    const expired = JSON.stringify({
+      version: 1,
+      id: 'expired',
+      savedAt: Date.now() - CHAT_CONTEXT_TTL_MS - 1,
+      messages: [{ role: 'user', content: 'stale' }],
+    });
+    writeFileSync(join(sessionDir, 'ctx_expired.json'), expired);
+    expect(loadChatContext(sessionDir, 'expired')).toEqual([]);
+    expect(readdirSync(sessionDir)).not.toContain('ctx_expired.json');
+    writeFileSync(join(sessionDir, 'ctx_expired.json'), expired);
+    ({ server, url } = startApp({ sessionDir, tools: [] }));
+    expect(readdirSync(sessionDir)).not.toContain('ctx_expired.json');
+  });
+
+  it('periodically prunes idle disk context with one lifecycle-managed timer', () => {
+    const now = Date.now();
+    writeFileSync(
+      join(sessionDir, 'ctx_idle_disk.json'),
+      JSON.stringify({
+        version: 1,
+        id: 'idle_disk',
+        savedAt: now,
+        messages: [{ role: 'user', content: 'context' }],
+      }),
+    );
+    ({ server, url } = startApp({ sessionDir, tools: [] }));
+    expect(__contextPrunerCount()).toBe(1);
+    registerChatRoutes(express(), { sessionDir, tools: [] });
+    expect(__contextPrunerCount()).toBe(1);
+    expect(readdirSync(sessionDir)).toContain('ctx_idle_disk.json');
+    __sweepChatContexts(now + CHAT_CONTEXT_TTL_MS + 1);
+    expect(readdirSync(sessionDir)).not.toContain('ctx_idle_disk.json');
+    __resetChatState();
+    expect(__contextPrunerCount()).toBe(0);
+  });
+
+  it('uses per-user project-keyed state and supports Windows reserved session ids', () => {
+    const original = process.env.HAYBA_CHAT_SESSION_DIR;
+    const previousLocal = process.env.LOCALAPPDATA;
+    try {
+      delete process.env.HAYBA_CHAT_SESSION_DIR;
+      process.env.LOCALAPPDATA = sessionDir;
+      const resolved = chatSessionDir();
+      expect(resolved).toMatch(/HaybaMCP[\\/]chat-context[\\/][a-f0-9]{32}$/);
+      expect(resolved.startsWith(sessionDir)).toBe(true);
+    } finally {
+      if (original === undefined) delete process.env.HAYBA_CHAT_SESSION_DIR;
+      else process.env.HAYBA_CHAT_SESSION_DIR = original;
+      if (previousLocal === undefined) delete process.env.LOCALAPPDATA;
+      else process.env.LOCALAPPDATA = previousLocal;
+    }
+    saveChatContext(sessionDir, 'CON', [{ role: 'user', content: 'safe' }]);
+    expect(readdirSync(sessionDir)).toContain('ctx_CON.json');
+    expect(loadChatContext(sessionDir, 'CON')).toEqual([{ role: 'user', content: 'safe' }]);
+  });
+
+  it('reports a context write failure in the SSE result', async () => {
+    const blockedDir = join(sessionDir, 'not-a-directory');
+    writeFileSync(blockedDir, 'file');
+    ({ server, url } = startApp({
+      sessionDir: blockedDir,
+      createClient: makeFakeClientFactory([
+        { deltas: ['answer'], content: 'answer', toolCalls: [], stopReason: 'end_turn' },
+      ]) as never,
+      tools: [],
+    }));
+    const res = await fetch(`${url}/chat/stream`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ session_id: 'write_fail', prompt: 'hi', provider: 'mock' }),
+    });
+    const frames = await readAllFrames(res.body!);
+    expect(frames.find((f) => f.event === 'error')?.data).toEqual(expect.objectContaining({ kind: 'persistence' }));
+    expect(frames.at(-1)?.data).toEqual(expect.objectContaining({ context_persisted: false }));
+  });
+
+  it('persists bounded redacted text without tool payloads or approval state', () => {
+    saveChatContext(sessionDir, 'safe', [
+      {
+        role: 'user',
+        content: 'password=supersecret Authorization: Bearer abcdefghijklmnop sk-ant-LEAK-CANARY-000111222333',
+      },
+      {
+        role: 'assistant',
+        content: [
+          { type: 'text', text: 'done' },
+          { type: 'tool_use', id: 't1', name: 'create_thing', input: { token: 'tool-secret' } },
+        ],
+      },
+    ]);
+    const raw = readFileSync(join(sessionDir, 'ctx_safe.json'), 'utf8');
+    expect(raw).not.toContain('supersecret');
+    expect(raw).not.toContain('abcdefghijklmnop');
+    expect(raw).not.toContain('LEAK-CANARY');
+    expect(raw).not.toContain('tool-secret');
+    expect(raw).not.toContain('tool_use');
+    expect(loadChatContext(sessionDir, 'safe')).toEqual([
+      { role: 'user', content: expect.stringContaining('[REDACTED:') },
+      { role: 'assistant', content: 'done' },
+    ]);
+  });
+
+  it('restores pending warning review after a sidecar restart', async () => {
+    const warningId = 'ui_engine_default_font_0123456789ab';
+    ({ server, url } = startApp({
+      sessionDir,
+      createClient: makeFakeClientFactory([
+        { content: null, toolCalls: [{ id: 'v1', name: 'validator_run', input: {} }], stopReason: 'tool_use' },
+        { content: 'I will review it.', toolCalls: [], stopReason: 'end_turn' },
+      ]) as never,
+      tools: [{ name: 'validator_run', description: 'validate', input_schema: { type: 'object', properties: {} } }],
+      dispatchTool: async () => ({ validator: { warning_ids: [warningId] } }),
+    }));
+    const request = (prompt: string) => fetch(`${url}/chat/stream`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ session_id: 'warning_restart', prompt, provider: 'mock' }),
+    });
+    let frames = await readAllFrames((await request('check fonts')).body!);
+    expect(frames.at(-1)?.data).toEqual(expect.objectContaining({
+      reason: 'warnings_unreviewed', pending_warning_ids: [warningId],
+    }));
+    expect(loadChatState(sessionDir, 'warning_restart').warnings.reviews).toEqual([
+      { id: warningId, status: 'pending' },
+    ]);
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    __resetChatState();
+    ({ server, url } = startApp({
+      sessionDir,
+      createClient: makeFakeClientFactory([
+        { content: 'Still pending.', toolCalls: [], stopReason: 'end_turn' },
+      ]) as never,
+      tools: [],
+    }));
+    frames = await readAllFrames((await request('follow up')).body!);
+    expect(frames.at(-1)?.data).toEqual(expect.objectContaining({
+      reason: 'warnings_unreviewed', pending_warning_ids: [warningId],
+    }));
+  });
+
+  it('persists deferred warning disposition with a redacted reason', () => {
+    saveChatContext(sessionDir, 'warning_deferred', [], Date.now(), {
+      reviews: [{ id: 'ui_engine_default_font_0123456789ab', status: 'deferred',
+        reason: 'Waiting on password=supersecret font approval' }],
+      overflow: false,
+    });
+    const raw = readFileSync(join(sessionDir, 'ctx_warning_deferred.json'), 'utf8');
+    expect(raw).not.toContain('supersecret');
+    expect(loadChatState(sessionDir, 'warning_deferred').warnings.reviews).toEqual([
+      { id: 'ui_engine_default_font_0123456789ab', status: 'deferred', reason: expect.stringContaining('[REDACTED:') },
+    ]);
+  });
+
+  it('keeps at most 64 session files and 100 text messages per session', () => {
+    const now = Date.now();
+    for (let i = 0; i < 70; i++) {
+      writeFileSync(
+        join(sessionDir, `ctx_s${i}.json`),
+        JSON.stringify({
+          version: 1,
+          id: `s${i}`,
+          savedAt: now,
+          messages: [{ role: 'user', content: 'context' }],
+        }),
+      );
+    }
+    pruneChatContexts(sessionDir);
+    expect(readdirSync(sessionDir)).toHaveLength(64);
+    saveChatContext(
+      sessionDir,
+      'bounded',
+      Array.from({ length: 120 }, (_, i) => ({
+        role: 'user' as const,
+        content: `message ${i}`,
+      })),
+    );
+    const loaded = loadChatContext(sessionDir, 'bounded');
+    expect(loaded).toHaveLength(100);
+    expect(loaded[0]).toEqual({ role: 'user', content: 'message 20' });
   });
 
   it('cancel mid-stream ends with done{cancelled:true, partial_text}', async () => {
@@ -302,9 +573,7 @@ describe('sidecar SSE chat server', () => {
         },
         { deltas: ['done'], content: 'done', toolCalls: [], stopReason: 'end_turn' },
       ]) as never,
-      tools: [
-        { name: 'get_thing', description: 'read a thing', input_schema: { type: 'object', properties: {} } },
-      ],
+      tools: [{ name: 'get_thing', description: 'read a thing', input_schema: { type: 'object', properties: {} } }],
       dispatchTool: async () => {
         dispatchCount++;
         return { ok: true };
@@ -349,6 +618,39 @@ describe('sidecar SSE chat server', () => {
     const parsed = JSON.parse(getBody);
     expect(parsed.provider).toBe('anthropic');
     expect(parsed.key_last4).toBe('2333');
+  });
+
+  it('config: an omitted key uses the provider environment; an explicit empty key clears it', async () => {
+    ({ server, url } = startApp({}));
+    const previous = process.env.ANTHROPIC_API_KEY;
+    process.env.ANTHROPIC_API_KEY = FAKE_KEY;
+    try {
+      const set = async (sessionId: string, apiKey?: string) =>
+        fetch(`${url}/chat/config`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            session_id: sessionId,
+            provider: 'anthropic',
+            ...(apiKey !== undefined ? { api_key: apiKey } : {}),
+          }),
+        });
+
+      expect((await set('env-key', 'previous-vault-key')).status).toBe(200);
+      expect(getConfigEntry('env-key')?.apiKey).toBe('previous-vault-key');
+      expect((await set('env-key')).status).toBe(200);
+      const omitted = getConfigEntry('env-key');
+      expect(omitted?.apiKey).toBeUndefined();
+      expect(resolveConfig({ provider: 'anthropic', apiKey: omitted?.apiKey }).apiKey).toBe(FAKE_KEY);
+
+      expect((await set('env-key', '')).status).toBe(200);
+      const cleared = getConfigEntry('env-key');
+      expect(cleared?.apiKey).toBe('');
+      expect(resolveConfig({ provider: 'anthropic', apiKey: cleared?.apiKey }).apiKey).toBe('');
+    } finally {
+      if (previous === undefined) delete process.env.ANTHROPIC_API_KEY;
+      else process.env.ANTHROPIC_API_KEY = previous;
+    }
   });
 
   it('I3: a concurrent second /chat/stream gets a real 409 (not mid-stream JSON)', async () => {
@@ -445,9 +747,7 @@ describe('sidecar SSE chat server', () => {
         { content: null, toolCalls: [{ id: 'p2', name: 'actor_spawn', input: { id: 'A' } }], stopReason: 'tool_use' },
         { deltas: ['ok'], content: 'ok', toolCalls: [], stopReason: 'end_turn' },
       ]) as never,
-      tools: [
-        { name: 'actor_spawn', description: 'spawn', input_schema: { type: 'object', properties: {} } },
-      ],
+      tools: [{ name: 'actor_spawn', description: 'spawn', input_schema: { type: 'object', properties: {} } }],
       dispatchTool: async () => {
         dispatchCount++;
         return { ok: true };
@@ -500,6 +800,73 @@ describe('sidecar SSE chat server', () => {
     const done = frames2.find((f) => f.event === 'done')!.data as { reason: string };
     expect(done.reason).toBe('end_turn');
     expect(dispatchCount).toBe(1);
+  });
+
+  it('rejects a changed prompt after approval without dispatching the old call', async () => {
+    let dispatchCount = 0;
+    ({ server, url } = startApp({
+      sessionDir,
+      createClient: makeFakeClientFactory([
+        { content: null, toolCalls: [{ id: 'p1', name: 'actor_spawn', input: { id: 'A' } }], stopReason: 'tool_use' },
+        { content: null, toolCalls: [{ id: 'p2', name: 'actor_spawn', input: { id: 'A' } }], stopReason: 'tool_use' },
+      ]) as never,
+      tools: [{ name: 'actor_spawn', description: 'spawn', input_schema: { type: 'object', properties: {} } }],
+      dispatchTool: async () => {
+        dispatchCount++;
+        return { ok: true };
+      },
+    }));
+    const post = (path: string, body: object) =>
+      fetch(`${url}${path}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+    const first = await post('/chat/stream', { session_id: 'changed', prompt: 'spawn it', provider: 'mock' });
+    expect((await readAllFrames(first.body!)).some((f) => f.event === 'plan_request')).toBe(true);
+    expect((await post('/chat/approve', { session_id: 'changed' })).status).toBe(200);
+    const changed = await post('/chat/stream', { session_id: 'changed', prompt: 'do not spawn', provider: 'mock' });
+    expect(changed.status).toBe(409);
+    expect(dispatchCount).toBe(0);
+    const retry = await post('/chat/stream', { session_id: 'changed', prompt: 'spawn it', provider: 'mock' });
+    expect((await readAllFrames(retry.body!)).some((f) => f.event === 'plan_request')).toBe(true);
+    expect(dispatchCount).toBe(0);
+  });
+
+  it('does not restore a pending Plan-Mode approval after restart', async () => {
+    let dispatchCount = 0;
+    const options = {
+      sessionDir,
+      createClient: makeFakeClientFactory([
+        { content: null, toolCalls: [{ id: 'p1', name: 'actor_spawn', input: { id: 'A' } }], stopReason: 'tool_use' },
+      ]) as never,
+      tools: [{ name: 'actor_spawn', description: 'spawn', input_schema: { type: 'object' as const, properties: {} } }],
+      dispatchTool: async () => {
+        dispatchCount++;
+        return { ok: true };
+      },
+    };
+    ({ server, url } = startApp(options));
+    const turn = await fetch(`${url}/chat/stream`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ session_id: 'plan_restart', prompt: 'spawn it', provider: 'mock' }),
+    });
+    expect((await readAllFrames(turn.body!)).some((f) => f.event === 'plan_request')).toBe(true);
+    const disk = readFileSync(join(sessionDir, 'ctx_plan_restart.json'), 'utf8');
+    expect(disk).not.toContain('approvedCall');
+    expect(disk).not.toContain('pendingPlanCall');
+    expect(disk).not.toContain('actor_spawn');
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    __resetChatState();
+    ({ server, url } = startApp(options));
+    const approval = await fetch(`${url}/chat/approve`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ session_id: 'plan_restart' }),
+    });
+    expect(approval.status).toBe(404);
+    expect(dispatchCount).toBe(0);
   });
 
   it('the API key never appears in any stream frame or log', async () => {
@@ -623,9 +990,7 @@ describe('sidecar SSE chat server', () => {
       ({ server, url } = startApp({
         createClient: factory as never,
         dispatchTool: async () => ({}),
-        tools: [
-          { name: 'get_thing', description: 'read a thing', input_schema: { type: 'object', properties: {} } },
-        ],
+        tools: [{ name: 'get_thing', description: 'read a thing', input_schema: { type: 'object', properties: {} } }],
       }));
 
       const res = await fetch(`${url}/chat/stream`, {

@@ -4,11 +4,18 @@ import { createConnection, Socket } from 'node:net';
 import { EventEmitter } from 'node:events';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { randomBytes } from 'node:crypto';
+import { isRedactionMarker, isUsableLeaseId } from './lease-id.js';
 
 export interface TcpCommand {
   cmd: string;
   id: string;
   params: Record<string, unknown>;
+  /** Which agent is calling. Optional on the wire; the editor falls back to
+   *  one owner per connection. Leases and Plan-Mode approval are per owner. */
+  owner?: string;
+  /** A held lease_id to act under (helper processes only; an MCP server sends its owner instead). */
+  lease?: string;
 }
 
 export interface TcpResponse {
@@ -20,6 +27,78 @@ export interface TcpResponse {
    *  and tool-disabled rejections so the TS ToolExecutor can map them onto a
    *  UeToolError code without string-matching UE's `error` text. */
   code?: string;
+  /** The command ran but collided with another owner's lease, or named a dead or redacted lease (Advisory, or a read under EnforcedForWrites). */
+  lease_warning?: Record<string, unknown>;
+  /** The lease-gate refusal detail (code lease_conflict or owner_required): reason, holder, other_owners, hint. Never a handle. */
+  lease?: Record<string, unknown>;
+  /** Sticky editor health on editor_unsafe_restart_required and native_fault_contained (ADR-0011). */
+  editor_health?: Record<string, unknown>;
+  /** Typed lifecycle advisory the editor attaches to failures (state, mutation_status, session_health, …). */
+  advisory?: Record<string, unknown>;
+  /** pie_active: the play session that refused the command
+   *  {pie, phase, simulating, since_s, command, caller_owner, rule}. */
+  pie?: Record<string, unknown>;
+  /** asset_busy refusal (P0 T3): the asset build that refused the command.
+   *  `{command, caller_owner, assets:[{asset, owner, label, lane, held_s, since, expires_in_s}]}`. */
+  busy?: Record<string, unknown>;
+  /** Advisory lease mode (P0 T3): the command ran although another owner is
+   *  building its asset. `{code: 'asset_busy', busy}`. */
+  state_warning?: Record<string, unknown>;
+}
+
+const MAX_OWNER_CHARS = 128;
+
+/** The envelope owner: HAYBA_AGENT_ID when set (lets several processes act as
+ *  one agent), otherwise unique to this process. */
+export function resolveAgentOwner(env: NodeJS.ProcessEnv = process.env, pid: number = process.pid): string {
+  const fromEnv = env.HAYBA_AGENT_ID?.trim();
+  if (fromEnv) return fromEnv.slice(0, MAX_OWNER_CHARS);
+  return `node-${pid}-${randomBytes(3).toString('hex')}`;
+}
+
+/** Build one wire envelope. `owner`/`lease` are omitted when empty so an
+ *  older editor sees exactly the envelope it always did. */
+export function buildEnvelope(
+  cmd: string,
+  id: string,
+  params: Record<string, unknown>,
+  owner?: string | null,
+  lease?: string | null,
+): TcpCommand {
+  const command: TcpCommand = { cmd, id, params };
+  if (owner) command.owner = owner;
+  if (lease) command.lease = lease;
+  return command;
+}
+
+/**
+ * R9: the envelope lease comes only from HAYBA_LEASE_ID, an explicit opt-in.
+ * HAYBA_LEASE (the gate's helper variable) and HAYBA_LEASE_TOKEN (the
+ * pre-lease_id name) are never read: the owner (HAYBA_AGENT_ID) already covers
+ * a lane's gate lease, and an inherited lease that later dies would turn every
+ * write from this server into a lease_conflict.
+ */
+export function resolveEnvLease(
+  env: NodeJS.ProcessEnv = process.env,
+  warn: (message: string) => void = (message) => console.error(message),
+): string | null {
+  const ignored = ['HAYBA_LEASE', 'HAYBA_LEASE_TOKEN'].filter((name) => env[name]?.trim());
+  if (ignored.length > 0) {
+    warn(
+      `[hayba] ${ignored.join(' and ')} ${ignored.length > 1 ? 'are' : 'is'} ignored: this MCP server sends a lease only from HAYBA_LEASE_ID. Set HAYBA_AGENT_ID to your gate owner instead.`,
+    );
+  }
+  const value = env.HAYBA_LEASE_ID?.trim();
+  if (!value) return null;
+  if (!isUsableLeaseId(value)) {
+    warn(
+      `[hayba] HAYBA_LEASE_ID is ignored: it is not a lease_id (expected ls_<seq>_<mac>)${
+        isRedactionMarker(value) ? '; it is a redaction marker' : ''
+      }.`,
+    );
+    return null;
+  }
+  return value;
 }
 
 // ── Injectable types (also used in tests) ────────────────────────────────────
@@ -37,6 +116,8 @@ export class UETcpClient extends EventEmitter {
     resolve: (value: TcpResponse) => void;
     reject: (reason: Error) => void;
     timer: ReturnType<typeof setTimeout>;
+    /** params.lease_id of the request, to match a [lease_id_unknown] reply to the env lease. */
+    namedLeaseId?: unknown;
   }>();
   /** Framing lives in FrameDecoder, not here. The 4-byte big-endian length
    *  prefix is the single most important invariant in the repo — both ends of
@@ -45,6 +126,10 @@ export class UETcpClient extends EventEmitter {
   private frames = new FrameDecoder();
   private requestCounter = 0;
   private connected = false;
+  private owner: string = resolveAgentOwner();
+  private lease: string | null = resolveEnvLease();
+  /** The lease came from HAYBA_LEASE_ID (not setLease): dropped once the editor says it is unknown. */
+  private leaseFromEnv = this.lease !== null;
 
   constructor(host = '127.0.0.1', port = 52342) {
     super();
@@ -100,13 +185,55 @@ export class UETcpClient extends EventEmitter {
     return this.connected;
   }
 
+  /** Process-wide envelope owner; a confirmed lease_adopt can switch it. */
+  getOwner(): string {
+    return this.owner;
+  }
+
+  setOwner(owner: string): void {
+    this.owner = owner.trim().slice(0, MAX_OWNER_CHARS) || resolveAgentOwner({});
+  }
+
+  /** The lease_id sent with every command (null = none). Env-seeded ids can be
+   *  cleared on unknown replies; manually set ids remain until explicitly changed. */
+  getLease(): string | null {
+    return this.lease;
+  }
+
+  /** Manual envelope lease, including confirmed adoption. Sticky across reconnect
+   *  and unknown replies; this does not start or transfer keeper renewal timers. */
+  setLease(leaseId: string | null): void {
+    this.lease = leaseId?.trim() || null;
+    this.leaseFromEnv = false;
+  }
+
+  /**
+   * R9: an env-seeded lease the editor no longer knows (released, expired, or
+   * the editor restarted) would make every later write a lease_conflict, so it
+   * is dropped once, with one log line. A lease set through setLease is left alone.
+   */
+  noteReply(response: TcpResponse, namedLeaseId?: unknown): void {
+    if (!this.leaseFromEnv || this.lease === null) return;
+    const gateSaysUnknown = [response.lease, response.lease_warning].some(
+      (detail) => !!detail && (detail.reason === 'lease_unknown' || detail.lease_id_error === 'unknown_or_expired'),
+    );
+    const handlerSaysUnknown =
+      namedLeaseId === this.lease && typeof response.error === 'string' && response.error.includes('[lease_id_unknown]');
+    if (!gateSaysUnknown && !handlerSaysUnknown) return;
+    console.error(
+      `[hayba] the editor no longer knows the lease from HAYBA_LEASE_ID (${this.lease}); this server stops sending it.`,
+    );
+    this.lease = null;
+    this.leaseFromEnv = false;
+  }
+
   async send(cmd: string, params: Record<string, unknown> = {}, timeoutMs = 30000): Promise<TcpResponse> {
     if (!this.socket || !this.connected) {
       throw new Error('Not connected to UE TCP server');
     }
 
     const id = `req_${++this.requestCounter}`;
-    const command: TcpCommand = { cmd, id, params };
+    const command = buildEnvelope(cmd, id, params, this.owner, this.lease);
     const json = JSON.stringify(command);
     const payload = Buffer.from(json, 'utf-8');
 
@@ -121,7 +248,7 @@ export class UETcpClient extends EventEmitter {
         reject(new Error(`Timeout waiting for response to ${cmd} (id: ${id})`));
       }, timeoutMs);
 
-      this.pendingRequests.set(id, { resolve, reject, timer });
+      this.pendingRequests.set(id, { resolve, reject, timer, namedLeaseId: params.lease_id });
       this.socket!.write(frame);
     });
   }
@@ -134,6 +261,7 @@ export class UETcpClient extends EventEmitter {
         if (pending) {
           clearTimeout(pending.timer);
           this.pendingRequests.delete(response.id);
+          this.noteReply(response, pending.namedLeaseId);
           pending.resolve(response);
         }
       } catch {

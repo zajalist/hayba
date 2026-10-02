@@ -72,6 +72,6 @@ Resources/  icons, PCGEx registry DB, embedded cognitive-map HTML
 
 ## Provenance
 
-Snapshot-imported from the standalone geoforge project tree (its local git
+Snapshot-imported from an external UE project tree (its local git
 history is not authoritative). Treat this directory as the canonical
 source. See ADR [`docs/adr/0004-ue-plugin-location.md`](../../docs/adr/0004-ue-plugin-location.md).

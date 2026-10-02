@@ -5,6 +5,7 @@
 #include "Modules/ModuleManager.h"
 #include "InputCoreTypes.h"
 #include "Input/Events.h"
+#include "Widgets/IToolTip.h"
 #include "Widgets/Input/SButton.h"
 #include "Widgets/Text/STextBlock.h"
 
@@ -26,14 +27,18 @@ namespace
         return false;
     }
 
-    TSharedPtr<SButton> FindButtonWithText(const TSharedRef<SWidget>& Widget, const FString& Needle)
+    TSharedPtr<SButton> FindButtonWithTooltip(const TSharedRef<SWidget>& Widget, const FString& Needle)
     {
-        if (Widget->GetType() == TEXT("SButton") && ContainsText(Widget, Needle))
-            return StaticCastSharedRef<SButton>(Widget);
+        if (Widget->GetType() == TEXT("SButton"))
+        {
+            const TSharedPtr<IToolTip> Tooltip = Widget->GetToolTip();
+            if (Tooltip.IsValid() && ContainsText(Tooltip->GetContentWidget(), Needle))
+                return StaticCastSharedRef<SButton>(Widget);
+        }
         FChildren* Children = Widget->GetChildren();
         for (int32 Index = 0; Children && Index < Children->Num(); ++Index)
         {
-            if (TSharedPtr<SButton> Found = FindButtonWithText(Children->GetChildAt(Index), Needle)) return Found;
+            if (TSharedPtr<SButton> Found = FindButtonWithTooltip(Children->GetChildAt(Index), Needle)) return Found;
         }
         return nullptr;
     }
@@ -51,7 +56,7 @@ bool FHaybaAgentInspectDockTest::RunTest(const FString&)
     const bool bWasDirty = World->GetPackage()->IsDirty();
 
     const TSharedRef<SHaybaMCPChatPanel> Panel = SNew(SHaybaMCPChatPanel, Module);
-    TSharedPtr<SButton> Inspect = FindButtonWithText(Panel, TEXT("Inspect world"));
+    TSharedPtr<SButton> Inspect = FindButtonWithTooltip(Panel, TEXT("Inspect the loaded world"));
     if (!TestTrue(TEXT("Agent dock offers a direct Inspect world action"), Inspect.IsValid())) return false;
     TestTrue(TEXT("Inspect is available when idle"), Inspect->IsEnabled());
     const FKeyEvent Accept(EKeys::Enter, FModifierKeysState(), 0, false, 0, 0);

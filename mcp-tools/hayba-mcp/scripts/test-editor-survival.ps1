@@ -12,8 +12,9 @@
 
   Every case verifies all of these before and after the hostile action: the
   exact executable/start-time/command-line identity is unchanged, the expected
-  PID still owns the listener, a request-id-correlated ping and benign Python
-  nonce succeed, PIE/map/dirty/filesystem state matches the baseline, and no
+  PID still owns the listener, request-id-correlated ping and native state
+  reads succeed, Python executes a nonce outside PIE or proves the exact PIE
+  admission refusal, PIE/map/dirty/filesystem state matches the baseline, and no
   crash signature or critical log line appeared. A safe `ok:false` rejection
   passes; a timeout, listener handoff, crash artifact, or process exit fails.
 
@@ -27,7 +28,7 @@ param(
     [ValidateRange(0, [int]::MaxValue)]
     [int]$EditorPid = 0,
 
-    [string]$EditorExe = 'C:\Program Files\Epic Games\UE_5.8\Engine\Binaries\Win64\UnrealEditor.exe',
+    [string]$EditorExe = '',
 
     [string]$ProjectPath = '',
 
@@ -57,7 +58,7 @@ param(
     [int]$Port = 0,
 
     # A cold UE editor can spend several minutes compiling shaders and loading
-    # the host project before the plugin binds its listener.  The timeout is a
+    # the host project before game-thread commands are ready. The timeout is a
     # harness patience limit, not a per-case safety limit; hostile commands are
     # still bounded independently by MaxCaseMs.
     [ValidateRange(10000, 600000)]
@@ -78,7 +79,16 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+if (-not $EditorExe) { $EditorExe = $env:HAYBA_UNREAL_EDITOR_EXE }
 $Invoker = Join-Path $PSScriptRoot 'invoke-tcp-command.ps1'
+$HostProofHelper = Join-Path $PSScriptRoot 'query-survival-host-proof.ps1'
+$SurvivalOwner = 'survival-' + [guid]::NewGuid().ToString('N')
+$CasePhases = [Collections.Generic.List[object]]::new()
+$CasePreflight = $null
+$HostileDurationMs = $null
+$HealthPhasePrefix = 'preflight'
+$LastHostQueryEvidence = $null
+$UnaccountedHostProofProcess = $null
 $Results = [System.Collections.Generic.List[object]]::new()
 $LaunchedProcess = $null
 $OwnsTarget = $false
@@ -92,7 +102,9 @@ $CleanupEvidence = $null
 $CleanupAttempted = $false
 $LogCursors = @{}
 $LogCriticalCount = 0
-$CaseDeadline = $null
+$CaseClock = $null
+$StartupClock = $null
+$StartupReadinessEvidence = $null
 $FrameReadTimeoutMs = 5000
 $ActiveMaxRequestBytes = 1MB
 $ActiveMaxJsonNestingDepth = 64
@@ -148,6 +160,8 @@ if ($List) {
     } | ConvertTo-Json -Depth 5
     exit 0
 }
+
+if (-not $EditorExe) { throw 'Pass -EditorExe or set HAYBA_UNREAL_EDITOR_EXE to the UnrealEditor executable.' }
 
 function Get-SanitizedHash([object]$Value) {
     $json = ConvertTo-Json -InputObject $Value -Compress -Depth 30
@@ -319,41 +333,223 @@ function Test-ExactCommandLineArgument([string]$CommandLine, [string]$Argument) 
         [Text.RegularExpressions.RegexOptions]::CultureInvariant)
 }
 
-function Get-EditorProcessRow([int]$ProcessId) {
-    $row = Get-CimInstance Win32_Process -Filter "ProcessId = $ProcessId" -ErrorAction Stop
-    if ($null -eq $row) { throw "editor PID $ProcessId does not exist" }
-    return $row
+function New-CaseClock { return [Diagnostics.Stopwatch]::StartNew() }
+
+function Start-CaseBudget {
+    $script:CaseStartTimestamp = [Diagnostics.Stopwatch]::GetTimestamp()
+    $script:CaseClock = New-CaseClock
+    $script:CasePhases = [Collections.Generic.List[object]]::new()
+    $script:CasePreflight = $null
+    $script:HostileDurationMs = $null
+    $script:HealthPhasePrefix = 'preflight'
+    $script:LastHostQueryEvidence = $null
 }
 
-function New-EditorIdentity([int]$ProcessId) {
-    $row = Get-EditorProcessRow $ProcessId
+function Invoke-CasePhase([string]$Name, [scriptblock]$Action) {
+    if ($null -eq $CaseClock) { return & $Action }
+    $phase = [pscustomobject]@{
+        name = $Name; start_ms = [long]$CaseClock.ElapsedMilliseconds; end_ms = $null
+        duration_ms = $null; remaining_ms = [Math]::Max(0, $MaxCaseMs - $CaseClock.ElapsedMilliseconds)
+        status = 'started'; diagnostic = $null
+    }
+    $CasePhases.Add($phase)
+    try {
+        Get-RemainingCaseMs $Name | Out-Null
+        $value = & $Action
+        Get-RemainingCaseMs $Name | Out-Null
+        $phase.status = 'completed'
+        return $value
+    }
+    catch {
+        $phase.status = if ($_.Exception -is [TimeoutException] -or $CaseClock.ElapsedMilliseconds -ge $MaxCaseMs) { 'timed_out' } else { 'failed' }
+        $phase.diagnostic = New-DiagnosticDigest $_.Exception.Message 'phase_failure'
+        throw
+    }
+    finally {
+        $phase.end_ms = [long]$CaseClock.ElapsedMilliseconds
+        $phase.duration_ms = $phase.end_ms - $phase.start_ms
+        $phase.remaining_ms = [Math]::Max(0, $MaxCaseMs - $CaseClock.ElapsedMilliseconds)
+        if ($Name -ceq 'hostile.command' -or $Name -ceq 'hostile.action') { $script:HostileDurationMs = $phase.duration_ms }
+    }
+}
+
+function Initialize-HostProofCapture {
+    if ('HaybaHostProofCapture' -as [type]) { return }
+    Add-Type -TypeDefinition @'
+using System;
+using System.IO;
+using System.Text;
+using System.Threading.Tasks;
+public sealed class HaybaHostProofCapture {
+    private readonly MemoryStream bytes = new MemoryStream();
+    private readonly object gate = new object();
+    public Task Work;
+    public int Count { get { lock (gate) { return (int)bytes.Length; } } }
+    public string Snapshot() { lock (gate) { return new UTF8Encoding(false, true).GetString(bytes.ToArray()); } }
+    public void Start(Stream stream) { Work = Capture(stream); }
+    private async Task Capture(Stream stream) {
+        byte[] buffer = new byte[1024];
+        while (true) {
+            int count = await stream.ReadAsync(buffer, 0, buffer.Length).ConfigureAwait(false);
+            if (count == 0) return;
+            lock (gate) {
+                if (bytes.Length + count > 8192) throw new IOException("host proof helper output exceeded its bound");
+                bytes.Write(buffer, 0, count);
+            }
+        }
+    }
+}
+'@
+}
+
+function Start-HostProofProcess([string[]]$Arguments) {
+    $info = [Diagnostics.ProcessStartInfo]::new([Environment]::ProcessPath)
+    $info.UseShellExecute = $false; $info.CreateNoWindow = $true
+    $info.RedirectStandardOutput = $true; $info.RedirectStandardError = $true
+    foreach ($argument in $Arguments) { $info.ArgumentList.Add($argument) }
+    $process = [Diagnostics.Process]::new(); $process.StartInfo = $info
+    if (-not $process.Start()) { throw 'host proof helper could not start' }
+    return $process
+}
+
+function Invoke-HostProofQuery {
+    param([switch]$IncludeListener, [int]$TimeoutMs = 0)
+    if ($null -ne $UnaccountedHostProofProcess) { throw 'previous host proof helper lacks confirmed exit; refusing another query' }
+    if ($TimeoutMs -eq 0) { $TimeoutMs = Get-RemainingCaseMs 'host proof' }
+    elseif ($null -ne $CaseClock) { $TimeoutMs = [Math]::Min($TimeoutMs, (Get-RemainingCaseMs 'host proof')) }
+    if ($TimeoutMs -le 250) { throw [TimeoutException]::new('host proof has no bounded query/exit allowance') }
+    $clock = [Diagnostics.Stopwatch]::StartNew()
+    Initialize-HostProofCapture
+    $process = $null; $stdout = $null; $stderr = $null; $failure = $null
+    $events = @(); $confirmed = $false; $timedOut = $false
+    $script:LastHostQueryEvidence = [pscustomobject]@{
+        helper_pid = $null; exit_confirmed = $false; timed_out = $false
+        elapsed_ms = 0; stdout_bytes = 0; stderr_bytes = 0; diagnostic = $null
+    }
+    try {
+        $arguments = @('-NoProfile', '-NonInteractive', '-File', $HostProofHelper,
+            '-ProcessId', [string]$EditorPid, '-Port', [string]$Port,
+            '-ProjectPath', $ProjectPath, '-SessionToken', $SessionToken)
+        if ($IncludeListener) { $arguments += '-IncludeListener' }
+        if ($clock.ElapsedMilliseconds -ge $TimeoutMs - 250) { throw [TimeoutException]::new('host proof helper setup exhausted its allowance') }
+        if ($null -ne $CaseClock) { Get-RemainingCaseMs 'host proof helper start' | Out-Null }
+        $process = Start-HostProofProcess $arguments
+        $LastHostQueryEvidence.helper_pid = $process.Id
+        $stdout = [HaybaHostProofCapture]::new(); $stderr = [HaybaHostProofCapture]::new()
+        $stdout.Start($process.StandardOutput.BaseStream); $stderr.Start($process.StandardError.BaseStream)
+        # Reserve exit accounting inside the caller's allowance. A timed-out
+        # client helper is never mistaken for CIM-provider cancellation.
+        $queryRemaining = $TimeoutMs - 250 - [int]$clock.ElapsedMilliseconds
+        if ($queryRemaining -le 0 -or -not $process.WaitForExit($queryRemaining)) {
+            $timedOut = $true
+            throw [TimeoutException]::new('host proof helper exceeded the remaining query allowance')
+        }
+    }
+    catch { $failure = $_ }
+    finally {
+        if ($null -ne $process) {
+            try {
+                if (-not $process.HasExited) { $process.Kill() }
+                $remaining = $TimeoutMs - [int]$clock.ElapsedMilliseconds
+                if (-not $process.HasExited -and ($remaining -le 0 -or -not $process.WaitForExit($remaining))) { throw 'host proof helper exit unconfirmed' }
+                $confirmed = $true
+                foreach ($capture in @($stdout, $stderr)) {
+                    if ($null -eq $capture) { continue }
+                    $remaining = $TimeoutMs - [int]$clock.ElapsedMilliseconds
+                    if (-not $capture.Work.IsCompleted -and ($remaining -le 0 -or -not $capture.Work.Wait($remaining))) { throw 'host proof helper output completion unconfirmed' }
+                    $null = $capture.Work.GetAwaiter().GetResult()
+                }
+                if ($null -ne $stderr -and $stderr.Count -ne 0) { throw 'host proof helper wrote unexpected diagnostics' }
+                if ($null -ne $stdout) {
+                    # Only complete bounded lines survive timeout; they are
+                    # progress, never permission to admit partial query rows.
+                    $text = $stdout.Snapshot()
+                    foreach ($line in $text.Split("`n")) {
+                        if ([string]::IsNullOrWhiteSpace($line)) { continue }
+                        try { $events += ($line | ConvertFrom-Json -DateKind String) }
+                        catch { if ($null -eq $failure) { throw 'host proof helper returned malformed output' } }
+                    }
+                }
+                if ($null -eq $failure -and $process.ExitCode -ne 0) { throw 'host proof helper exited with failure' }
+            }
+            catch { if ($null -eq $failure) { $failure = $_ } }
+            finally {
+                if ($confirmed -and ($null -eq $stdout -or $stdout.Work.IsCompleted) -and ($null -eq $stderr -or $stderr.Work.IsCompleted)) {
+                    $process.Dispose()
+                }
+                else { $script:UnaccountedHostProofProcess = $process }
+            }
+        }
+        $LastHostQueryEvidence.exit_confirmed = $confirmed
+        $LastHostQueryEvidence.timed_out = $timedOut
+        $LastHostQueryEvidence.elapsed_ms = [long]$clock.ElapsedMilliseconds
+        if ($null -ne $stdout) { $LastHostQueryEvidence.stdout_bytes = $stdout.Count }
+        if ($null -ne $stderr) { $LastHostQueryEvidence.stderr_bytes = $stderr.Count }
+        if ($null -ne $failure) { $LastHostQueryEvidence.diagnostic = New-DiagnosticDigest $failure.Exception.Message 'host_query_failure' }
+        if ($null -ne $CaseClock) {
+            foreach ($name in @('identity', 'listener')) {
+                $progress = @($events | Where-Object { $_.kind -ceq 'phase' -and $_.phase -ceq $name })
+                if ($progress.Count -eq 0) { continue }
+                $first = $progress[0]; $last = $progress[-1]
+                [long]$startTick = 0; [long]$endTick = 0
+                if (-not [long]::TryParse([string]$first.start_tick, [ref]$startTick) -or $startTick -lt $CaseStartTimestamp) { continue }
+                $startMs = [long](($startTick - $CaseStartTimestamp) * 1000.0 / [Diagnostics.Stopwatch]::Frequency)
+                $endMs = [long]$CaseClock.ElapsedMilliseconds
+                if ([long]::TryParse([string]$last.end_tick, [ref]$endTick) -and $endTick -ge $startTick) {
+                    $endMs = [long](($endTick - $CaseStartTimestamp) * 1000.0 / [Diagnostics.Stopwatch]::Frequency)
+                }
+                $state = if ($last.state -ceq 'completed') { 'completed' } elseif ($timedOut) { 'timed_out' } else { 'failed' }
+                $CasePhases.Add([pscustomobject]@{
+                    name = "$HealthPhasePrefix.$name"; start_ms = $startMs; end_ms = $endMs
+                    duration_ms = $endMs - $startMs; remaining_ms = [Math]::Max(0, $MaxCaseMs - $endMs)
+                    status = $state; diagnostic = if ($state -ceq 'completed') { $null } else { $LastHostQueryEvidence.diagnostic }
+                })
+            }
+        }
+    }
+    if ($null -ne $failure) { throw $failure }
+    if ($clock.ElapsedMilliseconds -ge $TimeoutMs) { throw [TimeoutException]::new('host proof helper completed after its allowance') }
+    if ($null -ne $CaseClock) { Get-RemainingCaseMs 'host proof' | Out-Null }
+    $results = @($events | Where-Object { $_.kind -ceq 'result' })
+    if ($results.Count -ne 1 -or $null -eq $results[0].process) { throw 'host proof helper omitted its unique complete result' }
+    if (@($events | Where-Object { $_.kind -ceq 'phase' -and $_.state -ceq 'failed' }).Count) { throw 'host proof helper reported a query failure' }
+    return $results[0]
+}
+
+function Get-EditorProcessRow([int]$ProcessId, [int]$TimeoutMs = 0) {
+    if ($ProcessId -ne $EditorPid) { throw 'host proof query must target the exact owned editor PID' }
+    return (Invoke-HostProofQuery -TimeoutMs $TimeoutMs).process
+}
+
+function New-EditorIdentity([int]$ProcessId, [object]$ProcessRow = $null, [int]$TimeoutMs = 0) {
+    $row = if ($null -eq $ProcessRow) { Get-EditorProcessRow $ProcessId $TimeoutMs } else { $ProcessRow }
+    if ([int]$row.ProcessId -ne $ProcessId) { throw 'queried PID mismatch' }
     $actualExe = Resolve-FullPath ([string]$row.ExecutablePath)
     $expectedExe = Resolve-FullPath $EditorExe
     if ($actualExe -cne $expectedExe) {
         throw "Refusing PID ${ProcessId}: executable mismatch (expected $expectedExe, got $actualExe)"
     }
-    $commandLine = [string]$row.CommandLine
-    $tagArg = "-HaybaSurvivalSession=$SessionToken"
-    if (-not (Test-ExactCommandLineArgument $commandLine $tagArg)) {
+    if ($row.ExactSessionArgument -isnot [bool] -or -not $row.ExactSessionArgument) {
         throw "Refusing PID ${ProcessId}: command line lacks the exact survival-session argument"
     }
-    if (-not (Test-ExactCommandLineArgument $commandLine $ProjectPath)) {
+    if ($row.ExactProjectArgument -isnot [bool] -or -not $row.ExactProjectArgument) {
         throw "Refusing PID ${ProcessId}: command line lacks the exact disposable project argument"
     }
+    if ([string]$row.CommandLineSha256 -cnotmatch '^[a-f0-9]{64}$') { throw 'process command-line digest missing' }
     return [pscustomobject]@{
         pid = $ProcessId
         executable_path = $actualExe
         creation_utc = ([DateTime]$row.CreationDate).ToUniversalTime().ToString('o')
-        command_line_sha256 = Get-SanitizedHash $commandLine
+        command_line_sha256 = [string]$row.CommandLineSha256
         session_token_sha256 = Get-SanitizedHash $SessionToken
         project_path = $ProjectPath
     }
 }
 
 function Assert-EditorIdentity {
+    param([object]$ProcessRow = $null, [int]$TimeoutMs = 0)
     if ($null -eq $EditorIdentity) { throw 'editor identity was not captured' }
-    $row = Get-EditorProcessRow $EditorPid
-    $current = New-EditorIdentity $EditorPid
+    $current = New-EditorIdentity $EditorPid $ProcessRow $TimeoutMs
     foreach ($field in @('pid', 'executable_path', 'creation_utc', 'command_line_sha256', 'session_token_sha256', 'project_path')) {
         if ([string]$current.$field -cne [string]$EditorIdentity.$field) {
             throw "editor identity changed at $field; refusing to continue or terminate by PID alone"
@@ -391,17 +587,16 @@ function Get-CrashRoots {
 }
 
 function Get-CrashEvidence {
-    $scanDeadline = [DateTime]::UtcNow.AddMilliseconds($CrashScanTimeoutMs)
-    if ($null -ne $CaseDeadline -and $CaseDeadline.AddMilliseconds(-250) -lt $scanDeadline) {
-        $scanDeadline = $CaseDeadline.AddMilliseconds(-250)
-    }
-    if ([DateTime]::UtcNow -ge $scanDeadline) { throw 'no bounded case budget remained for crash evidence' }
+    $scanClock = [Diagnostics.Stopwatch]::StartNew()
+    $scanLimitMs = $CrashScanTimeoutMs
+    if ($null -ne $CaseClock) { $scanLimitMs = [Math]::Min($scanLimitMs, $MaxCaseMs - $CaseClock.ElapsedMilliseconds - 250) }
+    if ($scanLimitMs -le 0) { throw 'no bounded case budget remained for crash evidence' }
     $artifacts = 0
     $filesSeen = 0
     $signatureSet = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     $manifest = [Collections.Generic.List[string]]::new()
     foreach ($root in Get-CrashRoots) {
-        if ([DateTime]::UtcNow -ge $scanDeadline) { throw 'crash evidence scan exceeded its bounded deadline' }
+        if ($scanClock.ElapsedMilliseconds -ge $scanLimitMs) { throw 'crash evidence scan exceeded its bounded deadline' }
         if (-not (Test-Path -LiteralPath $root -PathType Container)) { continue }
         $remainingDirectories = $MaxCrashDirectories - $artifacts
         $directories = @(Get-ChildItem -LiteralPath $root -Directory -ErrorAction SilentlyContinue |
@@ -414,7 +609,7 @@ function Get-CrashEvidence {
             $files = @(Get-ChildItem -LiteralPath $dir.FullName -File -Recurse -ErrorAction SilentlyContinue |
                 Select-Object -First ($remainingFiles + 1))
             foreach ($file in $files) {
-                if ([DateTime]::UtcNow -ge $scanDeadline) { throw 'crash evidence scan exceeded its bounded deadline' }
+                if ($scanClock.ElapsedMilliseconds -ge $scanLimitMs) { throw 'crash evidence scan exceeded its bounded deadline' }
                 $filesSeen++
                 if ($filesSeen -gt $MaxCrashFiles) { throw "crash evidence exceeded $MaxCrashFiles files" }
                 $relative = [IO.Path]::GetRelativePath($root, $file.FullName)
@@ -439,7 +634,7 @@ function Get-CrashEvidence {
             if ($dirManifest.Count -eq 0) { [void]$signatureSet.Add($dirState) }
         }
     }
-    if ([DateTime]::UtcNow -ge $scanDeadline) { throw 'crash evidence scan exceeded its bounded deadline' }
+    if ($scanClock.ElapsedMilliseconds -ge $scanLimitMs) { throw 'crash evidence scan exceeded its bounded deadline' }
     return [pscustomobject]@{
         artifact_count = $artifacts
         scanned_file_count = $filesSeen
@@ -459,16 +654,15 @@ function Assert-CrashEvidenceUnchanged {
 }
 
 function Get-ProjectFilesystemEvidence {
-    $scanDeadline = [DateTime]::UtcNow.AddMilliseconds($FilesystemScanTimeoutMs)
-    if ($null -ne $CaseDeadline -and $CaseDeadline.AddMilliseconds(-250) -lt $scanDeadline) {
-        $scanDeadline = $CaseDeadline.AddMilliseconds(-250)
-    }
-    if ([DateTime]::UtcNow -ge $scanDeadline) { throw 'no bounded case budget remained for project filesystem evidence' }
+    $scanClock = [Diagnostics.Stopwatch]::StartNew()
+    $scanLimitMs = $FilesystemScanTimeoutMs
+    if ($null -ne $CaseClock) { $scanLimitMs = [Math]::Min($scanLimitMs, $MaxCaseMs - $CaseClock.ElapsedMilliseconds - 250) }
+    if ($scanLimitMs -le 0) { throw 'no bounded case budget remained for project filesystem evidence' }
     $root = Split-Path -Parent $ProjectPath
     $manifest = [Collections.Generic.List[string]]::new()
     $filesVisited = 0
     foreach ($candidate in @($ProjectPath, (Join-Path $root 'Content'), (Join-Path $root 'Config'))) {
-        if ([DateTime]::UtcNow -ge $scanDeadline) { throw 'project filesystem evidence scan exceeded its bounded deadline' }
+        if ($scanClock.ElapsedMilliseconds -ge $scanLimitMs) { throw 'project filesystem evidence scan exceeded its bounded deadline' }
         if (Test-Path -LiteralPath $candidate -PathType Leaf) {
             $file = Get-Item -LiteralPath $candidate
             $manifest.Add("$(Get-SanitizedHash ([IO.Path]::GetRelativePath($root, $file.FullName)))|$($file.Length)|$($file.LastWriteTimeUtc.Ticks)")
@@ -482,11 +676,12 @@ function Get-ProjectFilesystemEvidence {
                 throw "project filesystem evidence exceeded $MaxTrackedProjectFiles visited files"
             }
             foreach ($file in @($files | Where-Object { $_.Extension -in @('.uasset', '.umap', '.ini') })) {
-                if ([DateTime]::UtcNow -ge $scanDeadline) { throw 'project filesystem evidence scan exceeded its bounded deadline' }
+                if ($scanClock.ElapsedMilliseconds -ge $scanLimitMs) { throw 'project filesystem evidence scan exceeded its bounded deadline' }
                 $manifest.Add("$(Get-SanitizedHash ([IO.Path]::GetRelativePath($root, $file.FullName)))|$($file.Length)|$($file.LastWriteTimeUtc.Ticks)")
             }
         }
     }
+    if ($scanClock.ElapsedMilliseconds -ge $scanLimitMs) { throw 'project filesystem evidence scan exceeded its bounded deadline' }
     return [pscustomobject]@{
         tracked_file_count = $manifest.Count
         state_sha256 = Get-SanitizedHash @($manifest | Sort-Object)
@@ -515,11 +710,10 @@ function Initialize-LogEvidence {
 }
 
 function Read-NewCriticalLogEvidence {
-    $scanDeadline = [DateTime]::UtcNow.AddMilliseconds($LogScanTimeoutMs)
-    if ($null -ne $CaseDeadline -and $CaseDeadline.AddMilliseconds(-250) -lt $scanDeadline) {
-        $scanDeadline = $CaseDeadline.AddMilliseconds(-250)
-    }
-    if ([DateTime]::UtcNow -ge $scanDeadline) { throw 'no bounded case budget remained for log evidence' }
+    $scanClock = [Diagnostics.Stopwatch]::StartNew()
+    $scanLimitMs = $LogScanTimeoutMs
+    if ($null -ne $CaseClock) { $scanLimitMs = [Math]::Min($scanLimitMs, $MaxCaseMs - $CaseClock.ElapsedMilliseconds - 250) }
+    if ($scanLimitMs -le 0) { throw 'no bounded case budget remained for log evidence' }
     $logs = Join-Path (Split-Path -Parent $ProjectPath) 'Saved\Logs'
     if (-not (Test-Path -LiteralPath $logs -PathType Container)) {
         return [pscustomobject]@{ critical_count = 0; delta_bytes = 0; evidence_sha256 = Get-SanitizedHash @() }
@@ -530,7 +724,7 @@ function Read-NewCriticalLogEvidence {
         Select-Object -First ($MaxLogFiles + 1))
     if ($files.Count -gt $MaxLogFiles) { throw "log evidence exceeded $MaxLogFiles files" }
     foreach ($file in $files) {
-        if ([DateTime]::UtcNow -ge $scanDeadline) { throw 'log evidence scan exceeded its bounded deadline' }
+        if ($scanClock.ElapsedMilliseconds -ge $scanLimitMs) { throw 'log evidence scan exceeded its bounded deadline' }
         [long]$start = 0
         if ($LogCursors.ContainsKey($file.FullName)) { $start = [long]$LogCursors[$file.FullName] }
         if ($file.Length -lt $start) { $start = 0 }
@@ -545,7 +739,7 @@ function Read-NewCriticalLogEvidence {
                 $stream.Position = $start
                 $bytes = [byte[]]::new([int]$available)
                 $read = $stream.Read($bytes, 0, $bytes.Length)
-                if ([DateTime]::UtcNow -ge $scanDeadline) { throw 'log evidence scan exceeded its bounded deadline' }
+                if ($scanClock.ElapsedMilliseconds -ge $scanLimitMs) { throw 'log evidence scan exceeded its bounded deadline' }
                 $deltaBytes += $read
                 $utf8 = [Text.Encoding]::UTF8.GetString($bytes, 0, $read)
                 $utf16 = [Text.Encoding]::Unicode.GetString($bytes, 0, $read - ($read % 2))
@@ -560,6 +754,7 @@ function Read-NewCriticalLogEvidence {
         }
         $LogCursors[$file.FullName] = [long]$file.Length
     }
+    if ($scanClock.ElapsedMilliseconds -ge $scanLimitMs) { throw 'log evidence scan exceeded its bounded deadline' }
     $script:LogCriticalCount += $critical.Count
     return [pscustomobject]@{
         critical_count = $critical.Count
@@ -581,13 +776,12 @@ function Get-RequiredTransportLimit([object]$Limits, [string]$Name, [int]$Minimu
 
 function Get-EnvironmentEvidence([object]$PingResponse) {
     $marker = '__HAYBA_ENV__'
+    # Native Python policy refuses try/except to protect the cooperative
+    # deadline. Metadata API failures must fail setup rather than be hidden.
     $environmentScript = @'
 import json, unreal
 def cv(name):
-    try:
-        return str(unreal.SystemLibrary.get_console_variable_string_value(name))
-    except Exception:
-        return ""
+    return str(unreal.SystemLibrary.get_console_variable_string_value(name))
 meta = {
     "engine_version": str(unreal.SystemLibrary.get_engine_version()),
     "project_file_path": str(unreal.Paths.get_project_file_path()),
@@ -597,7 +791,7 @@ meta = {
 }
 print("__HAYBA_ENV__" + json.dumps(meta, sort_keys=True))
 '@
-    $response = Invoke-HaybaCommand -Command 'python_run' -Params @{ script = $environmentScript }
+    $response = Invoke-HaybaCommand -Command 'python_run' -Params @{ script = $environmentScript; read_only = $true }
     if ($response.ok -ne $true) { throw "environment metadata probe failed: $($response.error)" }
     $match = [regex]::Match([string]$response.data.stdout, [regex]::Escape($marker) + '(\{[^\r\n]+\})')
     if (-not $match.Success) { throw 'environment metadata probe returned no parseable marker' }
@@ -712,6 +906,9 @@ $InitialCrashEvidence = Get-CrashEvidence
 $InitialFilesystemEvidence = Get-ProjectFilesystemEvidence
 Initialize-LogEvidence
 
+# One clock covers launch/attach setup, identity, listener and game-thread
+# readiness. Opening the listener alone does not mean frame-zero work is done.
+$StartupClock = [Diagnostics.Stopwatch]::StartNew()
 if ($EditorPid -eq 0) {
     if ([string]::IsNullOrWhiteSpace($SessionToken)) {
         $SessionToken = [guid]::NewGuid().ToString('N')
@@ -741,52 +938,84 @@ else {
     $OwnsTarget = $true
 }
 
-$identityWait = [Diagnostics.Stopwatch]::StartNew()
-while ($null -eq $EditorIdentity -and $identityWait.ElapsedMilliseconds -lt [Math]::Min($StartupTimeoutMs, 10000)) {
-    try { $EditorIdentity = New-EditorIdentity $EditorPid }
-    catch {
-        if ($null -eq $LaunchedProcess) { throw }
-        if (-not (Get-Process -Id $EditorPid -ErrorAction SilentlyContinue)) { throw }
-        Start-Sleep -Milliseconds 100
-    }
-}
-if ($null -eq $EditorIdentity) { throw 'could not capture the exact launched editor identity' }
-
-if ($Port -eq 0) {
-    $startup = [Diagnostics.Stopwatch]::StartNew()
-    while ($startup.ElapsedMilliseconds -lt $StartupTimeoutMs) {
-        if (-not (Get-Process -Id $EditorPid -ErrorAction SilentlyContinue)) {
-            throw "tagged editor PID $EditorPid exited before opening an MCP listener"
-        }
-        $Port = Find-OwnedMcpPort $EditorPid
-        if ($Port -ne 0) { break }
-        Start-Sleep -Milliseconds 250
-    }
-    if ($Port -eq 0) {
-        throw "tagged editor PID $EditorPid did not open a Hayba MCP listener within ${StartupTimeoutMs}ms"
-    }
-}
-elseif ($Port -lt 52342 -or $Port -gt 52350) {
+if ($Port -ne 0 -and ($Port -lt 52342 -or $Port -gt 52350)) {
     throw "Port must be 0 for owned discovery or an explicit Hayba port in 52342-52350; got $Port"
 }
 
-Assert-EditorIdentity | Out-Null
-
 function Get-ListenerOwner {
-    $owners = @(
-        Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue |
-            Select-Object -ExpandProperty OwningProcess -Unique
-    )
-    if ($owners.Count -ne 1) {
-        throw "Expected exactly one listener on port $Port; found $($owners.Count)"
+    param([object[]]$Owners, [int]$TimeoutMs = 0)
+    if (-not $PSBoundParameters.ContainsKey('Owners')) {
+        $proof = Invoke-HostProofQuery -IncludeListener -TimeoutMs $TimeoutMs
+        Assert-EditorIdentity -ProcessRow $proof.process | Out-Null
+        $Owners = @($proof.listener_owners)
     }
-    return [int]$owners[0]
+    $unique = @($Owners | Select-Object -Unique)
+    if ($unique.Count -ne 1) { throw "Expected exactly one listener on port $Port; found $($unique.Count)" }
+    if ([int]$unique[0] -ne $EditorPid) { throw "listener ownership changed: expected PID $EditorPid, got $($unique[0])" }
+    return [int]$unique[0]
+}
+
+function Get-RemainingStartupMs {
+    $remaining = $StartupTimeoutMs - $StartupClock.ElapsedMilliseconds
+    # The transport accepts 100..60000ms. Never round the remaining allowance
+    # up, reset it on retry, or borrow from a subsequent hostile case.
+    if ($remaining -lt 100) { throw "exhausted the absolute ${StartupTimeoutMs}ms startup deadline" }
+    return [int][Math]::Min($remaining, 60000)
+}
+
+function Wait-EditorReady {
+    $script:StartupReadinessEvidence = [pscustomobject]@{
+        ready = $false
+        request_id_correlated = $false
+        attempts = 0
+        transport_timeouts = 0
+        elapsed_ms = 0
+        timeout_ms = $StartupTimeoutMs
+    }
+    try {
+        # Capture identity even if launch consumed the deadline, so failure
+        # cleanup can still verify and close the owned process safely.
+        $script:EditorIdentity = New-EditorIdentity $EditorPid
+        while ($true) {
+            Get-RemainingStartupMs | Out-Null
+            Assert-EditorIdentity -TimeoutMs (Get-RemainingStartupMs) | Out-Null
+            if ($Port -eq 0) {
+                $script:Port = Find-OwnedMcpPort $EditorPid
+                if ($Port -eq 0) {
+                    Start-Sleep -Milliseconds ([Math]::Min(250, (Get-RemainingStartupMs)))
+                    continue
+                }
+            }
+            if ((Get-ListenerOwner -TimeoutMs (Get-RemainingStartupMs)) -ne $EditorPid) { throw 'startup listener ownership changed' }
+            $timeout = Get-RemainingStartupMs
+            $StartupReadinessEvidence.attempts++
+            try {
+                # Each invocation generates a fresh ID and validates its reply.
+                $text = & $Invoker -Cmd 'ping' -ParamsJson '{}' -Port $Port -TimeoutMs $timeout -Auth $Auth -Owner $SurvivalOwner -ThrowOnTimeout
+            }
+            catch [TimeoutException] {
+                $StartupReadinessEvidence.transport_timeouts++
+                continue
+            }
+            if ($LASTEXITCODE -ne 0) { throw 'startup transport failed for ping' }
+            $response = $text | ConvertFrom-Json
+            if ($response.ok -isnot [bool] -or $response.ok -ne $true) { throw 'startup readiness ping was malformed or refused' }
+            Get-RemainingStartupMs | Out-Null
+            Assert-EditorIdentity -TimeoutMs (Get-RemainingStartupMs) | Out-Null
+            if ((Get-ListenerOwner -TimeoutMs (Get-RemainingStartupMs)) -ne $EditorPid) { throw 'startup listener ownership changed' }
+            Get-RemainingStartupMs | Out-Null
+            $StartupReadinessEvidence.ready = $true
+            $StartupReadinessEvidence.request_id_correlated = $true
+            return $response
+        }
+    }
+    finally { $StartupReadinessEvidence.elapsed_ms = $StartupClock.ElapsedMilliseconds }
 }
 
 function Get-RemainingCaseMs([string]$Operation = 'case operation') {
-    if ($null -eq $CaseDeadline) { return $MaxCaseMs }
-    $remaining = [int][Math]::Floor(($CaseDeadline - [DateTime]::UtcNow).TotalMilliseconds)
-    if ($remaining -lt 100) { throw "$Operation exhausted the absolute ${MaxCaseMs}ms case deadline" }
+    if ($null -eq $CaseClock) { return $MaxCaseMs }
+    $remaining = $MaxCaseMs - [long]$CaseClock.ElapsedMilliseconds
+    if ($remaining -lt 100) { throw [TimeoutException]::new("$Operation exhausted the absolute ${MaxCaseMs}ms case deadline") }
     return [Math]::Min($remaining, 60000)
 }
 
@@ -797,8 +1026,9 @@ function Invoke-HaybaCommand {
     )
     $json = $Params | ConvertTo-Json -Compress -Depth 30
     $timeout = Get-RemainingCaseMs "transport for $Command"
-    $text = & $Invoker -Cmd $Command -ParamsJson $json -Port $Port -TimeoutMs $timeout -Auth $Auth
+    $text = & $Invoker -Cmd $Command -ParamsJson $json -Port $Port -TimeoutMs $timeout -Auth $Auth -Owner $SurvivalOwner
     if ($LASTEXITCODE -ne 0) { throw "transport failed for $Command" }
+    if ($null -ne $CaseClock) { Get-RemainingCaseMs "transport for $Command" | Out-Null }
     $response = $text | ConvertFrom-Json
     $isPlanModeRequired = [string]$response.data.status -ceq 'plan_mode_required' -or
         [string]$response.status -ceq 'plan_mode_required' -or
@@ -821,35 +1051,43 @@ function Get-EditorState {
 }
 
 function Test-BenignPythonNonce {
+    param([bool]$ExpectPolicyRefusal = $false)
     $nonce = [guid]::NewGuid().ToString('N')
     $marker = "__HAYBA_NONCE__$nonce"
-    $response = Invoke-HaybaCommand -Command 'python_run' -Params @{ script = "print('$marker')" }
+    $response = Invoke-HaybaCommand -Command 'python_run' -Params @{ script = "print('$marker')"; read_only = $true }
+    if ($ExpectPolicyRefusal) {
+        if ($response.ok -isnot [bool] -or $response.ok -ne $false -or
+            $response.code -isnot [string] -or $response.code -cne 'pie_active' -or
+            -not [string]::IsNullOrEmpty([string]$response.data.stdout) -or
+            -not [string]::IsNullOrEmpty([string]$response.stdout) -or
+            ($response | ConvertTo-Json -Compress -Depth 30).Contains($marker, [StringComparison]::Ordinal)) {
+            throw 'PIE Python admission probe did not prove the exact unexecuted pie_active refusal'
+        }
+        return [pscustomobject]@{ executed = $false; nonce_ok = $null; nonce_sha256 = $null; policy_refusal_ok = $true }
+    }
     if ($response.ok -ne $true) { throw "benign Python nonce failed: $($response.error)" }
     if (-not ([string]$response.data.stdout).Contains($marker, [StringComparison]::Ordinal)) {
         throw 'benign Python nonce response did not correlate to the generated nonce'
     }
-    return Get-SanitizedHash $nonce
+    return [pscustomobject]@{ executed = $true; nonce_ok = $true; nonce_sha256 = Get-SanitizedHash $nonce; policy_refusal_ok = $false }
 }
 
 function Assert-CaseTarget([object]$ExpectedPieRunning = $null) {
     # Use the same complete health proof both before and after every case. This
     # prevents a previous case's delayed failure from being attributed to the
-    # next hostile input and gives each result nonce-correlated pre/post proof.
+    # next hostile input and gives each result correlated native pre/post proof
+    # plus nonce execution outside PIE or exact admission refusal during PIE.
     return Assert-EditorHealthy -ExpectedPieRunning $ExpectedPieRunning
 }
 
 function Assert-EditorHealthy {
     param([object]$ExpectedPieRunning = $null)
-    Assert-EditorIdentity | Out-Null
-    $owner = Get-ListenerOwner
-    if ($owner -ne $EditorPid) {
-        throw "listener ownership changed: expected PID $EditorPid, got $owner"
-    }
-    $ping = Invoke-HaybaCommand -Command 'ping'
+    $proof = Invoke-CasePhase "$HealthPhasePrefix.host_query" { Invoke-HostProofQuery -IncludeListener }
+    Invoke-CasePhase "$HealthPhasePrefix.identity_validation" { Assert-EditorIdentity -ProcessRow $proof.process } | Out-Null
+    $owner = Invoke-CasePhase "$HealthPhasePrefix.listener_validation" { Get-ListenerOwner -Owners @($proof.listener_owners) }
+    $ping = Invoke-CasePhase "$HealthPhasePrefix.ping" { Invoke-HaybaCommand -Command 'ping' }
     if ($ping.ok -ne $true) { throw "fresh correlated ping failed: $($ping | ConvertTo-Json -Compress)" }
-    $pythonNonceHash = Test-BenignPythonNonce
-
-    $state = Get-EditorState
+    $state = Invoke-CasePhase "$HealthPhasePrefix.state" { Get-EditorState }
     $expectedPie = if ($null -eq $ExpectedPieRunning) { $InitialEditorState.pie_running } else { [bool]$ExpectedPieRunning }
     if ($state.map -cne $InitialEditorState.map -or $state.pie_running -ne $expectedPie) {
         throw "editor world baseline changed (map '$($InitialEditorState.map)' -> '$($state.map)', expected PIE $expectedPie, got $($state.pie_running))"
@@ -861,9 +1099,12 @@ function Assert-EditorHealthy {
     if ($addedDirty.Count -gt 0 -or $removedDirty.Count -gt 0) {
         throw "dirty-package baseline changed (added: $($addedDirty -join ', '); removed: $($removedDirty -join ', '))"
     }
-    $crash = Assert-CrashEvidenceUnchanged
-    $filesystem = Assert-ProjectFilesystemUnchanged
-    $log = Read-NewCriticalLogEvidence
+    # An unexpected PIE state is fatal before selecting the Python admission
+    # expectation. The successful native read is correlated by the invoker.
+    $pythonProof = Invoke-CasePhase "$HealthPhasePrefix.python" { Test-BenignPythonNonce -ExpectPolicyRefusal $expectedPie }
+    $crash = Invoke-CasePhase "$HealthPhasePrefix.crash" { Assert-CrashEvidenceUnchanged }
+    $filesystem = Invoke-CasePhase "$HealthPhasePrefix.filesystem" { Assert-ProjectFilesystemUnchanged }
+    $log = Invoke-CasePhase "$HealthPhasePrefix.log" { Read-NewCriticalLogEvidence }
     if ($log.critical_count -gt 0) {
         throw "new Unreal fatal/assert/ensure log evidence detected ($($log.critical_count) bounded signature(s))"
     }
@@ -872,8 +1113,11 @@ function Assert-EditorHealthy {
         exact_identity = $true
         listener_owner = $owner
         nonce_correlated_ping_ok = $true
-        python_nonce_ok = $true
-        python_nonce_sha256 = $pythonNonceHash
+        native_state_request_id_correlated = $true
+        python_nonce_executed = $pythonProof.executed
+        python_nonce_ok = $pythonProof.nonce_ok
+        python_nonce_sha256 = $pythonProof.nonce_sha256
+        python_policy_refusal_ok = $pythonProof.policy_refusal_ok
         pie_state_expected = $expectedPie
         map_baseline_unchanged = $true
         crash_artifact_delta = $crash.artifact_count - $InitialCrashEvidence.artifact_count
@@ -905,6 +1149,10 @@ function Add-Result {
         duration_ms = $DurationMs
         editor_pid = $EditorPid
         recovery = $Recovery
+        preflight = if ($null -ne $CaseClock) { $CasePreflight } else { $null }
+        hostile_duration_ms = if ($null -ne $CaseClock) { $HostileDurationMs } else { $null }
+        phases = if ($null -ne $CaseClock) { @($CasePhases.ToArray()) } else { @() }
+        host_query = $LastHostQueryEvidence
         detail = $safeDetail
     })
 }
@@ -917,21 +1165,23 @@ function Test-CommandRejection {
         [string]$ErrorPattern,
         [int]$MinDurationMs = 0
     )
-    $clock = [System.Diagnostics.Stopwatch]::StartNew()
-    $script:CaseDeadline = [DateTime]::UtcNow.AddMilliseconds($MaxCaseMs)
+    Start-CaseBudget
+    $clock = $CaseClock
     $paramsHash = Get-SanitizedHash $Params
     try {
         $preflight = Assert-CaseTarget
-        $response = Invoke-HaybaCommand -Command $Command -Params $Params
+        $script:CasePreflight = $preflight
+        $response = Invoke-CasePhase 'hostile.command' { Invoke-HaybaCommand -Command $Command -Params $Params }
         if ($response.ok -ne $false) {
             throw "expected ok:false, got $($response | ConvertTo-Json -Compress -Depth 20)"
         }
         if ($ErrorPattern -and [string]$response.error -notmatch $ErrorPattern) {
             throw "error did not match /$ErrorPattern/: $($response.error)"
         }
-        if ($clock.ElapsedMilliseconds -lt $MinDurationMs) {
-            throw "case returned in $($clock.ElapsedMilliseconds)ms; expected the runtime deadline path after at least ${MinDurationMs}ms"
+        if ($HostileDurationMs -lt $MinDurationMs) {
+            throw "hostile command returned in ${HostileDurationMs}ms; expected the runtime deadline path after at least ${MinDurationMs}ms"
         }
+        $script:HealthPhasePrefix = 'recovery'
         $recovery = Assert-EditorHealthy
         $recovery | Add-Member -NotePropertyName preflight -NotePropertyValue $preflight -Force
         if ($clock.ElapsedMilliseconds -gt $MaxCaseMs) { throw "case exceeded ${MaxCaseMs}ms" }
@@ -941,7 +1191,7 @@ function Test-CommandRejection {
         Add-Result $Name $false $clock.ElapsedMilliseconds $_.Exception.Message $Command $paramsHash
         throw
     }
-    finally { $script:CaseDeadline = $null }
+    finally { $script:CaseClock = $null }
 }
 
 function Test-CommandSuccess {
@@ -954,12 +1204,13 @@ function Test-CommandSuccess {
         [object]$ExpectedPieRunning = $null,
         [scriptblock]$VerifyResponse = $null
     )
-    $clock = [Diagnostics.Stopwatch]::StartNew()
-    $script:CaseDeadline = [DateTime]::UtcNow.AddMilliseconds($MaxCaseMs)
+    Start-CaseBudget
+    $clock = $CaseClock
     $paramsHash = Get-SanitizedHash $Params
     try {
         $preflight = Assert-CaseTarget -ExpectedPieRunning $ExpectedPrePieRunning
-        $response = Invoke-HaybaCommand -Command $Command -Params $Params
+        $script:CasePreflight = $preflight
+        $response = Invoke-CasePhase 'hostile.command' { Invoke-HaybaCommand -Command $Command -Params $Params }
         if ($response.ok -ne $true) {
             throw "expected ok:true, got $($response | ConvertTo-Json -Compress -Depth 20)"
         }
@@ -968,6 +1219,7 @@ function Test-CommandSuccess {
             if ((Get-RemainingCaseMs 'settle') -le $SettleMs) { throw 'settle would exceed the case deadline' }
             Start-Sleep -Milliseconds $SettleMs
         }
+        $script:HealthPhasePrefix = 'recovery'
         $recovery = Assert-EditorHealthy -ExpectedPieRunning $ExpectedPieRunning
         $recovery | Add-Member -NotePropertyName preflight -NotePropertyValue $preflight -Force
         if ($clock.ElapsedMilliseconds -gt $MaxCaseMs) { throw "case exceeded ${MaxCaseMs}ms" }
@@ -977,7 +1229,7 @@ function Test-CommandSuccess {
         Add-Result $Name $false $clock.ElapsedMilliseconds $_.Exception.Message $Command $paramsHash
         throw
     }
-    finally { $script:CaseDeadline = $null }
+    finally { $script:CaseClock = $null }
 }
 
 function Wait-RawTask([Threading.Tasks.Task]$Task, [string]$Operation) {
@@ -1007,9 +1259,9 @@ function Write-BoundedBytes([Net.Sockets.NetworkStream]$Stream, [byte[]]$Bytes, 
 function Read-BoundedExact([Net.Sockets.NetworkStream]$Stream, [byte[]]$Bytes, [int]$Count, [string]$Operation) {
     $read = 0
     while ($read -lt $Count) {
-        $count = Wait-RawTask ($Stream.ReadAsync($Bytes, $read, $Count - $read)) $Operation
-        if ($count -le 0) { throw "connection closed before $Operation" }
-        $read += $count
+        $bytesRead = Wait-RawTask ($Stream.ReadAsync($Bytes, $read, $Count - $read)) $Operation
+        if ($bytesRead -le 0) { throw "connection closed before $Operation" }
+        $read += $bytesRead
     }
 }
 
@@ -1031,7 +1283,7 @@ function Send-RawFrame {
             $client.Client.Shutdown([Net.Sockets.SocketShutdown]::Send)
         }
         if ($ExpectPeerClose) {
-            Wait-ForBoundedPeerClose $client 'malformed frame peer close' | Out-Null
+            Wait-ForBoundedPeerClose $stream 'malformed frame peer close' | Out-Null
             return ''
         }
         if (-not $ReadResponse) { return '' }
@@ -1052,26 +1304,225 @@ function Send-RawFrame {
 
 function Get-BigEndianHeader([uint32]$Length) {
     return [byte[]]@(
-        ($Length -shr 24) -band 0xff,
-        ($Length -shr 16) -band 0xff,
-        ($Length -shr 8) -band 0xff,
-        $Length -band 0xff
+        (($Length -shr 24) -band 0xff),
+        (($Length -shr 16) -band 0xff),
+        (($Length -shr 8) -band 0xff),
+        ($Length -band 0xff)
     )
 }
 
 function New-RawCommandFrame([string]$Command, [hashtable]$Params, [string]$Id) {
-    $request = @{ cmd = $Command; id = $Id; params = $Params }
+    $request = @{ cmd = $Command; id = $Id; params = $Params; owner = $SurvivalOwner }
     if ($Auth) { $request.auth = $Auth }
     $body = [Text.Encoding]::UTF8.GetBytes(($request | ConvertTo-Json -Compress -Depth 30))
     return [pscustomobject]@{ header = Get-BigEndianHeader $body.Length; body = $body; id = $Id }
 }
 
-function Wait-ForBoundedPeerClose([Net.Sockets.TcpClient]$Client, [string]$Operation) {
-    $stream = $Client.GetStream()
+function Wait-ForBoundedPeerClose([Net.Sockets.NetworkStream]$Stream, [string]$Operation) {
+    # The caller retains its valid stream across send-side half-close; asking
+    # TcpClient.GetStream again after Shutdown(Send) can reject that socket.
     $buffer = [byte[]]::new(4096)
     while ($true) {
-        $count = Wait-RawTask ($stream.ReadAsync($buffer, 0, $buffer.Length)) $Operation
+        $count = Wait-RawTask ($Stream.ReadAsync($buffer, 0, $buffer.Length)) $Operation
         if ($count -eq 0) { return $true }
+    }
+}
+
+function Get-RawTerminalSocketError([Exception]$Exception) {
+    $cause = $Exception
+    while ($null -ne $cause -and $cause -isnot [Net.Sockets.SocketException]) { $cause = $cause.InnerException }
+    if ($null -ne $cause -and $cause.SocketErrorCode -in @(
+        [Net.Sockets.SocketError]::ConnectionReset, [Net.Sockets.SocketError]::ConnectionAborted)) { return $cause }
+    return $null
+}
+
+function Get-RawCloseEvidence([Threading.Tasks.Task]$Task, [string]$Operation) {
+    try {
+        $count = Wait-RawTask $Task $Operation
+    }
+    catch {
+        # Only demonstrated terminal socket errors are close evidence. Deadline,
+        # binding, disposal, and unrelated helper failures must remain fatal.
+        $cause = Get-RawTerminalSocketError $_.Exception
+        if ($null -eq $cause) { throw }
+        return [pscustomobject]@{ kind='socket_error'; socket_error=[string]$cause.SocketErrorCode }
+    }
+    if ($count -ne 0) { throw "$Operation received response bytes instead of peer closure" }
+    return [pscustomobject]@{ kind='eof'; socket_error=$null }
+}
+
+function Initialize-RawCloseObservation {
+    if ('HaybaRawCloseObservation' -as [type]) { return }
+    # Capture monotonic time in the async read completion, before PowerShell
+    # polling. A Task.Delay race measures timer scheduling rather than expiry.
+    Add-Type -TypeDefinition @'
+using System.Diagnostics;
+using System.Net.Sockets;
+using System.Threading.Tasks;
+public sealed class HaybaRawCloseObservation {
+    public long ElapsedMs;
+    public Task<int> ReadTask;
+    public static HaybaRawCloseObservation Start(NetworkStream stream, Stopwatch clock) {
+        var observation = new HaybaRawCloseObservation();
+        observation.ReadTask = observation.ReadAsync(stream, clock);
+        return observation;
+    }
+    private async Task<int> ReadAsync(NetworkStream stream, Stopwatch clock) {
+        try { return await stream.ReadAsync(new byte[1], 0, 1).ConfigureAwait(false); }
+        finally { ElapsedMs = clock.ElapsedMilliseconds; }
+    }
+}
+'@
+}
+
+function New-AdmittedRawHolder($Clients, [string]$Operation) {
+    $client = Open-BoundedClient
+    # Own the current iteration before GetStream or either write can fail.
+    $Clients.Add($client)
+    $stream = $client.GetStream()
+    $frame = New-RawCommandFrame 'ping' @{} ('admission_' + [guid]::NewGuid().ToString('N'))
+    Write-BoundedBytes $stream $frame.header "$Operation admission header"
+    Write-BoundedBytes $stream $frame.body "$Operation admission body"
+    $header = [byte[]]::new(4)
+    Read-BoundedExact $stream $header 4 "$Operation admission response header"
+    if ([BitConverter]::IsLittleEndian) { [Array]::Reverse($header) }
+    $length = [BitConverter]::ToInt32($header, 0)
+    if ($length -le 0 -or $length -gt 8MB) { throw "$Operation admission response length was invalid" }
+    $body = [byte[]]::new($length)
+    Read-BoundedExact $stream $body $length "$Operation admission response body"
+    $response = ([Text.UTF8Encoding]::new($false, $true)).GetString($body) | ConvertFrom-Json
+    if ($response.ok -isnot [bool] -or $response.ok -ne $true -or [string]$response.id -cne $frame.id) {
+        throw "$Operation admission ping was refused or uncorrelated"
+    }
+    return [pscustomobject]@{
+        stream=$stream; id=$frame.id; clock=$null; close_task=$null; close_observation=$null;
+        drips=0; last_progress_ms=0; max_progress_gap_ms=0
+    }
+}
+
+function New-PartialFrameHolders($Clients, [string]$Operation) {
+    Initialize-RawCloseObservation
+    $holders = [Collections.Generic.List[object]]::new()
+    # Finish admission before starting any partial-frame clock. TCP connection
+    # or a successful write alone never proves application participation.
+    for ($i = 0; $i -lt $ConfiguredMaxClients; $i++) {
+        $holder = New-AdmittedRawHolder $Clients $Operation
+        $holders.Add($holder)
+        $script:RawProbeEvidence.admitted++
+    }
+    foreach ($holder in $holders) {
+        $holder.clock = [Diagnostics.Stopwatch]::StartNew()
+        Write-BoundedBytes $holder.stream (Get-BigEndianHeader 512) "$Operation partial header"
+        Write-BoundedBytes $holder.stream ([byte[]]@(0x7b)) "$Operation initial body byte"
+        $holder.last_progress_ms = $holder.clock.ElapsedMilliseconds
+        $holder.close_observation = [HaybaRawCloseObservation]::Start($holder.stream, $holder.clock)
+        $holder.close_task = $holder.close_observation.ReadTask
+    }
+    return ,$holders
+}
+
+function Assert-PartialHoldersActive($Holders, [string]$Operation) {
+    foreach ($holder in $Holders) {
+        if ($holder.close_task.IsCompleted -or $holder.clock.ElapsedMilliseconds -ge $FrameReadTimeoutMs) {
+            throw "$Operation lost an admitted holder or exceeded its active partial-frame lifetime"
+        }
+    }
+}
+
+function Invoke-PartialFrameCapacityProbe([int]$OverflowCount, [string]$Operation) {
+    $clients = [Collections.Generic.List[Net.Sockets.TcpClient]]::new()
+    $script:RawProbeEvidence = [pscustomobject]@{
+        configured_max_clients=$ConfiguredMaxClients; frame_timeout_ms=$FrameReadTimeoutMs;
+        admitted=0; closures=[Collections.Generic.List[object]]::new(); disposed=0
+    }
+    try {
+        $holders = New-PartialFrameHolders $clients $Operation
+        for ($i = 0; $i -lt $OverflowCount; $i++) {
+            Assert-PartialHoldersActive $holders $Operation
+            $extra = Open-BoundedClient
+            $clients.Add($extra)
+            $stream = $extra.GetStream()
+            $closeTask = $stream.ReadAsync([byte[]]::new(1), 0, 1)
+            $frame = New-RawCommandFrame 'ping' @{} ('overflow_' + [guid]::NewGuid().ToString('N'))
+            try {
+                Write-BoundedBytes $stream $frame.header "$Operation overflow header"
+                Write-BoundedBytes $stream $frame.body "$Operation overflow body"
+            }
+            catch {
+                # A terminal write error is not by itself rejection evidence;
+                # still require EOF/reset from the retained valid stream.
+                if ($null -eq (Get-RawTerminalSocketError $_.Exception)) { throw }
+            }
+            $closure = Get-RawCloseEvidence $closeTask "$Operation overflow close"
+            Assert-PartialHoldersActive $holders $Operation
+            $script:RawProbeEvidence.closures.Add($closure)
+        }
+    }
+    finally {
+        foreach ($client in $clients) { $client.Dispose(); $script:RawProbeEvidence.disposed++ }
+    }
+}
+
+function Invoke-SlowlorisDeadlineProbe {
+    $clients = [Collections.Generic.List[Net.Sockets.TcpClient]]::new()
+    $closed = [Collections.Generic.HashSet[int]]::new()
+    $script:RawProbeEvidence = [pscustomobject]@{
+        configured_max_clients=$ConfiguredMaxClients; frame_timeout_ms=$FrameReadTimeoutMs;
+        admitted=0; drips=0; closures=[Collections.Generic.List[object]]::new(); disposed=0
+    }
+    try {
+        $holders = New-PartialFrameHolders $clients 'slowloris'
+        $interval = [Math]::Max(20, [Math]::Min(500, [int]($FrameReadTimeoutMs / 3)))
+        $nextDrip = $interval
+        $clock = [Diagnostics.Stopwatch]::StartNew()
+        while ($closed.Count -lt $holders.Count) {
+            Get-RemainingCaseMs 'slowloris observation' | Out-Null
+            for ($i = 0; $i -lt $holders.Count; $i++) {
+                if ($closed.Contains($i)) { continue }
+                $holder = $holders[$i]
+                if ($holder.close_task.IsCompleted) {
+                    $elapsed = $holder.close_observation.ElapsedMs
+                    if ($elapsed -lt $FrameReadTimeoutMs) { throw 'slowloris holder closed prematurely before the total-frame deadline' }
+                    $closure = Get-RawCloseEvidence $holder.close_task 'slowloris total-deadline peer close'
+                    $gap = $elapsed - $holder.last_progress_ms
+                    if ($holder.drips -eq 0 -or $gap -ge $FrameReadTimeoutMs) { throw 'slowloris closure did not demonstrate continued partial-frame progress' }
+                    $closure | Add-Member -NotePropertyName elapsed_ms -NotePropertyValue $elapsed
+                    $closure | Add-Member -NotePropertyName drips -NotePropertyValue $holder.drips
+                    $closure | Add-Member -NotePropertyName max_progress_gap_ms -NotePropertyValue ([Math]::Max($gap, $holder.max_progress_gap_ms))
+                    $script:RawProbeEvidence.closures.Add($closure)
+                    [void]$closed.Add($i)
+                    continue
+                }
+                if ($clock.ElapsedMilliseconds -ge $nextDrip) {
+                    try {
+                        Write-BoundedBytes $holder.stream ([byte[]]@(0x20)) 'slowloris drip byte'
+                        $completedMs = $holder.clock.ElapsedMilliseconds
+                        if (-not $holder.close_task.IsCompleted) {
+                            # The gap spans successful completions, including
+                            # all time spent awaiting this write.
+                            $gap = $completedMs - $holder.last_progress_ms
+                            if ($gap -ge $FrameReadTimeoutMs) { throw 'slowloris drip interval exceeded the active frame timeout' }
+                            $holder.max_progress_gap_ms = [Math]::Max($gap, $holder.max_progress_gap_ms)
+                            $holder.last_progress_ms = $completedMs
+                            $holder.drips++
+                            $script:RawProbeEvidence.drips++
+                        }
+                    }
+                    catch {
+                        if ($null -eq (Get-RawTerminalSocketError $_.Exception)) { throw }
+                        # The pending read and its completion time must prove expiry.
+                    }
+                }
+            }
+            if ($clock.ElapsedMilliseconds -ge $nextDrip) { $nextDrip = $clock.ElapsedMilliseconds + $interval }
+            if ($closed.Count -lt $holders.Count) {
+                $remaining = Get-RemainingCaseMs 'slowloris observation sleep'
+                Start-Sleep -Milliseconds ([Math]::Min(20, $remaining))
+            }
+        }
+    }
+    finally {
+        foreach ($client in $clients) { $client.Dispose(); $script:RawProbeEvidence.disposed++ }
     }
 }
 
@@ -1080,13 +1531,16 @@ function Test-RawCase {
         [string]$Name,
         [scriptblock]$Action
     )
-    $clock = [System.Diagnostics.Stopwatch]::StartNew()
-    $script:CaseDeadline = [DateTime]::UtcNow.AddMilliseconds($MaxCaseMs)
+    Start-CaseBudget
+    $clock = $CaseClock
+    $script:RawProbeEvidence = $null
     try {
         $preflight = Assert-CaseTarget
-        & $Action
+        $script:CasePreflight = $preflight
+        Invoke-CasePhase 'hostile.action' $Action | Out-Null
         if ((Get-RemainingCaseMs 'raw settle') -le 150) { throw 'raw settle would exceed the case deadline' }
         Start-Sleep -Milliseconds 150
+        $script:HealthPhasePrefix = 'recovery'
         $recovery = Assert-EditorHealthy
         $recovery | Add-Member -NotePropertyName preflight -NotePropertyValue $preflight -Force
         if ($clock.ElapsedMilliseconds -gt $MaxCaseMs) { throw "case exceeded ${MaxCaseMs}ms" }
@@ -1096,14 +1550,19 @@ function Test-RawCase {
         Add-Result $Name $false $clock.ElapsedMilliseconds $_.Exception.Message 'raw_frame' (Get-SanitizedHash @{ case = $Name })
         throw
     }
-    finally { $script:CaseDeadline = $null }
+    finally {
+        if ($null -ne $RawProbeEvidence) {
+            $Results[$Results.Count - 1] | Add-Member -NotePropertyName probe_evidence -NotePropertyValue $RawProbeEvidence
+        }
+        $script:CaseClock = $null
+    }
 }
 
 function Wait-OwnedProcessExit([int]$TimeoutMs) {
     $clock = [Diagnostics.Stopwatch]::StartNew()
     while ($clock.ElapsedMilliseconds -lt $TimeoutMs) {
         if (-not (Get-Process -Id $EditorPid -ErrorAction SilentlyContinue)) { return $true }
-        try { Assert-EditorIdentity | Out-Null }
+        try { Assert-EditorIdentity -TimeoutMs ([int][Math]::Min($MaxCaseMs, $TimeoutMs - $clock.ElapsedMilliseconds)) | Out-Null }
         catch {
             # A graceful exit can race the identity read. Treat only confirmed
             # absence as success; a live mismatched/reused PID remains fatal.
@@ -1125,9 +1584,13 @@ function Stop-OwnedEditorWithEvidence {
     }
 
     Assert-EditorIdentity | Out-Null
+    # Query/identity failure stops cleanup. Only listener availability may
+    # select the already-authorized owned-window fallback below.
+    $proof = Invoke-HostProofQuery -IncludeListener
+    Assert-EditorIdentity -ProcessRow $proof.process | Out-Null
     $listenerOwned = $false
     try {
-        $listenerOwned = (Get-ListenerOwner) -eq $EditorPid
+        $listenerOwned = (Get-ListenerOwner -Owners @($proof.listener_owners)) -eq $EditorPid
     }
     catch {}
     $state = $null
@@ -1153,14 +1616,17 @@ function Stop-OwnedEditorWithEvidence {
     if (-not $exited) {
         Assert-EditorIdentity | Out-Null
         $owned = Get-Process -Id $EditorPid -ErrorAction Stop
+        $windowCloseRequested = $false
         try {
-            if ($owned.CloseMainWindow()) {
-                $gracefulRequested = $true
-                $gracefulMethod = if ($gracefulMethod) { $gracefulMethod + '+wm_close' } else { 'wm_close' }
-                $exited = Wait-OwnedProcessExit $GracefulShutdownTimeoutMs
-            }
+            $windowCloseRequested = $owned.CloseMainWindow()
         }
         catch {}
+        if ($windowCloseRequested) {
+            $gracefulRequested = $true
+            $gracefulMethod = if ($gracefulMethod) { $gracefulMethod + '+wm_close' } else { 'wm_close' }
+            # A failed identity proof while waiting must not enable force.
+            $exited = Wait-OwnedProcessExit $GracefulShutdownTimeoutMs
+        }
     }
 
     $forced = $false
@@ -1198,8 +1664,7 @@ function Stop-OwnedEditorWithEvidence {
 }
 
     if (-not (Test-Path -LiteralPath $Invoker)) { throw "missing invoker: $Invoker" }
-    $transportProbe = Invoke-HaybaCommand -Command 'ping'
-    if ($transportProbe.ok -ne $true) { throw 'initial transport-limit probe failed' }
+    $transportProbe = Wait-EditorReady
     $rawLimits = $transportProbe.data.transport_limits
     if ([string]$rawLimits.applies -cne 'active_tcp_server_snapshot') {
         throw 'ping transport_limits were not the active TCP server snapshot'
@@ -1253,12 +1718,16 @@ function Stop-OwnedEditorWithEvidence {
         if ($null -eq $LaunchedProcess) {
             throw '-CanaryKill is launch-mode only; it will never terminate an attached process'
         }
-        $script:CaseDeadline = [DateTime]::UtcNow.AddMilliseconds($MaxCaseMs)
-        Assert-CaseTarget | Out-Null
+        Start-CaseBudget
+        $clock = $CaseClock
+        $script:CasePreflight = Assert-CaseTarget
         Assert-EditorIdentity | Out-Null
-        $clock = [Diagnostics.Stopwatch]::StartNew()
-        Stop-Process -Id $EditorPid -Force
-        try { $LaunchedProcess.WaitForExit(10000) | Out-Null } catch {}
+        Invoke-CasePhase 'hostile.action' {
+            Stop-Process -Id $EditorPid -Force
+            if (-not $LaunchedProcess.WaitForExit((Get-RemainingCaseMs 'canary owned exit'))) {
+                throw 'canary owned process exit was not confirmed inside the case budget'
+            }
+        } | Out-Null
         $ordinaryGateWouldFail = $false
         try {
             Assert-EditorHealthy | Out-Null
@@ -1284,7 +1753,7 @@ function Stop-OwnedEditorWithEvidence {
         }
         $CleanupAttempted = $true
         $CleanupEvidence = [pscustomobject]@{ mode = 'canary_force_termination'; graceful = $false; forced_recovery = $false; exited = $true }
-        $script:CaseDeadline = $null
+        $script:CaseClock = $null
     }
     else {
 
@@ -1293,7 +1762,7 @@ function Stop-OwnedEditorWithEvidence {
     $fatalCases = @(
         @{ Name='world_switch_new_blank_map'; Script='import unreal; unreal.EditorLoadingAndSavingUtils.new_blank_map(False)' },
         @{ Name='world_switch_load_map'; Script='import unreal; unreal.EditorLoadingAndSavingUtils.load_map("/Game/Nope")' },
-        @{ Name='self_socket_deadlock'; Script='import socket; s=socket.socket(); s.connect(("127.0.0.1",52342))' },
+        @{ Name='self_socket_deadlock'; Script="import socket; s=socket.socket(); s.connect((`"127.0.0.1`",$Port))" },
         @{ Name='dangling_tick_callback'; Script='import unreal; unreal.register_slate_post_tick_callback(lambda dt: None)' },
         @{ Name='python_background_thread'; Script='import threading; threading.Thread(target=lambda:None).start()' },
         @{ Name='game_thread_sleep'; Script='import time; time.sleep(10)' },
@@ -1417,89 +1886,15 @@ p.write_text('this line must never execute', encoding='utf-8')
         }
     }
     Test-RawCase 'partial_frame_client_flood' {
-        $clients = [Collections.Generic.List[Net.Sockets.TcpClient]]::new()
-        try {
-            for ($i = 0; $i -lt ($ConfiguredMaxClients + 8); $i++) {
-                $client = $null
-                try {
-                    $client = Open-BoundedClient
-                    Write-BoundedBytes ($client.GetStream()) ([byte[]]@(0)) 'partial-flood byte write'
-                    $clients.Add($client)
-                }
-                catch {
-                    # Refusal above the configured ceiling is an expected safe
-                    # outcome. All accepted sockets are still disposed below.
-                    if ($null -ne $client) { $client.Dispose() }
-                }
-            }
-            if ($clients.Count -eq 0) { throw 'partial-frame flood could not establish any probe connection' }
-        }
-        finally {
-            foreach ($client in $clients) { $client.Dispose() }
-        }
+        Invoke-PartialFrameCapacityProbe 8 'partial-flood'
     }
 
     Test-RawCase 'client_limit_accounting_recovery' {
-        $holders = [Collections.Generic.List[Net.Sockets.TcpClient]]::new()
-        $extra = $null
-        try {
-            $incompleteHeader = Get-BigEndianHeader 512
-            for ($i = 0; $i -lt $ConfiguredMaxClients; $i++) {
-                $client = Open-BoundedClient
-                Write-BoundedBytes ($client.GetStream()) $incompleteHeader 'client-limit header write'
-                Write-BoundedBytes ($client.GetStream()) ([byte[]]@(0x7b)) 'client-limit partial body write'
-                $holders.Add($client)
-            }
-            $extra = Open-BoundedClient
-            $frame = New-RawCommandFrame 'ping' @{} ('limit_' + [guid]::NewGuid().ToString('N'))
-            try {
-                Write-BoundedBytes ($extra.GetStream()) $frame.header 'over-limit header write'
-                Write-BoundedBytes ($extra.GetStream()) $frame.body 'over-limit body write'
-            }
-            catch {
-                # A write-side refusal is already the desired bounded outcome.
-            }
-            if ($extra.Connected) { Wait-ForBoundedPeerClose $extra 'over-limit peer close' | Out-Null }
-        }
-        finally {
-            if ($null -ne $extra) { $extra.Dispose() }
-            foreach ($client in $holders) { $client.Dispose() }
-        }
+        Invoke-PartialFrameCapacityProbe 1 'client-limit'
     }
 
     Test-RawCase 'slowloris_total_frame_deadline' {
-        # Complete the header, then drip an incomplete body often enough that a
-        # per-read idle timeout would never fire. Only a total-frame deadline
-        # closes these sockets while they continue to make progress.
-        $clients = [Collections.Generic.List[Net.Sockets.TcpClient]]::new()
-        $closed = [Collections.Generic.HashSet[int]]::new()
-        try {
-            $declared = Get-BigEndianHeader 512
-            for ($i = 0; $i -lt $ConfiguredMaxClients; $i++) {
-                $client = Open-BoundedClient
-                Write-BoundedBytes ($client.GetStream()) $declared 'slowloris header write'
-                Write-BoundedBytes ($client.GetStream()) ([byte[]]@(0x7b)) 'slowloris initial body byte'
-                $clients.Add($client)
-            }
-            $drip = [Diagnostics.Stopwatch]::StartNew()
-            $interval = [Math]::Max(100, [Math]::Min(500, [int]($FrameReadTimeoutMs / 3)))
-            while ($drip.ElapsedMilliseconds -lt ($FrameReadTimeoutMs + 300)) {
-                Start-Sleep -Milliseconds $interval
-                for ($i = 0; $i -lt $clients.Count; $i++) {
-                    if ($closed.Contains($i)) { continue }
-                    try { Write-BoundedBytes ($clients[$i].GetStream()) ([byte[]]@(0x20)) 'slowloris drip byte' }
-                    catch { [void]$closed.Add($i) }
-                }
-            }
-            for ($i = 0; $i -lt $clients.Count; $i++) {
-                if (-not $closed.Contains($i)) {
-                    Wait-ForBoundedPeerClose $clients[$i] 'slowloris total-deadline peer close' | Out-Null
-                }
-            }
-        }
-        finally {
-            foreach ($client in $clients) { $client.Dispose() }
-        }
+        Invoke-SlowlorisDeadlineProbe
     }
 
     Test-RawCase 'pipelined_request_limit' {
@@ -1519,7 +1914,7 @@ p.write_text('this line must never execute', encoding='utf-8')
                     break
                 }
             }
-            if (-not $writeRejected) { Wait-ForBoundedPeerClose $client 'pipeline-limit peer close' | Out-Null }
+            if (-not $writeRejected) { Wait-ForBoundedPeerClose $stream 'pipeline-limit peer close' | Out-Null }
         }
         finally { $client.Dispose() }
     }
@@ -1554,11 +1949,12 @@ p.write_text('this line must never execute', encoding='utf-8')
     }
     $failed = @($Results | Where-Object { -not $_.passed })
     $report = [pscustomobject]@{
-        schema_version = 3
+        schema_version = 4
         mode = $CanaryKill ? 'canary' : 'survival'
         editor_pid = $EditorPid
         port = $Port
         environment = $EnvironmentEvidence
+        startup_readiness = $StartupReadinessEvidence
         crash_evidence_before = $InitialCrashEvidence
         editor_state_before = [pscustomobject]@{
             map_sha256 = Get-SanitizedHash $InitialEditorState.map
@@ -1583,7 +1979,7 @@ p.write_text('this line must never execute', encoding='utf-8')
     if ($failed.Count -gt 0) { $ExitCode = 1 }
 }
 catch {
-    $script:CaseDeadline = $null
+    $script:CaseClock = $null
     $fatalMessage = $_.Exception.Message
     $fatalDigest = New-DiagnosticDigest $fatalMessage 'fatal_exception'
     [Console]::Error.WriteLine("editor-survival gate failed: sanitized diagnostic sha256=$($fatalDigest.sha256)")
@@ -1617,12 +2013,13 @@ catch {
     }
     $failedCases = @($Results | Where-Object { -not $_.passed })
     $failedReport = [pscustomobject]@{
-        schema_version = 3
+        schema_version = 4
         mode = $CanaryKill ? 'canary' : 'survival'
         editor_pid = $EditorPid
         port = $Port
         fatal_error = $fatalDigest
         environment = $EnvironmentEvidence
+        startup_readiness = $StartupReadinessEvidence
         crash_evidence_before = $InitialCrashEvidence
         filesystem_evidence_before = $InitialFilesystemEvidence
         critical_log_signatures_seen = $LogCriticalCount

@@ -65,12 +65,36 @@ namespace
 		if (!Root->TryGetBoolField(TEXT("signed_in"), bSignedIn)) return EHaybaBrainSignIn::Unknown;
 		return bSignedIn ? EHaybaBrainSignIn::SignedIn : EHaybaBrainSignIn::NotSignedIn;
 	}
+
+	// The sidecar's warning ledger emits identifiers with this restricted shape.
+	// Revalidate at the SSE boundary so arbitrary server text cannot become a
+	// saved Chat notice, and never log or copy the raw pending_warning_ids field.
+	bool IsSafeWarningId(const FString& Id)
+	{
+		if (Id.IsEmpty() || Id.Len() > 80 || Id[0] < TEXT('a') || Id[0] > TEXT('z'))
+		{
+			return false;
+		}
+		for (const TCHAR Character : Id)
+		{
+			const bool bLower = Character >= TEXT('a') && Character <= TEXT('z');
+			const bool bDigit = Character >= TEXT('0') && Character <= TEXT('9');
+			if (!bLower && !bDigit && Character != TEXT('_')) return false;
+		}
+		return true;
+	}
 }
 
 FHaybaMCPAgentClient::~FHaybaMCPAgentClient()
 {
 	// Best-effort: drop callbacks and cancel any in-flight request so a late HTTP
 	// tick cannot re-enter a destroyed client. (Callbacks also capture a weak ptr.)
+	if (ConfigRequest.IsValid())
+	{
+		ConfigRequest->OnProcessRequestComplete().Unbind();
+		ConfigRequest->CancelRequest();
+		ConfigRequest.Reset();
+	}
 	if (StreamRequest.IsValid())
 	{
 		if (!bTerminalEmitted) MarkActivitiesDisconnected();
@@ -95,7 +119,7 @@ void FHaybaMCPAgentClient::SendPrompt(const FString& UserPrompt, const FString& 
 	// start a second /chat/stream sharing this instance's ParseCursor +
 	// AccumulatedText (reset in StartStream), corrupting the live parse. The
 	// server 409s a concurrent turn, but self-guard so the UI can't garble it.
-	if (bStreaming || bTurnPending)
+	if (bStreaming || bTurnPending || ConfigGate.IsPending())
 	{
 		FHaybaChatError Busy;
 		Busy.Error = TEXT("a chat turn is already in progress; cancel it or wait for done");
@@ -129,8 +153,8 @@ void FHaybaMCPAgentClient::SendPrompt(const FString& UserPrompt, const FString& 
 void FHaybaMCPAgentClient::ForceCommunityThisChat()
 {
 	bForceCommunityThisChat = true;
-	// Re-post /chat/config so the Community turn runs with the current provider key.
-	bConfigDone = false;
+	// Every new turn posts /chat/config, so the next Community turn uses the
+	// current provider key without retaining a stale sidecar configuration.
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -187,14 +211,8 @@ bool FHaybaMCPAgentClient::IsProLoopActive() const
 
 void FHaybaMCPAgentClient::ConfigureAndStream(const FString& UserPrompt)
 {
-	if (bConfigDone)
-	{
-		StartStream(UserPrompt);
-	}
-	else
-	{
-		PostConfig(UserPrompt);
-	}
+	ConfigGate.Begin();
+	PostConfig(UserPrompt);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -265,8 +283,12 @@ void FHaybaMCPAgentClient::PostConfig(const FString& UserPrompt)
 	const FString Provider = Settings.SelectedProviderId;
 	const FHaybaProviderInfo* Info = FHaybaMCPSettings::FindProvider(Provider);
 
-	const FString Model   = (Info && Info->DefaultModel)   ? FString(Info->DefaultModel)   : Settings.Model;
-	const FString BaseURL = (Info && Info->BaseURLDefault) ? FString(Info->BaseURLDefault) : Settings.BaseURL;
+	// Settings Save keeps user-edited values. Send those exact values to the
+	// sidecar; provider defaults are only a fallback for an empty field.
+	const FString Model = !Settings.Model.IsEmpty() ? Settings.Model
+		: (Info && Info->DefaultModel ? FString(Info->DefaultModel) : FString());
+	const FString BaseURL = !Settings.BaseURL.IsEmpty() ? Settings.BaseURL
+		: (Info && Info->BaseURLDefault ? FString(Info->BaseURLDefault) : FString());
 
 	// Key of record lives DPAPI-encrypted in the vault; fall back to the legacy
 	// shared accessor (which also routes through the vault).
@@ -281,11 +303,18 @@ void FHaybaMCPAgentClient::PostConfig(const FString& UserPrompt)
 	Body->SetStringField(TEXT("provider"), Provider);
 	Body->SetStringField(TEXT("model"), Model);
 	Body->SetStringField(TEXT("base_url"), BaseURL);
-	Body->SetStringField(TEXT("api_key"), ApiKey);   // loopback only — never logged
+	// Omission lets the sidecar use its provider-specific environment key.
+	// An explicit empty api_key sent by other clients still suppresses that
+	// fallback; never turn an absent vault value into an explicit clear.
+	if (!ApiKey.IsEmpty())
+	{
+		Body->SetStringField(TEXT("api_key"), ApiKey);   // loopback only — never logged
+	}
 
 	const FString ConfigUrl = Settings.SidecarURL / TEXT("chat/config");
 
 	TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();
+	ConfigRequest = Request;
 	Request->SetURL(ConfigUrl);
 	Request->SetVerb(TEXT("POST"));
 	Request->SetHeader(TEXT("Content-Type"), TEXT("application/json"));
@@ -297,13 +326,16 @@ void FHaybaMCPAgentClient::PostConfig(const FString& UserPrompt)
 
 	TWeakPtr<FHaybaMCPAgentClient> WeakSelf = AsShared();
 	const FString CapturedPrompt = UserPrompt;
-	const uint32 Generation = TurnGeneration;
+	const uint32 CapturedTurn = TurnGeneration;
+	const uint64 CapturedConfig = ConfigGate.Generation;
 	Request->OnProcessRequestComplete().BindLambda(
-		[WeakSelf, CapturedPrompt, Generation](FHttpRequestPtr /*Req*/, FHttpResponsePtr Response, bool bConnected)
+		[WeakSelf, CapturedPrompt, CapturedTurn, CapturedConfig](FHttpRequestPtr /*Req*/, FHttpResponsePtr Response, bool bConnected)
 		{
 			TSharedPtr<FHaybaMCPAgentClient> Self = WeakSelf.Pin();
-			// Stopped (or superseded) while /chat/config was in flight: do not stream.
-			if (!Self.IsValid() || !Self->IsTurnCurrent(Generation)) return;
+			// Both the Pro pre-stream turn and config handoff must still be live.
+			if (!Self.IsValid() || !Self->IsTurnCurrent(CapturedTurn)) return;
+			if (!Self->ConfigGate.Complete(CapturedConfig)) return;
+			Self->ConfigRequest.Reset();
 
 			if (!bConnected || !Response.IsValid())
 			{
@@ -321,11 +353,16 @@ void FHaybaMCPAgentClient::PostConfig(const FString& UserPrompt)
 				Self->EmitLocalDone(TEXT("error"), /*cancelled*/ false);
 				return;
 			}
-			Self->bConfigDone = true;
 			Self->StartStream(CapturedPrompt);
 		});
 
-	Request->ProcessRequest();
+	if (!Request->ProcessRequest() && IsTurnCurrent(CapturedTurn) && ConfigGate.Complete(CapturedConfig))
+	{
+		ConfigRequest.Reset();
+		OnError.Broadcast(FHaybaChatError{
+			TEXT("Could not start chat configuration request."), TEXT("transport") });
+		EmitLocalDone(TEXT("error"), /*cancelled*/ false);
+	}
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -338,13 +375,12 @@ void FHaybaMCPAgentClient::StartStream(const FString& UserPrompt)
 
 bool FHaybaMCPAgentClient::AdoptSavedSession(const FString& InSessionId)
 {
-	if (bStreaming || InSessionId.IsEmpty() || InSessionId.Len() > 128) return false;
+	if (IsTurnActive() || ConfigGate.IsPending() || InSessionId.IsEmpty() || InSessionId.Len() > 128) return false;
 	for (TCHAR Character : InSessionId)
 	{
 		if (!FChar::IsAlnum(Character) && Character != TEXT('_') && Character != TEXT('-')) return false;
 	}
 	SessionId = InSessionId;
-	bConfigDone = false;
 	bForceCommunityThisChat = false;
 	StreamActivityIds.Reset();
 	return true;
@@ -623,6 +659,54 @@ void FHaybaMCPAgentClient::DispatchFrame(const FString& FrameBlock)
 				Data->TryGetStringField(TEXT("partial_text"), Done.AssistantText);
 			}
 			Data->TryGetBoolField(TEXT("cancelled"), Done.bCancelled);
+			Data->TryGetBoolField(TEXT("warning_overflow"), Done.bWarningOverflow);
+			const TArray<TSharedPtr<FJsonValue>>* WarningIds = nullptr;
+			if (Data->TryGetArrayField(TEXT("pending_warning_ids"), WarningIds) && WarningIds)
+			{
+				// The server caps the list at 64. Keep the native boundary
+				// independently bounded if a malformed sidecar sends more.
+				for (int32 Index = 0; Index < FMath::Min(WarningIds->Num(), 256); ++Index)
+				{
+					const TSharedPtr<FJsonValue>& Value = (*WarningIds)[Index];
+					if (!Value.IsValid() || Value->Type != EJson::String) continue;
+					const FString Id = Value->AsString();
+					if (!IsSafeWarningId(Id) || Done.PendingWarningIds.Contains(Id)) continue;
+					if (Done.PendingWarningIds.Num() >= 64)
+					{
+						Done.bPendingWarningIdsTruncated = true;
+						break;
+					}
+					Done.PendingWarningIds.Add(Id);
+				}
+				if (WarningIds->Num() > 256) Done.bPendingWarningIdsTruncated = true;
+			}
+			const TArray<TSharedPtr<FJsonValue>>* Reviews = nullptr;
+			if (Data->TryGetArrayField(TEXT("warning_reviews"), Reviews) && Reviews)
+			{
+				TArray<FString> SeenIds;
+				for (int32 Index = 0; Index < FMath::Min(Reviews->Num(), 256); ++Index)
+				{
+					const TSharedPtr<FJsonValue>& Value = (*Reviews)[Index];
+					if (!Value.IsValid() || Value->Type != EJson::Object) continue;
+					const TSharedPtr<FJsonObject> Review = Value->AsObject();
+					if (!Review.IsValid()) continue;
+					FString Id;
+					FString Status;
+					if (!Review->TryGetStringField(TEXT("id"), Id) || !IsSafeWarningId(Id) ||
+						!Review->TryGetStringField(TEXT("status"), Status) || SeenIds.Contains(Id)) continue;
+					if (Status != TEXT("pending") && Status != TEXT("acknowledged") && Status != TEXT("deferred")) continue;
+					if (SeenIds.Num() >= 64)
+					{
+						Done.bWarningReviewsTruncated = true;
+						break;
+					}
+					SeenIds.Add(Id);
+					if (Status == TEXT("pending")) ++Done.PendingWarningReviewCount;
+					else if (Status == TEXT("acknowledged")) ++Done.AcknowledgedWarningReviewCount;
+					else ++Done.DeferredWarningReviewCount;
+				}
+				if (Reviews->Num() > 256) Done.bWarningReviewsTruncated = true;
+			}
 		}
 		bTerminalEmitted = true;
 		OnDone.Broadcast(Done);
@@ -712,12 +796,19 @@ void FHaybaMCPAgentClient::PostApprove()
 void FHaybaMCPAgentClient::Cancel()
 {
 	// Stop during the pre-stream round-trips (/brain/status, /brain/config,
-	// /chat/config): no server turn exists yet. Invalidate the pending
-	// continuations and finish the turn locally.
-	if (bTurnPending && !bStreaming)
+	// /chat/config): no server turn exists yet. Invalidate both generations
+	// and cancel a pending config request before it can launch a stream.
+	if ((bTurnPending || ConfigGate.IsPending()) && !bStreaming)
 	{
 		bTurnPending = false;
 		++TurnGeneration;
+		ConfigGate.Cancel();
+		if (ConfigRequest.IsValid())
+		{
+			ConfigRequest->OnProcessRequestComplete().Unbind();
+			ConfigRequest->CancelRequest();
+			ConfigRequest.Reset();
+		}
 		if (bCurrentTurnPro)
 		{
 			StoreRotatedBrainToken();

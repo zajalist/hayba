@@ -47,9 +47,16 @@ docs/briefs/
 docs/research/
 docs/architecture/
 
+# Third-party tutorial transcripts are research inputs, not distributable source.
+mcp-tools/hayba-mcp/src/gaea/transcripts/
+mcp-tools/hayba-mcp/gaea-mcp-output/
+
 # Sidecar chat/session runtime state — machine-local, not source
 .ai-agent/
 
 # Personal maintainer dashboard and task backlog (local only)
 /dashboard.html
 /TASKS.md
+
+# Machine-local agent permissions and commands
+.claude/settings.local.json

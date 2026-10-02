@@ -1,5 +1,8 @@
 #include "HaybaMCPPIEHandler.h"
 #include "HaybaPIERuntimeOps.h"
+#include "HaybaMCPEditorState.h"
+#include "HaybaMCPEditorHealth.h"
+#include "HaybaPIECapturePolicy.h"
 
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
@@ -35,6 +38,7 @@
 #include "Layout/Children.h"
 #include "HAL/PlatformProcess.h"
 #include "HAL/PlatformTime.h"
+#include "HAL/PlatformMemory.h"
 #include "InputCoreTypes.h"
 #include "InputKeyEventArgs.h"
 #include "GenericPlatform/GenericPlatformInputDeviceMapper.h"
@@ -42,8 +46,45 @@
 #include "Misc/Paths.h"
 #include "Misc/FileHelper.h"
 #include "Misc/FrameNumber.h"
+#include "Misc/Guid.h"
 #include "HaybaMCPParams.h"
 #endif
+
+struct FHaybaPIECaptureState
+{
+#if WITH_EDITOR
+    FString Id;
+    TWeakObjectPtr<UWorld> World;
+    int32 PIEInstance = INDEX_NONE;
+    int32 EndSerial = 0;
+    int32 TargetFrames = 0;
+    int32 WarmupFrames = 0;
+    int32 SeenFrames = 0;
+    uint64 LastFrame = MAX_uint64;
+    bool bHasTickerBaseline = false;
+    double LastTickerSeconds = 0.0;
+    FString Status = TEXT("running");
+    FString AbortReason;
+    TArray<double> TickerIntervalMs;
+    TArray<double> GameThreadMs;
+    TArray<double> RenderThreadMs;
+    TArray<double> ProcessPhysicalMB;
+    FString ActorTag;
+    int32 TaggedActorCount = 0;
+    int32 TaggedActorsScanned = 0;
+    bool bTaggedScanTruncated = false;
+    bool bTaggedScanReady = false;
+#endif
+};
+
+FHaybaMCPPIEHandler::FHaybaMCPPIEHandler() = default;
+
+FHaybaMCPPIEHandler::~FHaybaMCPPIEHandler()
+{
+#if WITH_EDITOR
+    if (CaptureTicker.IsValid()) FTSTicker::RemoveTicker(CaptureTicker);
+#endif
+}
 
 // ---------------------------------------------------------------------------
 // Boilerplate
@@ -65,20 +106,11 @@ TArray<FString> FHaybaMCPPIEHandler::GetCommands() const
         TEXT("editor_pie_actor_list"),
         TEXT("editor_pie_actor_inspect"),
         TEXT("editor_pie_project_world"),
+        TEXT("editor_pie_sightlines"),
         TEXT("editor_pie_click_actor"),
+        TEXT("editor_pie_capture_start"),
+        TEXT("editor_pie_capture_get"),
     };
-}
-
-FHaybaMCPPIEHandler::~FHaybaMCPPIEHandler()
-{
-#if WITH_EDITOR
-    if (bHooksBound && GEditor)
-    {
-        if (BeginPIEHandle.IsValid())  FEditorDelegates::BeginPIE.Remove(BeginPIEHandle);
-        if (EndPIEHandle.IsValid())    FEditorDelegates::EndPIE.Remove(EndPIEHandle);
-        if (CancelPIEHandle.IsValid()) FEditorDelegates::CancelPIE.Remove(CancelPIEHandle);
-    }
-#endif
 }
 
 FHaybaHandlerResult FHaybaMCPPIEHandler::Handle(const FString& Cmd, const TSharedPtr<FJsonObject>& Params)
@@ -86,7 +118,6 @@ FHaybaHandlerResult FHaybaMCPPIEHandler::Handle(const FString& Cmd, const TShare
 #if !WITH_EDITOR
     return FHaybaHandlerResult::Err(TEXT("PIE handler only available in editor builds"));
 #else
-    EnsureLifecycleHooks();
     if (Cmd == TEXT("editor_pie_assert"))     return PIEAssert(Params);
     if (Cmd == TEXT("editor_pie_wait_for"))   return PIEWaitFor(Params);
     if (Cmd == TEXT("editor_pie_press_key"))  return PIEPressKey(Params);
@@ -99,42 +130,16 @@ FHaybaHandlerResult FHaybaMCPPIEHandler::Handle(const FString& Cmd, const TShare
     if (Cmd == TEXT("editor_pie_actor_list"))    return PIEActorList(Params);
     if (Cmd == TEXT("editor_pie_actor_inspect")) return PIEActorInspect(Params);
     if (Cmd == TEXT("editor_pie_project_world")) return PIEProjectWorld(Params);
+    if (Cmd == TEXT("editor_pie_sightlines")) return PIESightlines(Params);
     if (Cmd == TEXT("editor_pie_click_actor"))   return PIEClickActor(Params);
+    if (Cmd == TEXT("editor_pie_capture_start")) return PIECaptureStart(Params);
+    if (Cmd == TEXT("editor_pie_capture_get"))   return PIECaptureGet(Params);
     if (Cmd == TEXT("editor_pie_screenshot")) return PIEScreenshot(Params);
     return FHaybaHandlerResult::Err(FString::Printf(TEXT("Unknown PIE command: %s"), *Cmd));
 #endif
 }
 
 #if WITH_EDITOR
-
-void FHaybaMCPPIEHandler::EnsureLifecycleHooks()
-{
-    if (bHooksBound) return;
-    bHooksBound = true;
-
-    BeginPIEHandle = FEditorDelegates::BeginPIE.AddLambda([this](const bool bIsSimulating)
-    {
-        this->OnBeginPIE(bIsSimulating);
-    });
-    EndPIEHandle = FEditorDelegates::EndPIE.AddLambda([this](const bool bIsSimulating)
-    {
-        this->OnEndPIE(bIsSimulating);
-    });
-    CancelPIEHandle = FEditorDelegates::CancelPIE.AddLambda([this]()
-    {
-        this->OnEndPIE(false);
-    });
-}
-
-void FHaybaMCPPIEHandler::OnBeginPIE(const bool /*bIsSimulating*/)
-{
-    bCancelPending = false;
-}
-
-void FHaybaMCPPIEHandler::OnEndPIE(const bool /*bIsSimulating*/)
-{
-    bCancelPending = true;
-}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -382,7 +387,7 @@ FHaybaHandlerResult FHaybaMCPPIEHandler_WaitLoop(
     // response carries `polling: true` so that is obvious from the result
     // rather than only from the docs.
     {
-        if (Self.bCancelPending)
+        if (!FHaybaMCPEditorState::Get().IsPieActiveOrQueued())
         {
             TSharedPtr<FJsonObject> R = MakeShared<FJsonObject>();
             R->SetBoolField(TEXT("matched"), false);
@@ -915,8 +920,8 @@ namespace
      * A zero delta is not a small move, it is no move at all. SScrollBar::OnMouseMove
      * returns Unhandled on it; SScrollBox's right-click drag scrolling adds 0.0 to
      * its accumulator and never crosses the drag trigger distance. Both of those
-     * were measured dead in the field (Aphrosia docs/gauntlet/scroll-dossier.md,
-     * 2026-08-02) and both were the harness, not the widget.
+     * were observed failing in a live editor, and both were the harness,
+     * not the widget.
      *
      * So: read the origin BEFORE moving, move, then read back what Slate stored
      * (it truncates to whole pixels) and build the event from the real pair.
@@ -2375,6 +2380,253 @@ namespace
     }
 }
 
+namespace
+{
+    // Ticker intervals and editor thread counters include editor and every PIE world.
+    // A capture never attributes them to one actor, world, or GPU.
+    constexpr int32 MaxCaptureTagActorsScanned = 5000;
+    bool StrictCaptureInt(const TSharedPtr<FJsonObject>& P, const TCHAR* Name,
+        int32 Default, int32 Min, int32 Max, int32& Out)
+    {
+        Out = Default;
+        if (!P.IsValid() || !P->HasField(Name)) return true;
+        const TSharedPtr<FJsonValue> Value = P->TryGetField(Name);
+        double Number = 0.0;
+        if (!Value.IsValid() || Value->Type != EJson::Number
+            || !Value->TryGetNumber(Number) || !FMath::IsFinite(Number)
+            || FMath::FloorToDouble(Number) != Number || Number < Min || Number > Max)
+            return false;
+        Out = static_cast<int32>(Number);
+        return true;
+    }
+
+    void ValidateCaptureWorld(FHaybaPIECaptureState& State)
+    {
+        if (State.Status != TEXT("running")) return;
+        const bool bUnsafe = FHaybaEditorHealth::IsUnsafe();
+        const bool bRunning = FHaybaMCPEditorState::Get().CurrentPie().Phase
+            == HaybaMCPState::EPiePhase::Running;
+        const bool bSameEndSerial = FHaybaMCPEditorState::Get().PieEndSerial() == State.EndSerial;
+        const bool bWorldValid = State.World.IsValid();
+        bool bStillCurrent = false;
+        if (bWorldValid && bRunning && bSameEndSerial && !bUnsafe)
+        {
+            for (const FPIEWorldEntry& Entry : RuntimePIEWorlds())
+            {
+                if (Entry.Candidate.PIEInstance == State.PIEInstance
+                    && Entry.World == State.World.Get())
+                {
+                    bStillCurrent = true;
+                    break;
+                }
+            }
+        }
+        if (!HaybaPIECapturePolicy::MustAbort(bUnsafe, bRunning, bSameEndSerial,
+            bWorldValid, bStillCurrent)) return;
+        if (bUnsafe) State.AbortReason = TEXT("editor_unsafe");
+        else if (!bRunning || !bSameEndSerial) State.AbortReason = TEXT("pie_stopped");
+        else if (!bWorldValid) State.AbortReason = TEXT("pie_world_destroyed");
+        else State.AbortReason = TEXT("pie_world_changed");
+        State.Status = TEXT("aborted");
+    }
+
+    TSharedPtr<FJsonObject> CaptureSeries(const TArray<double>& Values)
+    {
+        TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+        Result->SetNumberField(TEXT("sample_count"), Values.Num());
+        if (Values.IsEmpty()) return Result;
+        TArray<double> Sorted = Values;
+        Sorted.Sort();
+        double Sum = 0.0;
+        for (double Value : Values) Sum += Value;
+        Result->SetNumberField(TEXT("min"), Sorted[0]);
+        Result->SetNumberField(TEXT("mean"), Sum / Values.Num());
+        Result->SetNumberField(TEXT("p50"), Sorted[(Sorted.Num() - 1) / 2]);
+        Result->SetNumberField(TEXT("p95"), Sorted[FMath::CeilToInt(Sorted.Num() * 0.95) - 1]);
+        Result->SetNumberField(TEXT("max"), Sorted.Last());
+        return Result;
+    }
+
+    TSharedPtr<FJsonObject> CaptureJson(const FHaybaPIECaptureState& State)
+    {
+        TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
+        Out->SetStringField(TEXT("capture_id"), State.Id);
+        Out->SetStringField(TEXT("status"), State.Status);
+        Out->SetNumberField(TEXT("pie_instance"), State.PIEInstance);
+        Out->SetNumberField(TEXT("warmup_frames_requested"), State.WarmupFrames);
+        Out->SetNumberField(TEXT("sample_frames_requested"), State.TargetFrames);
+        Out->SetNumberField(TEXT("frames_seen"), State.SeenFrames);
+        Out->SetNumberField(TEXT("sample_frames_collected"), State.TickerIntervalMs.Num());
+        Out->SetBoolField(TEXT("samples_truncated"), HaybaPIECapturePolicy::SamplesTruncated(
+            State.Status == TEXT("complete"), State.TickerIntervalMs.Num(), State.TargetFrames));
+        Out->SetNumberField(TEXT("sample_frames_remaining"),
+            State.Status == TEXT("running") ? State.TargetFrames - State.TickerIntervalMs.Num() : 0);
+        if (!State.AbortReason.IsEmpty()) Out->SetStringField(TEXT("abort_reason"), State.AbortReason);
+        Out->SetStringField(TEXT("timing_scope"), TEXT("observed_core_ticker_interval_whole_editor_proxy_not_pie_exclusive"));
+        Out->SetStringField(TEXT("memory_scope"), TEXT("whole_editor_process_used_physical"));
+        Out->SetObjectField(TEXT("editor_ticker_interval_ms"), CaptureSeries(State.TickerIntervalMs));
+        Out->SetObjectField(TEXT("editor_game_thread_ms"), CaptureSeries(State.GameThreadMs));
+        Out->SetObjectField(TEXT("editor_render_thread_ms"), CaptureSeries(State.RenderThreadMs));
+        Out->SetObjectField(TEXT("process_used_physical_mb"), CaptureSeries(State.ProcessPhysicalMB));
+        if (!State.ActorTag.IsEmpty())
+        {
+            TSharedPtr<FJsonObject> Tagged = MakeShared<FJsonObject>();
+            Tagged->SetStringField(TEXT("tag"), State.ActorTag);
+            Tagged->SetStringField(TEXT("scope"), TEXT("selected_pie_world_actor_tags"));
+            Tagged->SetBoolField(TEXT("ready"), State.bTaggedScanReady);
+            Tagged->SetNumberField(TEXT("max_actors_scanned"), MaxCaptureTagActorsScanned);
+            if (State.bTaggedScanReady)
+            {
+                Tagged->SetNumberField(TEXT("count_in_scanned_prefix"), State.TaggedActorCount);
+                Tagged->SetNumberField(TEXT("actors_scanned"), State.TaggedActorsScanned);
+                Tagged->SetBoolField(TEXT("scan_truncated"), State.bTaggedScanTruncated);
+                Tagged->SetBoolField(TEXT("count_is_lower_bound"), State.bTaggedScanTruncated);
+            }
+            Out->SetObjectField(TEXT("tagged_runtime_actors"), Tagged);
+        }
+        Out->SetStringField(TEXT("gpu_time"), TEXT("unknown_unsupported"));
+        Out->SetStringField(TEXT("real_wp_cell_count"), TEXT("unknown_unsupported"));
+        Out->SetStringField(TEXT("npc_ai_cost"), TEXT("unknown_unsupported"));
+        Out->SetStringField(TEXT("performance_verdict"), TEXT("unknown_no_pie_exclusive_measurement"));
+        return Out;
+    }
+}
+
+bool FHaybaMCPPIEHandler::TickCapture(float)
+{
+    if (!Capture.IsValid() || Capture->Status != TEXT("running")) return false;
+    ValidateCaptureWorld(*Capture);
+    if (Capture->Status != TEXT("running")) return false;
+    if (Capture->LastFrame == GFrameCounter) return true;
+    Capture->LastFrame = GFrameCounter;
+    const double NowSeconds = FPlatformTime::Seconds();
+    if (!Capture->bHasTickerBaseline)
+    {
+        Capture->bHasTickerBaseline = true;
+        Capture->LastTickerSeconds = NowSeconds;
+        return true;
+    }
+    const double IntervalMs = (NowSeconds - Capture->LastTickerSeconds) * 1000.0;
+    Capture->LastTickerSeconds = NowSeconds;
+    ++Capture->SeenFrames;
+    if (Capture->SeenFrames <= Capture->WarmupFrames) return true;
+
+    // A missing/nonfinite interval cannot be represented as an observed sample.
+    if (FMath::IsFinite(IntervalMs) && IntervalMs > 0.0)
+    {
+        Capture->TickerIntervalMs.Add(IntervalMs);
+        const double GameMs = FPlatformTime::ToMilliseconds(GGameThreadTime);
+        const double RenderMs = FPlatformTime::ToMilliseconds(GRenderThreadTime);
+        if (FMath::IsFinite(GameMs) && GameMs > 0.0) Capture->GameThreadMs.Add(GameMs);
+        if (FMath::IsFinite(RenderMs) && RenderMs > 0.0) Capture->RenderThreadMs.Add(RenderMs);
+        const FPlatformMemoryStats Memory = FPlatformMemory::GetStats();
+        if (Memory.UsedPhysical > 0)
+            Capture->ProcessPhysicalMB.Add(static_cast<double>(Memory.UsedPhysical) / (1024.0 * 1024.0));
+    }
+    if (HaybaPIECapturePolicy::ReachedTickLimit(
+        Capture->SeenFrames, Capture->TargetFrames, Capture->WarmupFrames))
+    {
+        if (!Capture->ActorTag.IsEmpty() && Capture->World.IsValid())
+        {
+            // One bounded read on the capture tick, never in the start/get handler.
+            const FName Tag(*Capture->ActorTag, FNAME_Find);
+            if (Tag != NAME_None)
+            {
+                for (TActorIterator<AActor> It(Capture->World.Get()); It; ++It)
+                {
+                    if (Capture->TaggedActorsScanned >= MaxCaptureTagActorsScanned)
+                    {
+                        Capture->bTaggedScanTruncated = true;
+                        break;
+                    }
+                    ++Capture->TaggedActorsScanned;
+                    if (IsValid(*It) && It->Tags.Contains(Tag)) ++Capture->TaggedActorCount;
+                }
+            }
+            Capture->bTaggedScanReady = true;
+        }
+        Capture->Status = TEXT("complete");
+        return false;
+    }
+    return true;
+}
+
+FHaybaHandlerResult FHaybaMCPPIEHandler::PIECaptureStart(const TSharedPtr<FJsonObject>& P)
+{
+    if (FHaybaEditorHealth::IsUnsafe())
+        return FHaybaHandlerResult::Err(TEXT("editor_pie_capture_start: editor is unsafe"));
+    if (FHaybaMCPEditorState::Get().CurrentPie().Phase != HaybaMCPState::EPiePhase::Running)
+        return FHaybaHandlerResult::Err(TEXT("editor_pie_capture_start: PIE is not running"));
+    if (Capture.IsValid()) ValidateCaptureWorld(*Capture);
+    if (Capture.IsValid() && Capture->Status == TEXT("running"))
+        return FHaybaHandlerResult::Err(TEXT("editor_pie_capture_start: a capture is already running"));
+
+    int32 Frames = 120, Warmup = 0, PIEInstance = INDEX_NONE;
+    if (!StrictCaptureInt(P, TEXT("sample_frames"), 120, 1, HaybaPIECapturePolicy::MaxFrames, Frames)
+        || !StrictCaptureInt(P, TEXT("warmup_frames"), 0, 0, HaybaPIECapturePolicy::MaxWarmupFrames, Warmup)
+        || !StrictCaptureInt(P, TEXT("pie_instance"), INDEX_NONE, 0, 1024, PIEInstance))
+        return FHaybaHandlerResult::Err(TEXT("editor_pie_capture_start: sample_frames must be 1..600, warmup_frames 0..120, and pie_instance 0..1024; all must be integers"));
+    if (!HaybaPIECapturePolicy::ValidRequest(Frames, Warmup))
+        return FHaybaHandlerResult::Err(TEXT("editor_pie_capture_start: capture bounds invalid"));
+    FString ActorTag;
+    if (P.IsValid() && P->HasField(TEXT("actor_tag")))
+    {
+        const TSharedPtr<FJsonValue> TagField = P->TryGetField(TEXT("actor_tag"));
+        if (!TagField.IsValid() || TagField->Type != EJson::String
+            || !TagField->TryGetString(ActorTag) || ActorTag.IsEmpty() || ActorTag.Len() > 64)
+            return FHaybaHandlerResult::Err(TEXT("editor_pie_capture_start: actor_tag must be a nonempty string of at most 64 characters"));
+    }
+
+    TArray<FPIEWorldEntry> Worlds;
+    FPIEWorldEntry* Selected = nullptr;
+    HaybaPIERuntimeOps::FWorldSelection Selection;
+    FString Error;
+    if (!RuntimeSelectWorld(PIEInstance == INDEX_NONE ? TOptional<int32>() : TOptional<int32>(PIEInstance),
+        false, Worlds, Selected, Selection, Error))
+        return FHaybaHandlerResult::Err(FString::Printf(TEXT("editor_pie_capture_start: %s"), *Error));
+    if (PIEInstance == INDEX_NONE && Worlds.Num() != 1)
+        return FHaybaHandlerResult::Err(TEXT("editor_pie_capture_start: multiple PIE worlds; pass pie_instance"));
+
+    if (CaptureTicker.IsValid())
+    {
+        FTSTicker::RemoveTicker(CaptureTicker);
+        CaptureTicker.Reset();
+    }
+    Capture = MakeUnique<FHaybaPIECaptureState>();
+    Capture->Id = FGuid::NewGuid().ToString(EGuidFormats::Digits);
+    Capture->World = Selected->World;
+    Capture->PIEInstance = Selected->Candidate.PIEInstance;
+    Capture->EndSerial = FHaybaMCPEditorState::Get().PieEndSerial();
+    Capture->TargetFrames = Frames;
+    Capture->WarmupFrames = Warmup;
+    Capture->ActorTag = ActorTag;
+    Capture->TickerIntervalMs.Reserve(Frames);
+    Capture->GameThreadMs.Reserve(Frames);
+    Capture->RenderThreadMs.Reserve(Frames);
+    Capture->ProcessPhysicalMB.Reserve(Frames);
+    CaptureTicker = FTSTicker::GetCoreTicker().AddTicker(
+        FTickerDelegate::CreateRaw(this, &FHaybaMCPPIEHandler::TickCapture));
+    return FHaybaHandlerResult::Ok(CaptureJson(*Capture));
+}
+
+FHaybaHandlerResult FHaybaMCPPIEHandler::PIECaptureGet(const TSharedPtr<FJsonObject>& P)
+{
+    FString Id;
+    const TSharedPtr<FJsonValue> IdField = P.IsValid() ? P->TryGetField(TEXT("capture_id")) : nullptr;
+    if (!IdField.IsValid() || IdField->Type != EJson::String
+        || !IdField->TryGetString(Id) || Id.IsEmpty() || Id.Len() > 64)
+        return FHaybaHandlerResult::Err(TEXT("editor_pie_capture_get: capture_id is required"));
+    if (!Capture.IsValid() || Capture->Id != Id)
+        return FHaybaHandlerResult::Err(TEXT("editor_pie_capture_get: capture_id was not found"));
+    ValidateCaptureWorld(*Capture);
+    if (Capture->Status == TEXT("aborted") && CaptureTicker.IsValid())
+    {
+        FTSTicker::RemoveTicker(CaptureTicker);
+        CaptureTicker.Reset();
+    }
+    return FHaybaHandlerResult::Ok(CaptureJson(*Capture));
+}
+
 FHaybaHandlerResult FHaybaMCPPIEHandler::PIEActorList(const TSharedPtr<FJsonObject>& P)
 {
     FHaybaParamReader Reader(P, TEXT("editor_pie_actor_list"));
@@ -2522,6 +2774,91 @@ FHaybaHandlerResult FHaybaMCPPIEHandler::PIEActorInspect(const TSharedPtr<FJsonO
     Out->SetNumberField(TEXT("components_returned"), ComponentJson.Num());
     Out->SetNumberField(TEXT("components_total"), Components.Num());
     Out->SetBoolField(TEXT("components_have_more"), Request.ComponentOffset + ComponentJson.Num() < Components.Num());
+    return FHaybaHandlerResult::Ok(Out);
+}
+
+FHaybaHandlerResult FHaybaMCPPIEHandler::PIESightlines(const TSharedPtr<FJsonObject>& P)
+{
+    FHaybaParamReader Reader(P, TEXT("editor_pie_sightlines"));
+    const HaybaPIERuntimeOps::FSightlinesRequest Request = HaybaPIERuntimeOps::ParseSightlines(Reader);
+    if (Reader.HasErrors()) return FHaybaHandlerResult::Err(Reader.ErrorMessage());
+    if (!FHaybaMCPEditorState::Get().IsPieActiveOrQueued())
+        return FHaybaHandlerResult::Err(TEXT("editor_pie_sightlines: PIE has stopped"));
+
+    TArray<FPIEWorldEntry> Worlds;
+    FPIEWorldEntry* Selected = nullptr;
+    HaybaPIERuntimeOps::FWorldSelection Selection;
+    FString Error;
+    if (!RuntimeSelectWorld(Request.World.PIEInstance, false, Worlds, Selected, Selection, Error))
+        return FHaybaHandlerResult::Err(FString::Printf(TEXT("editor_pie_sightlines: %s"), *Error));
+    if (!Request.World.PIEInstance.IsSet() && Worlds.Num() != 1)
+        return FHaybaHandlerResult::Err(TEXT("editor_pie_sightlines: multiple live PIE worlds; pass pie_instance from editor_pie_actor_list"));
+    if (Selected->World->WorldType != EWorldType::PIE)
+        return FHaybaHandlerResult::Err(TEXT("editor_pie_sightlines: selected world is no longer PIE"));
+
+    TArray<TSharedPtr<FJsonValue>> Samples;
+    Samples.Reserve(Request.EyePositions.Num());
+    int32 ClearCount = 0;
+    int32 BlockedCount = 0;
+    int32 UnknownCount = 0;
+    for (int32 Index = 0; Index < Request.EyePositions.Num(); ++Index)
+    {
+        const FVector& Eye = Request.EyePositions[Index];
+        TSharedPtr<FJsonObject> Sample = MakeShared<FJsonObject>();
+        Sample->SetNumberField(TEXT("index"), Index);
+        Sample->SetObjectField(TEXT("eye_position"), RuntimeVectorJson(Eye));
+        Sample->SetNumberField(TEXT("distance_cm"), FVector::Distance(Eye, Request.TargetLocation));
+        if (!IsValid(Selected->World) || Selected->World->WorldType != EWorldType::PIE)
+        {
+            Sample->SetStringField(TEXT("status"), TEXT("unknown"));
+            Sample->SetStringField(TEXT("reason"), TEXT("selected PIE world ended during observation"));
+            ++UnknownCount;
+        }
+        else
+        {
+            FHitResult Hit;
+            FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(HaybaPIESightlines), true);
+            const bool bBlocked = Selected->World->LineTraceSingleByChannel(
+                Hit, Eye, Request.TargetLocation, ECC_Visibility, QueryParams);
+            if (bBlocked)
+            {
+                Sample->SetStringField(TEXT("status"), TEXT("blocked"));
+                TSharedPtr<FJsonObject> Blocker = MakeShared<FJsonObject>();
+                Blocker->SetObjectField(TEXT("location"), RuntimeVectorJson(Hit.Location));
+                Blocker->SetNumberField(TEXT("distance_cm"), Hit.Distance);
+                if (const AActor* Actor = Hit.GetActor())
+                    Blocker->SetStringField(TEXT("actor_path"), Actor->GetPathName());
+                if (const UPrimitiveComponent* Component = Hit.GetComponent())
+                    Blocker->SetStringField(TEXT("component_path"), Component->GetPathName());
+                Sample->SetObjectField(TEXT("first_blocker"), Blocker);
+                ++BlockedCount;
+            }
+            else
+            {
+                Sample->SetStringField(TEXT("status"), TEXT("clear"));
+                ++ClearCount;
+            }
+        }
+        Samples.Add(MakeShared<FJsonValueObject>(Sample));
+    }
+
+    const int32 Tested = ClearCount + BlockedCount;
+    TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
+    Out->SetObjectField(TEXT("world"), RuntimeWorldJson(*Selected, Selection));
+    Out->SetStringField(TEXT("observed_at_utc"), FDateTime::UtcNow().ToIso8601());
+    Out->SetObjectField(TEXT("target_location"), RuntimeVectorJson(Request.TargetLocation));
+    Out->SetStringField(TEXT("channel"), TEXT("ECC_Visibility"));
+    Out->SetStringField(TEXT("interpretation"), TEXT("collision sightline proxy; not rendered visibility, walkability, World Partition residency, or performance"));
+    Out->SetArrayField(TEXT("samples"), Samples);
+    Out->SetNumberField(TEXT("clear_count"), ClearCount);
+    Out->SetNumberField(TEXT("blocked_count"), BlockedCount);
+    Out->SetNumberField(TEXT("unknown_count"), UnknownCount);
+    Out->SetNumberField(TEXT("tested_count"), Tested);
+    Out->SetNumberField(TEXT("tested_point_ratio"), static_cast<double>(Tested) / Request.EyePositions.Num());
+    if (Tested > 0)
+        Out->SetNumberField(TEXT("clear_ratio_of_tested"), static_cast<double>(ClearCount) / Tested);
+    else
+        Out->SetField(TEXT("clear_ratio_of_tested"), MakeShared<FJsonValueNull>());
     return FHaybaHandlerResult::Ok(Out);
 }
 
@@ -3254,6 +3591,7 @@ FHaybaHandlerResult FHaybaMCPPIEHandler::PIEScreenshot(const TSharedPtr<FJsonObj
 FHaybaHandlerResult FHaybaMCPPIEHandler::PIEActorList(const TSharedPtr<FJsonObject>&)  { return FHaybaHandlerResult::Err(TEXT("editor-only")); }
 FHaybaHandlerResult FHaybaMCPPIEHandler::PIEActorInspect(const TSharedPtr<FJsonObject>&){ return FHaybaHandlerResult::Err(TEXT("editor-only")); }
 FHaybaHandlerResult FHaybaMCPPIEHandler::PIEProjectWorld(const TSharedPtr<FJsonObject>&){ return FHaybaHandlerResult::Err(TEXT("editor-only")); }
+FHaybaHandlerResult FHaybaMCPPIEHandler::PIESightlines(const TSharedPtr<FJsonObject>&){ return FHaybaHandlerResult::Err(TEXT("editor-only")); }
 FHaybaHandlerResult FHaybaMCPPIEHandler::PIEClickActor(const TSharedPtr<FJsonObject>&){ return FHaybaHandlerResult::Err(TEXT("editor-only")); }
 
 #endif  // WITH_EDITOR

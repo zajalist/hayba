@@ -91,14 +91,12 @@ function wireCalls(): Array<{ file: string; cmd: string }> {
  * the list exists so a NEW one fails this test loudly instead of joining them.
  * Shrink it; never grow it.
  *
- * Verified live 2026-08-01 — `hayba_fab_login_status` returns
- * "Unknown command: fab_login_status" from the plugin.
+ * The four fab_* commands left this list when their tools were removed: no
+ * plugin handler ever implemented them (verified live 2026-08-01, "Unknown
+ * command: fab_login_status"). A future Fab integration must ship its C++
+ * commands, not an exemption here.
  */
 const KNOWN_UNIMPLEMENTED = new Set([
-  'fab_login_status',
-  'fab_library_list',
-  'fab_marketplace_search',
-  'fab_download',
   'plan_mark_step',
   'hayba_request_input',
   'hayba_get_user_response',

@@ -31,6 +31,7 @@ const TArray<FHaybaProviderInfo>& FHaybaMCPSettings::GetProviderCatalog()
         { TEXT("mock"),       TEXT("Mock (offline, no key)"),        TEXT(""),                                 TEXT("mock"),                       false, TEXT("(no key)") },
         { TEXT("anthropic"),  TEXT("Anthropic"),                     TEXT("https://api.anthropic.com"),        TEXT("claude-opus-4-8"),            true,  TEXT("sk-ant-...") },
         { TEXT("openai"),     TEXT("OpenAI"),                        TEXT("https://api.openai.com/v1"),        TEXT("gpt-4o-mini"),                true,  TEXT("sk-...") },
+        { TEXT("deepseek"),   TEXT("DeepSeek"),                      TEXT("https://api.deepseek.com"),         TEXT("deepseek-flash"),             true,  TEXT("sk-...") },
         { TEXT("groq"),       TEXT("Groq (free tier)"),              TEXT("https://api.groq.com/openai/v1"),   TEXT("llama-3.3-70b-versatile"),    true,  TEXT("gsk_...") },
         { TEXT("openrouter"), TEXT("OpenRouter (free routes)"),      TEXT("https://openrouter.ai/api/v1"),     TEXT(""),                           true,  TEXT("sk-or-...") },
         { TEXT("ollama"),     TEXT("Ollama (local)"),                TEXT("http://localhost:11434/v1"),        TEXT("qwen2.5-coder:7b-instruct"),  false, TEXT("(no key)") },

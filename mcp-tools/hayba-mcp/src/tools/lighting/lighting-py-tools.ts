@@ -242,6 +242,7 @@ export const lightingCapabilityProbeDescriptor: PyToolDescriptor<typeof lighting
     '{ok, capabilities:{has_directional_light,has_point_light,has_spot_light,has_rect_light,has_sky_light,has_sky_atmosphere,has_exponential_height_fog,has_post_process_volume,has_lumen_gi_enum,has_reflection_method_enum,has_auto_exposure_enum}, engine_version, light_actor_count, post_process_volumes}',
   schema: lightingCapabilityProbeSchema.shape,
   meta: readMeta,
+  readOnly: true,
   buildScript: capabilityProbeScript,
   timeoutMs: 30_000,
 };
@@ -288,6 +289,7 @@ export const lightListDescriptor: PyToolDescriptor<typeof lightListSchema.shape>
     '{ok, lights:[{actor_id,path,class,component,intensity,light_color,temperature,use_temperature,attenuation_radius,cast_shadows,mobility}], total, has_more, next_offset}',
   schema: lightListSchema.shape,
   meta: readMeta,
+  readOnly: true,
   buildScript: lightListScript,
   timeoutMs: 30_000,
 };
@@ -324,6 +326,7 @@ export const lightGetDescriptor: PyToolDescriptor<typeof lightGetSchema.shape> =
     '{ok, actor_id, path, class, component, intensity, light_color, temperature, use_temperature, attenuation_radius, cast_shadows, mobility}',
   schema: lightGetSchema.shape,
   meta: readMeta,
+  readOnly: true,
   buildScript: lightGetScript,
   timeoutMs: 30_000,
 };
@@ -418,6 +421,7 @@ export const postprocessListVolumesDescriptor: PyToolDescriptor<typeof postproce
   returns: '{ok, volumes:[{actor_id,path,unbound,priority,blend_weight,enabled}], total}',
   schema: postprocessListVolumesSchema.shape,
   meta: readMeta,
+  readOnly: true,
   buildScript: ppListScript,
   timeoutMs: 30_000,
 };
@@ -469,6 +473,7 @@ export const postprocessGetDescriptor: PyToolDescriptor<typeof postprocessGetSch
     '{ok, volume, path, unbound, priority, values:{...}, overrides:{field:bool}, dynamic_global_illumination_method, reflection_method, auto_exposure_method}',
   schema: postprocessGetSchema.shape,
   meta: readMeta,
+  readOnly: true,
   buildScript: ppGetScript,
   timeoutMs: 30_000,
 };

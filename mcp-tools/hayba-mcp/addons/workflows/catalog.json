@@ -1,0 +1,1290 @@
+{
+  "version": 1,
+  "skills": [
+    {
+      "name": "hayba-ai-behavior-tree",
+      "category": "gameplay",
+      "tags": [
+        "ai",
+        "behavior-tree",
+        "blackboard",
+        "testing"
+      ],
+      "description": "Use when authoring or repairing an Unreal Behavior Tree branch and checking its blackboard contract, execution order, and observed AI behavior.",
+      "tools": [
+        "asset_save",
+        "bt_add_node",
+        "bt_compile",
+        "bt_connect",
+        "bt_get_info",
+        "editor_get_state",
+        "editor_pie_actor_inspect",
+        "editor_pie_actor_list",
+        "editor_start_pie",
+        "editor_stop_pie",
+        "get_tool_signature"
+      ],
+      "path": "hayba-ai-behavior-tree/SKILL.md"
+    },
+    {
+      "name": "hayba-animation-state-audit",
+      "category": "animation",
+      "tags": [
+        "state-machine",
+        "transitions",
+        "blueprint",
+        "compile"
+      ],
+      "description": "Use when reviewing or changing an Animation Blueprint state machine and checking transitions and compilation in Unreal.",
+      "tools": [
+        "anim_blueprint_add_state",
+        "anim_blueprint_add_transition",
+        "anim_blueprint_compile",
+        "anim_blueprint_get_info",
+        "anim_blueprint_set_condition",
+        "asset_save",
+        "editor_get_state",
+        "editor_start_pie",
+        "editor_stop_pie",
+        "get_tool_signature"
+      ],
+      "path": "hayba-animation-state-audit/SKILL.md"
+    },
+    {
+      "name": "hayba-asset-import-vetting",
+      "category": "assets",
+      "tags": [
+        "import",
+        "provenance",
+        "validation",
+        "dependencies"
+      ],
+      "description": "Use when bringing a supported external asset into Unreal and proving its source, import result, dependencies, quality, and save state.",
+      "tools": [
+        "asset_get_dependencies",
+        "asset_get_info",
+        "asset_get_referencers",
+        "asset_get_source_path",
+        "asset_import",
+        "asset_save",
+        "asset_search",
+        "asset_validate",
+        "get_tool_signature",
+        "mesh_audit",
+        "texture_audit",
+        "texture_get_info"
+      ],
+      "path": "hayba-asset-import-vetting/SKILL.md"
+    },
+    {
+      "name": "hayba-audio-soundscape",
+      "category": "audio",
+      "tags": [
+        "ambience",
+        "soundscape",
+        "spatial-audio",
+        "mix"
+      ],
+      "description": "Use when selecting and tuning ambient audio for an Unreal area, with active-sound and level-meter evidence in PIE.",
+      "tools": [
+        "audio_active_sounds",
+        "audio_asset_inspect",
+        "audio_list",
+        "audio_meter_read",
+        "audio_meter_start",
+        "audio_meter_stop",
+        "audio_play",
+        "audio_set_volume",
+        "editor_get_state",
+        "editor_start_pie",
+        "editor_stop_pie",
+        "level_save"
+      ],
+      "path": "hayba-audio-soundscape/SKILL.md"
+    },
+    {
+      "name": "hayba-camera-player-feel",
+      "category": "gameplay",
+      "tags": [
+        "camera",
+        "controls",
+        "framing",
+        "feel"
+      ],
+      "description": "Use when a playable camera feels too close, slow, occluded, or unstable and a repeatable input path can test a focused adjustment.",
+      "tools": [
+        "actor_get_components",
+        "asset_save",
+        "blueprint_inspect_graph",
+        "editor_get_state",
+        "editor_pie_axis",
+        "editor_pie_press_key",
+        "editor_pie_screenshot",
+        "editor_start_pie",
+        "editor_stop_pie",
+        "level_save",
+        "object_get_property",
+        "object_set_property"
+      ],
+      "path": "hayba-camera-player-feel/SKILL.md"
+    },
+    {
+      "name": "hayba-cinematic-shot",
+      "category": "cinematics",
+      "tags": [
+        "sequencer",
+        "camera",
+        "timing",
+        "shot"
+      ],
+      "description": "Use when creating or refining a short Unreal Sequencer shot with actor binding, camera cuts, timing, and sequence validation.",
+      "tools": [
+        "editor_capture_viewport",
+        "seq_bind_actor",
+        "seq_camera_cut",
+        "seq_inspect",
+        "seq_list",
+        "seq_new",
+        "seq_playback_range",
+        "seq_validate"
+      ],
+      "path": "hayba-cinematic-shot/SKILL.md"
+    },
+    {
+      "name": "hayba-combat-encounter",
+      "category": "gameplay",
+      "tags": [
+        "encounter",
+        "cover",
+        "sightlines",
+        "pacing"
+      ],
+      "description": "Use when blocking out one combat encounter around cover, enemy positions, sightlines, player route, and a measurable runtime budget.",
+      "tools": [
+        "actor_inspect",
+        "actor_list",
+        "actor_spawn_from_asset",
+        "actor_transform",
+        "editor_capture_viewport",
+        "editor_get_performance_stats",
+        "editor_get_state",
+        "editor_pie_actor_list",
+        "editor_pie_sightlines",
+        "editor_start_pie",
+        "editor_stop_pie",
+        "level_save",
+        "placement_validate",
+        "scene_export",
+        "scene_validate_physics"
+      ],
+      "path": "hayba-combat-encounter/SKILL.md"
+    },
+    {
+      "name": "hayba-content-redirector-migration",
+      "category": "assets",
+      "tags": [
+        "references",
+        "redirectors",
+        "migration",
+        "validation"
+      ],
+      "description": "Use when moving or renaming a small set of Unreal assets while preserving references and cleaning the resulting redirectors.",
+      "tools": [
+        "asset_fix_redirectors",
+        "asset_get_dependencies",
+        "asset_get_info",
+        "asset_get_referencers",
+        "asset_move",
+        "asset_rename",
+        "asset_search",
+        "asset_validate",
+        "content_validate"
+      ],
+      "path": "hayba-content-redirector-migration/SKILL.md"
+    },
+    {
+      "name": "hayba-controller-focus-audit",
+      "category": "ui",
+      "tags": [
+        "gamepad",
+        "focus",
+        "navigation",
+        "accessibility"
+      ],
+      "description": "Use when a menu works with a mouse but gamepad or keyboard focus, activation, or back navigation may fail.",
+      "tools": [
+        "editor_get_state",
+        "editor_pie_press_key",
+        "editor_pie_screenshot",
+        "editor_pie_widget_tree",
+        "editor_start_pie",
+        "editor_stop_pie",
+        "ui_get_widget_info",
+        "ui_layout_snapshot",
+        "ui_set_slot_layout",
+        "ui_set_widget_properties",
+        "ui_validate"
+      ],
+      "path": "hayba-controller-focus-audit/SKILL.md"
+    },
+    {
+      "name": "hayba-data-balance-pass",
+      "category": "gameplay",
+      "tags": [
+        "balance",
+        "data-assets",
+        "tuning",
+        "regression"
+      ],
+      "description": "Use when tuning a scalar Unreal DataAsset value against a stated gameplay target and verifying the saved value and runtime effect.",
+      "tools": [
+        "asset_save",
+        "data_get",
+        "data_set",
+        "editor_get_state",
+        "editor_pie_actor_inspect",
+        "editor_pie_assert",
+        "editor_start_pie",
+        "editor_stop_pie",
+        "get_tool_signature",
+        "test_get_log",
+        "test_list",
+        "test_run"
+      ],
+      "path": "hayba-data-balance-pass/SKILL.md"
+    },
+    {
+      "name": "hayba-debug-level",
+      "category": "qa",
+      "tags": [
+        "debugging",
+        "physics",
+        "streaming",
+        "performance"
+      ],
+      "description": "Use when an Unreal level has placement, streaming, physics, or performance symptoms that need a measured diagnosis and verified fix.",
+      "tools": [
+        "actor_list",
+        "actor_set_visibility",
+        "actor_transform",
+        "editor_get_performance_stats",
+        "editor_stream_log",
+        "hayba_check_ue_status",
+        "level_save",
+        "placement_validate",
+        "scene_export",
+        "scene_validate_physics",
+        "validator_run",
+        "wp_get_cells"
+      ],
+      "path": "hayba-debug-level/SKILL.md"
+    },
+    {
+      "name": "hayba-dialogue-subtitle-review",
+      "category": "narrative",
+      "tags": [
+        "dialogue",
+        "subtitles",
+        "timing",
+        "audio"
+      ],
+      "description": "Use when checking one voiced dialogue beat for subtitle timing, legibility, safe layout, and audible playback.",
+      "tools": [
+        "audio_active_sounds",
+        "audio_asset_inspect",
+        "editor_get_state",
+        "editor_pie_screenshot",
+        "editor_pie_widget_tree",
+        "editor_start_pie",
+        "editor_stop_pie",
+        "ui_get_widget_info",
+        "ui_layout_snapshot",
+        "ui_measure_text",
+        "ui_render_widget_to_png",
+        "ui_set_slot_layout",
+        "ui_set_text_style",
+        "ui_validate"
+      ],
+      "path": "hayba-dialogue-subtitle-review/SKILL.md"
+    },
+    {
+      "name": "hayba-foliage-layout",
+      "category": "set-dressing",
+      "tags": [
+        "foliage",
+        "density",
+        "biome",
+        "performance"
+      ],
+      "description": "Use when planning and painting foliage in an Unreal level while preserving routes, focal areas, and a measurable density budget.",
+      "tools": [
+        "editor_capture_viewport",
+        "editor_get_performance_stats",
+        "foliage_list_types",
+        "foliage_paint_at",
+        "level_save",
+        "scene_export",
+        "scene_validate_physics",
+        "validator_run"
+      ],
+      "path": "hayba-foliage-layout/SKILL.md"
+    },
+    {
+      "name": "hayba-gameplay-ability-slice",
+      "category": "gameplay",
+      "tags": [
+        "gas",
+        "abilities",
+        "effects",
+        "activation"
+      ],
+      "description": "Use when creating a small Gameplay Ability System ability or effect and checking its asset, actor prerequisites, and runtime activation path.",
+      "tools": [
+        "asset_get_info",
+        "asset_save",
+        "blueprint_add_node",
+        "blueprint_compile",
+        "blueprint_connect_nodes",
+        "blueprint_get_info",
+        "blueprint_inspect_graph",
+        "editor_get_state",
+        "editor_pie_actor_inspect",
+        "editor_start_pie",
+        "editor_stop_pie",
+        "gas_apply_effect",
+        "gas_create_ability",
+        "gas_create_effect",
+        "gas_grant_ability",
+        "get_tool_signature",
+        "level_save",
+        "project_list_plugins"
+      ],
+      "path": "hayba-gameplay-ability-slice/SKILL.md"
+    },
+    {
+      "name": "hayba-gameplay-input-mapping",
+      "category": "gameplay",
+      "tags": [
+        "input",
+        "controls",
+        "pie",
+        "interaction"
+      ],
+      "description": "Use when adding or auditing a gameplay input action and mapping, then checking that the intended control works in PIE.",
+      "tools": [
+        "asset_save",
+        "editor_get_state",
+        "editor_pie_press_key",
+        "editor_start_pie",
+        "editor_stop_pie",
+        "editor_stream_log",
+        "get_tool_signature",
+        "hayba_invoke",
+        "input_add_mapping",
+        "input_create_action",
+        "input_create_mapping",
+        "project_get_info"
+      ],
+      "path": "hayba-gameplay-input-mapping/SKILL.md"
+    },
+    {
+      "name": "hayba-hero-set-dressing",
+      "category": "set-dressing",
+      "tags": [
+        "assets",
+        "hero-area",
+        "composition",
+        "placement"
+      ],
+      "description": "Use when dressing a focal Unreal area with selected project assets, clear silhouette, deliberate spacing, and placement readback.",
+      "tools": [
+        "actor_inspect",
+        "actor_list",
+        "actor_spawn_from_asset",
+        "actor_transform",
+        "editor_capture_viewport",
+        "hayba_asset_search",
+        "level_save",
+        "placement_validate",
+        "scene_export",
+        "scene_validate_physics",
+        "validator_run"
+      ],
+      "path": "hayba-hero-set-dressing/SKILL.md"
+    },
+    {
+      "name": "hayba-lighting-mood-pass",
+      "category": "lighting",
+      "tags": [
+        "mood",
+        "exposure",
+        "readability",
+        "performance"
+      ],
+      "description": "Use when shaping an Unreal area with lights, exposure, and post process while checking readability and performance from fixed cameras.",
+      "tools": [
+        "editor_capture_viewport",
+        "editor_get_performance_stats",
+        "exposure_set",
+        "level_save",
+        "light_get",
+        "light_list",
+        "light_set",
+        "light_spawn",
+        "lighting_capability_probe",
+        "postprocess_get",
+        "postprocess_list_volumes",
+        "postprocess_set",
+        "postprocess_spawn_volume"
+      ],
+      "path": "hayba-lighting-mood-pass/SKILL.md"
+    },
+    {
+      "name": "hayba-localization-layout-stress",
+      "category": "ui",
+      "tags": [
+        "localization",
+        "typography",
+        "overflow",
+        "layout"
+      ],
+      "description": "Use when a widget must survive long translated strings and different viewport sizes without clipping or losing usable controls.",
+      "tools": [
+        "editor_get_state",
+        "editor_pie_screenshot",
+        "editor_pie_widget_tree",
+        "editor_start_pie",
+        "editor_stop_pie",
+        "ui_compile_widget",
+        "ui_get_widget_info",
+        "ui_layout_snapshot",
+        "ui_measure_text",
+        "ui_query",
+        "ui_render_widget_to_png",
+        "ui_save_widget",
+        "ui_set_slot_layout",
+        "ui_set_text_style",
+        "ui_validate"
+      ],
+      "path": "hayba-localization-layout-stress/SKILL.md"
+    },
+    {
+      "name": "hayba-material-instance-variants",
+      "category": "assets",
+      "tags": [
+        "material-instances",
+        "parameters",
+        "variants",
+        "reuse"
+      ],
+      "description": "Use when creating a small family of material instances from one parent while preserving parameter consistency and scene readability.",
+      "tools": [
+        "asset_duplicate",
+        "asset_get_referencers",
+        "asset_save",
+        "asset_validate",
+        "editor_capture_viewport",
+        "material_create_instance",
+        "material_get_info",
+        "material_list",
+        "material_set_param",
+        "material_validate",
+        "mesh_set_material_slot"
+      ],
+      "path": "hayba-material-instance-variants/SKILL.md"
+    },
+    {
+      "name": "hayba-material-look-pass",
+      "category": "assets",
+      "tags": [
+        "material",
+        "look",
+        "shader",
+        "validation"
+      ],
+      "description": "Use when adjusting an existing Unreal material or instance to match a stated visual target, with graph checks and same-view comparison.",
+      "tools": [
+        "asset_get_referencers",
+        "editor_capture_viewport",
+        "material_compile",
+        "material_get_info",
+        "material_set_param",
+        "material_validate"
+      ],
+      "path": "hayba-material-look-pass/SKILL.md"
+    },
+    {
+      "name": "hayba-mesh-lod-pass",
+      "category": "optimization",
+      "tags": [
+        "mesh",
+        "lod",
+        "triangles",
+        "silhouette"
+      ],
+      "description": "Use when adjusting static-mesh LOD thresholds or reduction for a measured scene cost while preserving silhouette and material behavior.",
+      "tools": [
+        "asset_get_referencers",
+        "asset_save",
+        "asset_validate",
+        "editor_capture_viewport",
+        "editor_get_performance_stats",
+        "get_tool_signature",
+        "mesh_audit",
+        "mesh_get_info",
+        "mesh_get_lods",
+        "mesh_set_lod",
+        "world_budget_snapshot"
+      ],
+      "path": "hayba-mesh-lod-pass/SKILL.md"
+    },
+    {
+      "name": "hayba-metasound-cue",
+      "category": "audio",
+      "tags": [
+        "metasound",
+        "cue",
+        "graph",
+        "mix"
+      ],
+      "description": "Use when creating or repairing one interactive MetaSound cue and checking graph validity, audible behavior, and level-meter evidence.",
+      "tools": [
+        "audio_asset_inspect",
+        "audio_meter_read",
+        "audio_meter_start",
+        "audio_meter_stop",
+        "audio_play",
+        "metasound_add_node",
+        "metasound_compile",
+        "metasound_connect",
+        "metasound_create",
+        "metasound_inspect",
+        "metasound_list",
+        "metasound_set_input"
+      ],
+      "path": "hayba-metasound-cue/SKILL.md"
+    },
+    {
+      "name": "hayba-multiplayer-replication-audit",
+      "category": "multiplayer",
+      "tags": [
+        "replication",
+        "authority",
+        "client",
+        "pie"
+      ],
+      "description": "Use when a replicated actor behaves differently for host and client and the editor state, network flags, and multi-client observations need checking.",
+      "tools": [
+        "actor_get_properties",
+        "actor_inspect",
+        "editor_get_state",
+        "editor_pie_actor_inspect",
+        "editor_pie_actor_list",
+        "editor_pie_screenshot",
+        "editor_start_pie",
+        "editor_stop_pie",
+        "get_tool_signature",
+        "level_save",
+        "net_debug",
+        "net_set_replication"
+      ],
+      "path": "hayba-multiplayer-replication-audit/SKILL.md"
+    },
+    {
+      "name": "hayba-new-scene",
+      "category": "world-composition",
+      "tags": [
+        "scene",
+        "blockout",
+        "environment",
+        "composition"
+      ],
+      "description": "Use when creating a new Unreal scene from a brief, including spatial structure, asset choices, a first playable area, and observed validation.",
+      "tools": [
+        "actor_list",
+        "actor_spawn_from_asset",
+        "editor_capture_viewport",
+        "editor_get_state",
+        "hayba_asset_search",
+        "hayba_check_ue_status",
+        "level_create",
+        "level_get_info",
+        "level_list",
+        "level_load",
+        "level_save",
+        "scene_export",
+        "scene_validate_physics",
+        "validator_run",
+        "world_generate",
+        "wp_get_cells"
+      ],
+      "path": "hayba-new-scene/SKILL.md"
+    },
+    {
+      "name": "hayba-niagara-vfx-pass",
+      "category": "vfx",
+      "tags": [
+        "niagara",
+        "particles",
+        "placement",
+        "performance"
+      ],
+      "description": "Use when placing or tuning one Niagara effect and checking system warnings, visibility, timing, and measured scene cost.",
+      "tools": [
+        "editor_capture_viewport",
+        "editor_get_performance_stats",
+        "level_save",
+        "niagara_capability_probe",
+        "niagara_component_inspect",
+        "niagara_param_list",
+        "niagara_param_set",
+        "niagara_place_actor",
+        "niagara_spawn_transient",
+        "niagara_system_inspect",
+        "niagara_systems",
+        "niagara_validate"
+      ],
+      "path": "hayba-niagara-vfx-pass/SKILL.md"
+    },
+    {
+      "name": "hayba-objective-trigger-slice",
+      "category": "gameplay",
+      "tags": [
+        "objectives",
+        "triggers",
+        "blueprint",
+        "verification"
+      ],
+      "description": "Use when adding one project-defined objective trigger and verifying its event wiring, state change, and player-facing response.",
+      "tools": [
+        "actor_find",
+        "asset_save",
+        "blueprint_add_bound_event",
+        "blueprint_add_custom_event",
+        "blueprint_add_node",
+        "blueprint_add_variable",
+        "blueprint_compile",
+        "blueprint_connect_nodes",
+        "blueprint_get_info",
+        "blueprint_inspect_graph",
+        "editor_get_state",
+        "editor_pie_actor_inspect",
+        "editor_pie_assert",
+        "editor_pie_widget_tree",
+        "editor_start_pie",
+        "editor_stop_pie",
+        "get_tool_signature",
+        "ui_bind_event",
+        "ui_bind_property"
+      ],
+      "path": "hayba-objective-trigger-slice/SKILL.md"
+    },
+    {
+      "name": "hayba-pcg-build",
+      "category": "pcg",
+      "tags": [
+        "pcgex",
+        "graphs",
+        "generation",
+        "verification"
+      ],
+      "description": "Use when planning, building, or reviewing PCG/PCGEx content in Unreal; choose the production method, ground PCGEx choices in documentation and live editor facts, then verify the cooked result.",
+      "tools": [
+        "asset_save",
+        "hayba_get_pattern_template",
+        "hayba_get_pcgex_knowledge_detail",
+        "hayba_query_pcgex_docs",
+        "level_save",
+        "pcg_cook_and_wait",
+        "pcg_create_graph",
+        "pcg_execute_graph",
+        "pcg_get_node_details",
+        "pcg_list_node_classes",
+        "pcg_list_pins",
+        "pcg_read_node_output",
+        "pcg_validate_graph"
+      ],
+      "path": "hayba-pcg-build/SKILL.md"
+    },
+    {
+      "name": "hayba-pcgex-node-selection",
+      "category": "pcg",
+      "tags": [
+        "pcgex",
+        "nodes",
+        "pins",
+        "discovery"
+      ],
+      "description": "Use when choosing PCGEx nodes and pins for a specific graph operation, especially when documentation and installed plugin versions may differ.",
+      "tools": [
+        "hayba_compatible_pins",
+        "hayba_get_node_details",
+        "hayba_get_pattern_template",
+        "hayba_query_pcgex_docs",
+        "hayba_search_node_catalog",
+        "pcg_get_node_details",
+        "pcg_list_node_classes",
+        "pcg_list_pins"
+      ],
+      "path": "hayba-pcgex-node-selection/SKILL.md"
+    },
+    {
+      "name": "hayba-pcgex-output-audit",
+      "category": "pcg",
+      "tags": [
+        "pcgex",
+        "cook",
+        "instances",
+        "verification"
+      ],
+      "description": "Use when a PCG or PCGEx graph claims success but the actual generated instances, placement, or freshness remain uncertain.",
+      "tools": [
+        "editor_capture_viewport",
+        "hayba_execute_pcg_graph",
+        "hayba_validate_pcg_graph",
+        "level_save",
+        "pcg_cook_and_wait",
+        "pcg_execute_graph",
+        "pcg_read_node_output",
+        "validator_run"
+      ],
+      "path": "hayba-pcgex-output-audit/SKILL.md"
+    },
+    {
+      "name": "hayba-performance-budget",
+      "category": "optimization",
+      "tags": [
+        "frame-time",
+        "draw-calls",
+        "memory",
+        "streaming"
+      ],
+      "description": "Use when measuring an Unreal level against explicit frame, draw-call, memory, or streaming budgets before choosing an optimization.",
+      "tools": [
+        "editor_capture_viewport",
+        "editor_get_performance_stats",
+        "editor_stream_log",
+        "level_save",
+        "scene_export",
+        "validator_run",
+        "wp_get_cells"
+      ],
+      "path": "hayba-performance-budget/SKILL.md"
+    },
+    {
+      "name": "hayba-physics-interaction",
+      "category": "gameplay",
+      "tags": [
+        "physics",
+        "collision",
+        "interaction",
+        "pie"
+      ],
+      "description": "Use when making one Unreal object pushable or blocking and checking collision, simulation, and observed interaction in PIE.",
+      "tools": [
+        "actor_find",
+        "actor_get_components",
+        "editor_get_state",
+        "editor_pie_actor_inspect",
+        "editor_pie_click_actor",
+        "editor_pie_press_key",
+        "editor_start_pie",
+        "editor_stop_pie",
+        "level_save",
+        "physics_add_impulse",
+        "physics_set_collision_profile",
+        "physics_set_simulate",
+        "scene_validate_physics"
+      ],
+      "path": "hayba-physics-interaction/SKILL.md"
+    },
+    {
+      "name": "hayba-pie-performance-capture",
+      "category": "optimization",
+      "tags": [
+        "pie",
+        "profiling",
+        "frame-time",
+        "memory"
+      ],
+      "description": "Use when collecting repeatable PIE timing and editor-memory proxy samples for one route before comparing a scene change.",
+      "tools": [
+        "editor_get_performance_stats",
+        "editor_get_state",
+        "editor_pie_capture_get",
+        "editor_pie_capture_start",
+        "editor_start_pie",
+        "editor_stop_pie",
+        "world_budget_snapshot",
+        "world_compare_snapshots"
+      ],
+      "path": "hayba-pie-performance-capture/SKILL.md"
+    },
+    {
+      "name": "hayba-project-cook-readiness",
+      "category": "release",
+      "tags": [
+        "cook",
+        "build",
+        "assets",
+        "validation"
+      ],
+      "description": "Use when checking whether an Unreal project can cook for a named target and tracing asset, validation, or asynchronous cook failures.",
+      "tools": [
+        "asset_get_dependencies",
+        "build_cook",
+        "build_project",
+        "build_status",
+        "content_validate",
+        "get_tool_signature",
+        "project_get_info",
+        "project_get_settings",
+        "validator_run"
+      ],
+      "path": "hayba-project-cook-readiness/SKILL.md"
+    },
+    {
+      "name": "hayba-qa-smoke-test",
+      "category": "qa",
+      "tags": [
+        "testing",
+        "pie",
+        "regression",
+        "verification"
+      ],
+      "description": "Use when checking a small Unreal gameplay change through available automation, PIE observation, and scene validation before reporting it done.",
+      "tools": [
+        "editor_get_state",
+        "editor_pie_screenshot",
+        "editor_start_pie",
+        "editor_stop_pie",
+        "level_save",
+        "test_get_log",
+        "test_list",
+        "test_run",
+        "validator_run"
+      ],
+      "path": "hayba-qa-smoke-test/SKILL.md"
+    },
+    {
+      "name": "hayba-refine-scene",
+      "category": "set-dressing",
+      "tags": [
+        "composition",
+        "lighting",
+        "materials",
+        "iteration"
+      ],
+      "description": "Use when improving the composition or look of an existing Unreal scene through focused edits and observed before-and-after evidence.",
+      "tools": [
+        "actor_list",
+        "actor_transform",
+        "asset_save",
+        "editor_capture_viewport",
+        "foliage_paint_at",
+        "level_save",
+        "material_get_info",
+        "material_set_param",
+        "scene_export",
+        "scene_validate_physics",
+        "validator_run"
+      ],
+      "path": "hayba-refine-scene/SKILL.md"
+    },
+    {
+      "name": "hayba-room-grammar-prototype",
+      "category": "procedural-design",
+      "tags": [
+        "grammar",
+        "rooms",
+        "constraints",
+        "variation"
+      ],
+      "description": "Use when prototyping repeatable room or set-piece variations from explicit grammar rules and checking their placement constraints.",
+      "tools": [
+        "editor_capture_viewport",
+        "get_tool_signature",
+        "level_save",
+        "plumb_constraint_list",
+        "plumb_grammar_expand",
+        "plumb_production_define",
+        "plumb_production_list",
+        "plumb_validate",
+        "scene_export"
+      ],
+      "path": "hayba-room-grammar-prototype/SKILL.md"
+    },
+    {
+      "name": "hayba-save-load-regression",
+      "category": "qa",
+      "tags": [
+        "savegame",
+        "persistence",
+        "regression",
+        "pie"
+      ],
+      "description": "Use when checking that a project-defined game save restores one concrete piece of player progress after a clean restart.",
+      "tools": [
+        "editor_get_state",
+        "editor_pie_actor_inspect",
+        "editor_pie_assert",
+        "editor_pie_click_widget",
+        "editor_pie_press_key",
+        "editor_pie_wait_for",
+        "editor_pie_widget_tree",
+        "editor_start_pie",
+        "editor_stop_pie",
+        "test_get_log",
+        "test_list",
+        "test_run"
+      ],
+      "path": "hayba-save-load-regression/SKILL.md"
+    },
+    {
+      "name": "hayba-sequencer-motion-pass",
+      "category": "cinematics",
+      "tags": [
+        "sequencer",
+        "motion",
+        "keyframes",
+        "continuity"
+      ],
+      "description": "Use when refining actor or camera movement inside an existing Sequencer shot and checking key timing, framing, and playback continuity.",
+      "tools": [
+        "editor_capture_viewport",
+        "get_tool_signature",
+        "seq_inspect",
+        "seq_list_bindings",
+        "seq_track_add",
+        "seq_transform_keyframe",
+        "seq_validate"
+      ],
+      "path": "hayba-sequencer-motion-pass/SKILL.md"
+    },
+    {
+      "name": "hayba-spatial-audio-falloff",
+      "category": "audio",
+      "tags": [
+        "attenuation",
+        "distance",
+        "spatial-audio",
+        "mix"
+      ],
+      "description": "Use when a world sound is too loud, too quiet, or persists at the wrong listener distance and attenuation needs verification.",
+      "tools": [
+        "audio_active_sounds",
+        "audio_asset_create",
+        "audio_asset_inspect",
+        "audio_asset_save",
+        "audio_asset_set",
+        "editor_get_state",
+        "editor_start_pie",
+        "editor_stop_pie"
+      ],
+      "path": "hayba-spatial-audio-falloff/SKILL.md"
+    },
+    {
+      "name": "hayba-spline-route-authoring",
+      "category": "world-composition",
+      "tags": [
+        "spline",
+        "route",
+        "geometry",
+        "generation"
+      ],
+      "description": "Use when authoring a road, path, fence, or cable guide as a spline and checking its geometry before downstream generation.",
+      "tools": [
+        "actor_list",
+        "editor_capture_viewport",
+        "level_save",
+        "placement_validate",
+        "scene_export",
+        "scene_validate_physics",
+        "spline_add_point",
+        "spline_create",
+        "spline_get_info",
+        "spline_set_point"
+      ],
+      "path": "hayba-spline-route-authoring/SKILL.md"
+    },
+    {
+      "name": "hayba-terrain-import-pass",
+      "category": "terrain",
+      "tags": [
+        "landscape",
+        "heightmap",
+        "scale",
+        "layers"
+      ],
+      "description": "Use when importing or auditing a heightmap landscape and checking scale, layers, material, collision, and streaming implications.",
+      "tools": [
+        "editor_capture_viewport",
+        "landscape_get_material",
+        "landscape_import",
+        "landscape_inspect",
+        "landscape_layer_list",
+        "landscape_list",
+        "landscape_set_lod_settings",
+        "landscape_set_material",
+        "level_save",
+        "scene_validate_physics",
+        "validator_run"
+      ],
+      "path": "hayba-terrain-import-pass/SKILL.md"
+    },
+    {
+      "name": "hayba-texture-memory-pass",
+      "category": "optimization",
+      "tags": [
+        "textures",
+        "memory",
+        "mips",
+        "streaming"
+      ],
+      "description": "Use when trimming texture cost for a target platform while checking format, mip policy, streaming, and visible detail.",
+      "tools": [
+        "asset_get_referencers",
+        "asset_save",
+        "asset_validate",
+        "editor_capture_viewport",
+        "editor_get_performance_stats",
+        "get_tool_signature",
+        "texture_audit",
+        "texture_get_info",
+        "texture_set_compression",
+        "texture_set_settings",
+        "wait_for_shaders"
+      ],
+      "path": "hayba-texture-memory-pass/SKILL.md"
+    },
+    {
+      "name": "hayba-traversal-playtest",
+      "category": "world-composition",
+      "tags": [
+        "traversal",
+        "route",
+        "collision",
+        "pie"
+      ],
+      "description": "Use when checking a noncombat route for reachable waypoints, readable exits, obstacles, and loading behavior during actual play.",
+      "tools": [
+        "actor_inspect",
+        "actor_list",
+        "actor_transform",
+        "editor_capture_viewport",
+        "editor_get_state",
+        "editor_pie_actor_list",
+        "editor_pie_axis",
+        "editor_pie_press_key",
+        "editor_pie_screenshot",
+        "editor_pie_sightlines",
+        "editor_start_pie",
+        "editor_stop_pie",
+        "level_save",
+        "placement_validate",
+        "scene_export",
+        "scene_validate_physics"
+      ],
+      "path": "hayba-traversal-playtest/SKILL.md"
+    },
+    {
+      "name": "hayba-ui-data-binding",
+      "category": "ui",
+      "tags": [
+        "binding",
+        "events",
+        "dynamic-data",
+        "pie"
+      ],
+      "description": "Use when a Widget Blueprint displays a changing gameplay value or reacts to a control and the binding needs compile and PIE proof.",
+      "tools": [
+        "blueprint_connect_nodes",
+        "blueprint_inspect_graph",
+        "editor_get_state",
+        "editor_pie_screenshot",
+        "editor_pie_widget_tree",
+        "editor_start_pie",
+        "editor_stop_pie",
+        "ui_bind_event",
+        "ui_bind_property",
+        "ui_compile_widget",
+        "ui_get_widget_info",
+        "ui_layout_snapshot",
+        "ui_query",
+        "ui_save_widget",
+        "ui_set_variable",
+        "ui_validate"
+      ],
+      "path": "hayba-ui-data-binding/SKILL.md"
+    },
+    {
+      "name": "hayba-ui-hud-build",
+      "category": "ui",
+      "tags": [
+        "hud",
+        "widgets",
+        "layout",
+        "focus"
+      ],
+      "description": "Use when building a focused Unreal HUD widget and verifying its hierarchy, layout, text, focus, compile state, and PIE display.",
+      "tools": [
+        "editor_get_state",
+        "editor_pie_widget_tree",
+        "editor_start_pie",
+        "editor_stop_pie",
+        "ui_add_element",
+        "ui_build_tree",
+        "ui_compile_widget",
+        "ui_create_widget",
+        "ui_get_widget_info",
+        "ui_layout_snapshot",
+        "ui_list_widget_blueprints",
+        "ui_measure_text",
+        "ui_query",
+        "ui_render_widget_to_png",
+        "ui_save_widget",
+        "ui_set_slot_layout",
+        "ui_validate"
+      ],
+      "path": "hayba-ui-hud-build/SKILL.md"
+    },
+    {
+      "name": "hayba-ui-warning-audit",
+      "category": "ui",
+      "tags": [
+        "widgets",
+        "warnings",
+        "layout",
+        "typography"
+      ],
+      "description": "Use when auditing an Unreal widget for layout, clipping, text, and validation warnings before calling the UI finished.",
+      "tools": [
+        "hayba_search_tools",
+        "ui_get_widget_info",
+        "ui_layout_snapshot",
+        "ui_measure_text",
+        "ui_query",
+        "ui_render_widget_to_png",
+        "ui_validate"
+      ],
+      "path": "hayba-ui-warning-audit/SKILL.md"
+    },
+    {
+      "name": "hayba-water-crossing",
+      "category": "water",
+      "tags": [
+        "river",
+        "crossing",
+        "zones",
+        "traversal"
+      ],
+      "description": "Use when placing a river or lake beside a playable crossing and checking Water plugin state, spline or zone setup, and traversal evidence.",
+      "tools": [
+        "editor_capture_viewport",
+        "get_tool_signature",
+        "level_save",
+        "scene_validate_physics",
+        "water_body_inspect",
+        "water_body_list",
+        "water_body_river_create",
+        "water_check_plugin",
+        "water_validate",
+        "water_zone_create",
+        "water_zone_inspect"
+      ],
+      "path": "hayba-water-crossing/SKILL.md"
+    },
+    {
+      "name": "hayba-weather-visibility-pass",
+      "category": "lighting",
+      "tags": [
+        "fog",
+        "sky",
+        "visibility",
+        "landmarks"
+      ],
+      "description": "Use when fog, sky, or daylight makes a player route or landmark hard to read and visibility must be checked at fixed distances.",
+      "tools": [
+        "actor_list",
+        "editor_capture_viewport",
+        "editor_get_performance_stats",
+        "exposure_set",
+        "fog_configure",
+        "level_save",
+        "light_list",
+        "light_set",
+        "lighting_capability_probe",
+        "sky_setup"
+      ],
+      "path": "hayba-weather-visibility-pass/SKILL.md"
+    },
+    {
+      "name": "hayba-world-composition",
+      "category": "world-composition",
+      "tags": [
+        "layout",
+        "traversal",
+        "sightlines",
+        "streaming"
+      ],
+      "description": "Use when organizing an existing Unreal level into readable routes, landmarks, vistas, and streaming cells before adding detail.",
+      "tools": [
+        "actor_inspect",
+        "actor_list",
+        "actor_transform",
+        "editor_capture_viewport",
+        "level_save",
+        "scene_export",
+        "validator_run",
+        "wp_get_cells"
+      ],
+      "path": "hayba-world-composition/SKILL.md"
+    },
+    {
+      "name": "hayba-world-partition-streaming",
+      "category": "world-composition",
+      "tags": [
+        "world-partition",
+        "streaming",
+        "actors",
+        "traversal"
+      ],
+      "description": "Use when diagnosing whether a World Partition area and its actors appear at the intended time during a player route.",
+      "tools": [
+        "editor_get_performance_stats",
+        "editor_get_state",
+        "editor_pie_actor_list",
+        "editor_start_pie",
+        "editor_stop_pie",
+        "editor_stream_log",
+        "scene_export",
+        "world_budget_snapshot",
+        "wp_get_cells",
+        "wp_get_streaming_state"
+      ],
+      "path": "hayba-world-partition-streaming/SKILL.md"
+    },
+    {
+      "name": "hayba-world-save-integrity",
+      "category": "qa",
+      "tags": [
+        "level",
+        "persistence",
+        "reload",
+        "verification"
+      ],
+      "description": "Use when checking that an authored level edit survives save and reload with expected actors, transforms, and validation state.",
+      "tools": [
+        "actor_inspect",
+        "actor_list",
+        "editor_get_state",
+        "level_get_info",
+        "level_load",
+        "level_save",
+        "validator_run",
+        "world_semantic_snapshot"
+      ],
+      "path": "hayba-world-save-integrity/SKILL.md"
+    }
+  ]
+}

@@ -21,6 +21,8 @@
 #include "Widgets/Notifications/SNotificationList.h"
 #include "HaybaMCPTcpServer.h"
 #include "HaybaMCPCommandHandler.h"
+#include "HaybaMCPLeaseManager.h"
+#include "HaybaMCPEditorHealth.h"
 #include "IHaybaMCPHandler.h"
 #include "handlers/HaybaMCPLegacyHandler.h"
 #include "handlers/HaybaMCPActorHandler.h"
@@ -55,6 +57,9 @@
 #include "handlers/HaybaMCPPerfHandler.h"
 #include "handlers/HaybaMCPIdleHandler.h"
 #include "handlers/HaybaMCPRenderHandler.h"
+#include "handlers/HaybaMCPLeaseHandler.h"
+#include "handlers/HaybaMCPBatchHandler.h"
+#include "HaybaMCPEditorState.h"
 #include "HaybaMCPCaptureActor.h"
 #include "HaybaMCPSettings.h"
 #include "HaybaMCPRenderSafety.h"
@@ -205,6 +210,17 @@ void FHaybaMCPModule::StartupModule()
     CommandHandler->RegisterHandler(MakeShared<FHaybaMCPPerfHandler>());
     CommandHandler->RegisterHandler(MakeShared<FHaybaMCPIdleHandler>());
     CommandHandler->RegisterHandler(MakeShared<FHaybaMCPRenderHandler>());
+    CommandHandler->RegisterHandler(MakeShared<FHaybaMCPLeaseHandler>());
+    CommandHandler->RegisterHandler(MakeShared<FHaybaMCPBatchHandler>());
+
+    // PIE hooks and the Play authorizer exist before any request can arrive
+    // (the TCP server starts below) and in owned automation children, which
+    // never start a server. Editor state must depend on neither (docs/adr/0012).
+    FHaybaMCPEditorState::Get().Startup();
+
+    // Lease-warning drain (T6, R-18): a closed 30 s window's "repeated N more
+    // times" line is logged even when no further warning arrives.
+    FHaybaMCPLeaseManager::Get().StartWarningDrain();
 
     // Optional-capability check: warn (log + editor notification) for any
     // satellite plugin that is disabled, so the user understands why a command
@@ -361,11 +377,14 @@ void FHaybaMCPModule::ShutdownModule()
     // Every engine-owned callback below executes code from this DLL. Revoke
     // them before any UI/server teardown so a hot unload cannot leave a timer,
     // console command, or ToolMenus startup callback pointing at plugin code.
+    FHaybaMCPEditorState::Get().Shutdown();
     if (GEditor && AutoOpenTimerHandle.IsValid())
     {
         GEditor->GetTimerManager()->ClearTimer(AutoOpenTimerHandle);
     }
     AutoOpenTimerHandle.Invalidate();
+
+    FHaybaMCPLeaseManager::Get().StopWarningDrain();
     if (OpenToolkitConsoleCommand)
     {
         IConsoleManager::Get().UnregisterConsoleObject(OpenToolkitConsoleCommand, false);
@@ -381,6 +400,9 @@ void FHaybaMCPModule::ShutdownModule()
         UToolMenus::UnRegisterStartupCallback(StudioMenuStartupHandle);
         StudioMenuStartupHandle.Reset();
     }
+
+    // A pending editor_unsafe notification is a core-ticker delegate into this DLL.
+    FHaybaEditorHealth::RevokeCallbacks();
 
     // Ticker lambdas execute plugin code. Remove/fail an in-flight test job
     // before module unload so no callback can jump into an unloaded DLL.
@@ -425,6 +447,16 @@ bool FHaybaMCPModule::StartTcpServer()
         UE_LOG(LogHaybaMCP, Warning, TEXT("TCP server already running on port %d"), TcpPort);
         return false;
     }
+    // T7: a new server hands out new connection ids, so every lease bound to
+    // the previous server's connections is orphaned (60 s grace) instead of
+    // living on to its TTL.
+    const int32 Orphaned = FHaybaMCPLeaseManager::Get().Table().OrphanAllBound();
+    FHaybaMCPLeaseManager::Get().ForgetAllAdoptions();
+    if (Orphaned > 0)
+    {
+        UE_LOG(LogHaybaMCP, Log, TEXT("TCP server starting: orphaned %d lease(s) bound to the previous server's connections"), Orphaned);
+    }
+
     // Initiative #3: scan a small port range so multiple UE editor instances
     // can run side-by-side without EADDRINUSE collisions. The first instance
     // claims 52342; subsequent ones walk forward. Heartbeat written to disk

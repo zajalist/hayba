@@ -67,17 +67,17 @@ void SHaybaMCPSettingsPanel::Construct(const FArguments& InArgs)
         .OnTextChanged_Lambda(OnDirty);
     SAssignNew(LlmModelBox,    SEditableTextBox)
         .Text(FText::FromString(S.Model))
-        .OnTextChanged_Lambda(OnDirty);
+        .OnTextChanged_Lambda([this](const FText&){ if (!bApplyingProviderDefaults) bModelEdited = true; MarkDirty(); });
     SAssignNew(LlmBaseUrlBox,  SEditableTextBox)
         .Text(FText::FromString(S.BaseURL))
-        .OnTextChanged_Lambda(OnDirty);
+        .OnTextChanged_Lambda([this](const FText&){ if (!bApplyingProviderDefaults) bUrlEdited = true; MarkDirty(); });
     // Key box starts EMPTY — we never populate it with the stored secret. The
     // last-4 status label (RefreshKeyStatus) is the only readback. Typing here
     // marks the key as edited so OnSave writes the new value through the vault.
     SAssignNew(LlmApiKeyBox,   SEditableTextBox)
         .IsPassword(true)
         .HintText(NSLOCTEXT("Hayba", "S.Backend.KeyHint", "enter to replace stored key"))
-        .OnTextChanged_Lambda([this](const FText&){ bKeyEdited = true; MarkDirty(); });
+        .OnTextChanged_Lambda([this](const FText&){ bKeyEdited = true; bKeyDiscardedOnProviderChange = false; MarkDirty(); });
 
     // Provider dropdown — options mirror the catalog (providers.ts).
     ProviderOptions.Reset();
@@ -196,7 +196,7 @@ void SHaybaMCPSettingsPanel::Construct(const FArguments& InArgs)
     ChildSlot
     [
         SNew(SBorder)
-        .BorderImage(FAppStyle::Get().GetBrush("Brushes.Recessed"))
+        .BorderImage(FHaybaMCPStyle::GetBrush("Hayba.Brush.Dock"))
         .Padding(FMargin(0))
         [
             SNew(SVerticalBox)
@@ -204,7 +204,7 @@ void SHaybaMCPSettingsPanel::Construct(const FArguments& InArgs)
             + SVerticalBox::Slot().AutoHeight()
             [
                 SNew(SBorder)
-                .BorderImage(FAppStyle::Get().GetBrush("Brushes.Header"))
+                .BorderImage(FHaybaMCPStyle::GetBrush("Hayba.Brush.Dock"))
                 .Padding(FMargin(12.f, 8.f))
                 [
                     SNew(SHorizontalBox)
@@ -212,12 +212,12 @@ void SHaybaMCPSettingsPanel::Construct(const FArguments& InArgs)
                     [
                         SNew(STextBlock)
                         .TextStyle(&FAppStyle::Get().GetWidgetStyle<FTextBlockStyle>("SmallText"))
-                        // Status text reacts to dirty state too — clearer feedback loop.
+                        // Only surface state when the user has an unsaved change.
                         .Text_Lambda([this]()
                         {
                             return bIsDirty
                                 ? NSLOCTEXT("Hayba", "Settings.Hint.Dirty", "You have unsaved changes.")
-                                : NSLOCTEXT("Hayba", "Settings.Hint.Clean", "Edit any field to enable Save.");
+                                : FText::GetEmpty();
                         })
                         .ColorAndOpacity_Lambda([this]()
                         {
@@ -304,8 +304,8 @@ void SHaybaMCPSettingsPanel::Construct(const FArguments& InArgs)
                             [ BuildLabeledRow(
                                 NSLOCTEXT("Hayba", "S.Backend.Provider", "Provider"),
                                 NSLOCTEXT("Hayba", "S.Backend.Provider.TT",
-                                    "Pick your LLM provider. Selecting one auto-fills the Base URL, "
-                                    "default Model, and key hint below. Local providers "
+                                    "Pick your LLM provider. Selecting one fills the Base URL and "
+                                    "default Model unless you have edited those fields. Local providers "
                                     "(Ollama, LM Studio) and Mock need no API key."),
                                 ProviderCombo.ToSharedRef()) ]
                             + SVerticalBox::Slot().AutoHeight().Padding(0.f, 2.f)
@@ -331,6 +331,23 @@ void SHaybaMCPSettingsPanel::Construct(const FArguments& InArgs)
                                 FText::GetEmpty(),
                                 FText::GetEmpty(),
                                 KeyStatusText.ToSharedRef()) ]
+                            + SVerticalBox::Slot().AutoHeight().Padding(0.f, 2.f)
+                            [
+                                SNew(STextBlock)
+                                .AutoWrapText(true)
+                                .Text_Lambda([this]()
+                                {
+                                    return FText::Format(
+                                        NSLOCTEXT("Hayba", "S.Key.ProviderChanged",
+                                            "Unsaved key entry for {0} was cleared. Its stored key was not changed."),
+                                        FText::FromString(DiscardedKeyProviderLabel));
+                                })
+                                .ColorAndOpacity(FSlateColor(FHaybaMCPStyle::Colour("Hayba.Color.Status.Warn")))
+                                .Visibility_Lambda([this]()
+                                {
+                                    return bKeyDiscardedOnProviderChange ? EVisibility::Visible : EVisibility::Collapsed;
+                                })
+                            ]
                             + SVerticalBox::Slot().AutoHeight().Padding(0.f, 2.f)
                             [ BuildToggle(
                                 NSLOCTEXT("Hayba", "S.CodeMode", "Code Mode (meta-tools)"),
@@ -493,32 +510,6 @@ void SHaybaMCPSettingsPanel::Construct(const FArguments& InArgs)
                     + SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 8.f)
                     [
                         BuildSection(
-                            NSLOCTEXT("Hayba", "Settings.Sec.SceneMap", "Scene Map renderer"),
-                            NSLOCTEXT("Hayba", "Settings.Sec.SceneMap.TT",
-                                "Choose how the Scene Map (cognitive map) tab renders cells.\n\n"
-                                "  • Auto — pick Web on modern GPUs.\n"
-                                "  • Web — CEF + D3.js. Smooth animations, fancier tooltips.\n"
-                                "  • Native — Slate-only. Lighter on low-end GPUs."),
-                            SNew(SVerticalBox)
-                            + SVerticalBox::Slot().AutoHeight().Padding(0.f, 2.f)
-                            [
-                                BuildToggle(
-                                    NSLOCTEXT("Hayba", "S.Map.Web",   "Use Web (CEF + D3.js) renderer"),
-                                    NSLOCTEXT("Hayba", "S.Map.Web.TT",
-                                        "Toggle ON for the rich Web renderer, OFF for the lightweight Native Slate renderer."),
-                                    [](){ return FHaybaMCPSettings::Get().SceneMapRenderer != FHaybaMCPSettings::ESceneMapRenderer::Native; },
-                                    [](bool b){
-                                        FHaybaMCPSettings::Get().SceneMapRenderer = b
-                                            ? FHaybaMCPSettings::ESceneMapRenderer::Web
-                                            : FHaybaMCPSettings::ESceneMapRenderer::Native;
-                                    })
-                            ]
-                        )
-                    ]
-
-                    + SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 8.f)
-                    [
-                        BuildSection(
                             NSLOCTEXT("Hayba", "Settings.Sec.Python", "Python"),
                             NSLOCTEXT("Hayba", "Settings.Sec.Python.TT",
                                 "python_run is an Unreal-only embedded scripting principal.\n\n"
@@ -579,7 +570,7 @@ void SHaybaMCPSettingsPanel::Construct(const FArguments& InArgs)
 TSharedRef<SWidget> SHaybaMCPSettingsPanel::BuildSection(const FText& Heading, const FText& Tooltip, const TSharedRef<SWidget>& Body)
 {
     return SNew(SBorder)
-        .BorderImage(FAppStyle::Get().GetBrush("Brushes.Panel"))
+        .BorderImage(FHaybaMCPStyle::GetBrush("Hayba.Brush.Settings.Section"))
         .ToolTipText(Tooltip)
         .Padding(FMargin(10.f, 8.f))
         [
@@ -587,13 +578,11 @@ TSharedRef<SWidget> SHaybaMCPSettingsPanel::BuildSection(const FText& Heading, c
             + SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 8.f)
             [
                 SNew(STextBlock)
-                .TextStyle(&FAppStyle::Get().GetWidgetStyle<FTextBlockStyle>("DetailsView.CategoryTextStyle"))
+                .TextStyle(&FHaybaMCPStyle::Get().GetWidgetStyle<FTextBlockStyle>("Hayba.Text.TabLabel"))
                 .Text(Heading)
                 .ToolTipText(Tooltip)
             ]
-            + SVerticalBox::Slot().AutoHeight()
-            [ SNew(SSeparator).Thickness(1.f) ]
-            + SVerticalBox::Slot().AutoHeight().Padding(0.f, 8.f, 0.f, 0.f)
+            + SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 0.f)
             [ Body ]
         ];
 }
@@ -609,7 +598,7 @@ TSharedRef<SWidget> SHaybaMCPSettingsPanel::BuildLabeledRow(const FText& Label, 
         + SHorizontalBox::Slot().FillWidth(0.42f).VAlign(VAlign_Center)
         [
             SNew(STextBlock)
-            .TextStyle(&FAppStyle::Get().GetWidgetStyle<FTextBlockStyle>("NormalText"))
+            .TextStyle(&FHaybaMCPStyle::Get().GetWidgetStyle<FTextBlockStyle>("Hayba.Text.Body"))
             .Text(Label)
             .ToolTipText(Tooltip)
         ]
@@ -621,6 +610,8 @@ TSharedRef<SWidget> SHaybaMCPSettingsPanel::BuildToggle(const FText& Label, cons
                                                        TFunction<bool()> Get, TFunction<void(bool)> Set)
 {
     TWeakPtr<SHaybaMCPSettingsPanel> WeakSelf = StaticCastSharedRef<SHaybaMCPSettingsPanel>(AsShared());
+    TSharedRef<FPendingToggle> Pending = MakeShared<FPendingToggle>(Get(), MoveTemp(Set));
+    PendingToggles.Add(Pending);
     return SNew(SBox).ToolTipText(Tooltip)
     [
         SNew(SHorizontalBox)
@@ -628,17 +619,17 @@ TSharedRef<SWidget> SHaybaMCPSettingsPanel::BuildToggle(const FText& Label, cons
         [
             SNew(SCheckBox)
             .ToolTipText(Tooltip)
-            .IsChecked_Lambda([Get](){ return Get() ? ECheckBoxState::Checked : ECheckBoxState::Unchecked; })
-            .OnCheckStateChanged_Lambda([Set, WeakSelf](ECheckBoxState s)
+            .IsChecked_Lambda([Pending](){ return Pending->Value ? ECheckBoxState::Checked : ECheckBoxState::Unchecked; })
+            .OnCheckStateChanged_Lambda([Pending, WeakSelf](ECheckBoxState s)
             {
-                Set(s == ECheckBoxState::Checked);
+                Pending->Value = (s == ECheckBoxState::Checked);
                 if (TSharedPtr<SHaybaMCPSettingsPanel> Self = WeakSelf.Pin()) Self->MarkDirty();
             })
         ]
         + SHorizontalBox::Slot().FillWidth(1.f).VAlign(VAlign_Center).Padding(10.f, 0.f, 0.f, 0.f)
         [
             SNew(STextBlock)
-            .TextStyle(&FAppStyle::Get().GetWidgetStyle<FTextBlockStyle>("NormalText"))
+            .TextStyle(&FHaybaMCPStyle::Get().GetWidgetStyle<FTextBlockStyle>("Hayba.Text.Body"))
             .AutoWrapText(true)
             .Text(Label)
             .ToolTipText(Tooltip)
@@ -659,6 +650,15 @@ FReply SHaybaMCPSettingsPanel::OnSave()
 {
     auto& S = FHaybaMCPSettings::Get();
 
+    for (const TSharedRef<FPendingToggle>& Pending : PendingToggles)
+    {
+        if (Pending->Value != Pending->SavedValue)
+        {
+            Pending->Apply(Pending->Value);
+            Pending->SavedValue = Pending->Value;
+        }
+    }
+
     if (CapTokenBox.IsValid())   S.CapabilityToken = CapTokenBox->GetText().ToString();
     if (SidecarUrlBox.IsValid()) S.SidecarURL      = SidecarUrlBox->GetText().ToString();
     if (LlmModelBox.IsValid())   S.Model           = LlmModelBox->GetText().ToString();
@@ -667,6 +667,7 @@ FReply SHaybaMCPSettingsPanel::OnSave()
     // Persist the selected provider before writing the key so the vault stores
     // it under the right id.
     if (SelectedProvider.IsValid()) S.SelectedProviderId = *SelectedProvider;
+    if (SelectedAdvisoryVerbosity.IsValid()) S.AdvisoryVerbosity = *SelectedAdvisoryVerbosity;
 
     // Only touch the vault when the user actually typed a new key this session.
     // An empty-but-untouched box must NOT wipe the stored key.
@@ -690,8 +691,12 @@ FReply SHaybaMCPSettingsPanel::OnSave()
         if (T.IsNumeric()) S.ToolCacheTTLSeconds = FCString::Atof(*T);
     }
     S.Save();
+    bUrlEdited = false;
+    bModelEdited = false;
     RefreshKeyStatus();
     bIsDirty = false;
+    bKeyDiscardedOnProviderChange = false;
+    DiscardedKeyProviderLabel.Empty();
     Invalidate(EInvalidateWidgetReason::Paint);
     return FReply::Handled();
 }
@@ -699,10 +704,24 @@ FReply SHaybaMCPSettingsPanel::OnSave()
 void SHaybaMCPSettingsPanel::OnProviderChanged(TSharedPtr<FString> NewId, ESelectInfo::Type)
 {
     if (!NewId.IsValid()) return;
+    if (SelectedProvider == NewId) return;
+    // A pending secret belongs to the provider that was selected when it was
+    // entered. Never write it under a different provider after a dropdown
+    // change, including an empty entry intended to clear the original key.
+    if (bKeyEdited && LlmApiKeyBox.IsValid())
+    {
+        const FHaybaProviderInfo* PreviousInfo = SelectedProvider.IsValid()
+            ? FHaybaMCPSettings::FindProvider(*SelectedProvider) : nullptr;
+        DiscardedKeyProviderLabel = PreviousInfo
+            ? FString(PreviousInfo->Label)
+            : (SelectedProvider.IsValid() ? *SelectedProvider : FString(TEXT("the previous provider")));
+        LlmApiKeyBox->SetText(FText::GetEmpty());
+        bKeyEdited = false;
+        bKeyDiscardedOnProviderChange = true;
+    }
     SelectedProvider = NewId;
     const FHaybaProviderInfo* Info = FHaybaMCPSettings::FindProvider(*NewId);
-    // Overwrite the Base URL / Model fields with this provider's defaults so the
-    // panel always shows a coherent config for the picked provider.
+    // Keep custom edits visible. Only untouched fields follow provider defaults.
     ApplyProviderDefaults(Info, /*bOverwriteUrlModel=*/true);
     RefreshKeyStatus();
     MarkDirty();
@@ -713,8 +732,10 @@ void SHaybaMCPSettingsPanel::ApplyProviderDefaults(const FHaybaProviderInfo* Inf
     if (!Info) return;
     if (bOverwriteUrlModel)
     {
-        if (LlmBaseUrlBox.IsValid()) LlmBaseUrlBox->SetText(FText::FromString(FString(Info->BaseURLDefault)));
-        if (LlmModelBox.IsValid())   LlmModelBox->SetText(FText::FromString(FString(Info->DefaultModel)));
+        bApplyingProviderDefaults = true;
+        if (LlmBaseUrlBox.IsValid() && !bUrlEdited) LlmBaseUrlBox->SetText(FText::FromString(FString(Info->BaseURLDefault)));
+        if (LlmModelBox.IsValid() && !bModelEdited) LlmModelBox->SetText(FText::FromString(FString(Info->DefaultModel)));
+        bApplyingProviderDefaults = false;
     }
     if (LlmApiKeyBox.IsValid())
     {
@@ -774,7 +795,6 @@ void SHaybaMCPSettingsPanel::OnAdvisoryVerbosityChanged(
 {
     if (!NewValue.IsValid()) return;
     SelectedAdvisoryVerbosity = NewValue;
-    FHaybaMCPSettings::Get().AdvisoryVerbosity = *NewValue;
     MarkDirty();
 }
 

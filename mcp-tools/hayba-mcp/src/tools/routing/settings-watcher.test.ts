@@ -17,18 +17,18 @@ describe('settings-watcher', () => {
   });
 
   it('returns defaults when file is missing', () => {
-    expect(readSettings()).toEqual({ toolRouting: 'deferred', alwaysLoadPacks: [] });
+    expect(readSettings()).toEqual({ toolRouting: 'deferred', alwaysLoadPacks: [], externalRouteAdvice: 'off' });
   });
 
   it('reads valid JSON', () => {
     writeFileSync(process.env.HAYBA_SETTINGS_PATH!, JSON.stringify({
-      toolRouting: 'full', alwaysLoadPacks: ['biome'],
+      toolRouting: 'full', alwaysLoadPacks: ['biome'], externalRouteAdvice: 'brain',
     }));
-    expect(readSettings()).toEqual({ toolRouting: 'full', alwaysLoadPacks: ['biome'] });
+    expect(readSettings()).toEqual({ toolRouting: 'full', alwaysLoadPacks: ['biome'], externalRouteAdvice: 'brain' });
   });
 
   it('falls back to defaults on malformed JSON', () => {
     writeFileSync(process.env.HAYBA_SETTINGS_PATH!, '{not json');
-    expect(readSettings()).toEqual({ toolRouting: 'deferred', alwaysLoadPacks: [] });
+    expect(readSettings()).toEqual({ toolRouting: 'deferred', alwaysLoadPacks: [], externalRouteAdvice: 'off' });
   });
 });

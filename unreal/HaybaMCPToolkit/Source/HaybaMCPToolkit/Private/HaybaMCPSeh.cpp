@@ -1,4 +1,5 @@
 #include "HaybaMCPSeh.h"
+#include "HaybaMCPEditorHealth.h"   // RecordCaughtFault, called after the guard returns
 #if PLATFORM_WINDOWS
 #include <excpt.h>   // EXCEPTION_EXECUTE_HANDLER
 #endif
@@ -13,17 +14,19 @@ namespace HaybaSeh
 {
 namespace
 {
-    // The __try lives alone in this function so nothing else in RunGuarded can
-    // trip MSVC C2712 ("cannot use __try in functions that require object
-    // unwinding"). It has no locals at all beyond the parameters.
-    void RunGuardedRaw(void (*Thunk)(void*), void* Context, bool& bOutCrashed)
+    // The __try lives alone in this function so nothing else can trip MSVC
+    // C2712 ("cannot use __try in functions that require object unwinding").
+    // It has no locals at all beyond the parameters. The filter only stores
+    // the exception code into a parameter; everything that records the fault
+    // runs in RunGuardedAt after this returns.
+    void RunGuardedRaw(void (*Thunk)(void*), void* Context, bool& bOutCrashed, uint32& OutCode)
     {
 #if PLATFORM_WINDOWS
         __try
         {
             Thunk(Context);
         }
-        __except (EXCEPTION_EXECUTE_HANDLER)
+        __except (OutCode = GetExceptionCode(), EXCEPTION_EXECUTE_HANDLER)
         {
             bOutCrashed = true;
         }
@@ -117,16 +120,23 @@ namespace
         }
     }
 
-    void RunGuarded(void (*Thunk)(void*), void* Context, bool& bOutCrashed)
+    void RunGuardedAt(EHaybaFaultSite Site, void (*Thunk)(void*), void* Context, bool& bOutCrashed)
     {
         bOutCrashed = false;
         if (!Thunk) return;
 
         const FWorldSwitchSnapshot Before = CaptureWorldSwitchState();
-        RunGuardedRaw(Thunk, Context, bOutCrashed);
+        uint32 ExceptionCode = 0;
+        RunGuardedRaw(Thunk, Context, bOutCrashed, ExceptionCode);
         if (bOutCrashed)
         {
-            RepairWorldSwitchState(Before);
+            const bool bRepaired = RepairWorldSwitchState(Before);
+            FHaybaEditorHealth::RecordCaughtFault(Site, ExceptionCode, bRepaired);
         }
+    }
+
+    void RunGuarded(void (*Thunk)(void*), void* Context, bool& bOutCrashed)
+    {
+        RunGuardedAt(EHaybaFaultSite::HandlerInner, Thunk, Context, bOutCrashed);
     }
 }

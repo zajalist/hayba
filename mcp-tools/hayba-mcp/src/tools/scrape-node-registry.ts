@@ -1,6 +1,6 @@
 import { z } from 'zod';
-import { readdirSync, readFileSync, statSync, existsSync, unlinkSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { readdirSync, readFileSync, statSync, lstatSync, existsSync, unlinkSync, writeFileSync } from 'node:fs';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { createRequire } from 'node:module';
 const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite') as typeof import('node:sqlite');
 
@@ -13,8 +13,6 @@ const schema = z.object({
 export type ScrapeNodeRegistryParams = z.infer<typeof schema>;
 
 import { config } from '../config.js';
-const DEFAULT_SOURCE_PATH = process.env.HAYBA_PCGEX_SOURCE
-  || 'D:/UnrealEngine/geoforge/Plugins/PCGExtendedToolkit/Source';
 const DEFAULT_DB_PATH = config.pcgexDbPath;
 
 function walkHeaderFiles(dir: string): string[] {
@@ -22,9 +20,11 @@ function walkHeaderFiles(dir: string): string[] {
   try {
     const entries = readdirSync(dir);
     for (const entry of entries) {
-      const full = `${dir}/${entry}`;
+      const full = join(dir, entry);
       try {
-        const stat = statSync(full);
+        // Do not follow a linked directory or header outside the selected tree.
+        const stat = lstatSync(full);
+        if (stat.isSymbolicLink()) continue;
         if (stat.isDirectory()) results.push(...walkHeaderFiles(full));
         else if (entry.endsWith('.h')) results.push(full);
       } catch { /* skip inaccessible */ }
@@ -37,10 +37,24 @@ interface NodeInfo { className: string; module: string; displayName: string; des
 interface PinInfo { nodeClass: string; name: string; direction: 'input' | 'output'; pinType: string; required: boolean; description: string; }
 interface PropertyInfo { nodeClass: string; propertyName: string; cppType: string; isPcgOverridable: boolean; description: string; }
 
-function extractModule(headerPath: string, sourcePath: string): string {
-  const rel = headerPath.replace(sourcePath.replace(/\\/g, '/'), '').replace(/\\/g, '/');
-  const parts = rel.split('/').filter(Boolean);
-  return parts[0] || 'Unknown';
+// Mask comments and literals before checking for C++ declarations. A
+// commented-out class must not authorize forceRescan.
+function codeOnly(content: string): string {
+  const tokenRe = /R"([^()\s\\]{0,16})\([\s\S]*?\)\1"|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\/\*[\s\S]*?\*\/|\/\/[^\r\n]*/g;
+  return content.replace(tokenRe, token => token.replace(/[^\r\n]/g, ' '));
+}
+
+function findNodeClass(content: string): string | undefined {
+  return codeOnly(content).match(/\bclass\s+(?:\w+_API\s+)?(UPCGEx\w+Settings)\s*[:{]/)?.[1];
+}
+
+function sourceRelativeHeaderPath(headerPath: string, sourcePath: string): string {
+  const path = relative(sourcePath, headerPath);
+  if (!path || path === '..' || path.startsWith(`..${sep}`) || isAbsolute(path)) {
+    throw new Error('PCGEx header is outside the selected Source directory');
+  }
+  // Store portable metadata, never the developer's local checkout path.
+  return path.split(sep).join('/');
 }
 
 /**
@@ -139,16 +153,16 @@ function parseHeader(content: string, headerPath: string, sourcePath: string, cp
 
   // Modern PCGEx uses UCLASS(MinimalAPI, ...) with NO API macro; older code
   // uses MODULE_API. Match both: API macro optional.
-  const classMatch = content.match(/class\s+(?:\w+_API\s+)?(UPCGEx\w+Settings)\s*[:\s{]/);
-  if (!classMatch) return { pins, properties };
-  const className = classMatch[1];
+  const className = findNodeClass(content);
+  if (!className) return { pins, properties };
 
   const nodeInfoMatch = content.match(/PCGEX_NODE_INFOS\s*\(\s*\w+\s*,\s*"([^"]+)"\s*,\s*"([^"]*)"/s);
   const displayName = nodeInfoMatch ? nodeInfoMatch[1] : className;
   const description = nodeInfoMatch ? nodeInfoMatch[2] : '';
 
-  const module = extractModule(headerPath, sourcePath);
-  const node: NodeInfo = { className, module, displayName, description, headerPath };
+  const relativeHeaderPath = sourceRelativeHeaderPath(headerPath, sourcePath);
+  const module = relativeHeaderPath.split('/')[0] || 'Unknown';
+  const node: NodeInfo = { className, module, displayName, description, headerPath: relativeHeaderPath };
 
   // Some older PCGEx code overrides GetInputPins/GetOutputPins in the header.
   const scanHeaderPins = (methodName: string, direction: 'input' | 'output') => {
@@ -209,10 +223,37 @@ function parseHeader(content: string, headerPath: string, sourcePath: string, cp
 
 export async function scrapeNodeRegistry(params: ScrapeNodeRegistryParams) {
   const { pluginSourcePath, outputDbPath, forceRescan } = schema.parse(params);
-  const sourcePath = (pluginSourcePath || DEFAULT_SOURCE_PATH).replace(/\\/g, '/');
   const dbPath = outputDbPath || DEFAULT_DB_PATH;
   const startMs = Date.now();
   const errors: string[] = [];
+  const selectedSource = pluginSourcePath?.trim() || process.env.HAYBA_PCGEX_SOURCE?.trim();
+  if (!selectedSource) {
+    return { nodesFound: 0, dbPath, durationMs: 0,
+      errors: ['Specify pluginSourcePath or HAYBA_PCGEX_SOURCE for the PCGExtendedToolkit Source directory.'] };
+  }
+  const sourcePath = resolve(selectedSource);
+  try {
+    if (!statSync(sourcePath).isDirectory()) throw new Error('not a directory');
+  } catch {
+    return { nodesFound: 0, dbPath, durationMs: 0,
+      errors: [`PCGExtendedToolkit source does not exist or is not a directory: ${sourcePath}`] };
+  }
+  // Reject an unrelated directory before forceRescan can remove a valid DB.
+  // A PCGEx Source tree may contain many headers; require at least one public
+  // node declaration that the parser below can actually recognize.
+  const headers = walkHeaderFiles(sourcePath);
+  const hasPcgexNode = headers.some((headerPath) => {
+    if (!headerPath.replace(/\\/g, '/').includes('/Public/')) return false;
+    try {
+      return findNodeClass(readFileSync(headerPath, 'utf-8')) !== undefined;
+    } catch {
+      return false;
+    }
+  });
+  if (!hasPcgexNode) {
+    return { nodesFound: 0, dbPath, durationMs: 0,
+      errors: [`No recognizable PCGEx node headers under Source/Public: ${sourcePath}. Existing registry files were left unchanged.`] };
+  }
 
   // BUG-5: forceRescan should delete the DB file so schema changes take effect
   if (forceRescan && existsSync(dbPath)) {
@@ -238,7 +279,6 @@ export async function scrapeNodeRegistry(params: ScrapeNodeRegistryParams) {
     );
   `);
 
-  const headers = walkHeaderFiles(sourcePath);
   // Pre-pass: resolve PCGEx pin-label symbols (Foo::Labels::OutputEdgesLabel
   // → "Edges") so the catalog ships clean FName strings, not C++ refs.
   const labelTable = buildLabelTable(headers);
@@ -253,21 +293,19 @@ export async function scrapeNodeRegistry(params: ScrapeNodeRegistryParams) {
   const insertProp = db.prepare(
     'INSERT INTO properties(node_class, property_name, cpp_type, is_pcg_overridable, description) VALUES (?,?,?,?,?)'
   );
-  // BUG-3: delete existing pins/properties before reinserting to avoid duplicates on non-force rescan
-  const deletePins = db.prepare('DELETE FROM pins WHERE node_class = ?');
-  const deleteProps = db.prepare('DELETE FROM properties WHERE node_class = ?');
+  // A scan is a complete snapshot. Clear stale rows too, including absolute
+  // paths left by older registries when this is a non-force rescan.
+  db.exec('DELETE FROM pins; DELETE FROM properties; DELETE FROM nodes;');
 
   for (const headerPath of headers) {
     try {
       const content = readFileSync(headerPath, 'utf-8');
       // PCGEx convention: header at Public/.../Foo.h, impl at Private/.../Foo.cpp
-      const cppPath = headerPath.replace('/Public/', '/Private/').replace(/\.h$/, '.cpp');
+      const cppPath = headerPath.replace(/[\\/]Public[\\/]/, `${sep}Private${sep}`).replace(/\.h$/, '.cpp');
       let cppContent: string | null = null;
       try { cppContent = readFileSync(cppPath, 'utf-8'); } catch { /* no impl file — ok */ }
       const { node, pins, properties } = parseHeader(content, headerPath, sourcePath, cppContent);
       if (node) {
-        deletePins.run(node.className);
-        deleteProps.run(node.className);
         insertNode.run(node.className, node.module, node.displayName, node.description, node.headerPath);
         for (const pin of pins) {
           const resolvedName = resolvePinLabel(pin.name, labelTable);
@@ -318,5 +356,6 @@ export async function scrapeNodeRegistry(params: ScrapeNodeRegistryParams) {
     errors.push(`node_catalog.json regen: ${e.message}`);
   }
 
+  db.close();
   return { nodesFound, dbPath, catalogPath, durationMs: Date.now() - startMs, errors };
 }

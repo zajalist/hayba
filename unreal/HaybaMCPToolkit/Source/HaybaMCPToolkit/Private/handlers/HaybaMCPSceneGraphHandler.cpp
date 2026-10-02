@@ -1,5 +1,6 @@
 #include "HaybaMCPSceneGraphHandler.h"
 #include "HaybaMCPParams.h"
+#include "HaybaMCPWorldGeometry.h"
 #include "Editor.h"
 #include "EngineUtils.h"
 #include "GameFramework/Actor.h"
@@ -71,6 +72,7 @@ TArray<FString> FHaybaMCPSceneGraphHandler::GetCommands() const
 {
     return {
         TEXT("scene_export"),
+        TEXT("world_semantic_snapshot"),
         TEXT("scene_validate_physics"),
         TEXT("scene_get_actor_relations"),
     };
@@ -79,6 +81,7 @@ TArray<FString> FHaybaMCPSceneGraphHandler::GetCommands() const
 FHaybaHandlerResult FHaybaMCPSceneGraphHandler::Handle(const FString& Cmd, const TSharedPtr<FJsonObject>& Params)
 {
     if (Cmd == TEXT("scene_export"))              return Export(Params);
+    if (Cmd == TEXT("world_semantic_snapshot"))   return WorldSemanticSnapshot(Params);
     if (Cmd == TEXT("scene_validate_physics"))    return ValidatePhysics(Params);
     if (Cmd == TEXT("scene_get_actor_relations")) return GetActorRelations(Params);
 
@@ -326,6 +329,266 @@ FHaybaHandlerResult FHaybaMCPSceneGraphHandler::Export(const TSharedPtr<FJsonObj
 
     WriteCognitiveMapCache(Result);
     return FHaybaHandlerResult::Ok(Result);
+}
+
+FHaybaHandlerResult FHaybaMCPSceneGraphHandler::WorldSemanticSnapshot(const TSharedPtr<FJsonObject>& P)
+{
+    UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
+    if (!World)
+        return FHaybaHandlerResult::Err(TEXT("world_semantic_snapshot: no editor world"));
+    if (!P.IsValid())
+        return FHaybaHandlerResult::Err(TEXT("world_semantic_snapshot: parameters must be an object"));
+
+    FString Section = TEXT("overview");
+    if (const TSharedPtr<FJsonValue>* Value = P->Values.Find(TEXT("section"));
+        Value && (!Value->IsValid() || (*Value)->Type != EJson::String))
+        return FHaybaHandlerResult::Err(TEXT("world_semantic_snapshot: section must be a string"));
+    P->TryGetStringField(TEXT("section"), Section);
+    if (Section != TEXT("overview") && Section != TEXT("actors") &&
+        Section != TEXT("nodes") && Section != TEXT("clusters") &&
+        Section != TEXT("members") && Section != TEXT("splats"))
+        return FHaybaHandlerResult::Err(TEXT("world_semantic_snapshot: unknown section"));
+
+    auto ReadIndex = [&P](const TCHAR* Name, int32 Default, int32 Max, int32& Out)
+    {
+        Out = Default;
+        const TSharedPtr<FJsonValue>* Value = P->Values.Find(Name);
+        if (!Value) return true;
+        if (!Value->IsValid() || (*Value)->Type != EJson::Number) return false;
+        const double Number = (*Value)->AsNumber();
+        if (!FMath::IsFinite(Number) || Number < 0.0 || Number > Max || FMath::FloorToDouble(Number) != Number) return false;
+        Out = static_cast<int32>(Number);
+        return true;
+    };
+    int32 Offset = 0, Limit = 32, ClusterIndex = INDEX_NONE, NodeIndex = INDEX_NONE;
+    if (!ReadIndex(TEXT("offset"), 0, 100000, Offset) ||
+        !ReadIndex(TEXT("limit"), 32, 32, Limit) || Limit == 0 ||
+        !ReadIndex(TEXT("cluster_index"), INDEX_NONE, 100000, ClusterIndex) ||
+        !ReadIndex(TEXT("node_index"), INDEX_NONE, 100000, NodeIndex))
+        return FHaybaHandlerResult::Err(TEXT("world_semantic_snapshot: invalid pagination or index"));
+
+    FString MemberKind = TEXT("nodes");
+    if (const TSharedPtr<FJsonValue>* Value = P->Values.Find(TEXT("member_kind"));
+        Value && (!Value->IsValid() || (*Value)->Type != EJson::String))
+        return FHaybaHandlerResult::Err(TEXT("world_semantic_snapshot: member_kind must be a string"));
+    P->TryGetStringField(TEXT("member_kind"), MemberKind);
+    if (MemberKind != TEXT("nodes") && MemberKind != TEXT("actors"))
+        return FHaybaHandlerResult::Err(TEXT("world_semantic_snapshot: member_kind must be nodes or actors"));
+    if ((ClusterIndex != INDEX_NONE && Section != TEXT("members") && Section != TEXT("splats")) ||
+        (NodeIndex != INDEX_NONE && Section != TEXT("splats")))
+        return FHaybaHandlerResult::Err(TEXT("world_semantic_snapshot: filter does not apply to this section"));
+
+    const HaybaWorldGeometry::FSnapshot Snapshot = HaybaWorldGeometry::Build(World);
+    if ((ClusterIndex != INDEX_NONE && !Snapshot.Clusters.IsValidIndex(ClusterIndex)) ||
+        (NodeIndex != INDEX_NONE && !Snapshot.Nodes.IsValidIndex(NodeIndex)) ||
+        (Section == TEXT("members") && ClusterIndex == INDEX_NONE))
+        return FHaybaHandlerResult::Err(TEXT("world_semantic_snapshot: index outside current scan"));
+
+    // Page indices belong to one scan. Hash the metadata and sampled positions
+    // relevant to pagination so callers can detect a changed scene view.
+    uint32 Fingerprint = GetTypeHash(World->GetPathName());
+    auto Mix = [&Fingerprint](const auto& Value)
+    {
+        Fingerprint = HashCombineFast(Fingerprint, GetTypeHash(Value));
+    };
+    auto MixVector = [&Mix](const FVector& Value)
+    {
+        Mix(Value.X);
+        Mix(Value.Y);
+        Mix(Value.Z);
+    };
+    Mix(Snapshot.ActorCount);
+    Mix(Snapshot.VisitedActorCount);
+    Mix(Snapshot.EligibleMeshActorCount);
+    Mix(Snapshot.EligibleMetadataActorCount);
+    Mix(Snapshot.SelectedActorCount);
+    Mix(Snapshot.EligibilityComponentCount);
+    Mix(Snapshot.ComponentCount);
+    Mix(Snapshot.ObservedInstanceCount);
+    Mix(Snapshot.bObservedInstanceCountSaturated);
+    Mix(Snapshot.InstanceCount);
+    Mix(Snapshot.ClusteredSplatCount);
+    Mix(Snapshot.bActorIteratorComplete);
+    Mix(Snapshot.bClusterPartial);
+    Mix(Snapshot.bTruncated);
+    Mix(Snapshot.bDownsampled);
+    Mix(Snapshot.bNaniteProxy);
+    Mix(Snapshot.StopReason);
+    for (const FString& Reason : Snapshot.StopReasons) Mix(Reason);
+    TArray<FString> UnsupportedKinds;
+    Snapshot.UnsupportedByKind.GetKeys(UnsupportedKinds);
+    UnsupportedKinds.Sort();
+    for (const FString& Kind : UnsupportedKinds)
+    {
+        Mix(Kind);
+        Mix(Snapshot.UnsupportedByKind.FindChecked(Kind));
+    }
+    MixVector(Snapshot.OriginCm);
+    MixVector(Snapshot.BoundsCm.Min);
+    MixVector(Snapshot.BoundsCm.Max);
+    for (const HaybaWorldGeometry::FActor& Actor : Snapshot.Actors)
+    {
+        Mix(Actor.Path);
+        Mix(Actor.Label);
+        Mix(Actor.Folder);
+    }
+    for (const HaybaWorldGeometry::FNode& Node : Snapshot.Nodes)
+    {
+        Mix(Node.Id);
+        Mix(Node.Label);
+        Mix(Node.ParentIndex);
+        Mix(Node.Kind);
+        Mix(Node.Path);
+        Mix(Node.Level);
+        Mix(Node.Folder);
+        Mix(Node.ActorClass);
+        Mix(Node.MeshAsset);
+        Mix(Node.GeometryStatus);
+        Mix(Node.ActorIndex);
+        Mix(Node.InstanceIndex);
+        Mix(Node.ObservedInstanceCount);
+        Mix(Node.SourceCount);
+        Mix(Node.SplatCount);
+        Mix(Node.bTagsTruncated);
+        MixVector(Node.BoundsCm.Min);
+        MixVector(Node.BoundsCm.Max);
+        for (const FString& Tag : Node.Tags)
+            Mix(Tag);
+    }
+    for (const HaybaWorldGeometry::FCluster& Cluster : Snapshot.Clusters)
+    {
+        Mix(Cluster.Id);
+        Mix(Cluster.ParentIndex);
+        Mix(Cluster.Level);
+        Mix(Cluster.SplatCount);
+        Mix(Cluster.RadiusCm);
+        Mix(Cluster.bTagsTruncated);
+        MixVector(Cluster.CentroidCm);
+        MixVector(Cluster.BoundsCm.Min);
+        MixVector(Cluster.BoundsCm.Max);
+        for (int32 Index : Cluster.ActorIndices) Mix(Index);
+        for (int32 Index : Cluster.NodeIndices) Mix(Index);
+        for (const FString& Tag : Cluster.Tags)
+            Mix(Tag);
+    }
+    for (const HaybaWorldGeometry::FSplat& Splat : Snapshot.Splats)
+    {
+        MixVector(Splat.PositionCm);
+        MixVector(Splat.Normal);
+        Mix(Splat.R);
+        Mix(Splat.G);
+        Mix(Splat.B);
+        Mix(Splat.ActorIndex);
+        Mix(Splat.NodeIndex);
+        Mix(Splat.ClusterIndex);
+    }
+    const FString ScanId = FString::Printf(TEXT("%08X"), Fingerprint);
+    FString ExpectedScanId;
+    if (const TSharedPtr<FJsonValue>* Value = P->Values.Find(TEXT("expected_scan_id"));
+        Value && (!Value->IsValid() || (*Value)->Type != EJson::String))
+        return FHaybaHandlerResult::Err(TEXT("world_semantic_snapshot: expected_scan_id must be a string"));
+    if (P->TryGetStringField(TEXT("expected_scan_id"), ExpectedScanId))
+    {
+        if (ExpectedScanId.Len() != 8)
+            return FHaybaHandlerResult::Err(TEXT("world_semantic_snapshot: malformed expected_scan_id"));
+        for (int32 Index = 0; Index < ExpectedScanId.Len(); ++Index)
+        {
+            const TCHAR Digit = ExpectedScanId[Index];
+            if (!((Digit >= TEXT('0') && Digit <= TEXT('9')) ||
+                (Digit >= TEXT('A') && Digit <= TEXT('F')) ||
+                (Digit >= TEXT('a') && Digit <= TEXT('f'))))
+                return FHaybaHandlerResult::Err(TEXT("world_semantic_snapshot: malformed expected_scan_id"));
+        }
+        if (!ExpectedScanId.Equals(ScanId, ESearchCase::IgnoreCase))
+            return FHaybaHandlerResult::Err(TEXT("world_semantic_snapshot: scan changed; restart pagination"));
+    }
+
+    // Keep page reads proportional to the returned records. The geometry scan
+    // itself is bounded; building every point's JSON for a 32-item read would
+    // defeat that bound on a busy editor frame.
+    const TSharedRef<FJsonObject> Summary = HaybaWorldGeometry::ToMetadataJson(
+        Snapshot, false, TEXT("overview"));
+    TSharedRef<FJsonObject> Out = MakeShared<FJsonObject>();
+    Out->SetStringField(TEXT("scan_id"), ScanId);
+    Out->SetStringField(TEXT("section"), Section);
+    Out->SetNumberField(TEXT("offset"), Offset);
+    Out->SetNumberField(TEXT("limit"), Limit);
+    Out->SetBoolField(TEXT("indices_scan_local"), true);
+    Out->SetObjectField(TEXT("coverage"), Summary->GetObjectField(TEXT("coverage")).ToSharedRef());
+    Out->SetObjectField(TEXT("boundsCm"), Summary->GetObjectField(TEXT("boundsCm")).ToSharedRef());
+    Out->SetArrayField(TEXT("originCm"), Summary->GetArrayField(TEXT("originCm")));
+    TSharedRef<FJsonObject> Totals = MakeShared<FJsonObject>();
+    Totals->SetNumberField(TEXT("actors"), Snapshot.Actors.Num());
+    Totals->SetNumberField(TEXT("nodes"), Snapshot.Nodes.Num());
+    Totals->SetNumberField(TEXT("clusters"), Snapshot.Clusters.Num());
+    Totals->SetNumberField(TEXT("splats"), Snapshot.Splats.Num());
+    Out->SetObjectField(TEXT("totals"), Totals);
+
+    TArray<TSharedPtr<FJsonValue>> Items;
+    Items.Reserve(Limit);
+    int32 Matched = 0;
+    auto Take = [&Items, &Matched, Offset, Limit](const TSharedPtr<FJsonValue>& Value)
+    {
+        if (Matched >= Offset && Items.Num() < Limit) Items.Add(Value);
+        ++Matched;
+    };
+    if (Section == TEXT("actors") || Section == TEXT("nodes") || Section == TEXT("clusters"))
+    {
+        const TSharedRef<FJsonObject> Page = HaybaWorldGeometry::ToMetadataJson(
+            Snapshot, false, Section, Offset, Limit);
+        const TArray<TSharedPtr<FJsonValue>>& Rows = Page->GetArrayField(Section);
+        Matched = Section == TEXT("actors") ? Snapshot.Actors.Num()
+            : Section == TEXT("nodes") ? Snapshot.Nodes.Num() : Snapshot.Clusters.Num();
+        for (int32 Row = 0; Row < Rows.Num(); ++Row)
+        {
+            TSharedPtr<FJsonObject> Item = Rows[Row]->AsObject();
+            Item->SetNumberField(TEXT("index"), Offset + Row);
+            if (Section == TEXT("clusters"))
+            {
+                const int32 ActorMembers = Item->GetArrayField(TEXT("actorIndices")).Num();
+                const int32 NodeMembers = Item->GetArrayField(TEXT("nodeIndices")).Num();
+                Item->RemoveField(TEXT("actorIndices"));
+                Item->RemoveField(TEXT("nodeIndices"));
+                Item->SetNumberField(TEXT("actorMemberCount"), ActorMembers);
+                Item->SetNumberField(TEXT("nodeMemberCount"), NodeMembers);
+            }
+            Items.Add(Rows[Row]);
+        }
+    }
+    else if (Section == TEXT("members"))
+    {
+        const HaybaWorldGeometry::FCluster& Cluster = Snapshot.Clusters[ClusterIndex];
+        const TArray<int32>& Members = MemberKind == TEXT("actors") ? Cluster.ActorIndices : Cluster.NodeIndices;
+        Out->SetNumberField(TEXT("cluster_index"), ClusterIndex);
+        Out->SetStringField(TEXT("member_kind"), MemberKind);
+        for (const int32 Member : Members) Take(MakeShared<FJsonValueNumber>(Member));
+    }
+    else if (Section == TEXT("splats"))
+    {
+        if (ClusterIndex != INDEX_NONE) Out->SetNumberField(TEXT("cluster_index"), ClusterIndex);
+        if (NodeIndex != INDEX_NONE) Out->SetNumberField(TEXT("node_index"), NodeIndex);
+        for (int32 Index = 0; Index < Snapshot.Splats.Num(); ++Index)
+        {
+            const HaybaWorldGeometry::FSplat& Splat = Snapshot.Splats[Index];
+            bool bInCluster = ClusterIndex == INDEX_NONE;
+            for (int32 At = Splat.ClusterIndex; !bInCluster && Snapshot.Clusters.IsValidIndex(At); At = Snapshot.Clusters[At].ParentIndex)
+                bInCluster = At == ClusterIndex;
+            bool bInNode = NodeIndex == INDEX_NONE;
+            for (int32 At = Splat.NodeIndex; !bInNode && Snapshot.Nodes.IsValidIndex(At); At = Snapshot.Nodes[At].ParentIndex)
+                bInNode = At == NodeIndex;
+            if (bInCluster && bInNode)
+            {
+                if (Matched >= Offset && Items.Num() < Limit)
+                    Items.Add(HaybaWorldGeometry::SplatToJson(Splat));
+                ++Matched;
+            }
+        }
+    }
+    Out->SetNumberField(TEXT("total_items"), Matched);
+    if (Offset + Items.Num() < Matched) Out->SetNumberField(TEXT("next_offset"), Offset + Items.Num());
+    else Out->SetField(TEXT("next_offset"), MakeShared<FJsonValueNull>());
+    Out->SetArrayField(TEXT("items"), MoveTemp(Items));
+    return FHaybaHandlerResult::Ok(Out);
 }
 
 // ---------------------------------------------------------------------------

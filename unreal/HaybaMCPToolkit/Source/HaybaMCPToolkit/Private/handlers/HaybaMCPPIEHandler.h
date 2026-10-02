@@ -1,21 +1,19 @@
 #pragma once
 #include "IHaybaMCPHandler.h"
+#include "Containers/Ticker.h"
 
-#if WITH_EDITOR
-#include "Delegates/IDelegateInstance.h"
-#endif
+struct FHaybaPIECaptureState;
 
 /**
  * PIE test-harness commands: assert / wait_for / press_key / screenshot.
  *
- * Lifecycle hooks (BeginPIE / EndPIE / CancelPIE) are bound lazily on first
- * use of any command, and torn down by the destructor.
+ * PIE state (who owns the session, whether it is queued) lives in FHaybaMCPEditorState, whose hooks are bound at module startup.
  */
 class FHaybaMCPPIEHandler : public IHaybaMCPHandler
 {
 public:
-    FHaybaMCPPIEHandler() = default;
-    virtual ~FHaybaMCPPIEHandler();
+    FHaybaMCPPIEHandler();
+    virtual ~FHaybaMCPPIEHandler() override;
 
     virtual FString GetDomain() const override { return TEXT("editor"); }
     virtual TArray<FString> GetCommands() const override;
@@ -39,23 +37,12 @@ private:
     FHaybaHandlerResult PIEActorList(const TSharedPtr<FJsonObject>& P);
     FHaybaHandlerResult PIEActorInspect(const TSharedPtr<FJsonObject>& P);
     FHaybaHandlerResult PIEProjectWorld(const TSharedPtr<FJsonObject>& P);
+    FHaybaHandlerResult PIESightlines(const TSharedPtr<FJsonObject>& P);
     FHaybaHandlerResult PIEClickActor(const TSharedPtr<FJsonObject>& P);
+    FHaybaHandlerResult PIECaptureStart(const TSharedPtr<FJsonObject>& P);
+    FHaybaHandlerResult PIECaptureGet(const TSharedPtr<FJsonObject>& P);
 
-#if WITH_EDITOR
-    void EnsureLifecycleHooks();
-    void OnBeginPIE(const bool bIsSimulating);
-    void OnEndPIE(const bool bIsSimulating);
-
-    bool bHooksBound = false;
-    FDelegateHandle BeginPIEHandle;
-    FDelegateHandle EndPIEHandle;
-    FDelegateHandle CancelPIEHandle;
-
-    // Set when EndPIE/CancelPIE fires while a wait loop is running — checked
-    // each iteration to abort cleanly.
-    bool bCancelPending = false;
-
-    friend FHaybaHandlerResult FHaybaMCPPIEHandler_WaitLoop(
-        FHaybaMCPPIEHandler& Self, const TSharedPtr<class FJsonObject>& P, const FString& Comparator);
-#endif
+    TUniquePtr<FHaybaPIECaptureState> Capture;
+    FTSTicker::FDelegateHandle CaptureTicker;
+    bool TickCapture(float DeltaSeconds);
 };

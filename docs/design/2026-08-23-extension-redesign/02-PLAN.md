@@ -67,7 +67,8 @@ concentrated pass afterwards.
 - Emit one `CAPABILITIES.md` from the same generator: every command, its domain,
   whether it is agent-callable, and which TS tool (if any) wraps it.
 - Add a CI check that fails when a declared command has no descriptor.
-- Fix `.codex/config.toml` (F6) — `geoforge` → the real host project path.
+- Fix `.codex/config.toml` (F6) — replace stale host paths with explicit
+  catalog configuration.
 
 **Done when:** one command, one number, and a CI gate that keeps it true.
 
@@ -96,7 +97,7 @@ currently slow."*
   with zero per-query allocation.
 - Optional second step: an inverted token index for multi-term queries.
 
-**Done when:** a catalogue lookup on a project the size of Aphrosia returns in
+**Done when:** a catalogue lookup on a large content project returns in
 well under a second, with a benchmark committed so it cannot regress.
 
 **Effort:** W1b is an afternoon. W1a is the larger half.

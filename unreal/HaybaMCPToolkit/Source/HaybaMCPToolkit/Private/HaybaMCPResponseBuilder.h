@@ -36,7 +36,9 @@ struct FHaybaResponseLimits
         TEXT("code"), TEXT("error"), TEXT("errors"), TEXT("phase"),
         TEXT("mutation_status"), TEXT("failure_kind"), TEXT("save_attempted"),
         TEXT("dirty_known"), TEXT("partial"), TEXT("unknown_outcome"),
-        TEXT("session_suspect"), TEXT("crafted_format_safety")
+        TEXT("session_suspect"), TEXT("crafted_format_safety"),
+        // Sticky editor health (ADR-0011).
+        TEXT("editor_unsafe"), TEXT("python_unhealthy"), TEXT("health"), TEXT("may_have_executed")
     };
 };
 

@@ -53,6 +53,15 @@ const PROVIDERS: ProviderEntry[] = [
     protocol: 'openai',
   },
   {
+    id: 'deepseek',
+    label: 'DeepSeek',
+    baseURLDefault: 'https://api.deepseek.com',
+    defaultModel: 'deepseek-flash',
+    needsKey: true,
+    keyHint: 'sk-...',
+    protocol: 'openai',
+  },
+  {
     id: 'groq',
     label: 'Groq (free tier)',
     baseURLDefault: 'https://api.groq.com/openai/v1',

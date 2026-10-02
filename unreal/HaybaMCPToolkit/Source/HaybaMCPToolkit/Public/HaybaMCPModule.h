@@ -59,6 +59,7 @@ public:
     static const FName TabStudio;
 
     // Weak references to live sub-panels (set by SHaybaMCPMainPanel as it builds them).
+    TWeakPtr<class SHaybaMCPMainPanel>       MainPanel;
     TWeakPtr<class SHaybaMCPToolStreamPanel> ToolStreamPanel;
     TWeakPtr<class SHaybaMCPSceneMapPanel>   SceneMapPanel;
     TWeakPtr<class SHaybaMCPPlanPanel>       PlanPanel;
@@ -77,6 +78,9 @@ public:
     // Plan Mode handshake — set by Plan panel's Approve click, reset by every
     // destructive command so each plan must be approved exactly once.
     bool bPlanApproved = false;
+    // Owner (envelope `owner`, else per connection) of the plan on the panel.
+    // Only that owner may spend bPlanApproved; empty = pre-lease global rule.
+    FString PlanOwner;
 
     // External MCP proposals survive navigation and tab recreation. Chat has
     // its own exact-call approval protocol; never broadcast chat approval here.
@@ -100,6 +104,9 @@ public:
     // unregistered (the router returns a clean "unknown command" instead of the
     // whole plugin failing to load). No-ops safely if the core router isn't up.
     HAYBAMCPTOOLKIT_API void RegisterExternalHandler(TSharedRef<IHaybaMCPHandler> Handler);
+
+    /** The live command router (tests read its registered command set). */
+    TSharedPtr<FHaybaMCPCommandHandler> GetCommandHandler() const { return CommandHandler; }
     HAYBAMCPTOOLKIT_API void UnregisterExternalHandler(const TSharedRef<IHaybaMCPHandler>& Handler);
 
     // Multicast — fires synchronously when a tool call is recorded on the Game

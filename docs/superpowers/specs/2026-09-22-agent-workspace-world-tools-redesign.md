@@ -55,14 +55,16 @@ The coordinator automatically selects specialist agents using declared capabilit
 
 World owns the state of the open Unreal world rather than the history of how it was changed. It includes:
 
-- the web-based scene map;
+- a full-width, orbitable 3D surface-splat view derived from loaded scene meshes;
 - selected actor and asset context;
 - landscape and terrain summaries;
 - World Partition grid, streaming source, cell, data-layer, and HLOD status;
 - contextual rule violations and directional repair suggestions;
 - import readiness and last-ingestion summary.
 
-The web scene-map renderer is retained. The native `SCanvas` scene map is deleted. If the WebBrowser plugin is unavailable, World shows an explicit fallback with a concise textual world summary and setup action rather than a blank panel.
+The old actor-category force graph and fixed inspector are removed. Surface splats come from bounded mesh samples in world space, including instanced transforms where available; actor origins and bounding boxes must not masquerade as mesh geometry. Selection reveals a compact contextual label on the canvas and can select the loaded actor in Unreal. The view states which loaded geometry it could sample and which content remains unknown, including unloaded World Partition content and unsupported component types. If the WebBrowser or 3D renderer is unavailable, World shows a concise fallback with a recovery action instead of a fabricated scene.
+
+The splat count is a bounded sampling budget, not a target to maximize. Each point references a source record in an authored world → level → folder → actor → component → instance hierarchy and a scan-local coarse/fine spatial cluster. Source records hold editor facts such as paths, tags, mesh identity, and sampled bounds. Cluster records summarize sampled neighbors and tag unions as **derived spatial evidence**; they do not claim authored area boundaries or inferred gameplay roles. The same compact metadata is exposed to agent inspection without requiring it to parse an image or ingest every point. Semantic interpretations such as focal hierarchy, route, market, or occluder require a separate evidence-backed inference. Budget and performance conclusions require measured runtime evidence.
 
 Validation, Lessons, and the separate PLUMB surface cease to exist as standalone panels. A finding lives beside the world object or operation that produced it. Explanations are attached to findings, not stored in a separate Lessons destination.
 
@@ -228,7 +230,7 @@ Conversation persistence stores messages, compact activity summaries, artifact r
 - A gear is anchored at the bottom.
 - Agent uses a single-column conversation with a sticky composer.
 - Activity cards use a compact summary row and progressive disclosure.
-- World uses a map-first layout with an inspector drawer for selection, partition, and findings.
+- World gives the 3D sampled scene the available width. A compact on-canvas selection overlay and controls replace the fixed right inspector; deeper facts and findings are opened only when requested.
 - Library uses searchable grouped results with asset/recipe/profile filters, not separate sub-apps.
 
 The layout must remain useful at dock widths from 360 px upward. At narrow widths the rail becomes icon-only; labels remain available through tooltips and accessible names.
@@ -306,7 +308,7 @@ Golden workflows cover:
 
 - The sidebar contains exactly Agent, World, and Library; Settings is a gear.
 - There are no standalone Plan, Diff, Tool Stream, Validation, Lessons, MCP, Slivers, or Memory panels.
-- The native scene-map implementation is removed; World has a functional textual fallback when WebBrowser is unavailable.
+- The actor-category force graph and fixed right inspector are removed from World; the surface is a 3D, mesh-derived splat view with explicit coverage gaps and a functional unavailable state.
 - One conversation can plan, request approval, execute through specialist agents, show diffs/verdicts, and offer retry/undo without navigating away.
 - Landscape ingestion can explicitly inspect and configure World Partition, data layers, and HLOD using preserve/configure/require semantics.
 - Imported mesh preparation covers Nanite, collision, LOD, lightmap UV, and material-instance policy with inspectable decisions.

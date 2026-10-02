@@ -81,6 +81,15 @@ bool FHaybaMCPAdvisoryStatesTest::RunTest(const FString&)
     AddCase(TEXT("fatal editor failure"), Signals,
         EHaybaMCPAdvisoryState::FatalError, TEXT("fatal_error"));
 
+    Signals = FHaybaMCPAdvisorySignals();
+    Signals.bOperationSucceeded = false;
+    Signals.FailureKind = EHaybaMCPFailureKind::PolicyBlocked;
+    Signals.Code = TEXT("editor_unsafe_restart_required");
+    Signals.MutationStatus = EHaybaMCPMutationStatus::NotStarted;
+    Signals.bEditorUnsafe = true;
+    AddCase(TEXT("editor unsafe refusal is a policy block"), Signals,
+        EHaybaMCPAdvisoryState::PolicyBlocked, TEXT("editor_unsafe_restart_required"));
+
     for (const FCase& Case : Cases)
     {
         const FHaybaMCPAdvisoryResult Result = Evaluate(Case.Signals);
@@ -126,6 +135,31 @@ bool FHaybaMCPAdvisoryStatesTest::RunTest(const FString&)
     TestTrue(TEXT("session suspect carries mandatory recovery"), Suspect.MandatoryRecovery.Num() > 0);
     TestTrue(TEXT("session suspect tells caller not to trust session"),
         Suspect.SessionHealth == EHaybaMCPSessionHealth::Suspect);
+
+    Signals = FHaybaMCPAdvisorySignals();
+    Signals.bOperationSucceeded = false;
+    Signals.FailureKind = EHaybaMCPFailureKind::PolicyBlocked;
+    Signals.Code = TEXT("editor_unsafe_restart_required");
+    Signals.MutationStatus = EHaybaMCPMutationStatus::NotStarted;
+    Signals.bEditorUnsafe = true;
+    const FHaybaMCPAdvisoryResult Unsafe = Evaluate(Signals);
+    TestTrue(TEXT("editor unsafe requires a restart"), Unsafe.SessionHealth == EHaybaMCPSessionHealth::RestartRequired);
+    TestFalse(TEXT("editor unsafe is never retryable"), Unsafe.bRetryable);
+    TestFalse(TEXT("an unsafe refusal never mutated"), Unsafe.bMayHaveMutated);
+    TestTrue(TEXT("the restart line is mandatory recovery"),
+        Unsafe.MandatoryRecovery.Contains(TEXT("Fault contained; restart the editor before further work.")));
+
+    Signals = FHaybaMCPAdvisorySignals();
+    Signals.bOperationSucceeded = false;
+    Signals.bStructuredException = true;
+    Signals.Code = TEXT("native_fault_contained");
+    Signals.MutationStatus = EHaybaMCPMutationStatus::Unknown;
+    Signals.bEditorUnsafe = true;
+    const FHaybaMCPAdvisoryResult Faulted = Evaluate(Signals);
+    TestTrue(TEXT("the faulting command is session_suspect"), Faulted.State == EHaybaMCPAdvisoryState::SessionSuspect);
+    TestEqual(TEXT("and keeps its code"), Faulted.Code, FString(TEXT("native_fault_contained")));
+    TestTrue(TEXT("and requires a restart, not only suspicion"), Faulted.SessionHealth == EHaybaMCPSessionHealth::RestartRequired);
+    TestTrue(TEXT("and may have mutated"), Faulted.bMayHaveMutated);
     return true;
 }
 

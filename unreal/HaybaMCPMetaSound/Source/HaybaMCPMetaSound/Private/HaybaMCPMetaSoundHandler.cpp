@@ -20,6 +20,7 @@
 #include "MetasoundGlobals.h"
 #include "Misc/DataValidation.h"
 #include "UObject/SavePackage.h"
+#include "HaybaMCPSaveVerify.h"
 
 #if WITH_EDITOR
 #include "MetasoundFactory.h"
@@ -503,6 +504,16 @@ static FHaybaHandlerResult MSCompile(const TSharedPtr<FJsonObject>& P)
         bSave = SaveValue->AsBool();
     }
     FString Path, Error; UObject* Asset = LoadMetaSound(P, Path, Error, /*bRequireGameContent=*/true); if (!Asset) return FHaybaHandlerResult::Err(TEXT("metasound_compile: ") + Error);
+    if (bSave)
+    {
+        // Before AttachBuilder / conform: nothing may change when the save cannot happen.
+        FHaybaHandlerResult ReadOnly;
+        if (HaybaSaveVerify::RefuseIfReadOnly(TEXT("metasound_compile"), Asset->GetOutermost()->GetName(), ReadOnly,
+                TEXT("Or pass save:false to validate without saving.")))
+        {
+            return ReadOnly;
+        }
+    }
     UMetaSoundBuilderBase* Builder=AttachBuilder(*Asset); if (!Builder) return FHaybaHandlerResult::Err(TEXT("metasound_compile: builder unavailable"));
     const FMetaSoundFrontendDocumentBuilder& DocBuilder = Builder->GetConstBuilder();
     if (!DocBuilder.IsValid()) return FHaybaHandlerResult::Err(TEXT("metasound_compile: active document is invalid"));
@@ -568,7 +579,26 @@ static FHaybaHandlerResult MSCompile(const TSharedPtr<FJsonObject>& P)
         return FHaybaHandlerResult::Err(TEXT("metasound_compile: runtime graph registration failed; see the editor log for node-level diagnostics"));
     Asset->MarkPackageDirty();
     bool bSaved=false;
-    if (bSave) { UPackage* Package=Asset->GetOutermost(); const FString Filename=FPackageName::LongPackageNameToFilename(Package->GetName(),FPackageName::GetAssetPackageExtension()); FSavePackageArgs Args; Args.TopLevelFlags=RF_Public|RF_Standalone; bSaved=UPackage::SavePackage(Package,Asset,*Filename,Args); if(!bSaved) return FHaybaHandlerResult::Err(TEXT("metasound_compile: validation passed but SavePackage failed")); }
+    if (bSave)
+    {
+        const HaybaSaveVerify::FResult Saved = HaybaSaveVerify::SaveAndVerify(Asset);
+        bSaved = Saved.DidReachDisk();
+        if (!bSaved)
+        {
+            // The asset was already conformed in memory: not an Err, which would drop data.
+            const FString Reason = TEXT("metasound_compile: validation passed and the asset was conformed in memory, but the save did not reach disk. ") + Saved.Note;
+            TSharedPtr<FJsonObject> Unsaved = MakeShared<FJsonObject>();
+            Unsaved->SetBoolField(TEXT("ok"), false);
+            Unsaved->SetBoolField(TEXT("valid"), true);
+            Unsaved->SetBoolField(TEXT("saved"), false);
+            Unsaved->SetStringField(TEXT("error"), Reason);
+            Unsaved->SetStringField(TEXT("save_error"), Reason);
+            Unsaved->SetStringField(TEXT("save_error_code"), Saved.SaveErrorCode);
+            Unsaved->SetStringField(TEXT("mutation_status"), TEXT("applied_unsaved"));
+            Unsaved->SetStringField(TEXT("path"), Asset->GetPathName());
+            return FHaybaHandlerResult::Ok(Unsaved);
+        }
+    }
     TSharedPtr<FJsonObject> Out=MakeShared<FJsonObject>(); Out->SetBoolField(TEXT("valid"),true); Out->SetBoolField(TEXT("conformed_object_data"),bConformed); Out->SetBoolField(TEXT("saved"),bSaved); Out->SetStringField(TEXT("path"),Asset->GetPathName()); Out->SetArrayField(TEXT("warnings"),ValidationWarnings); return FHaybaHandlerResult::Ok(Out);
 }
 

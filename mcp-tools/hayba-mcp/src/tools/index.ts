@@ -7,6 +7,7 @@ import { installToolStreamMirror, wrapToolHandlerForStream } from './tool-stream
 import { installLiveSender, executeCommand } from './tool-executor.js';
 import { registerToolMeta } from './tool-meta-registry.js';
 import { readSettings } from './routing/settings-watcher.js';
+import { registerSuggestRoute } from './routing/suggest-route.js';
 import {
   registerDeferredRouting,
   type CapturedTool,
@@ -17,16 +18,21 @@ import { defineTool, materializeTool, registerTool, recordToolSchema, type ToolD
 import { resolveAliases } from './param-aliases.js';
 import { TOOL_ALIASES } from './tool-aliases.js';
 import { AUDIO_DESCRIPTORS } from './audio/audio-tools.js';
+import { LEASE_DESCRIPTORS } from './lease/lease-tools.js';
+import { BATCH_DESCRIPTORS } from './batch/batch-tools.js';
 import { errorResult, okResult } from './tool-result.js';
 
 // ── Code Mode meta-tools (always-on) ──────────────────────────────────────────
 import { listToolCategoriesHandler, meta as listMeta } from './code-mode/list-tool-categories.js';
 import { getToolSignatureHandler, meta as sigMeta } from './code-mode/get-tool-signature.js';
-import { pythonRunHandler, meta as pyMeta } from './python/python-run.js';
+import { pythonRunHandler, meta as pyMeta, executionFields as pyExecutionFields } from './python/python-run.js';
 
 // ── New UE-domain tool handlers ───────────────────────────────────────────────
 import { actorSpawnHandler, meta as actorSpawnMeta } from './actor/actor-spawn.js';
 import { actorListHandler, meta as actorListMeta } from './actor/actor-list.js';
+import { worldBudgetSnapshotHandler, meta as worldBudgetSnapshotMeta } from './world/world-budget-snapshot.js';
+import { worldSemanticSnapshotHandler, schema as worldSemanticSnapshotSchema, meta as worldSemanticSnapshotMeta } from './world/world-semantic-snapshot.js';
+import { worldCompareSnapshotsHandler, meta as worldCompareSnapshotsMeta, schema as worldCompareSnapshotsSchema } from './world/world-compare-snapshots.js';
 import { actorDeleteHandler, meta as actorDeleteMeta } from './actor/actor-delete.js';
 import { actorTransformHandler, meta as actorTransformMeta } from './actor/actor-transform.js';
 import { sceneExportHandler, meta as sceneExportMeta } from './scene/scene-export.js';
@@ -47,10 +53,6 @@ import { editorStreamLogHandler, meta as streamLogMeta } from './editor/editor-s
 import { handleWaitForShaders, meta as waitForShadersMeta } from './wait-for-shaders.js';
 import { handleWaitForIdle, meta as waitForIdleMeta, schema as waitForIdleSchema } from './wait-for-idle.js';
 import { handleRenderCamera, meta as renderCameraMeta, schema as renderCameraSchema } from './render-camera.js';
-import { handleFabLoginStatus, meta as fabLoginStatusMeta } from './fab/login-status.js';
-import { handleFabLibraryList, meta as fabLibraryListMeta } from './fab/library-list.js';
-import { handleFabMarketplaceSearch, meta as fabMarketplaceSearchMeta } from './fab/marketplace-search.js';
-import { handleFabDownload, meta as fabDownloadMeta } from './fab/download.js';
 
 // ── Agent memory tool handlers (issue #355) ──────────────────────────────────
 import { memoryWriteHandler, meta as memoryWriteMeta } from './memory/write.js';
@@ -250,10 +252,23 @@ import {
   pieProjectWorldHandler,
 } from './pie/pie-project-world.js';
 import {
+  meta as pieSightlinesMeta,
+  schema as pieSightlinesSchema,
+  pieSightlinesHandler,
+} from './pie/pie-sightlines.js';
+import {
   meta as pieClickActorMeta,
   schema as pieClickActorSchema,
   pieClickActorHandler,
 } from './pie/pie-click-actor.js';
+import {
+  startMeta as pieCaptureStartMeta,
+  getMeta as pieCaptureGetMeta,
+  startSchema as pieCaptureStartSchema,
+  getSchema as pieCaptureGetSchema,
+  pieCaptureStartHandler,
+  pieCaptureGetHandler,
+} from './pie/pie-capture.js';
 import {
   meta as textureAuditMeta,
   schema as textureAuditSchema,
@@ -401,6 +416,7 @@ import { formatGraphTopology, type FormatGraphTopologyParams } from './format-gr
 import { abstractToSubgraph, type AbstractToSubgraphParams } from './abstract-to-subgraph.js';
 import { parameterizeGraphInputs } from './parameterize-graph-inputs.js';
 import { queryPcgexDocs, type QueryPcgexDocsParams } from './query-pcgex-docs.js';
+import { getPcgexKnowledgeDetail } from './pcgex-knowledge.js';
 import { initiateInfrastructureBrainstorm } from './initiate-infrastructure-brainstorm.js';
 import {
   catalogDiffHandler,
@@ -1264,7 +1280,7 @@ export const PCG_DESCRIPTORS: ToolDescriptor[] = [
   }),
   defineTool({
     name: 'hayba_get_pattern_template',
-    description: 'Return a small, annotated PCG/PCGEx graph template selected by authoring intent.',
+    description: 'Return a PCG/PCGEx graph template with read-only catalog preflight. Class and pin checks require live Unreal validation before building or cooking.',
     meta: {
       cost: 'low',
       effects: [],
@@ -1273,7 +1289,7 @@ export const PCG_DESCRIPTORS: ToolDescriptor[] = [
     },
     schema: patternTemplateSchema.shape,
     cost: 'low',
-    returns: '{id,use_when,nodes,edges} or {template:null,available}',
+    returns: '{id,use_when,nodes,edges,preflight:{catalog_version,scope,requiresLiveValidation,note,class_checks,pin_checks,edge_checks:[{status,type_compatibility,...edge}]}} or {template:null,available}',
     handler: async (params) => {
       const result = await patternTemplateHandler(params);
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
@@ -1395,12 +1411,12 @@ export const PCG_DESCRIPTORS: ToolDescriptor[] = [
       not_when: 'the registry is current - this rebuilds it from scratch',
     },
     schema: {
-      pluginSourcePath: z.string().optional().describe('Path to PCGExtendedToolkit/Source/ directory'),
+      pluginSourcePath: z.string().optional().describe('Path to PCGExtendedToolkit/Source/ directory; required unless HAYBA_PCGEX_SOURCE is set'),
       outputDbPath: z.string().optional().describe('Output SQLite DB path (default: Resources/pcgex_registry.db)'),
       forceRescan: z.boolean().optional().describe('Force re-scan even if DB exists'),
     },
     cost: 'high',
-    returns: '{ok, nodes, pins, properties, db_path}',
+    returns: '{nodesFound, dbPath, catalogPath?, durationMs, errors}; missing or invalid source leaves the DB untouched',
     handler: async (params) => {
       const result = await scrapeNodeRegistry(params as unknown as ScrapeNodeRegistryParams);
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
@@ -1552,7 +1568,7 @@ export const PCG_DESCRIPTORS: ToolDescriptor[] = [
   }),
   defineTool({
     name: 'hayba_query_pcgex_docs',
-    description: 'Search the PCGEx documentation for a node or concept.',
+    description: 'Search local PCGExKnowledge documentation for a node or concept, falling back to the Hayba catalog and registry.',
     meta: {
       cost: 'low',
       effects: [],
@@ -1568,11 +1584,20 @@ export const PCG_DESCRIPTORS: ToolDescriptor[] = [
         .describe('Include up to 80 lines from the header file'),
     },
     cost: 'low',
-    returns: '{results:[{title,excerpt,ref}]}',
+    returns: '{available,results:[{id,name,kind,classification,placeableInPcgGraph,purpose,source,documentedPluginVersion}]} or legacy catalog results with matching knowledge metadata when available',
     handler: async (params) => {
       const result = await queryPcgexDocs(params as unknown as QueryPcgexDocsParams);
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     },
+  }),
+  defineTool({
+    name: 'hayba_get_pcgex_knowledge_detail',
+    description: 'Read a PCGExKnowledge node, provider, asset, struct, or concept by exact ID from an optional local bundle. Documentation is a versioned snapshot, not installed UE truth.',
+    meta: { cost: 'low', effects: [], when: 'a PCGExKnowledge search result needs pins, settings, warnings, inherited references, or concept prose', not_when: 'you need the installed Unreal plugin state; use UE reflection' },
+    schema: { id: z.string().min(1).max(500).describe('Exact C++ class ID, alias ID, concept ID, or plugin:concept ID') },
+    cost: 'low',
+    returns: '{available,found,kind,id,classification,placeableInPcgGraph,pins,settings,inherits,references,sourceHash,sourceStale,documentedPluginVersion}',
+    handler: async ({ id }) => ({ content: [{ type: 'text', text: JSON.stringify(getPcgexKnowledgeDetail(id), null, 2) }] }),
   }),
   defineTool({
     name: 'hayba_initiate_infrastructure_brainstorm',
@@ -1823,6 +1848,38 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
       class_filter: z.string().optional().describe('Exact class name filter'),
       tag: z.string().optional().describe('Tag filter'),
     },
+  },
+  {
+    name: 'world_budget_snapshot',
+    description:
+      'Read-only structural evidence for currently loaded editor actors or a folder path and descendants aggregated across all loaded Outliner roots. Same-path folders in separate roots are combined. Counts loaded actors, classes, folder paths, and ISM/HISM instances; reports unknown unloaded World Partition/PCG coverage. Optional user targets compare counts for that stated aggregate only. This does not establish runtime memory, streaming, NPC, frame-time, or texel-density fitness.',
+    meta: worldBudgetSnapshotMeta,
+    handler: worldBudgetSnapshotHandler,
+    cost: 'low',
+    returns: '{world,folder_scope,coverage:{scope,folder_scope_kind,folder_identity,scan_complete,world_partition_enabled,unloaded_world_partition_actors,unloaded_pcg_generated_instances},measured_structure:{loaded_actor_count,loaded_ism_hism_instance_count,classes,folders,folder_rows_scope},user_structural_targets,production_performance_verdict}',
+    schema: {
+      folder: z.string().max(1024).optional().describe('Folder path aggregate across loaded roots; includes descendants'),
+      max_loaded_actors: z.number().int().min(0).max(100_000_000).optional(),
+      max_loaded_ism_instances: z.number().int().min(0).max(100_000_000).optional(),
+    },
+  },
+  {
+    name: 'world_semantic_snapshot',
+    description: 'Page through the loaded editor world as linked authored sources and derived spatial clusters. Overview reports coverage and table counts; nodes, clusters, membership, and optional surface samples are bounded pages. Pass expected_scan_id between pages to refuse a changed scan. No visual-quality or production-performance verdict.',
+    meta: worldSemanticSnapshotMeta,
+    handler: worldSemanticSnapshotHandler,
+    cost: 'medium',
+    returns: '{scan_id,section,offset,limit,total_items,next_offset,totals,coverage,originCm,boundsCm,items}',
+    schema: worldSemanticSnapshotSchema.shape,
+  },
+  {
+    name: 'world_compare_snapshots',
+    description: 'Compare two caller-supplied loaded-editor world budget snapshots under one declared protocol, with optional paired completed PIE proxy captures. Matching complete scans yield structural deltas and caller-supplied cap headroom; incomplete scans retain observed counts but withhold deltas and verdicts. PIE proxy deltas require compatible captures and full requested samples for each metric. The caller protocol is not independently verified; no production performance or design score is inferred.',
+    meta: worldCompareSnapshotsMeta,
+    handler: worldCompareSnapshotsHandler,
+    cost: 'low',
+    returns: '{scope,evidence,measured_structure,user_structural_caps,pie_proxy_capture?,unsupported}',
+    schema: worldCompareSnapshotsSchema.shape,
   },
   {
     name: 'actor_delete',
@@ -2487,8 +2544,8 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
     returns: '{path, name, parent_class, root?}',
     niche: UI,
     schema: {
-      path: z.string().min(1).describe('UE content package directory, e.g. "/Game/Aphrosia/UI"'),
-      name: z.string().min(1).describe('Asset name, e.g. "WBP_StartScreen"'),
+      path: z.string().min(1).describe('UE content package directory, e.g. "/Game/LanternPuzzle/UI"'),
+      name: z.string().min(1).describe('Asset name, e.g. "WBP_PuzzlePanel"'),
       parent_class: z
         .string()
         .optional()
@@ -3053,6 +3110,26 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
   // Consequence worth knowing: the world advances BETWEEN calls, not during
   // them. Look at the result, then act again.
   {
+    name: 'editor_pie_capture_start',
+    description: 'Start a bounded asynchronous capture of observed editor ticker intervals, whole-editor thread timing, and process physical memory during an already-running PIE session. Returns a capture_id immediately; poll editor_pie_capture_get. Ticker intervals are a whole-editor proxy and the result gives no performance verdict.',
+    meta: pieCaptureStartMeta,
+    handler: pieCaptureStartHandler,
+    cost: 'low',
+    returns: '{capture_id,status,frames_seen,sample_frames_requested,sample_frames_collected,timing_scope,memory_scope}',
+    niche: PIE,
+    schema: pieCaptureStartSchema.shape,
+  },
+  {
+    name: 'editor_pie_capture_get',
+    description: 'Read progress or the final whole-editor timing summary for a PIE capture. Reports aborted status if PIE stops or the selected world changes. If the editor becomes unsafe, the safety gate refuses this command, so an internal abort cannot be retrieved. GPU time, real WP cells, and NPC AI cost remain explicitly unknown.',
+    meta: pieCaptureGetMeta,
+    handler: pieCaptureGetHandler,
+    cost: 'low',
+    returns: '{capture_id,status,abort_reason?,frames_seen,sample_frames_collected,samples_truncated,editor_ticker_interval_ms,editor_game_thread_ms,editor_render_thread_ms,process_used_physical_mb,gpu_time,real_wp_cell_count,npc_ai_cost,performance_verdict}',
+    niche: PIE,
+    schema: pieCaptureGetSchema.shape,
+  },
+  {
     name: 'editor_pie_actor_list',
     description:
       'WHAT EXISTS IN THE RUNNING WORLD: paginated runtime actors from the selected PIE client/server, with exact path, class and transform. USE_WHEN: finding roads, controllers, interactable actors or spawned state while PIE runs. NOT_WHEN: querying the editor MainMenu world (actor_list). Use the returned actor_path for unambiguous follow-up calls.',
@@ -3084,6 +3161,16 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
     returns: '{world,available_worlds,player_index,target,target_click_ready,target_click_status,viewport:{x,y,width,height,projected,in_viewport},absolute:{available,geometry_available,x?,y?,coordinate_space},slate_hit:{tested,world_click_clear,leaf_type?},visibility_hit:{tested,blocking_hit,actor_path?,component_path?,verdict}}',
     niche: PIE,
     schema: pieProjectWorldSchema.shape,
+  },
+  {
+    name: 'editor_pie_sightlines',
+    description: 'Observe collision sightlines in live PIE. Tests 1-32 explicit eye positions against one target point with one ECC_Visibility trace per sample (maximum 100 m each). Returns clear, blocked with first blocker, or unknown, plus clear/tested ratio. This is a collision sightline proxy, not rendered visibility, walkability, World Partition residency, or performance. Read-only; multiple live PIE worlds require pie_instance.',
+    meta: pieSightlinesMeta,
+    handler: pieSightlinesHandler,
+    cost: 'low',
+    returns: '{world,observed_at_utc,target_location,channel,interpretation,samples:[{index,eye_position,distance_cm,status,first_blocker?}],clear_count,blocked_count,unknown_count,tested_count,tested_point_ratio,clear_ratio_of_tested:number|null}',
+    niche: PIE,
+    schema: pieSightlinesSchema.shape,
   },
   {
     name: 'editor_pie_click_actor',
@@ -3312,61 +3399,13 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
     schema: renderCameraSchema.shape,
   },
 
-  // ── Fab connector domain ────────────────────────────────────────────────
-  {
-    name: 'hayba_fab_login_status',
-    description: 'Check whether the user is currently logged into Fab through the UE editor.',
-    meta: fabLoginStatusMeta,
-    handler: async (args, _session) => handleFabLoginStatus(args as any),
-    cost: 'low',
-    returns: '{logged_in:bool, user?:string}',
-    schema: {},
-  },
-  {
-    name: 'hayba_fab_library_list',
-    description: "List a page of the user's Fab library (assets they own).",
-    meta: fabLibraryListMeta,
-    handler: async (args, _session) => handleFabLibraryList(args as any),
-    cost: 'medium',
-    returns: '{assets:[{id,title,type}], next_cursor?}',
-    schema: {
-      count: z.number().int().min(1).max(100).optional().describe('Number of results per page (default 20).'),
-      page: z.string().optional().describe('Pagination cursor from previous call.'),
-    },
-  },
-  {
-    name: 'hayba_fab_marketplace_search',
-    description: 'Search the public Fab marketplace for assets matching a query.',
-    meta: fabMarketplaceSearchMeta,
-    handler: async (args, _session) => handleFabMarketplaceSearch(args as any),
-    cost: 'medium',
-    returns: '{assets:[{id,title,type,price}], next_cursor?}',
-    schema: {
-      query: z.string().min(1).describe('Search query string.'),
-      type: z.string().optional().describe('Filter by asset type (e.g. "Material", "StaticMesh").'),
-      page: z.string().optional().describe('Pagination cursor from previous call.'),
-    },
-  },
-  {
-    name: 'hayba_fab_download',
-    description: 'Download a Fab asset into the active UE project.',
-    meta: fabDownloadMeta,
-    handler: async (args, _session) => handleFabDownload(args as any),
-    cost: 'high',
-    returns: '{ok, import_path}',
-    schema: {
-      asset_id: z.string().min(1).describe('Fab asset identifier.'),
-      download_url: z.string().url().describe('Signed download URL from library_list / search result item.'),
-      target_dir: z
-        .string()
-        .optional()
-        .describe('Project content path, e.g. /Game/Fab/MyAsset. Defaults to /Game/Fab/<asset_id>.'),
-      wait: z
-        .boolean()
-        .optional()
-        .describe('If true, blocks until download completes (up to 10min cap on the C++ side). Default true.'),
-    },
-  },
+  // The Fab connector domain was removed. Its four tools sent fab_* commands
+  // that no plugin has ever declared -- they were written against an
+  // editor-side integration that was never built, so every call answered
+  // "unknown command", which reads as a stale plugin rather than a missing
+  // feature. Download Fab content through the Epic Games Launcher or the
+  // in-editor Fab plugin, then find it with hayba_asset_search /
+  // hayba_asset_browse.
 
   // ── Asset-source connectors (Poly Haven / ambientCG / Sketchfab) ────────
   {
@@ -3489,11 +3528,12 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
   {
     name: 'editor_get_state',
     description:
-      'One-shot consolidated native editor status: current map, PIE/play state, selected-actor count, and dirty (unsaved) package list. The master gating probe before any action loop.',
+      'One-shot consolidated native editor status: current map, who owns PIE (pie: none | user | agent:<owner>) and its phase, selected-actor count, Live Coding / shader / save activity, asset builds in progress, editor health, and the dirty (unsaved) package list (include_dirty:false skips that walk). The master gating probe before any action loop; after a pie_active refusal, poll it until pie is "none".',
     meta: editorGetStateMeta,
     handler: editorGetStateHandler,
     cost: 'low',
-    returns: '{ok, map, pie_running, selection_count, dirty_packages[], dirty_count}',
+    returns:
+      '{ok, map, selection_count, caller_owner, pie, pie_running, pie_phase, pie_since_s, pie_simulating, compiling, shader_jobs, saving, building[], editor_unsafe, python_unhealthy, health{}, dirty_packages[]?, dirty_count?, dirty_packages_skipped?}',
     schema: editorGetStateSchema.shape,
   },
   {
@@ -3712,6 +3752,8 @@ const PYTHON_SCRIPT_FIELD_DESCRIPTION =
 export const STANDARD_DESCRIPTORS: ToolDescriptor[] = [
   ...HANDWRITTEN_STANDARD_DESCRIPTORS,
   ...AUDIO_DESCRIPTORS,
+  ...LEASE_DESCRIPTORS,
+  ...BATCH_DESCRIPTORS,
   ...VALIDATOR_DESCRIPTORS,
   ...PLUMB_DESCRIPTORS,
   ...PCG_DESCRIPTORS,
@@ -3720,6 +3762,8 @@ export const STANDARD_DESCRIPTORS: ToolDescriptor[] = [
       [
         ...HANDWRITTEN_STANDARD_DESCRIPTORS,
         ...AUDIO_DESCRIPTORS,
+        ...LEASE_DESCRIPTORS,
+        ...BATCH_DESCRIPTORS,
         ...VALIDATOR_DESCRIPTORS,
         ...PLUMB_DESCRIPTORS,
         ...PCG_DESCRIPTORS,
@@ -3786,6 +3830,7 @@ export const CODE_MODE_DESCRIPTORS: ToolDescriptor[] = [
         .describe(
           'Deprecated compatibility field; accepted but always ineffective. Embedded python_run permanently refuses Tier 3 host filesystem, subprocess, and network access. Use typed brokered tools (#412/#415).',
         ),
+      ...pyExecutionFields,
     },
     wireSchema: {
       script: z.string().optional().describe(PYTHON_SCRIPT_FIELD_DESCRIPTION),
@@ -3796,9 +3841,10 @@ export const CODE_MODE_DESCRIPTORS: ToolDescriptor[] = [
         .describe(
           'Deprecated compatibility field; accepted but always ineffective. Embedded python_run permanently refuses Tier 3 host filesystem, subprocess, and network access. Use typed brokered tools (#412/#415).',
         ),
+      ...pyExecutionFields,
     },
     cost: 'high',
-    returns: '{ok, tier, stdout, stderr}',
+    returns: '{ok, tier, deadline_s, stdout, stderr}',
     handler: async (params, session) => pythonRunHandler(params as Record<string, unknown>, session),
   }),
 ];
@@ -3908,6 +3954,7 @@ export async function registerTools(
     // descriptors straight into the captured map; registration is no longer
     // executed for its side effects merely to discover what would register.
     const captured = captureStaticToolCatalogue(session);
+    if (settings.externalRouteAdvice !== 'off') registerSuggestRoute(server, captured, settings.externalRouteAdvice);
     installToolHooks();
 
     // Now register meta-tools + alwaysLoadPacks. Awaited so the caller can
@@ -3920,6 +3967,10 @@ export async function registerTools(
 
   for (const descriptor of CODE_MODE_DESCRIPTORS) {
     registerTool(server, session, descriptor);
+  }
+
+  if (settings.externalRouteAdvice !== 'off') {
+    registerSuggestRoute(server, captureStaticToolCatalogue(session), settings.externalRouteAdvice);
   }
 
   // Code Mode keeps the native surface small. The descriptors and signatures
@@ -3969,7 +4020,6 @@ export function inferDir(name: string): string | null {
   if (name.startsWith('material_')) return 'material';
   if (name.startsWith('memory_')) return 'memory';
   if (name.startsWith('ui_')) return 'ui';
-  if (name.startsWith('hayba_fab_')) return 'fab';
   if (name.startsWith('hayba_polyhaven_')) return 'asset-sources';
   if (name.startsWith('hayba_ambientcg_')) return 'asset-sources';
   if (name.startsWith('hayba_sketchfab_')) return 'asset-sources';

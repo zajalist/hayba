@@ -216,6 +216,20 @@ describe('chat server Pro loop', () => {
     await s.frames;
   });
 
+  it('sends DeepSeek BYOK to the Brain without a client-chosen endpoint', async () => {
+    const brain = new FakeBrain();
+    start(brainConnector(brain));
+    await post('/chat/config', { provider: 'deepseek', model: 'deepseek-flash', api_key: 'synthetic-deepseek-key' });
+    const s = await stream({ prompt: 'hi', loop: 'pro', llm: 'byok' });
+    await waitFor(() => brain.sentTypes().includes('turn'));
+    expect(brain.sock.sent[0]).toMatchObject({
+      type: 'hello', llm: { mode: 'byok', provider: 'deepseek', model: 'deepseek-flash', api_key: 'synthetic-deepseek-key' },
+    });
+    expect(brain.sock.sent[0].llm).not.toHaveProperty('base_url');
+    brain.finishTurn('a1');
+    await s.frames;
+  });
+
   it('rejects an unknown loop value', async () => {
     start(brainConnector(new FakeBrain()));
     const res = await post('/chat/stream', { prompt: 'hi', loop: 'turbo' });

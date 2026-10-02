@@ -1,6 +1,7 @@
 #pragma once
 #include "CoreMinimal.h"
 #include "Interfaces/IHttpRequest.h"
+#include "HaybaMCPChatConfigGate.h"
 
 class FJsonObject;
 
@@ -29,7 +30,8 @@ class FJsonObject;
 //   tool_call    {id,name,input}               -> OnToolCall
 //   tool_result  {id,name,result,isError?}     -> OnToolResult
 //   plan_request {id,name,input,source,hint?,args_hash} -> OnPlanRequest
-//   done         {reason,assistant_text,partial_text,cancelled,...} -> OnDone
+//   done         {reason,assistant_text,partial_text,cancelled,
+//                 pending_warning_ids?,warning_reviews?,...} -> OnDone
 //   error        {error,kind?}                 -> OnError
 //   `: ping` heartbeat comment lines           -> ignored
 //
@@ -70,6 +72,15 @@ struct FHaybaChatDone
 {
 	FString Reason;
 	FString AssistantText;
+	/** Validated warning identifiers only (at most 64, each at most 80 ASCII chars). */
+	TArray<FString> PendingWarningIds;
+	bool bPendingWarningIdsTruncated = false;
+	bool bWarningOverflow = false;
+	/** Counts only validated warning-review records. Reasons remain server-side. */
+	int32 PendingWarningReviewCount = 0;
+	int32 AcknowledgedWarningReviewCount = 0;
+	int32 DeferredWarningReviewCount = 0;
+	bool bWarningReviewsTruncated = false;
 	bool bCancelled = false;
 };
 
@@ -96,11 +107,18 @@ public:
 	/**
 	 * Push provider/key config to the sidecar (once) then start a streaming turn
 	 * with the given user prompt. Provider/model/baseURL/key are resolved from
-	 * FHaybaMCPSettings (selected provider + DPAPI vault). Safe to call again for
-	 * a follow-up turn on the same session; the config push is skipped after the
-	 * first success.
+	 * FHaybaMCPSettings (selected provider + DPAPI vault). Each new turn refreshes
+	 * the sidecar config so edits saved in Settings take effect without reopening
+	 * the chat. A parked approval resumes under its original turn configuration.
 	 */
 	void SendPrompt(const FString& UserPrompt, const FString& WorkMode = TEXT("production"));
+
+	/** Use the UI conversation id before the first send so reopening a saved
+	 *  transcript can reconnect while the sidecar still holds that session. */
+	void SetSessionId(const FString& InSessionId)
+	{
+		if (!bStreaming && SessionId.IsEmpty()) SessionId = InSessionId;
+	}
 
 	/**
 	 * Plan-mode resume: after the user Approves a gated action in the Plan tab,
@@ -201,8 +219,9 @@ private:
 
 	// State
 	FString SessionId;
+	TSharedPtr<IHttpRequest, ESPMode::ThreadSafe> ConfigRequest;
 	TSharedPtr<IHttpRequest, ESPMode::ThreadSafe> StreamRequest;
-	bool bConfigDone = false;
+	FHaybaMCPChatConfigGate ConfigGate;
 	bool bStreaming = false;
 	bool bTerminalEmitted = false;   // guards against double done (local + server)
 	bool bCurrentTurnPro = false;    // the in-flight/last turn asked for loop=pro

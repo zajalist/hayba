@@ -270,9 +270,10 @@ FHaybaHandlerResult FHaybaMCPWorldPartitionHandler::WpLoadCell(const TSharedPtr<
     // over cells, gets ok every time, and concludes the world is loaded. It
     // never loads anything, so it now says so.
     return FHaybaHandlerResult::Err(TEXT(
-        "wp_load_cell: not implemented — World Partition cell loading is interactive-only in the editor. "
-        "There is no programmatic path here yet; load the region in the editor, or use wp_get_cells to see "
-        "what exists without loading it."));
+        "wp_load_cell: not implemented. Load World Partition regions with an editor_batch step instead: "
+        "{cmd:\"wp_region_load\", params:{bounds:[minX,minY,maxX,maxY]}} under a lease on the world or a "
+        "containing wp-region. The batch owns the loader adapter and releases the region by the time it ends. "
+        "wp_get_cells shows what exists without loading it."));
 }
 
 FHaybaHandlerResult FHaybaMCPWorldPartitionHandler::WpGetStreamingState(const TSharedPtr<FJsonObject>& P)

@@ -37,7 +37,7 @@ bool FHaybaWorkspaceVisualReview::RunTest(const FString&)
     if (GUsingNullRHI) { AddInfo(TEXT("Visual capture skipped under NullRHI.")); return true; }
     const FString Dir = FPaths::ProjectSavedDir() / TEXT("Screenshots/HaybaReview");
     IFileManager::Get().MakeDirectory(*Dir, true);
-    for (const int32 Width : { 1000, 460 })
+    for (const int32 Width : { 1000, 460, 360 })
     {
         FHaybaMCPModule Module;
         TSharedRef<SHaybaMCPMainPanel> Panel = SNew(SHaybaMCPMainPanel, &Module);

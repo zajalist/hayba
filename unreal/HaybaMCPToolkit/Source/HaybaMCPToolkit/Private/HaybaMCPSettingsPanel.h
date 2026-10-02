@@ -42,6 +42,21 @@ private:
     TSharedPtr<STextBlock>                   KeyStatusText;     // "Stored: ••••1234" / keyless badge
     // Whether the user typed a new key this session (only then do we write the vault).
     bool bKeyEdited = false;
+    bool bKeyDiscardedOnProviderChange = false;
+    FString DiscardedKeyProviderLabel;
+    bool bUrlEdited = false;
+    bool bModelEdited = false;
+    bool bApplyingProviderDefaults = false;
+
+    struct FPendingToggle
+    {
+        bool Value;
+        bool SavedValue;
+        TFunction<void(bool)> Apply;
+        FPendingToggle(bool InValue, TFunction<void(bool)> InApply)
+            : Value(InValue), SavedValue(InValue), Apply(MoveTemp(InApply)) {}
+    };
+    TArray<TSharedRef<FPendingToggle>> PendingToggles;
 
     // Optional response-guidance level. Strongly typed so adding a future
     // level cannot silently map to the wrong display label.

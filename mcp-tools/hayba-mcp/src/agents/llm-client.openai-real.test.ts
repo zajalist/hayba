@@ -189,6 +189,24 @@ afterAll(async () => {
 });
 
 describe('OpenAI 7 published client compatibility', () => {
+  it('uses DeepSeek preset through the real SDK streaming and tool-call parser', async () => {
+    const client = createLLMClient({
+      provider: 'deepseek', baseURL: `${origin}/v1`, apiKey: 'synthetic-deepseek-key',
+    });
+    const events: LLMStreamEvent[] = [];
+    for await (const event of client.stream(params())) events.push(event);
+    const request = seen.find((entry) => entry.body.model === 'deepseek-flash');
+    expect(request).toMatchObject({
+      url: '/v1/chat/completions', authorization: 'Bearer synthetic-deepseek-key',
+      body: { model: 'deepseek-flash', stream: true, stream_options: { include_usage: true } },
+    });
+    expect(events.find((event) => event.type === 'tool_call')).toEqual({
+      type: 'tool_call', call: { id: 'call_local', name: 'actor_list', input: { limit: 3 } },
+    });
+    expect(events.at(-1)).toMatchObject({ type: 'done', response: { stopReason: 'tool_use' } });
+    expect(escapedURLs).toEqual([]);
+  });
+
   it('uses the lazy real constructor for complete(), canonicalizes baseURL, and reports usage', async () => {
     const apiKey = 'sk-local-real-client-1234567890';
     const client = createLLMClient({

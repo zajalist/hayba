@@ -8,16 +8,44 @@
 // reach a stale/destroyed callback — most often a Python-registered editor
 // delegate whose target was garbage-collected — and dereference freed memory.
 // That is a C-level access violation, NOT a C++/Python exception, so try/catch
-// cannot stop it: it takes the whole editor down. RunGuarded wraps the call in
-// Windows SEH and converts such a fault into a reported flag, keeping the
-// editor alive.
+// cannot stop it: it takes the whole editor down. RunGuardedAt wraps the call in
+// Windows SEH, converts such a fault into a reported flag, and records it in
+// FHaybaEditorHealth: the editor is then sticky-unsafe until it restarts
+// (ADR-0011). Catching a fault does not make the process healthy.
 //
 // The thunk takes a void* context so callers can pass a CAPTURELESS lambda
 // (which converts to a function pointer). TFunctionRef cannot be used: MSVC
 // C2712 forbids C++ object unwinding across __try, and even a TFunctionRef
 // parameter trips it on the 14.50 toolchain. Non-Windows runs the thunk directly.
+
+/**
+ * Where a caught native fault happened (ADR-0011). Global scope on purpose:
+ * the source form `RunGuardedAt(EHaybaFaultSite::Python` is what the
+ * editor-health and save-site contract tests match (review item R-20).
+ */
+enum class EHaybaFaultSite : uint8
+{
+    /** The router's guard around IHaybaMCPHandler::Handle. */
+    Dispatch,
+    /** python_run's guard around each FPythonCommandEx. */
+    Python,
+    /** A handler guarding its own crash-prone call (HaybaSeh::RunGuarded). */
+    HandlerInner,
+    /** Reserved for test-only callers; classified like HandlerInner. */
+    TestInjection,
+};
+
 namespace HaybaSeh
 {
+    /**
+     * Runs Thunk(Context) under the toolkit's only __except. On a caught fault
+     * it repairs a stranded play-world switch, then records the fault (site,
+     * exception code, repair) in FHaybaEditorHealth, in ordinary code after
+     * the guard has returned.
+     */
+    void RunGuardedAt(EHaybaFaultSite Site, void (*Thunk)(void*), void* Context, bool& bOutCrashed);
+
+    /** RunGuardedAt(EHaybaFaultSite::HandlerInner, …): a handler guarding its own crash-prone call. */
     void RunGuarded(void (*Thunk)(void*), void* Context, bool& bOutCrashed);
 
     // ---- Editor world-switch repair after a swallowed structured exception ----
@@ -44,8 +72,7 @@ namespace HaybaSeh
     //     check(CurrentGWorld != PlayWorld || bIsSimulatingInEditor)
     //     [EditorEngine.cpp:1758]
     //   i.e. one frame after the guard logged that the editor was kept alive.
-    //   Observed twice on 2026-08-11 driving Aphrosia, via
-    //   editor_run_console_command -> AphrosiaPlayerController.HandleMapModeChanged.
+    //   Observed during live PIE commands that entered game Blueprint code.
     //
     // So the guard must put the world state back itself. Snapshot it before the
     // guarded call; if the fault left it drifted, undo the engine's switch with

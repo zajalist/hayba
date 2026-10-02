@@ -42,12 +42,14 @@
 
 import type { Express, Request, Response } from 'express';
 import type { AddressInfo } from 'node:net';
+import { createHash } from 'node:crypto';
 import { createLLMClient, type LLMMessage } from '../agents/llm-client.js';
 import { getProvider } from '../agents/providers.js';
 import {
   runAgentLoop as runAgentLoopStreaming,
   adaptToLegacy,
   argsHash,
+  WarningReviewLedger,
   buildToolCatalog,
   type AgentEvent,
   type ApprovedCall,
@@ -67,6 +69,13 @@ import { jsonObjectBody, stringQuery } from '../http/express-boundary.js';
 import { isLocalRequest, isLoopback } from '../http/loopback-guard.js';
 import { SessionStore, isValidSessionId, type SavedActivity, type SavedSession } from './session-store.js';
 import type { AgentStreamEvent } from './activity-events.js';
+import {
+  chatSessionDir,
+  loadChatState,
+  pruneChatContexts,
+  saveChatContext,
+  validChatSessionId,
+} from './session-store.js';
 
 // ---------------------------------------------------------------------------
 // Localhost enforcement
@@ -178,6 +187,7 @@ function approvalFor(call: OriginatedCall | undefined, loop: TurnLoop): Approved
 
 interface ChatSession {
   id: string;
+  contextDir: string;
   abortController: AbortController;
   seq: number;
   buffer: BufferedFrame[];
@@ -195,8 +205,15 @@ interface ChatSession {
    * Honoured only by a turn on the same loop that raised it (`origin`).
    */
   approvedCall?: OriginatedCall;
+  /** Hash of the exact request that paused at the Plan-Mode gate. In memory only. */
+  requestFingerprint?: string;
+  approvedRequestFingerprint?: string;
   assistantText: string;
   toolTrace: ToolTraceEntry[];
+  warningLedger: WarningReviewLedger;
+  pendingWarningIds?: string[];
+  warningReviews?: ReturnType<WarningReviewLedger['snapshot']>['reviews'];
+  warningOverflow?: boolean;
   /** Epoch ms of the last activity on this session; drives TTL/LRU eviction. */
   lastActivity: number;
   /** Set once the current/last turn has ended (final done frame emitted). */
@@ -221,6 +238,28 @@ const SWEEP_INTERVAL_MS = 60_000;
 /** Hard cap on concurrent sessions; oldest inactive are LRU-evicted past this. */
 const MAX_SESSIONS = 64;
 const sessions = new Map<string, ChatSession>();
+/** A single unref'd timer prunes all directories registered in this process. */
+const contextDirs = new Set<string>();
+const CONTEXT_PRUNE_INTERVAL_MS = 60_000;
+let contextPruner: ReturnType<typeof setInterval> | null = null;
+
+function sweepChatContexts(now: number = Date.now()): void {
+  for (const dir of contextDirs) {
+    try {
+      pruneChatContexts(dir, now);
+    } catch {
+      // Live chat remains available; any write failure is reported to the turn.
+    }
+  }
+}
+
+function registerContextDir(dir: string): void {
+  contextDirs.add(dir);
+  sweepChatContexts();
+  if (contextPruner) return;
+  contextPruner = setInterval(() => sweepChatContexts(), CONTEXT_PRUNE_INTERVAL_MS);
+  contextPruner.unref?.();
+}
 
 // ---------------------------------------------------------------------------
 // Session eviction (I1): idle-TTL + LRU cap. Evicting an active session aborts
@@ -269,7 +308,7 @@ function dropBrain(session: ChatSession): Promise<void> {
 }
 
 /** Hosted providers Hayba Pro accepts a BYOK key for; anything else (local, custom) stays on Community. */
-const PRO_BYOK_PROVIDERS: ReadonlySet<string> = new Set(['anthropic', 'openai', 'groq', 'openrouter']);
+const PRO_BYOK_PROVIDERS: ReadonlySet<string> = new Set(['anthropic', 'openai', 'deepseek', 'groq', 'openrouter']);
 const CUSTOM_ENDPOINT_MESSAGE = "Custom endpoints aren't supported in Hayba Pro — use Community for local models";
 const NO_BYOK_KEY_MESSAGE = 'No API key configured for Bring-your-own-key. Add one in Settings or switch Hayba Pro to Hayba models.';
 
@@ -345,21 +384,24 @@ function newSessionId(): string {
   return `sess_${Date.now().toString(36)}_${sessionCounter}`;
 }
 
-function getOrCreateSession(id: string): ChatSession {
+function getOrCreateSession(id: string, contextDir: string): ChatSession {
   startSweeper();
   sweepSessions();
   let s = sessions.get(id);
   if (!s) {
+    const stored = loadChatState(contextDir, id);
     s = {
       id,
+      contextDir,
       abortController: new AbortController(),
       seq: 0,
       buffer: [],
-      messages: [],
+      messages: stored.messages,
       clients: new Set(),
       running: false,
       assistantText: '',
       toolTrace: [],
+      warningLedger: new WarningReviewLedger(stored.warnings),
       lastActivity: Date.now(),
       approvals: new LocalApprovals(),
     };
@@ -433,6 +475,23 @@ function normalizeMessages(body: { messages?: unknown; prompt?: unknown }): LLMM
   return null;
 }
 
+function requestFingerprint(body: {
+  messages?: unknown;
+  prompt?: unknown;
+  provider?: unknown;
+  model?: unknown;
+  archetype?: unknown;
+  archetype_filter?: unknown;
+  mode?: unknown;
+  loop?: unknown;
+  llm?: unknown;
+  permissions?: unknown;
+}): string {
+  const request = [body.messages, body.prompt, body.provider, body.model, body.archetype,
+    body.archetype_filter, body.mode, body.loop, body.llm, body.permissions];
+  return createHash('sha256').update(JSON.stringify(request)).digest('hex');
+}
+
 const DEFAULT_SYSTEM =
   'You are the Hayba in-editor copilot. You help build Unreal Engine worlds by ' +
   'calling Hayba tools. Prefer reads before writes; respect Plan Mode.';
@@ -462,6 +521,8 @@ function modeGuidance(mode: AgentWorkMode): string {
 export interface ChatRoutesOptions {
   /** Durable text and activity history. Defaults to Saved/HaybaMCP/sessions. */
   sessionStore?: SessionStore;
+  /** Override the per-user, project-keyed context directory (test seam). */
+  sessionDir?: string;
   /** Override the tool dispatcher (test seam). Defaults to full-coverage dispatch. */
   dispatchTool?: DispatchTool;
   /** Inject a client factory (test seam). Defaults to createLLMClient. */
@@ -556,6 +617,8 @@ export function registerChatRoutes(app: Express, options: ChatRoutesOptions = {}
       return res.status(500).json({ error: 'Unable to delete session' });
     }
   });
+  const contextDir = options.sessionDir ?? chatSessionDir();
+  registerContextDir(contextDir);
 
   // ── POST /chat/config ────────────────────────────────────────────────────
   app.post('/chat/config', (req: Request, res: Response) => {
@@ -631,6 +694,7 @@ export function registerChatRoutes(app: Express, options: ChatRoutesOptions = {}
       return res.status(409).json({ error: 'no pending plan request to approve' });
     }
     session.approvedCall = session.pendingPlanCall;
+    session.approvedRequestFingerprint = session.requestFingerprint;
     session.pendingPlanCall = undefined;
     // Resume = the C++ panel re-issues POST /chat/stream with the same
     // session_id; the stored transcript continues and ONLY this exact call
@@ -670,12 +734,35 @@ export function registerChatRoutes(app: Express, options: ChatRoutesOptions = {}
     }
     const mode: AgentWorkMode = body.mode ?? 'production';
 
+    if (body.session_id !== undefined && !validChatSessionId(body.session_id)) {
+      return res.status(400).json({ error: 'invalid session_id' });
+    }
+
     // ── Branch on resume vs new turn BEFORE any SSE headers are flushed (I3) ──
     // Emitting a 409 after flushHeaders() would append JSON mid-stream (the 200 +
     // SSE headers are already on the wire). So decide the disposition first, and
     // only flush SSE headers once we're committed to streaming.
     const existing = body.session_id ? sessions.get(body.session_id) : undefined;
     const isResume = existing !== undefined && typeof body.last_seq === 'number';
+    if (!isResume && existing?.approvedCall) {
+      const turnLoop = body.loop ?? 'community';
+      if (existing.approvedCall.origin !== turnLoop) {
+        // Main's loop-bound approval cannot cross Community/Pro. A new turn
+        // on the other loop simply abandons it.
+        existing.approvedCall = undefined;
+        existing.approvedRequestFingerprint = undefined;
+      } else if (turnLoop === 'community' && existing.approvedRequestFingerprint !== requestFingerprint(body)) {
+        // Community restarts its local model turn, so bind that retry to the
+        // exact paused request. A Pro turn resumes in the already-open brain
+        // session and legitimately sends an empty prompt instead.
+        existing.approvedCall = undefined;
+        existing.approvedRequestFingerprint = undefined;
+        return res.status(409).json({ error: 'approved plan request changed; submit the new prompt again' });
+      }
+    }
+    if (!existing && body.last_seq !== undefined) {
+      return res.status(409).json({ error: 'live stream unavailable; start a new turn without last_seq' });
+    }
 
     // Reject a second concurrent NEW turn on a running session with a real 409.
     // (Resumes are allowed to attach to a running session — that is the point.)
@@ -746,21 +833,29 @@ export function registerChatRoutes(app: Express, options: ChatRoutesOptions = {}
     }
 
     // ── NEW TURN path ────────────────────────────────────────────────────────
-    const session = getOrCreateSession(sessionId);
-    if (!session.messages.length && saved) session.messages = saved.messages;
+    const session = getOrCreateSession(sessionId, contextDir);
+    // The explicit session-history store is authoritative when present;
+    // bounded context supplies restart recovery when it has no record.
+    if (saved?.messages.length) session.messages = saved.messages;
     touch(session);
     // Fresh AbortController per turn (a prior cancel leaves an aborted one).
     session.abortController = new AbortController();
     session.running = true;
     session.assistantText = '';
     session.toolTrace = [];
+    session.pendingWarningIds = undefined;
+    session.warningReviews = undefined;
+    session.warningOverflow = undefined;
     session.clients.add(res);
 
-    // Resolve messages: explicit body wins; else reuse stored transcript
-    // (post-approval resume) if present.
-    let messages = normalizeMessages(body);
-    if (!Array.isArray(body.messages) && messages && session.messages.length) {
-      messages = [...session.messages, ...messages];
+    // Explicit transcript replaces context. A prompt extends it; a Plan-Mode
+    // approval replays the paused prompt without adding a duplicate user turn.
+    let messages = Array.isArray(body.messages) ? normalizeMessages(body) : null;
+    if (!messages && typeof body.prompt === 'string' && body.prompt.length > 0) {
+      messages =
+        session.approvedCall && session.messages.length > 0
+          ? session.messages
+          : [...session.messages, { role: 'user', content: body.prompt }];
     }
     if (!messages && session.messages.length > 0) messages = session.messages;
     if (!messages) {
@@ -771,6 +866,7 @@ export function registerChatRoutes(app: Express, options: ChatRoutesOptions = {}
       return res.end();
     }
     session.messages = messages;
+    session.requestFingerprint = requestFingerprint(body);
     try {
       // An explicit client transcript is authoritative, including edits and
       // deletions. Prompt-only callers already include restored history above.
@@ -944,6 +1040,7 @@ export function registerChatRoutes(app: Express, options: ChatRoutesOptions = {}
       cleanup();
       // Consume the one-shot call-bound approval so a later turn re-gates.
       session.approvedCall = undefined;
+      session.approvedRequestFingerprint = undefined;
     });
 
     return undefined;
@@ -1089,8 +1186,9 @@ async function runTurn(session: ChatSession, params: RunTurnParams): Promise<voi
           signal: params.signal,
           planMode: true, // honour Plan Mode; UE side is authoritative, TS side gated
           approvedCall: params.approvedCall,
+          warningLedger: session.warningLedger,
         });
-    for await (const legacy of adaptToLegacy(source, observe)) {
+    for await (const legacy of adaptToLegacy(source, observe, session.warningLedger)) {
       let ev = legacy;
       if (ev.type === 'error' && ev.kind === 'brain_unavailable') {
         brainLost = true;
@@ -1115,6 +1213,19 @@ async function runTurn(session: ChatSession, params: RunTurnParams): Promise<voi
       activity.status = 'failed';
       activity.reason = 'error';
     }
+  }
+
+  // A Pro turn cannot silently turn previously discovered local warnings into
+  // a clean completion. The ledger persists across both paths until review.
+  const warningState = session.warningLedger.snapshot();
+  session.pendingWarningIds = session.warningLedger.pendingIds();
+  session.warningReviews = warningState.reviews;
+  session.warningOverflow = warningState.overflow;
+  if (finalReason === 'end_turn' && session.pendingWarningIds.length) finalReason = 'warnings_unreviewed';
+  else if (finalReason === 'end_turn' && session.warningLedger.hasDeferred()) finalReason = 'reviewed_with_deferred';
+  if (activity && (finalReason === 'warnings_unreviewed' || finalReason === 'reviewed_with_deferred')) {
+    activity.status = 'failed';
+    activity.reason = finalReason;
   }
 
   try {
@@ -1146,12 +1257,30 @@ async function runTurn(session: ChatSession, params: RunTurnParams): Promise<voi
   // reported any (even on an aborted/error turn — partial usage still cost
   // real tokens and is worth surfacing).
   const usageExtra = usage ? { usage } : {};
+  let contextPersisted = true;
+  try {
+    saveChatContext(session.contextDir, session.id, session.messages, Date.now(), session.warningLedger.snapshot());
+  } catch {
+    contextPersisted = false;
+    emit(session, 'error', {
+      kind: 'persistence',
+      error: 'Chat context and warning review state could not be saved; they may be lost after the sidecar restarts.',
+    });
+  }
+  const contextExtra = contextPersisted ? {} : { context_persisted: false };
   if (finalReason === 'aborted') {
-    finalize(session, 'aborted', usageExtra);
+    finalize(session, 'aborted', { ...usageExtra, ...contextExtra });
   } else if (lastError && !finalReason) {
-    finalize(session, 'error', { error: lastError, ...usageExtra });
+    finalize(session, 'error', { error: lastError, ...usageExtra, ...contextExtra });
   } else {
-    finalize(session, finalReason ?? 'end_turn', { ...(lastError ? { error: lastError } : {}), ...usageExtra });
+    finalize(session, finalReason ?? 'end_turn', {
+      ...(lastError ? { error: lastError } : {}),
+      ...usageExtra,
+      ...contextExtra,
+      ...(session.pendingWarningIds?.length ? { pending_warning_ids: session.pendingWarningIds } : {}),
+      ...(session.warningReviews?.length ? { warning_reviews: session.warningReviews } : {}),
+      ...(session.warningOverflow ? { warning_overflow: true } : {}),
+    });
   }
 }
 
@@ -1212,6 +1341,9 @@ function forwardEvent(
     case 'done':
       setReason(ev.reason);
       setUsage(ev.usage);
+      session.pendingWarningIds = ev.pendingWarningIds;
+      session.warningReviews = ev.warningReviews;
+      session.warningOverflow = ev.warningOverflow;
       break;
     case 'error':
       setError({ error: ev.error, kind: ev.kind });
@@ -1237,11 +1369,26 @@ export function __resetChatState(): void {
     clearInterval(sweeper);
     sweeper = null;
   }
+  if (contextPruner) {
+    clearInterval(contextPruner);
+    contextPruner = null;
+  }
+  contextDirs.clear();
 }
 
 /** Test hook: run the idle-TTL sweep at a given wall-clock time. */
 export function __sweepSessions(now?: number): void {
   sweepSessions(now);
+}
+
+/** Test hook: run the periodic on-disk retention sweep at a given wall-clock time. */
+export function __sweepChatContexts(now?: number): void {
+  sweepChatContexts(now);
+}
+
+/** Test hook: the context pruner is a process-wide singleton. */
+export function __contextPrunerCount(): number {
+  return contextPruner ? 1 : 0;
 }
 
 /** Test hook: number of live sessions. */

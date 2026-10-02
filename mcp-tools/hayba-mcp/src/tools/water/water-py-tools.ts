@@ -277,6 +277,7 @@ export const waterCheckPluginDescriptor: PyToolDescriptor<typeof waterCheckPlugi
   returns: '{ok, enabled, version, water_subsystem_ready, plugin_present, classes, hint?, warnings[]}',
   schema: waterCheckPluginSchema.shape,
   meta: readMeta,
+  readOnly: true,
   buildScript: waterCheckPluginScript,
   timeoutMs: 30_000,
 };
@@ -340,6 +341,7 @@ export const waterBodyListDescriptor: PyToolDescriptor<typeof waterBodyListSchem
   returns: '{ok, enabled, bodies:[{path,class,label,zone,bounds,has_waves}], count, has_more, next_offset, warnings[]}',
   schema: waterBodyListSchema.shape,
   meta: readMeta,
+  readOnly: true,
   buildScript: waterBodyListScript,
   timeoutMs: 30_000,
 };
@@ -404,6 +406,7 @@ export const waterBodyInspectDescriptor: PyToolDescriptor<typeof waterBodyInspec
   returns: '{ok, enabled, path, class, component_valid, waves, materials, affects_landscape, zone, bounds, properties, warnings[]}',
   schema: waterBodyInspectSchema.shape,
   meta: readMeta,
+  readOnly: true,
   buildScript: waterBodyInspectScript,
   timeoutMs: 30_000,
 };
@@ -687,6 +690,7 @@ export const waterWavesInspectDescriptor: PyToolDescriptor<typeof waterWavesInsp
   returns: '{ok, enabled, path, generator, num_waves, min_wavelength, max_wavelength, steepness, seed, direction, asset?, warnings[]}',
   schema: waterWavesInspectSchema.shape,
   meta: readMeta,
+  readOnly: true,
   buildScript: waterWavesInspectScript,
   timeoutMs: 30_000,
 };
@@ -894,6 +898,7 @@ export const waterZoneInspectDescriptor: PyToolDescriptor<typeof waterZoneInspec
   returns: '{ok, enabled, zone_path, bounds, resolution, far_distance, covered_bodies[], orphaned_bodies[], warnings[]}',
   schema: waterZoneInspectSchema.shape,
   meta: readMeta,
+  readOnly: true,
   buildScript: waterZoneInspectScript,
   timeoutMs: 30_000,
 };
@@ -967,6 +972,7 @@ export const waterValidateDescriptor: PyToolDescriptor<typeof waterValidateSchem
   returns: '{ok, enabled, status, findings:[{rule,severity,body,detail,fix?}], error_count, warning_count, body_count, zone_count, warnings[]}',
   schema: waterValidateSchema.shape,
   meta: readMeta,
+  readOnly: true,
   buildScript: waterValidateScript,
   timeoutMs: 30_000,
 };

@@ -8,6 +8,7 @@ import {
   buildToolCatalog,
   isDestructiveToolName,
   argsHash,
+  WarningReviewLedger,
   type AgentEvent,
   type AgentLoopParams,
 } from './agent-loop.js';
@@ -355,6 +356,7 @@ describe('isDestructiveToolName', () => {
     expect(isDestructiveToolName('actor_delete')).toBe(true);
     expect(isDestructiveToolName('python_run')).toBe(true);
     expect(isDestructiveToolName('actor_set_properties')).toBe(true);
+    expect(isDestructiveToolName('actor_transform')).toBe(true);
     expect(isDestructiveToolName('material_create')).toBe(true);
     expect(isDestructiveToolName('actor_list')).toBe(false);
     expect(isDestructiveToolName('get_tool_signature')).toBe(false);
@@ -407,6 +409,170 @@ describe('runAgentLoop', () => {
     expect(events.at(-1)).toMatchObject({ type: 'plan_request', source: 'ue' });
     expect(events.some((e) => e.type === 'tool_result')).toBe(false);
   });
+  it('shows validator warning IDs to the model and marks an ignored warning pending', async () => {
+    const client = new FakeLLMClient([toolResponse('actor_list'), textResponse('Looks done')]);
+    const result = { content: [{ type: 'text', text: JSON.stringify({ validator: { warning_ids: ['ui_engine_default_font'] } }) }] };
+    const events = await collect(runAgentLoop(baseParams({ client, dispatchTool: async () => result })));
+    const secondTurn = JSON.stringify(client.seenMessages[1]);
+    expect(secondTurn).toContain('ui_engine_default_font');
+    expect(secondTurn).toContain('warning review required');
+    expect(client.offeredToolNames[1]).toContain('hayba_warning_review');
+    expect(events.at(-1)).toMatchObject({
+      type: 'done', reason: 'warnings_unreviewed', pendingWarningIds: ['ui_engine_default_font'],
+    });
+  });
+
+  it('records explicit acknowledgement without claiming the warning was resolved', async () => {
+    const client = new FakeLLMClient([
+      toolResponse('actor_list'),
+      toolResponse('hayba_warning_review', {
+        warning_id: 'ui_engine_default_font', disposition: 'acknowledged',
+        reason: 'Checked the affected widget and documented the font mismatch.',
+      }),
+      textResponse('Warning reviewed; font work remains.'),
+    ]);
+    const ledger = new WarningReviewLedger();
+    const result = { content: [{ type: 'text', text: JSON.stringify({ validator: { warning_ids: ['ui_engine_default_font'] } }) }] };
+    const events = await collect(runAgentLoop(baseParams({ client, warningLedger: ledger, dispatchTool: async () => result })));
+    expect(events.filter((ev) => ev.type === 'tool_result' && ev.name === 'hayba_warning_review'))
+      .toMatchObject([{ result: { ok: true, review_status: 'acknowledged', resolved: false } }]);
+    expect(events.at(-1)).toMatchObject({ type: 'done', reason: 'end_turn' });
+    expect(ledger.pendingIds()).toEqual([]);
+  });
+
+  it('reports deferred review as unresolved rather than clean completion', async () => {
+    const ledger = new WarningReviewLedger();
+    ledger.record(['ui_engine_default_font_0123456789ab']);
+    expect(ledger.review({ warning_id: 'ui_engine_default_font_0123456789ab', disposition: 'deferred',
+      reason: 'The widget is in a legacy screen; schedule visual revalidation.' })).toMatchObject({
+      ok: true, resolved: false,
+    });
+    const events = await collect(runAgentLoop(baseParams({ client: new FakeLLMClient([textResponse('Review deferred.')]), warningLedger: ledger })));
+    expect(events.at(-1)).toMatchObject({
+      type: 'done', reason: 'reviewed_with_deferred',
+      warningReviews: [{ status: 'deferred' }],
+    });
+    expect(ledger.snapshot().reviews[0]?.reason).toContain('schedule visual revalidation');
+  });
+
+  it('keeps an explicit overflow sentinel when more warnings arrive than fit', () => {
+    const ledger = new WarningReviewLedger();
+    const source = '1111111111111111';
+    ledger.record(Array.from({ length: 70 }, (_, n) => `warning_${n}`), source);
+    expect(ledger.snapshot().reviews).toHaveLength(63);
+    expect(ledger.pendingIds()).toContain('warning_overflow');
+    expect(ledger.review({ warning_id: 'warning_overflow', disposition: 'acknowledged', reason: 'reviewed all' }))
+      .toMatchObject({ ok: false });
+    expect(ledger.reconcileCompleteValidation(source, 1)).toBe(false);
+    expect(ledger.review({ warning_id: 'warning_overflow', disposition: 'acknowledged', reason: 'reviewed all' }))
+      .toMatchObject({ ok: false });
+    expect(ledger.reconcileCompleteValidation(source, 0)).toBe(true);
+    expect(ledger.pendingIds()).toContain('warning_overflow'); // evidence alone never silently clears it
+    ledger.record(['new_warning'], source); // a later finding invalidates stale zero-warning evidence
+    expect(ledger.review({ warning_id: 'warning_overflow', disposition: 'acknowledged', reason: 'stale pass' }))
+      .toMatchObject({ ok: false });
+    expect(ledger.reconcileCompleteValidation(source, 0)).toBe(true);
+    expect(ledger.review({ warning_id: 'warning_overflow', disposition: 'acknowledged', reason: 'A full fresh pass found zero warnings.' }))
+      .toMatchObject({ ok: true, overflow_cleared: true, resolved: false });
+    expect(ledger.pendingIds()).not.toContain('warning_overflow');
+  });
+
+  it('distinguishes two same-rule widgets from an unwrapped native result', async () => {
+    const client = new FakeLLMClient([toolResponse('actor_list'), textResponse('Need review.')]);
+    const events = await collect(runAgentLoop(baseParams({ client, dispatchTool: async () => ({
+      findings: [
+        { rule_id: 'ui_engine_default_font', severity: 'warning', widget: 'MenuTitle', message: 'Roboto' },
+        { rule_id: 'ui_engine_default_font', severity: 'warning', widget: 'MenuButton', message: 'Roboto' },
+      ],
+    }) })));
+    const pending = (events.at(-1) as Extract<AgentEvent, { type: 'done' }>).pendingWarningIds!;
+    expect(pending).toHaveLength(2);
+    expect(new Set(pending).size).toBe(2);
+    expect(pending.every((id) => /^ui_engine_default_font_[a-f0-9]{12}$/.test(id))).toBe(true);
+  });
+
+  it('clears overflow only after a complete fresh zero-warning pass and explicit review', async () => {
+    const ledger = new WarningReviewLedger();
+    const input = { widget_blueprint_path: '/Game/UI/WBP_Probe' };
+    const tools = [{ name: 'ui_validate', description: 'validate', input_schema: { type: 'object' as const, properties: {} } }];
+    const complete = { widget_blueprint_path: input.widget_blueprint_path, layout_resolved: true,
+      rules_skipped_no_layout: [], rules_disabled: [], rules_below_strictness: [],
+      rules_evaluated: 1, counts: { error: 0, warning: 0, info: 0 }, findings: [] };
+    const many = {
+      ...complete,
+      findings: Array.from({ length: 70 }, (_, n) => ({
+        ruleId: 'ui_engine_default_font', severity: 'warning', widget: `Widget${n}`, message: 'Roboto',
+      })),
+    };
+    await collect(runAgentLoop(baseParams({
+      client: new FakeLLMClient([toolResponse('ui_validate', input), textResponse('Many warnings.')]),
+      tools, warningLedger: ledger, dispatchTool: async () => many,
+    })));
+    expect(ledger.pendingIds()).toContain('warning_overflow');
+    const events = await collect(runAgentLoop(baseParams({
+      client: new FakeLLMClient([
+        toolResponse('ui_validate', input),
+        toolResponse('hayba_warning_review', { warning_id: 'warning_overflow', disposition: 'acknowledged',
+          reason: 'A complete fresh UI pass found zero warnings in this widget.' }),
+        textResponse('Overflow review complete.'),
+      ]),
+      tools, warningLedger: ledger,
+      dispatchTool: async () => complete,
+    })));
+    expect(events.find((ev) => ev.type === 'tool_result' && ev.name === 'hayba_warning_review'))
+      .toMatchObject({ result: { ok: true, overflow_cleared: true } });
+    expect(ledger.pendingIds()).not.toContain('warning_overflow');
+  });
+
+  it('refuses overflow retirement from disabled, skipped, unavailable, or partial UI checks', async () => {
+    const ledger = new WarningReviewLedger();
+    const input = { widget_blueprint_path: '/Game/UI/WBP_Probe' };
+    const tools = [{ name: 'ui_validate', description: 'validate', input_schema: { type: 'object' as const, properties: {} } }];
+    const full = { widget_blueprint_path: input.widget_blueprint_path, layout_resolved: true,
+      rules_skipped_no_layout: [], rules_disabled: [], rules_below_strictness: [],
+      rules_evaluated: 1, counts: { error: 0, warning: 0, info: 0 }, findings: [] };
+    const many = { ...full, findings: Array.from({ length: 70 }, (_, n) =>
+      ({ ruleId: 'ui_engine_default_font', severity: 'warning', widget: `W${n}`, message: 'Roboto' })) };
+    const run = async (result: unknown): Promise<void> => {
+      await collect(runAgentLoop(baseParams({
+        client: new FakeLLMClient([toolResponse('ui_validate', input), textResponse('Review remains.')]),
+        tools, warningLedger: ledger, dispatchTool: async () => result,
+      })));
+    };
+    await run(many);
+    for (const bad of [
+      { ...full, rules_disabled: ['ui_engine_default_font'] },
+      { ...full, rules_below_strictness: ['ui_engine_default_font'] },
+      { ...full, rules_skipped_no_layout: ['ui_engine_default_font'] },
+      { ...full, layout_resolved: false },
+      { ...full, widget_blueprint_path: '/Game/UI/Other' },
+      { ...full, counts: { warning: 1 } },
+    ]) {
+      await run(bad);
+      expect(ledger.review({ warning_id: 'warning_overflow', disposition: 'acknowledged', reason: 'reviewed' }))
+        .toMatchObject({ ok: false });
+    }
+    await run(full);
+    expect(ledger.review({ warning_id: 'warning_overflow', disposition: 'acknowledged',
+      reason: 'A complete fresh pass found zero warnings.' })).toMatchObject({ ok: true, overflow_cleared: true });
+  });
+
+  it('never treats empty validator_run output as overflow-clear evidence', async () => {
+    const ledger = new WarningReviewLedger();
+    const tools = [{ name: 'validator_run', description: 'validate', input_schema: { type: 'object' as const, properties: {} } }];
+    const run = async (result: unknown): Promise<void> => {
+      await collect(runAgentLoop(baseParams({
+        client: new FakeLLMClient([toolResponse('validator_run'), textResponse('Still needs review.')]),
+        tools, warningLedger: ledger, dispatchTool: async () => result,
+      })));
+    };
+    await run({ findings: Array.from({ length: 70 }, (_, n) =>
+      ({ rule_id: 'ui_engine_default_font', severity: 'warning', widget: `W${n}`, message: 'Roboto' })), total: 70 });
+    await run({ findings: [], total: 0 });
+    expect(ledger.review({ warning_id: 'warning_overflow', disposition: 'acknowledged', reason: 'empty result' }))
+      .toMatchObject({ ok: false });
+  });
+
   it('runs a multi-step tool loop (2 rounds) to end_turn', async () => {
     const client = new FakeLLMClient([
       toolResponse('actor_list', {}, 'c1'),

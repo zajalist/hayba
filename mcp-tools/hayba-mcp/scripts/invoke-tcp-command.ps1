@@ -18,7 +18,13 @@ param(
     [int]$Port = 52342,
     [ValidateRange(100, 60000)]
     [int]$TimeoutMs = 10000,
-    [string]$Auth = ''
+    [string]$Auth = '',
+    [string]$Owner = '',
+    [string]$Lease = '',
+
+    # Startup callers can retry only a transport deadline, without parsing a
+    # diagnostic or treating malformed/refused replies as readiness.
+    [switch]$ThrowOnTimeout
 )
 
 $ErrorActionPreference = 'Stop'
@@ -38,7 +44,7 @@ function Get-DiagnosticHash([object]$Value) {
 function Get-RemainingTimeoutMs([string]$Operation) {
     $remaining = $TimeoutMs - [int]$Clock.ElapsedMilliseconds
     if ($remaining -le 0) {
-        throw "$Operation exceeded the absolute ${TimeoutMs}ms command deadline"
+        throw [TimeoutException]::new("$Operation exceeded the absolute ${TimeoutMs}ms command deadline")
     }
     return $remaining
 }
@@ -46,7 +52,7 @@ function Get-RemainingTimeoutMs([string]$Operation) {
 function Wait-IoTask([System.Threading.Tasks.Task]$Task, [string]$Operation) {
     $remaining = Get-RemainingTimeoutMs $Operation
     if (-not $Task.Wait($remaining)) {
-        throw "$Operation exceeded the absolute ${TimeoutMs}ms command deadline"
+        throw [TimeoutException]::new("$Operation exceeded the absolute ${TimeoutMs}ms command deadline")
     }
     return $Task.GetAwaiter().GetResult()
 }
@@ -61,9 +67,9 @@ function Read-ExactAsync(
     $read = 0
     while ($read -lt $Count) {
         $task = $Stream.ReadAsync($Buffer, $Offset + $read, $Count - $read)
-        $count = Wait-IoTask $task $Operation
-        if ($count -le 0) { throw "Connection closed before $Operation completed" }
-        $read += $count
+        $bytesRead = Wait-IoTask $task $Operation
+        if ($bytesRead -le 0) { throw "Connection closed before $Operation completed" }
+        $read += $bytesRead
     }
 }
 
@@ -84,6 +90,8 @@ try {
             params = $paramsObject
         }
         if ($Auth) { $request.auth = $Auth }
+        if ($Owner) { $request.owner = $Owner }
+        if ($Lease) { $request.lease = $Lease }
 
         $json = $request | ConvertTo-Json -Compress -Depth 30
         $payload = [System.Text.Encoding]::UTF8.GetBytes($json)
@@ -123,6 +131,7 @@ try {
     }
 }
 catch {
+    if ($ThrowOnTimeout -and $_.Exception -is [TimeoutException]) { throw }
     # This helper is often used by security probes. Never echo a peer-controlled
     # response fragment or request sentinel into captured CI/editor evidence.
     $digest = Get-DiagnosticHash $_.Exception.Message

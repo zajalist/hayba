@@ -72,10 +72,50 @@ All via environment variables ([`src/config.ts`](src/config.ts)):
 | `HAYBA_NODE_CATALOG` | resolved | Override PCGEx `node_catalog.json` path |
 | `HAYBA_PCGEX_DB` | resolved | Override PCGEx `pcgex_registry.db` path |
 | `HAYBA_CRITIQUE_ENABLED` / `HAYBA_CRITIQUE_THRESHOLD` | on / `15.0` | Terrain self-critique |
+| `HAYBA_BRAIN_URL` | empty | Hosted Hayba Pro Brain URL; needed for remote route advice |
 
 Resource paths (`node_catalog.json`, `pcgex_registry.db`) are resolved by
 walking a fallback list — new plugin layout, workspace `Resources/`, legacy
 `Hayba_PcgEx_MCP` layout — so existing installs keep working.
+
+#### Route advice for external MCP hosts
+
+`hayba_suggest_route` is off by default. To expose this read-only tool to
+Claude Code or another MCP host, set `externalRouteAdvice` in
+`Saved/HaybaMCP/settings.json` (or the file selected by `HAYBA_SETTINGS_PATH`):
+
+```json
+{ "externalRouteAdvice": "local" }
+```
+
+`"local"` gives a deterministic suggestion from enabled tools and installed
+workflow skills. `"brain"` also asks the hosted Brain to rank that shortlist
+when Hayba Pro is signed in; it falls back to local order when sign-in or the
+Brain is unavailable. Brain ranking requires `HAYBA_BRAIN_URL` here and the
+private Brain's `FASTINO_DECISIONS_ENABLED=1` and
+`FASTINO_EXTERNAL_ROUTE_ADVICE_ENABLED=1`. The Brain holds the Fastino key;
+this MCP process sends only a fixed intent, mode, and candidate IDs. The tool
+does not execute its suggestion or bypass normal tool and editor checks.
+
+The MCP process holds its Hayba Pro refresh token in memory. The Unreal plugin
+stores a token in its DPAPI vault, but restores it to the MCP process only when
+a Pro chat turn starts, not when Claude Code launches MCP. With the editor
+closed or before that handoff, `"brain"` mode gives local advice until the
+same MCP process signs in. The loopback device-code endpoints
+`/brain/signin/start` and `/brain/signin/poll` can sign in that running
+process, but there is no automatic headless restore from the Unreal vault.
+Restarting MCP also clears its in-memory sign-in.
+
+#### DeepSeek in Community Chat
+
+The `deepseek` preset appears immediately after OpenAI in the provider list.
+It uses DeepSeek's [OpenAI-compatible Chat Completions API](https://api-docs.deepseek.com/)
+at `https://api.deepseek.com` with `deepseek-flash` as the default model.
+Supply your own DeepSeek key in the editor's provider settings or as
+`DEEPSEEK_API_KEY` for a headless Node client. Community Chat uses the same
+streaming and tool-call path as other OpenAI-compatible providers. Hayba Pro
+BYOK accepts the preset at its fixed hosted endpoint and sends the user's key
+to the Brain; custom endpoints remain available in Community Chat only.
 
 ### PCG registry intelligence
 
@@ -98,6 +138,23 @@ exact lookup and keyword search:
 
 These tools inspect catalog metadata only; they do not require a running Unreal
 Editor and do not mutate the registry.
+
+### World evidence comparison
+
+`world_compare_snapshots` compares two supplied `world_budget_snapshot` results
+without contacting the editor. Each side needs a distinct `scenario_id` and the
+same caller-declared `protocol_id`; the tool also checks world, folder aggregate,
+World Partition setting, and scan limit. Optional `editor_pie_capture_get`
+results must be supplied as a completed pair with matching capture settings.
+It returns raw loaded counts and deltas, whole-editor proxy timing and memory
+statistics with sample counts and units, and verdicts only against structural
+caps explicitly supplied to the comparison. Incomplete structural scans remain
+scanned-prefix evidence. A truncated tagged-actor scan stays a labeled lower
+bound; Hayba does not subtract two lower bounds. Counts beyond JavaScript's
+safe-integer range are rejected instead of rounded. The caller is responsible for ensuring the declared
+protocol represents comparable route, hardware, build, and editor conditions;
+GPU, streaming, NPC cost, design quality, and production performance remain
+unknown.
 
 ## Code Mode (the deep interface)
 

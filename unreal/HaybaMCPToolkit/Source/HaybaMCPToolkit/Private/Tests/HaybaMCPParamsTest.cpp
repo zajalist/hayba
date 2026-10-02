@@ -548,8 +548,8 @@ bool FHaybaMCPPieCoordSpaceTest::RunTest(const FString& Parameters)
 
 // ── PIE drag gesture planning ───────────────────────────────────────────────
 //
-// Regression test for the dead-drag defect (Aphrosia docs/gauntlet/scroll-dossier.md,
-// 2026-08-02): a press on a scrollbar thumb followed by moves left the scroll
+// Regression test for the dead-drag defect: a press on a scrollbar thumb
+// followed by moves left the scroll
 // offset at exactly 0.000000, across both action:"drag" and manual
 // press/move/move/release, and right-click drag-scrolling on the content failed
 // identically.

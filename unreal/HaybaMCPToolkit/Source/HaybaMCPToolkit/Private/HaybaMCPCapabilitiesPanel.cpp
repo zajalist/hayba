@@ -1,17 +1,14 @@
 // Plugins/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/HaybaMCPCapabilitiesPanel.cpp
 #include "HaybaMCPCapabilitiesPanel.h"
 #include "HaybaMCPSettings.h"
-#include "HaybaMCPStyle.h"
 #include "HaybaMCPModule.h"
 
 #include "Widgets/SBoxPanel.h"
-#include "Widgets/Layout/SBox.h"
 #include "Widgets/Layout/SBorder.h"
 #include "Widgets/Layout/SScrollBox.h"
 #include "Widgets/Layout/SSeparator.h"
 #include "Widgets/Layout/SExpandableArea.h"
 #include "Widgets/Text/STextBlock.h"
-#include "Widgets/Images/SImage.h"
 #include "Widgets/Input/SButton.h"
 #include "Widgets/Input/SCheckBox.h"
 #include "Widgets/Input/SSearchBox.h"
@@ -27,7 +24,7 @@ void SHaybaMCPCapabilitiesPanel::Construct(const FArguments& InArgs)
     ChildSlot
     [
         SNew(SVerticalBox)
-        // Hero header with MCP logo and explainer copy.
+        // Heading and explainer copy.
         + SVerticalBox::Slot().AutoHeight().Padding(12.f, 12.f, 12.f, 6.f)
         [ BuildHeader() ]
 
@@ -54,47 +51,38 @@ void SHaybaMCPCapabilitiesPanel::Construct(const FArguments& InArgs)
     RebuildCategoryList();
 }
 
-// ── Header (logo + explainer) ─────────────────────────────────────────────
+// ── Header ────────────────────────────────────────────────────────────────
 
 TSharedRef<SWidget> SHaybaMCPCapabilitiesPanel::BuildHeader()
 {
-    return SNew(SHorizontalBox)
-        + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0.f, 0.f, 14.f, 0.f)
+    return SNew(SVerticalBox)
+        + SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 4.f)
         [
-            SNew(SBox).WidthOverride(64.f).HeightOverride(64.f)
-            [ SNew(SImage).Image(FHaybaMCPStyle::GetBrush(TEXT("Hayba.MCP.Hero"))) ]
+            SNew(STextBlock)
+            .TextStyle(&FAppStyle::Get().GetWidgetStyle<FTextBlockStyle>("DetailsView.CategoryTextStyle"))
+            .Text(LOCTEXT("HeaderTitle", "Model Context Protocol"))
         ]
-        + SHorizontalBox::Slot().FillWidth(1.f).VAlign(VAlign_Center)
+        + SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 2.f)
         [
-            SNew(SVerticalBox)
-            + SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 4.f)
-            [
-                SNew(STextBlock)
-                .TextStyle(&FAppStyle::Get().GetWidgetStyle<FTextBlockStyle>("DetailsView.CategoryTextStyle"))
-                .Text(LOCTEXT("HeaderTitle", "Model Context Protocol"))
-            ]
-            + SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 2.f)
-            [
-                SNew(STextBlock)
-                .ColorAndOpacity(FSlateColor(FLinearColor(0.78f, 0.80f, 0.88f)))
-                .AutoWrapText(true)
-                .Text_Lambda([this]()
-                {
-                    return FText::FromString(FString::Printf(
-                        TEXT("Hayba exposes %d tools across %d domains to your AI agent. Toggle individual tools or whole categories off to limit what the remote agent can see and call."),
-                        TotalTools(), Categories.Num()));
-                })
-            ]
-            + SVerticalBox::Slot().AutoHeight()
-            [
-                SNew(STextBlock)
-                .ColorAndOpacity(FSlateColor(FLinearColor(0.55f, 0.57f, 0.65f)))
-                .Text_Lambda([this]()
-                {
-                    return FText::FromString(FString::Printf(
-                        TEXT("Currently exposing %d / %d tools."), TotalEnabledTools(), TotalTools()));
-                })
-            ]
+            SNew(STextBlock)
+            .ColorAndOpacity(FSlateColor(FLinearColor(0.78f, 0.80f, 0.88f)))
+            .AutoWrapText(true)
+            .Text_Lambda([this]()
+            {
+                return FText::FromString(FString::Printf(
+                    TEXT("Hayba exposes %d tools across %d domains to your AI agent. Toggle individual tools or whole categories off to limit what the remote agent can see and call."),
+                    TotalTools(), Categories.Num()));
+            })
+        ]
+        + SVerticalBox::Slot().AutoHeight()
+        [
+            SNew(STextBlock)
+            .ColorAndOpacity(FSlateColor(FLinearColor(0.55f, 0.57f, 0.65f)))
+            .Text_Lambda([this]()
+            {
+                return FText::FromString(FString::Printf(
+                    TEXT("Currently exposing %d / %d tools."), TotalEnabledTools(), TotalTools()));
+            })
         ];
 }
 

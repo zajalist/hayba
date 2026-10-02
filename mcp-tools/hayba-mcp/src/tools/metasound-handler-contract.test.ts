@@ -57,7 +57,7 @@ describe('editor-safe MetaSound handler contract', () => {
 
   it('keeps graph edits in memory until the explicit compile/save boundary', () => {
     expect(handler).toMatch(/MSAddNode[\s\S]*MarkPackageDirty/);
-    expect(handler).toMatch(/MSCompile[\s\S]*UPackage::SavePackage/);
+    expect(handler).toMatch(/MSCompile[\s\S]*HaybaSaveVerify::SaveAndVerify\(Asset\)/);
   });
 
   it('inspects the active UE 5.8 graph page instead of the empty legacy graph field', () => {

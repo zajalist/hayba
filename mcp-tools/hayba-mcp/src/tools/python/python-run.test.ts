@@ -122,6 +122,32 @@ describe('python_run crash guard + bounded inline output', () => {
     expect(payload.allow_unsafe_deprecated).toBe(true);
   });
 
+  it('forwards deadline_s, world_partition and transaction to the native handler', async () => {
+    const { pythonRunHandler } = await import('./python-run.js');
+    send.mockClear();
+    setDefaultSender(send);
+    send.mockResolvedValueOnce({ ok: true, data: { ok: true, stdout: '' } });
+    const r = await pythonRunHandler(
+      { script: 'print(1)', deadline_s: 30, world_partition: true, transaction: false },
+      {} as never,
+    );
+    expect(r.isError).toBeFalsy();
+    expect(send).toHaveBeenCalledWith(
+      'python_run',
+      { script: 'print(1)', deadline_s: 30, world_partition: true, transaction: false },
+      expect.anything(),
+    );
+  });
+
+  it('rejects a deadline_s outside 5..60 before UE', async () => {
+    const { pythonRunHandler } = await import('./python-run.js');
+    send.mockClear();
+    setDefaultSender(send);
+    const r = await pythonRunHandler({ script: 'print(1)', deadline_s: 600 }, {} as never);
+    expect(r.isError).toBe(true);
+    expect(send).not.toHaveBeenCalled();
+  });
+
   it('preserves an authoritative native policy code and recovery response', async () => {
     const { pythonRunHandler } = await import('./python-run.js');
     send.mockClear();
@@ -253,5 +279,111 @@ describe('python_run crash guard + bounded inline output', () => {
     expect(payload.mcp_result_truncated).toBe(false);
     expect(payload.output_truncated).toBe(false);
     expect(payload.output_complete).toBe(true);
+  });
+});
+
+describe('python_run native fault facts (ADR-0011)', () => {
+  const rules = [
+    ['native_access_violation', 'execution'],
+    ['post_execution_readback_access_violation', 'post_execution'],
+    ['post_execution_status_access_violation', 'post_execution'],
+    ['post_execution_deadline_readback_access_violation', 'post_execution'],
+    ['post_execution_cleanup_access_violation', 'post_execution'],
+  ] as const;
+
+  it.each(rules)('maps %s to an unknown outcome that forbids retry', async (rule, executionPhase) => {
+    const { pythonRunHandler } = await import('./python-run.js');
+    send.mockClear();
+    setDefaultSender(send);
+    send.mockResolvedValueOnce({
+      ok: false,
+      code: 'native_fault_contained',
+      error:
+        "native_fault_contained [HCR-NATIVE-002]: 'python_run' raised native fault 0xC0000005 (python_native_fault); " +
+        'its outcome is unknown and it may have partly run. Fault contained; restart the editor before further work.',
+      data: {
+        ok: false,
+        policy_code: 'HCR-NATIVE-002',
+        matched_rule: rule,
+        execution_phase: executionPhase,
+        phase: 'execute',
+        mutation_status: 'unknown',
+        may_have_executed: true,
+        session_suspect: true,
+      },
+      editor_health: { editor_unsafe: true, python_unhealthy: true, cause: 'python_native_fault', fault_code: 'HCR-NATIVE-002' },
+      advisory: { state: 'session_suspect', mutation_status: 'unknown', may_have_mutated: true, session_health: 'restart_required' },
+    });
+    const r = await pythonRunHandler({ script: 'print(1)' }, {} as never);
+    expect(r.isError).toBe(true);
+    const payload = JSON.parse(r.content[0].text);
+    expect(payload).toMatchObject({
+      code: 'native_fault_contained',
+      policy_code: 'HCR-NATIVE-002',
+      matched_rule: rule,
+      mutation_status: 'unknown',
+      may_have_executed: true,
+      retry_unchanged: 'forbidden',
+      restart_required: true,
+    });
+    expect(payload.editor_health.cause).toBe('python_native_fault');
+    expect(payload.advisory.session_health).toBe('restart_required');
+  });
+
+  it('overrides a stale plugin that labelled a post-execution fault not_started', async () => {
+    const { pythonRunHandler } = await import('./python-run.js');
+    send.mockClear();
+    setDefaultSender(send);
+    send.mockResolvedValueOnce({
+      ok: false,
+      error:
+        "python_run fatal_error [HCR-NATIVE-002]: matched 'post_execution_readback_access_violation'. The interpreter " +
+        'faulted while reading captured output after the user script. Retry unchanged: forbidden; editor session health is suspect.',
+      advisory: { state: 'policy_blocked', code: 'crash_guard_blocked', mutation_status: 'not_started', may_have_mutated: false },
+    });
+    const payload = JSON.parse((await pythonRunHandler({ script: 'print(1)' }, {} as never)).content[0].text);
+    expect(payload).toMatchObject({
+      policy_code: 'HCR-NATIVE-002',
+      matched_rule: 'post_execution_readback_access_violation',
+      mutation_status: 'unknown',
+      may_have_executed: true,
+      retry_unchanged: 'forbidden',
+    });
+    expect(payload.advisory).toMatchObject({ state: 'session_suspect', mutation_status: 'unknown', may_have_mutated: true });
+  });
+
+  it('reports a refusal after an earlier fault as not started, retry forbidden until restart', async () => {
+    const { pythonRunHandler } = await import('./python-run.js');
+    send.mockClear();
+    setDefaultSender(send);
+    send.mockResolvedValueOnce({
+      ok: false,
+      code: 'editor_unsafe_restart_required',
+      error: "editor_unsafe_restart_required: 'python_run' was not run. …",
+      editor_health: { editor_unsafe: true },
+      advisory: { state: 'policy_blocked', mutation_status: 'not_started', session_health: 'restart_required' },
+    });
+    const payload = JSON.parse((await pythonRunHandler({ script: 'print(1)' }, {} as never)).content[0].text);
+    expect(payload).toMatchObject({
+      code: 'editor_unsafe_restart_required',
+      mutation_status: 'not_started',
+      may_have_executed: false,
+      retry_unchanged: 'forbidden_until_restart',
+      restart_required: true,
+    });
+    expect(payload.editor_health.editor_unsafe).toBe(true);
+  });
+
+  it('keeps pre-execution policy codes not_started, but never claims it for the post-execution deadline', async () => {
+    const { nativeFailureFacts } = await import('./python-run.js');
+    expect(nativeFailureFacts({}, 'python_run policy_blocked [HCR-WORLD-001]: x', false)).toMatchObject({
+      policy_code: 'HCR-WORLD-001',
+      retry_unchanged: 'forbidden',
+      mutation_status: 'not_started',
+    });
+    const deadline = nativeFailureFacts({}, 'python_run policy_blocked [HCR-TIME-001]: x', false);
+    expect(deadline.policy_code).toBe('HCR-TIME-001');
+    expect(deadline.mutation_status).toBeUndefined();
+    expect(nativeFailureFacts(undefined, 'plain failure', false)).toEqual({});
   });
 });

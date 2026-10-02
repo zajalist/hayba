@@ -1253,7 +1253,7 @@
         "Game-thread marshal seam HaybaGameThread::RunSync (PR #254) — every landscape edit is game-thread-only (check IsInGameThread already enforced in importer)",
         "World Partition: ALandscapeStreamingProxy enumeration + force-load of all loaded-region proxies before any data edit",
         "PLUMB validator + validator_run hooks for landscape_validate; vision loop (render_camera/editor_capture_viewport) for capture/dry-run",
-        "Gaea knowledge corpus already in repo (src/gaea/transcripts + knowledge/gaea-docs) — source of mask-name → layer-name conventions for the Gaea bridge",
+        "Independently authored Gaea integration notes in src/gaea/knowledge/gaea-docs; verify mask-name → layer-name conventions against current Gaea documentation and integration tests",
         "1MB TCP frame cap — heightmap/weightmap blobs must transfer as file paths or be chunked, never inline base64"
       ],
       "risks": [

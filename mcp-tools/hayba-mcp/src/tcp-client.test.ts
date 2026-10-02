@@ -1,15 +1,19 @@
+import { createServer, type AddressInfo } from 'node:net';
+import { FrameDecoder } from './tcp-frame-decoder.js';
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   UETcpClient,
+  buildEnvelope,
   connectWithBackoff,
   discoverPortFromInstanceRegistry,
   resolveTargetPort,
   ensureConnected,
   awaitEditorResponsive,
   _resetClientForTesting,
+  type TcpResponse,
 } from './tcp-client.js';
 
 const discoveryTempDirs: string[] = [];
@@ -348,6 +352,121 @@ describe('ensureConnected', () => {
       expect(delays).toEqual([200, 400]);
     } finally {
       UETcpClient.prototype.connect = originalConnect;
+    }
+  });
+});
+
+describe('envelope lease from the environment (R9)', () => {
+  const ID = 'ls_1_aad6bc3c3546';
+
+  function clearLeaseEnv() {
+    vi.stubEnv('HAYBA_LEASE', '');
+    vi.stubEnv('HAYBA_LEASE_TOKEN', '');
+    vi.stubEnv('HAYBA_LEASE_ID', '');
+  }
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+  });
+
+  it('sends HAYBA_LEASE_ID, and ignores HAYBA_LEASE and HAYBA_LEASE_TOKEN with one console.error', () => {
+    clearLeaseEnv();
+    vi.stubEnv('HAYBA_LEASE', 'ls_9_aad6bc3c3546');
+    vi.stubEnv('HAYBA_LEASE_TOKEN', '[REDACTED:token]');
+    vi.stubEnv('HAYBA_LEASE_ID', ID);
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const c = new UETcpClient();
+    expect(c.getLease()).toBe(ID);
+    expect(buildEnvelope('ping', 'req_1', {}, c.getOwner(), c.getLease()).lease).toBe(ID);
+    expect(err).toHaveBeenCalledTimes(1);
+    expect(String(err.mock.calls[0]![0])).toContain('HAYBA_LEASE and HAYBA_LEASE_TOKEN are ignored');
+  });
+
+  it('never takes HAYBA_LEASE as the lease', () => {
+    clearLeaseEnv();
+    vi.stubEnv('HAYBA_LEASE', ID);
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    expect(new UETcpClient().getLease()).toBeNull();
+  });
+
+  it('ignores a redaction marker in HAYBA_LEASE_ID with a warning', () => {
+    clearLeaseEnv();
+    vi.stubEnv('HAYBA_LEASE_ID', '[REDACTED:token]');
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    expect(new UETcpClient().getLease()).toBeNull();
+    expect(err).toHaveBeenCalledTimes(1);
+    expect(String(err.mock.calls[0]![0])).toContain('redaction marker');
+  });
+
+  it.each([
+    ['a refusal with lease.reason lease_unknown', { ok: false, error: "lease_conflict: 'level_save'", code: 'lease_conflict', lease: { reason: 'lease_unknown' } }],
+    ['an advisory lease_warning.reason lease_unknown', { ok: true, data: {}, lease_warning: { reason: 'lease_unknown' } }],
+    ['a gate detail lease_id_error unknown_or_expired', { ok: true, data: {}, lease_warning: { lease_id_error: 'unknown_or_expired' } }],
+  ])('clears the env-seeded lease after %s, logs once, and stops sending it', (_label, reply) => {
+    clearLeaseEnv();
+    vi.stubEnv('HAYBA_LEASE_ID', ID);
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const c = new UETcpClient();
+    c.noteReply({ id: 'req_1', ...reply } as TcpResponse);
+    c.noteReply({ id: 'req_2', ...reply } as TcpResponse);
+    expect(c.getLease()).toBeNull();
+    expect(err).toHaveBeenCalledTimes(1);
+    expect(buildEnvelope('ping', 'req_3', {}, c.getOwner(), c.getLease())).not.toHaveProperty('lease');
+  });
+
+  it('clears it on [lease_id_unknown] only when the request named that lease', () => {
+    clearLeaseEnv();
+    vi.stubEnv('HAYBA_LEASE_ID', ID);
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const c = new UETcpClient();
+    const refused = { id: 'x', ok: false, error: 'lease_renew [lease_id_unknown]: unknown or expired lease' } as TcpResponse;
+    c.noteReply(refused, 'ls_2_b30995e71074');
+    expect(c.getLease()).toBe(ID);
+    c.noteReply(refused, ID);
+    expect(c.getLease()).toBeNull();
+  });
+
+  it('leaves a lease set through setLease alone', () => {
+    clearLeaseEnv();
+    const c = new UETcpClient();
+    c.setLease(ID);
+    c.noteReply({ id: 'x', ok: true, data: {}, lease_warning: { reason: 'lease_unknown' } });
+    expect(c.getLease()).toBe(ID);
+  });
+});
+
+describe('envelope owner (T8)', () => {
+  it('every envelope the client sends carries an owner', async () => {
+    const frames: Array<Record<string, unknown>> = [];
+    const server = createServer((socket) => {
+      const decoder = new FrameDecoder();
+      socket.on('data', (chunk: Buffer) => {
+        for (const message of decoder.push(chunk)) {
+          const envelope = JSON.parse(message.toString('utf-8')) as Record<string, unknown>;
+          frames.push(envelope);
+          const reply = Buffer.from(JSON.stringify({ id: envelope.id, ok: true, data: {} }), 'utf-8');
+          const header = Buffer.alloc(4);
+          header.writeUInt32BE(reply.length, 0);
+          socket.write(Buffer.concat([header, reply]));
+        }
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as AddressInfo).port; // an ephemeral port, never the editor's 52342
+    const client = new UETcpClient('127.0.0.1', port);
+    try {
+      await client.connect();
+      await client.send('ping', {});
+      client.setOwner('   '); // a blank owner falls back to a per-process one, never to nothing
+      await client.send('actor_spawn', { a: 1 });
+    } finally {
+      client.disconnect();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+    expect(frames).toHaveLength(2);
+    for (const frame of frames) {
+      expect(typeof frame.owner === 'string' && (frame.owner as string).length > 0, JSON.stringify(frame)).toBe(true);
     }
   });
 });

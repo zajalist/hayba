@@ -9,7 +9,6 @@
 #include "HaybaMCPWorldInspectSummary.h"
 
 class FHaybaMCPModule;
-class SHaybaMCPMainPanel;
 class SScrollBox;
 class SBox;
 class SVerticalBox;
@@ -26,20 +25,23 @@ struct FHaybaChatError;
 class FJsonObject;
 
 /**
- * Single-purpose chat surface. Conversation, input, footer status — that's it.
+ * Single-purpose chat surface. Conversation, input, and contextual task feedback.
  *
  * Settings, step progress, and onboarding live in their dedicated panels.
  */
 class SHaybaMCPChatPanel : public SCompoundWidget
 {
 public:
-    SLATE_BEGIN_ARGS(SHaybaMCPChatPanel) {}
-        SLATE_ARGUMENT(SHaybaMCPMainPanel*, MainPanel)
-    SLATE_END_ARGS()
+    SLATE_BEGIN_ARGS(SHaybaMCPChatPanel) {} SLATE_END_ARGS()
 
     void Construct(const FArguments& InArgs, FHaybaMCPModule* InModule);
     /** Stage a guided request without sending or replacing a user's draft. */
     void DraftPrompt(const FString& Prompt);
+
+    /** Controls hosted by the main panel's single task header. */
+    TSharedRef<SWidget> BuildTaskSwitcher();
+    FReply OnNewConversation();
+    FReply OnInspectWorld();
 
     // Unsubscribe delegates + cancel any in-flight stream so a late callback
     // cannot touch freed Slate widgets.
@@ -57,7 +59,6 @@ private:
     bool AppendToInput(const FString& Addition);
 
     FHaybaMCPModule* Module = nullptr;
-    SHaybaMCPMainPanel* MainPanel = nullptr;
 
     // ── Session ────────────────────────────────────────────────────────────
     // Lives in the widget for now; will migrate to the module so it survives
@@ -123,9 +124,7 @@ private:
     void            RejectActivity(const FString& ActivityId);
 
     // ── Layout ─────────────────────────────────────────────────────────────
-    TSharedRef<SWidget> BuildToolbar();
     TSharedRef<SWidget> BuildChatArea();
-    TSharedRef<SWidget> BuildFooter();
     TSharedRef<SWidget> BuildInput();
     TSharedRef<SWidget> BuildEmptyState();
     TSharedRef<SWidget> BuildMessageRow(const FHaybaMCPChatMessage& Message, int32 MessageIndex);
@@ -148,8 +147,6 @@ private:
     bool   CanSend() const;
 
     // ── Conversation controls ─────────────────────────────────────────────
-    FReply OnNewConversation();
-    FReply OnInspectWorld();
     TSharedRef<SWidget> BuildRecentSessionsMenu();
     void RefreshRecentSessions();
     void OpenSavedSession(const FString& SessionId);
@@ -158,12 +155,7 @@ private:
     FReply OnCopyMessage(int32 MessageIndex);
     TSharedPtr<SWidget> BuildMessageContextMenu(int32 MessageIndex);
 
-    // ── Footer click handlers (Q17-b) ─────────────────────────────────────
-    FReply OnFooterConnectionClick();
-    FReply OnFooterModelClick();
-
     // ── Empty-state prompt helpers ────────────────────────────────────────
-    FReply OnPromptCardClicked(FString Prompt);
 
     // ── Scroll chip ───────────────────────────────────────────────────────
     EVisibility GetNewMessagesChipVisibility() const;

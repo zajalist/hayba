@@ -36,14 +36,23 @@ export interface UePythonResult {
   error?: string;
 }
 
+export interface RunUePythonOptions {
+  /** Declare the script read-only (python_run read_only:true): the editor
+   *  then treats it as a Read for leases. Only for a script that reads; a
+   *  declared read is trusted. */
+  readOnly?: boolean;
+}
+
 /**
  * Run a generated Python script in UE and parse its single HAYBA_JSON line.
  * Throws with the captured stdout/stderr when the marker is absent (a Python
  * exception before _emit, or python_run itself failing).
  */
-export async function runUePythonJson<T = unknown>(script: string, timeout?: number): Promise<T> {
+export async function runUePythonJson<T = unknown>(script: string, timeout?: number, opts: RunUePythonOptions = {}): Promise<T> {
   const full = `${PY_PREAMBLE}\n${script}`;
-  const data = await executeCommand<UePythonResult>('python_run', { script: full }, timeout ? { timeout } : {});
+  const payload: Record<string, unknown> = { script: full };
+  if (opts.readOnly === true) payload.read_only = true;
+  const data = await executeCommand<UePythonResult>('python_run', payload, timeout ? { timeout } : {});
   // Plan Mode gates python_run as a destructive command. Surface that clearly
   // instead of the misleading "no HAYBA_JSON result" (live-validation finding:
   // the gate response has ok:true + empty stdout and was swallowed here).

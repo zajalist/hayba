@@ -4,8 +4,11 @@
 #include "HaybaMCPGameThread.h"
 #include "HaybaMCPCommandHandler.h"
 #include "HaybaMCPModule.h"
+#include "HaybaMCPLeaseManager.h"
 #include "HaybaMCPSettings.h"
+#include "HaybaMCPEditorHealth.h"
 #include "HaybaMCPLandscapeImporter.h"
+#include "HaybaMCPSaveVerify.h"
 #include "Interfaces/IPluginManager.h"
 #include "Runtime/Launch/Resources/Version.h"
 #include "Json.h"
@@ -148,7 +151,22 @@ FHaybaHandlerResult FHaybaMCPLegacyHandler::Cmd_Ping(const TSharedPtr<FJsonObjec
 			const bool bEnabled = P.IsValid() && P->IsEnabled();
 			Caps->SetBoolField(S.Key, bEnabled);
 		}
+		// Multi-agent coordination (docs/adr/0010). Host-project scripts such
+		// as editor_gate.py switch from a file lock to lease_acquire when
+		// lease_manager is true, and fall back to the file lock when absent.
+		Caps->SetBoolField(TEXT("lease_manager"), true);
+		// Lease handles are named lease_id and survive redaction (T4). Host
+		// tools use leases only when both lease_manager and lease_id are set.
+		Caps->SetBoolField(TEXT("lease_id"), true);
+		Caps->SetBoolField(TEXT("editor_batch"), true);
+		Caps->SetBoolField(TEXT("wp_region_steps"), true);
+		// T8 (D1): the live enforcement mode by name, and the owner_required rule.
+		Caps->SetStringField(TEXT("lease_enforcement"), FHaybaMCPLeaseManager::CurrentModeName());
+		Caps->SetBoolField(TEXT("owner_required"), true);
+		// Sticky editor_unsafe (ADR-0011): health fields below; refusals carry editor_health.
+		Caps->SetBoolField(TEXT("editor_health"), true);
 		Data->SetObjectField(TEXT("capabilities"), Caps);
+		FHaybaEditorHealth::WriteJson(Data.ToSharedRef());
 	}
 
     // Report the immutable snapshot from the active server, not the mutable
@@ -630,6 +648,16 @@ FHaybaHandlerResult FHaybaMCPLegacyHandler::Cmd_CreateGraph(const TSharedPtr<FJs
     FString PackagePath = TEXT("/Game/Hayba/Generated");
     FString FullPath = FString::Printf(TEXT("%s/%s"), *PackagePath, *SafeName);
 
+    // Before CreatePackage: a read-only graph must not be displaced into the
+    // transient package (below) and then fail to save.
+    {
+        FHaybaHandlerResult ReadOnly;
+        if (HaybaSaveVerify::RefuseIfReadOnly(TEXT("create_graph"), FullPath, ReadOnly))
+        {
+            return ReadOnly;
+        }
+    }
+
     UPackage* Package = CreatePackage(*FullPath);
     if (!Package)
     {
@@ -938,10 +966,8 @@ FHaybaHandlerResult FHaybaMCPLegacyHandler::Cmd_CreateGraph(const TSharedPtr<FJs
     FAssetRegistryModule::AssetCreated(NewGraph);
     Package->MarkPackageDirty();
 
-    FString FilePath = FPackageName::LongPackageNameToFilename(FullPath, FPackageName::GetAssetPackageExtension());
-    FSavePackageArgs SaveArgs;
-    SaveArgs.TopLevelFlags = RF_Public | RF_Standalone;
-    const bool bSaved = UPackage::SavePackage(Package, NewGraph, *FilePath, SaveArgs);
+    const HaybaSaveVerify::FResult Saved = HaybaSaveVerify::SaveAndVerify(NewGraph);
+    const bool bSaved = Saved.DidReachDisk();
 
     TSharedPtr<FJsonObject> Data = MakeShareable(new FJsonObject());
     Data->SetBoolField(TEXT("created"), true);
@@ -951,6 +977,11 @@ FHaybaHandlerResult FHaybaMCPLegacyHandler::Cmd_CreateGraph(const TSharedPtr<FJs
     // The save result was previously discarded, so a graph that failed to reach
     // disk still reported created:true and then vanished on editor restart.
     Data->SetBoolField(TEXT("saved"), bSaved);
+    if (!bSaved)
+    {
+        Data->SetStringField(TEXT("save_error"), Saved.Note);
+        Data->SetStringField(TEXT("save_error_code"), Saved.SaveErrorCode);
+    }
 
     Data->SetNumberField(TEXT("propertiesApplied"), PropertiesApplied);
     if (PropertyProblems.Num() > 0)

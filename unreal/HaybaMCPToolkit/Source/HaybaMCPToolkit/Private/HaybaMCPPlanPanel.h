@@ -32,6 +32,9 @@ public:
         for human approval before timing out. */
     void LoadPlan(const TArray<FHaybaPlanStep>& InSteps, int32 AwaitSeconds);
 
+    /** Number of steps currently shown in this review surface. */
+    int32 GetStepCount() const { return Steps.Num(); }
+
     /** Mark a specific step completed (called from the destructive-op gate). */
     void MarkStepCompleted(int32 StepIndex);
 

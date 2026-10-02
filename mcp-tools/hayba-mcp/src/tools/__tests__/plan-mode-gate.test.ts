@@ -87,6 +87,37 @@ describe('Plan Mode gate covers every non-retryable command', () => {
     expect(NON_IDEMPOTENT.has('asset_registry_query')).toBe(false);
   });
 
+  // The lease control plane must be answerable while a plan is pending and
+  // while other agents hold leases. Gating lease_acquire behind Approve would
+  // mean an agent cannot even queue for the world it wants to plan against.
+  // A retried lease_acquire is idempotent (T7: the same owner, claims, label
+  // and binding get the same lease_id back), so it stays out of NON_IDEMPOTENT.
+  it.runIf(available)('keeps the lease control plane ungated and retry-safe', () => {
+    const gated = parseGatedCommands();
+    for (const cmd of ['lease_acquire', 'lease_renew', 'lease_release', 'lease_status', 'lease_adopt']) {
+      expect(gated.has(cmd), cmd).toBe(false);
+      expect(NON_IDEMPOTENT.has(cmd), cmd).toBe(false);
+    }
+  });
+
+  it.runIf(available)('backs the retry-safety of lease_acquire with an idempotent table (T7)', () => {
+    const policy = readFileSync(
+      join(process.cwd(), '../../unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/HaybaMCPLeasePolicy.h'),
+      'utf-8',
+    );
+    expect(policy).toContain('if (FLease* Existing = FindReusable(Request))');
+    expect(policy).toContain('Result.bReused = true;');
+  });
+
+  // One global Approve used to cover whichever agent sent the next
+  // destructive command. Approval is now spent only by the plan's owner.
+  it.runIf(available)('scopes plan approval to the owner that proposed the plan', () => {
+    const src = readFileSync(CPP_PATH, 'utf-8');
+    expect(src).toContain('HaybaMCPLease::PlanApprovalApplies(M->bPlanApproved, M->PlanOwner, Caller)');
+    expect(src).toContain('M->PlanOwner = Proposer;');
+    expect(src).not.toContain('const bool bApproved = (M && M->bPlanApproved);');
+  });
+
   it.runIf(available)('gates idempotent material mutation and compile/save commands', () => {
     const gated = parseGatedCommands();
     const agentLoop = readFileSync(AGENT_LOOP_PATH, 'utf-8');

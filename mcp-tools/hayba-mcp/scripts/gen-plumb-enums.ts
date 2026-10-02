@@ -6,7 +6,7 @@
  * into the Unreal plugin.
  *
  * Run:
- *   cd D:/Hackathons/hayba/mcp-tools/hayba-mcp
+ *   cd mcp-tools/hayba-mcp
  *   npx tsx scripts/gen-plumb-enums.ts
  *
  * Or via npm:
@@ -108,11 +108,11 @@ const header =
   `// SOURCE-HASH: ${sourceHash}\n` +
   `//\n` +
   `// Source-of-truth files:\n` +
-  `//   D:/Hackathons/hayba/mcp-tools/hayba-mcp/src/plumb/primitives.ts   — PRIMITIVES array (13)\n` +
-  `//   D:/Hackathons/hayba/mcp-tools/hayba-mcp/src/plumb/contracts.ts    — EmitOp union + GATE_ORDER\n` +
-  `//   D:/Hackathons/hayba/mcp-tools/hayba-mcp/src/plumb/junction.ts     — JunctionType union\n` +
+  `//   mcp-tools/hayba-mcp/src/plumb/primitives.ts   — PRIMITIVES array (13)\n` +
+  `//   mcp-tools/hayba-mcp/src/plumb/contracts.ts    — EmitOp union + GATE_ORDER\n` +
+  `//   mcp-tools/hayba-mcp/src/plumb/junction.ts     — JunctionType union\n` +
   `//\n` +
-  `// To regenerate: cd D:/Hackathons/hayba/mcp-tools/hayba-mcp && npm run gen:plumb-enums\n` +
+  `// To regenerate: cd mcp-tools/hayba-mcp && npm run gen:plumb-enums\n` +
   `// "Plumb is the single rule authority" -- no C++ node may reference a value not in these enums.\n` +
   `\n` +
   `#pragma once\n` +

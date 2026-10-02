@@ -98,8 +98,8 @@ upstream of the marketing/README numbers drifting all year.
 3. **CI gate**: fail when a declared command has no descriptor, and when
    generated ≠ committed. Replace the existing existence-only lint.
 4. Fix `.codex/config.toml` — it points `HAYBA_NODE_CATALOG` and
-   `HAYBA_PCGEX_DB` at `D:/UnrealEngine/geoforge/...`; the host project is
-   Aphrosia. Dead paths.
+   `HAYBA_PCGEX_DB` at obsolete external project paths. Use explicit catalog
+   configuration for the installed plugin.
 
 ### Why it runs before P1
 P1 deletes `ValidatorFinding` and four rules. Deleting safely requires an

@@ -4,6 +4,37 @@ All notable changes to Hayba MCP Toolkit are documented here. Format based on [K
 
 ## [Unreleased]
 
+### Added
+- P0 editor safety: sticky unsafe state after a contained native fault, guarded
+  saves, Play and dirty-Blueprint preflights, asset-busy protection, and
+  owner-bound multi-agent leases with canonical `lease_id` handles.
+- Bounded editor batches, lease adoption/renewal, and structured refusal and
+  warning details for orchestrators.
+- A scene-derived World preview sampled from loaded static-mesh surfaces,
+  linked to authored level/folder/actor/component/instance records and derived
+  spatial clusters. `world_semantic_snapshot` exposes bounded pages of the
+  same evidence to agents.
+- Read-only World budget snapshots, PIE timing and memory proxies, collision
+  sightline probes, and evidence-scoped snapshot comparison.
+- A focused six-tab editor workspace with hand-authored navigation icons and
+  stronger Chat drafting, activity, and review flows.
+
+### Changed
+- Lease enforcement defaults to `EnforcedForWrites`. Reads remain available
+  under their explicit editor-state and fault-cause policies; undeclared
+  Python mutations fail closed against overlapping claims.
+- The World view uses a full-width 3D canvas with an on-demand hierarchy
+  explorer in place of the old force graph and fixed inspector.
+
+### Fixed
+- Read-only or racing package saves return an error instead of opening a
+  blocking dialog or continuing unsafely. Plugin Python runs unattended.
+- Large and paged editor responses preserve exact source paths and report
+  partial coverage instead of silently clipping agent evidence.
+
+### Removed
+- The four nonfunctional Fab commands whose editor handlers never existed.
+
 ## [0.3.0] — 2026-09-30
 
 ### Added

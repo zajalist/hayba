@@ -2,6 +2,7 @@
 #include "HaybaActorOps.h"
 #include "HaybaMCPParams.h"
 #include "HaybaMCPReflection.h"
+#include "HaybaWorldBudgetPolicy.h"
 #include "Json.h"
 #include "Editor.h"
 #include "EngineUtils.h"
@@ -10,7 +11,9 @@
 #include "GameFramework/Actor.h"
 #include "Components/StaticMeshComponent.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "Components/InstancedStaticMeshComponent.h"
 #include "Engine/World.h"
+#include "WorldPartition/WorldPartition.h"
 #include "UObject/Class.h"
 #include "UObject/UnrealType.h"
 
@@ -70,6 +73,7 @@ TArray<FString> FHaybaMCPActorHandler::GetCommands() const
         TEXT("actor_delete"),
         TEXT("actor_transform"),
         TEXT("actor_list"),
+        TEXT("world_budget_snapshot"),
         TEXT("actor_get_properties"),
         TEXT("actor_set_properties"),
         TEXT("actor_tag"),
@@ -89,6 +93,7 @@ FHaybaHandlerResult FHaybaMCPActorHandler::Handle(const FString& Cmd, const TSha
     if (Cmd == TEXT("actor_delete"))          return Delete(Params);
     if (Cmd == TEXT("actor_transform"))       return Transform(Params);
     if (Cmd == TEXT("actor_list"))            return List(Params);
+    if (Cmd == TEXT("world_budget_snapshot")) return WorldBudgetSnapshot(Params);
     if (Cmd == TEXT("actor_get_properties"))  return GetProps(Params);
     if (Cmd == TEXT("actor_set_properties"))  return SetProps(Params);
     if (Cmd == TEXT("actor_tag"))             return Tag(Params);
@@ -218,6 +223,142 @@ FHaybaHandlerResult FHaybaMCPActorHandler::List(const TSharedPtr<FJsonObject>& P
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
     Out->SetArrayField(TEXT("actors"), Actors);
     Out->SetNumberField(TEXT("count"), Actors.Num());
+    return FHaybaHandlerResult::Ok(Out);
+}
+
+// Structural evidence from actors currently loaded in the editor world. This
+// deliberately does not estimate runtime memory, draw calls, streaming cost,
+// texel density, or NPC budget from editor-only counts.
+FHaybaHandlerResult FHaybaMCPActorHandler::WorldBudgetSnapshot(const TSharedPtr<FJsonObject>& P)
+{
+    UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
+    if (!World) return FHaybaHandlerResult::Err(TEXT("world_budget_snapshot: no editor world"));
+
+    FString RequestedFolder;
+    P->TryGetStringField(TEXT("folder"), RequestedFolder);
+    RequestedFolder = HaybaWorldBudget::NormalizeFolder(RequestedFolder);
+
+    double ActorLimit = 0, InstanceLimit = 0;
+    const bool bActorLimit = P->TryGetNumberField(TEXT("max_loaded_actors"), ActorLimit);
+    const bool bInstanceLimit = P->TryGetNumberField(TEXT("max_loaded_ism_instances"), InstanceLimit);
+    if ((bActorLimit && (!FMath::IsFinite(ActorLimit) || ActorLimit < 0 || ActorLimit > 100000000 || FMath::FloorToDouble(ActorLimit) != ActorLimit)) ||
+        (bInstanceLimit && (!FMath::IsFinite(InstanceLimit) || InstanceLimit < 0 || InstanceLimit > 100000000 || FMath::FloorToDouble(InstanceLimit) != InstanceLimit)))
+    {
+        return FHaybaHandlerResult::Err(TEXT("world_budget_snapshot: structural limits must be nonnegative whole counts at most 100000000"));
+    }
+
+    int32 ScannedActors = 0, LoadedActors = 0;
+    int64 IsmInstances = 0;
+    bool bScanTruncated = false;
+    TMap<FString, int32> ClassCounts, DirectFolders, DescendantFolders;
+    for (TActorIterator<AActor> It(World); It; ++It)
+    {
+        if (ScannedActors == HaybaWorldBudget::MaxScannedActors) { bScanTruncated = true; break; }
+        AActor* Actor = *It;
+        if (!Actor) continue;
+        ++ScannedActors;
+        // Same internal-actor exclusion as actor_list, explicit in coverage.
+        if (Actor->ActorHasTag(TEXT("HaybaMCPCaptureActor")) || Actor->ActorHasTag(TEXT("HaybaMCP_Internal"))) continue;
+        const FString Folder = HaybaWorldBudget::NormalizeFolder(Actor->GetFolderPath().ToString());
+        HaybaWorldBudget::AddFolderCounts(Folder, DirectFolders, DescendantFolders);
+        if (!HaybaWorldBudget::ContainsFolder(RequestedFolder, Folder)) continue;
+        ++LoadedActors;
+        ClassCounts.FindOrAdd(Actor->GetClass()->GetName())++;
+        TInlineComponentArray<UInstancedStaticMeshComponent*> Components;
+        Actor->GetComponents(Components);
+        for (const UInstancedStaticMeshComponent* Component : Components)
+        {
+            if (IsValid(Component)) IsmInstances += Component->GetInstanceCount();
+        }
+    }
+
+    auto CountRows = [](const TMap<FString, int32>& Counts, const TCHAR* Name)
+    {
+        TArray<TPair<FString, int32>> Sorted;
+        for (const auto& Entry : Counts) Sorted.Emplace(Entry.Key, Entry.Value);
+        Sorted.Sort([](const auto& A, const auto& B)
+        {
+            return A.Value != B.Value ? A.Value > B.Value : A.Key < B.Key;
+        });
+        TArray<TSharedPtr<FJsonValue>> Rows;
+        for (int32 Index = 0; Index < HaybaWorldBudget::BoundedRowCount(Sorted.Num()); ++Index)
+        {
+            TSharedRef<FJsonObject> Row = MakeShared<FJsonObject>();
+            Row->SetStringField(Name, Sorted[Index].Key);
+            Row->SetNumberField(TEXT("loaded_actor_count"), Sorted[Index].Value);
+            Rows.Add(MakeShared<FJsonValueObject>(Row));
+        }
+        return Rows;
+    };
+
+    TArray<TSharedPtr<FJsonValue>> FolderRows;
+    TArray<FString> FolderPaths;
+    // Ancestors with no direct actors must still be visible in folder totals.
+    // Keep folder rows within the requested scope, just like class totals.
+    for (const auto& Entry : DescendantFolders)
+    {
+        if (HaybaWorldBudget::ContainsFolder(RequestedFolder, Entry.Key)) FolderPaths.Add(Entry.Key);
+    }
+    FolderPaths.Sort();
+    for (int32 Index = 0; Index < HaybaWorldBudget::BoundedRowCount(FolderPaths.Num()); ++Index)
+    {
+        TSharedRef<FJsonObject> Row = MakeShared<FJsonObject>();
+        const FString& Path = FolderPaths[Index];
+        Row->SetStringField(TEXT("folder"), Path);
+        Row->SetNumberField(TEXT("direct_loaded_actor_count"), DirectFolders.FindRef(Path));
+        Row->SetNumberField(TEXT("descendant_loaded_actor_count"), DescendantFolders.FindRef(Path));
+        FolderRows.Add(MakeShared<FJsonValueObject>(Row));
+    }
+
+    TSharedRef<FJsonObject> Coverage = MakeShared<FJsonObject>();
+    Coverage->SetStringField(TEXT("scope"), TEXT("currently_loaded_editor_actors"));
+    // GetFolderPath() is only the path portion of Outliner identity. Different
+    // loaded folder roots may own the same path, so these totals intentionally
+    // aggregate those roots instead of claiming one specific Outliner folder.
+    Coverage->SetStringField(TEXT("folder_scope_kind"), TEXT("path_aggregate_across_loaded_folder_roots"));
+    Coverage->SetStringField(TEXT("folder_identity"), TEXT("folder_path_only_root_identity_not_measured"));
+    Coverage->SetBoolField(TEXT("scan_complete"), !bScanTruncated);
+    Coverage->SetNumberField(TEXT("scanned_actor_count"), ScannedActors);
+    Coverage->SetNumberField(TEXT("scan_limit_actors"), HaybaWorldBudget::MaxScannedActors);
+    Coverage->SetBoolField(TEXT("world_partition_enabled"), World->GetWorldPartition() != nullptr);
+    Coverage->SetStringField(TEXT("unloaded_world_partition_actors"), TEXT("unknown"));
+    Coverage->SetStringField(TEXT("unloaded_pcg_generated_instances"), TEXT("unknown"));
+    Coverage->SetStringField(TEXT("internal_hayba_actors"), TEXT("excluded"));
+
+    TSharedRef<FJsonObject> Measured = MakeShared<FJsonObject>();
+    Measured->SetNumberField(TEXT("loaded_actor_count"), LoadedActors);
+    Measured->SetNumberField(TEXT("loaded_ism_hism_instance_count"), static_cast<double>(IsmInstances));
+    Measured->SetArrayField(TEXT("classes"), CountRows(ClassCounts, TEXT("class")));
+    Measured->SetNumberField(TEXT("class_count"), ClassCounts.Num());
+    Measured->SetBoolField(TEXT("classes_truncated"), HaybaWorldBudget::RowsTruncated(ClassCounts.Num()));
+    Measured->SetArrayField(TEXT("folders"), MoveTemp(FolderRows));
+    Measured->SetStringField(TEXT("folder_rows_scope"), TEXT("path_aggregate_across_loaded_folder_roots"));
+    Measured->SetNumberField(TEXT("folder_count"), FolderPaths.Num());
+    Measured->SetBoolField(TEXT("folders_truncated"), HaybaWorldBudget::RowsTruncated(FolderPaths.Num()));
+
+    TSharedRef<FJsonObject> Targets = MakeShared<FJsonObject>();
+    auto SetTarget = [&](const TCHAR* Key, bool bPresent, double Limit, double Actual)
+    {
+        if (!bPresent) return;
+        TSharedRef<FJsonObject> Target = MakeShared<FJsonObject>();
+        Target->SetNumberField(TEXT("maximum_count"), Limit);
+        Target->SetNumberField(TEXT("observed_loaded_count"), Actual);
+        Target->SetStringField(TEXT("scope"), RequestedFolder.IsEmpty() ?
+            TEXT("whole_loaded_editor_world") : TEXT("folder_path_aggregate_across_loaded_roots"));
+        Target->SetStringField(TEXT("verdict"), HaybaWorldBudget::StructuralTargetVerdict(!bScanTruncated, Actual, Limit));
+        Targets->SetObjectField(Key, Target);
+    };
+    SetTarget(TEXT("loaded_actors"), bActorLimit, ActorLimit, LoadedActors);
+    SetTarget(TEXT("loaded_ism_hism_instances"), bInstanceLimit, InstanceLimit, static_cast<double>(IsmInstances));
+
+    TSharedRef<FJsonObject> Out = MakeShared<FJsonObject>();
+    Out->SetStringField(TEXT("world"), World->GetName());
+    Out->SetStringField(TEXT("folder_scope"), RequestedFolder);
+    Out->SetObjectField(TEXT("coverage"), Coverage);
+    Out->SetObjectField(TEXT("measured_structure"), Measured);
+    Out->SetObjectField(TEXT("user_structural_targets"), Targets);
+    Out->SetStringField(TEXT("production_performance_verdict"), TEXT("unknown_not_measured"));
+    Out->SetStringField(TEXT("needed_next"), TEXT("route-specific streaming traces, frame CPU/GPU and memory captures, NPC density/AI costs, texture texel density and streaming residency"));
     return FHaybaHandlerResult::Ok(Out);
 }
 

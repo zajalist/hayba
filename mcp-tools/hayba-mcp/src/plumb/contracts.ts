@@ -1,6 +1,6 @@
 // PLUMB contract port — the frozen seam.
 //
-// Mirrors D:/Hackathons/plumb/contracts.py (Verdict / GateResult /
+// Mirrors the PLUMB contracts (Verdict / GateResult /
 // ConstraintResult / FixVector / Transform / PAP) so the hayba validator can
 // speak PLUMB's quantified, *directional* language: every check yields a signed
 // value_m plus a FixVector telling the agent which way to move, instead of the

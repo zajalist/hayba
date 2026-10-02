@@ -1,8 +1,8 @@
 // mcp_server/src/index.ts
 import { McpServer, ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { config } from './config.js';
 import { HAYBA_VERSION } from './version.js';
+import { config } from './config.js';
 import { listCatalogResources, readCatalogResource } from './resources.js';
 import { registerTools } from './tools/index.js';
 import { startDashboard } from './dashboard/server.js';
