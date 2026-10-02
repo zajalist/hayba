@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-// The productions used to be read from D:/UnrealEngine/template/.scratch/grammar.json
+// The productions used to be read from a developer-machine scratch JSON path
 // — an absolute path on one developer's machine. That made this suite pass
 // locally and fail on every CI runner with ENOENT, permanently, which is worse
 // than having no test: a red check everyone learns to ignore stops reporting

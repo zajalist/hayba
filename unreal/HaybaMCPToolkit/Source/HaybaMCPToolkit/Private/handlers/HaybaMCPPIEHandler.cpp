@@ -874,8 +874,8 @@ namespace
      * A zero delta is not a small move, it is no move at all. SScrollBar::OnMouseMove
      * returns Unhandled on it; SScrollBox's right-click drag scrolling adds 0.0 to
      * its accumulator and never crosses the drag trigger distance. Both of those
-     * were measured dead in the field (Aphrosia docs/gauntlet/scroll-dossier.md,
-     * 2026-08-02) and both were the harness, not the widget.
+     * were observed failing in a live editor, and both were the harness,
+     * not the widget.
      *
      * So: read the origin BEFORE moving, move, then read back what Slate stored
      * (it truncates to whole pixels) and build the event from the real pair.

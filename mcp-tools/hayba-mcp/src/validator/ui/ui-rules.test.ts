@@ -1072,7 +1072,7 @@ describe('engine default font', () => {
 
   it('leaves a project font alone', () => {
     const r = validateUiSnapshot(
-      snapshot([rootPanel, roboto({ font_object: '/Game/UI/Fonts/F_AphrosiaBody', typeface: 'Regular' })]),
+      snapshot([rootPanel, roboto({ font_object: '/Game/UI/Fonts/F_LanternBody', typeface: 'Regular' })]),
       { strictness: 'strict' },
     );
     expect(findingsFor(r, 'ui_engine_default_font')).toHaveLength(0);

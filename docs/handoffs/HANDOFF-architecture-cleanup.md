@@ -45,14 +45,14 @@ npm run lint:legacy-wrappers        # SEPARATE from npm test. Easy to forget.
 
 # C++ build (editor must be CLOSED)
 "C:\Program Files\Epic Games\UE_5.8\Engine\Build\BatchFiles\Build.bat" \
-  AphrosiaEditor Win64 Development -Project="D:\Projects\aphrosia\Aphrosia.uproject"
+  h58Editor Win64 Development -Project="D:\UEScratch\h58\h58.uproject" -NoHotReloadFromIDE
 
 # C++ tests, headless
 "C:\Program Files\Epic Games\UE_5.8\Engine\Binaries\Win64\UnrealEditor-Cmd.exe" \
-  "D:\Projects\aphrosia\Aphrosia.uproject" \
+  "D:\UEScratch\h58\h58.uproject" \
   -ExecCmds="Automation RunTests Hayba.MCP; Quit" -unattended -nopause -nosplash -NullRHI -log
-# results go to D:\Projects\aphrosia\Saved\Logs\Aphrosia.log, NOT stdout:
-grep -E "Test Completed" /d/Projects/aphrosia/Saved/Logs/Aphrosia.log
+# results go to D:\UEScratch\h58\Saved\Logs\h58.log, NOT stdout:
+grep -E "Test Completed" /d/UEScratch/h58/Saved/Logs/h58.log
 ```
 
 Expected: **16 of 17 `Hayba.MCP` tests pass.** The one failure is
@@ -189,7 +189,7 @@ honest error, but never a success). The rule they follow is
 
 - `gas`, `metasound`, and the stale `niagara_*` / `seq_*` names. These are NOT
   missing descriptors. `unreal/HaybaMCP{GAS,MetaSound,Niagara,Sequencer}/` are
-  four complete plugins that are **absent from `Aphrosia/Plugins/`**, so their
+  four complete plugins that were **absent from the observed host's `Plugins/` directory**, so their
   commands answer `Unknown command`. The `niagara_*` / `seq_*` surfaces agents
   use today come from the TS/python tool layer instead. Settle the packaging
   question before writing another line of code here: install and build them, or

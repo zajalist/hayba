@@ -201,7 +201,8 @@ the README and marketing numbers keep drifting.
 ### F6. Stale config
 
 `.codex/config.toml` points `HAYBA_NODE_CATALOG` and `HAYBA_PCGEX_DB` at
-`D:/UnrealEngine/geoforge/...`. The host project is Aphrosia. Dead paths.
+an obsolete external project path. Catalog paths must come from the current
+installation or explicit configuration.
 
 ## G. What is genuinely good (do not break these)
 

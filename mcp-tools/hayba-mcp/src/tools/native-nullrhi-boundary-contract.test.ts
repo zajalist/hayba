@@ -21,7 +21,7 @@ function bodyBetween(source: string, start: string, end: string): string {
   return source.slice(from, to);
 }
 
-describe('native regressions observed in the 2026-08-28 Aphrosia NullRHI run', () => {
+describe('native regressions observed in a UE NullRHI run', () => {
   it('exercises advisory shaping with the registered destructive actor command', () => {
     // The actor handler registers actor_transform; actor_set_transform is not
     // a command, so an advisory probe under that name tests nothing real.

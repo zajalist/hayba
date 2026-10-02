@@ -367,7 +367,7 @@
           "name": "category",
           "type": "string",
           "required": false,
-          "description": "Case-insensitive full-path prefix selector, e.g. 'Aphrosia'. Use without explicit test_names."
+          "description": "Case-insensitive full-path prefix selector, e.g. 'LanternPuzzle'. Use without explicit test_names."
         },
         {
           "name": "smoke_only",
@@ -3819,7 +3819,7 @@
           "name": "path_prefix",
           "type": "string",
           "required": false,
-          "description": "Keep only assets whose object path starts with this, e.g. /Game/Aphrosia. Omitted means every static mesh the registry knows, engine content included."
+          "description": "Keep only assets whose object path starts with this, e.g. /Game/LanternPuzzle. Omitted means every static mesh the registry knows, engine content included."
         }
       ],
       "returns": {

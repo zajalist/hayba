@@ -836,7 +836,7 @@ namespace
             // whenever a preview is attached — so a value could be read from
             // one place, modified, and written through another, and anchors in
             // particular could be rebuilt from a stale copy. Field report
-            // (2026-07/08, Aphrosia): ui_set_slot_layout anchors were a silent
+            // from live UMG testing: ui_set_slot_layout anchors were a silent
             // no-op and the working workaround was object_set_property with a
             // full LayoutData literal on the slot. This is that workaround made
             // first-class: build the complete FAnchorData from the serialized

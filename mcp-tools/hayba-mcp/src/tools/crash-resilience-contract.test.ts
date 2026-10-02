@@ -162,7 +162,7 @@ describe('TCP crash-resilience contract', () => {
     expect(survivalHarness).toContain("Invoke-HaybaCommand -Command 'editor_save_all_and_quit'");
     expect(survivalHarness).toContain('$owned.CloseMainWindow()');
     expect(survivalHarness).not.toContain('[switch]$KeepEditor');
-    expect(survivalHarness).not.toContain("'D:\\Projects\\aphrosia");
+    expect(survivalHarness).not.toMatch(/['\"](?:[A-Z]:[/\\\\]|\/)(?:[^'\"\r\n]+[/\\\\])?Saved[/\\\\]Crashes/i);
   });
 
   it('serializes null evidence explicitly instead of dropping it through the PowerShell pipeline', () => {

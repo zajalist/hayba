@@ -22,7 +22,7 @@ bool FHaybaMCPAutomationIsolationPolicyTest::RunTest(const FString& Parameters)
         EExecutionMode::OwnedChild);
     TestEqual(
         TEXT("an arbitrary project test defaults to an owned child"),
-        Classify(FString(TEXT("Aphrosia.GameInstance.InvalidOuter"))),
+        Classify(FString(TEXT("LanternPuzzle.GameInstance.InvalidOuter"))),
         EExecutionMode::OwnedChild);
     TestEqual(
         TEXT("an engine test defaults to an owned child despite EditorContext"),

@@ -62,7 +62,7 @@ describe('ui_render_widget_to_png', () => {
     expect(() => schema.parse({ ...base, out_path: 'widget-proof.png' })).not.toThrow();
     expect(() => schema.parse({ ...base, out_path: 'Saved/Screenshots/gauntlet/widget-proof.png' })).toThrow();
     expect(() =>
-      schema.parse({ ...base, out_path: 'D:\\Projects\\Aphrosia\\Saved\\Screenshots\\gauntlet\\widget-proof.png' }),
+      schema.parse({ ...base, out_path: 'C:\\Scratch\\Saved\\Screenshots\\widget-proof.png' }),
     ).toThrow();
   });
 

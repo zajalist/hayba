@@ -13,8 +13,6 @@ const schema = z.object({
 export type ScrapeNodeRegistryParams = z.infer<typeof schema>;
 
 import { config } from '../config.js';
-const DEFAULT_SOURCE_PATH = process.env.HAYBA_PCGEX_SOURCE
-  || 'D:/UnrealEngine/geoforge/Plugins/PCGExtendedToolkit/Source';
 const DEFAULT_DB_PATH = config.pcgexDbPath;
 
 function walkHeaderFiles(dir: string): string[] {
@@ -209,10 +207,37 @@ function parseHeader(content: string, headerPath: string, sourcePath: string, cp
 
 export async function scrapeNodeRegistry(params: ScrapeNodeRegistryParams) {
   const { pluginSourcePath, outputDbPath, forceRescan } = schema.parse(params);
-  const sourcePath = (pluginSourcePath || DEFAULT_SOURCE_PATH).replace(/\\/g, '/');
   const dbPath = outputDbPath || DEFAULT_DB_PATH;
   const startMs = Date.now();
   const errors: string[] = [];
+  const selectedSource = pluginSourcePath?.trim() || process.env.HAYBA_PCGEX_SOURCE?.trim();
+  if (!selectedSource) {
+    return { nodesFound: 0, dbPath, durationMs: 0,
+      errors: ['Specify pluginSourcePath or HAYBA_PCGEX_SOURCE for the PCGExtendedToolkit Source directory.'] };
+  }
+  const sourcePath = selectedSource.replace(/\\/g, '/');
+  try {
+    if (!statSync(sourcePath).isDirectory()) throw new Error('not a directory');
+  } catch {
+    return { nodesFound: 0, dbPath, durationMs: 0,
+      errors: [`PCGExtendedToolkit source does not exist or is not a directory: ${sourcePath}`] };
+  }
+  // Reject an unrelated directory before forceRescan can remove a valid DB.
+  // A PCGEx Source tree may contain many headers; require at least one public
+  // node declaration that the parser below can actually recognize.
+  const headers = walkHeaderFiles(sourcePath);
+  const hasPcgexNode = headers.some((headerPath) => {
+    if (!headerPath.replace(/\\/g, '/').includes('/Public/')) return false;
+    try {
+      return /\bclass\s+(?:\w+_API\s+)?UPCGEx\w+Settings\s*[:{]/.test(readFileSync(headerPath, 'utf-8'));
+    } catch {
+      return false;
+    }
+  });
+  if (!hasPcgexNode) {
+    return { nodesFound: 0, dbPath, durationMs: 0,
+      errors: [`No recognizable PCGEx node headers under Source/Public: ${sourcePath}. Existing registry files were left unchanged.`] };
+  }
 
   // BUG-5: forceRescan should delete the DB file so schema changes take effect
   if (forceRescan && existsSync(dbPath)) {
@@ -238,7 +263,6 @@ export async function scrapeNodeRegistry(params: ScrapeNodeRegistryParams) {
     );
   `);
 
-  const headers = walkHeaderFiles(sourcePath);
   // Pre-pass: resolve PCGEx pin-label symbols (Foo::Labels::OutputEdgesLabel
   // → "Edges") so the catalog ships clean FName strings, not C++ refs.
   const labelTable = buildLabelTable(headers);
@@ -318,5 +342,6 @@ export async function scrapeNodeRegistry(params: ScrapeNodeRegistryParams) {
     errors.push(`node_catalog.json regen: ${e.message}`);
   }
 
+  db.close();
   return { nodesFound, dbPath, catalogPath, durationMs: Date.now() - startMs, errors };
 }

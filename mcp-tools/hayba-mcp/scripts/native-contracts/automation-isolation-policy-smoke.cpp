@@ -4,7 +4,7 @@ using namespace HaybaAutomationIsolation;
 
 static_assert(ClassifyLiteral(L"Hayba.MCP.Params.Reader") == EExecutionMode::InProcess);
 static_assert(ClassifyLiteral(L"Hayba.MCP.Future.Unreviewed") == EExecutionMode::OwnedChild);
-static_assert(ClassifyLiteral(L"Aphrosia.GameInstance.InvalidOuter") == EExecutionMode::OwnedChild);
+static_assert(ClassifyLiteral(L"LanternPuzzle.GameInstance.InvalidOuter") == EExecutionMode::OwnedChild);
 static_assert(ClassifyLiteral(L"Engine.Editor.ContextFixture") == EExecutionMode::OwnedChild);
 
 static_assert(ClassifyChildOutcome(false, false, false, false, -1) == EChildOutcome::NeverStarted);

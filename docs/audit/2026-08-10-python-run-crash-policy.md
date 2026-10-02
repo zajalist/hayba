@@ -44,7 +44,7 @@ Every fatal refusal contains:
 
 ## Historical crash evidence
 
-The crash archive under `Aphrosia/Saved/Crashes` contains five unique sessions
+The local host crash archive contained five unique sessions
 where `python_run` is the final logged MCP command and an engine failure begins
 on the next tick. Four immediately browse/load a map while PIE is active, then
 fail because the old world was retained or the replacement PIE world was

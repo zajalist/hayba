@@ -102,22 +102,25 @@ hayba_invoke { name: "editor_run_console_command", args: { command: "LiveCoding.
 `hayba_invoke` takes **`args`**, not `params`.
 
 `{executed: true}` means "the console command ran" — **not** "the compile
-succeeded". Poll `D:\Projects\aphrosia\Saved\Logs\Aphrosia.log` for
+succeeded". Poll `D:\UEScratch\h58\Saved\Logs\h58.log` for
 `LogLiveCoding: Display: Live coding succeeded` or `LogLiveCoding: Error`. Match
 on a **count** of terminal lines, not presence — earlier runs are still in the file.
 
 **Compile errors are NOT in the editor log.** It only says "see Live console".
-Read `C:\Users\Admin\AppData\Local\UnrealBuildTool\Log.txt`.
+Read `%LOCALAPPDATA%\UnrealBuildTool\Log.txt`.
 
 ### Editor closed → full build
 ```
 "C:\Program Files\Epic Games\UE_5.8\Engine\Build\BatchFiles\Build.bat" \
-  AphrosiaEditor Win64 Development -Project="D:\Projects\aphrosia\Aphrosia.uproject"
+  h58Editor Win64 Development -Project="D:\UEScratch\h58\h58.uproject" -NoHotReloadFromIDE
 ```
-Host project is **Aphrosia**, not geoforge (geoforge is stale and cannot build).
+Use an isolated scratch project whose editor is closed for full builds.
 
-"Unable to build while Live Coding is active" after the editor has exited means a
-stray `LiveCodingConsole` / `CrashReportClientEditor` survived. Kill those first.
+"Unable to build while Live Coding is active" after the editor has exited may
+mean a scratch-run `LiveCodingConsole` or `CrashReportClientEditor` survived.
+Before terminating anything, verify its PID, process start time, executable,
+command line, and scratch-project association. End only processes owned by
+that scratch run; another editor's Live Coding process may still be in use.
 
 ### Closing the editor
 Ask first unless told otherwise — another agent may be working in it.
@@ -160,7 +163,7 @@ render, and native-handler changes also require the editor-survival gate:
 
 ```powershell
 pwsh mcp-tools/hayba-mcp/scripts/test-editor-survival.ps1 `
-  -ProjectPath D:\Projects\aphrosia\Aphrosia.uproject `
+  -ProjectPath D:\UEScratch\h58\h58.uproject `
   -OutputJson Saved\TestResults\hayba-survival.json `
   -OutputJUnit Saved\TestResults\hayba-survival.xml
 ```
@@ -354,10 +357,10 @@ A change is done when **all** of these hold. Anything short, say so explicitly.
 | Thing | Where |
 |---|---|
 | MCP server | `mcp-tools/hayba-mcp` (build: `npm run build:server`) |
-| Plugin source | `unreal/HaybaMCPToolkit` (symlinked into Aphrosia) |
-| Host project | `D:\Projects\aphrosia\Aphrosia.uproject` |
-| Editor log | `D:\Projects\aphrosia\Saved\Logs\Aphrosia.log` |
-| Compile errors | `C:\Users\Admin\AppData\Local\UnrealBuildTool\Log.txt` |
+| Plugin source | `unreal/HaybaMCPToolkit` (copied into scratch project) |
+| Host project | `D:\UEScratch\h58\h58.uproject` |
+| Editor log | `D:\UEScratch\h58\Saved\Logs\h58.log` |
+| Compile errors | `%LOCALAPPDATA%\UnrealBuildTool\Log.txt` |
 | C++ tests | `unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/Tests/` |
 | Test harness | `mcp-tools/hayba-mcp/src/tools/testing/scripted-ue.ts` |
 | Editor survival gate | `mcp-tools/hayba-mcp/scripts/test-editor-survival.ps1` |

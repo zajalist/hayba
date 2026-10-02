@@ -68,4 +68,4 @@ body:
     id: crash
     attributes:
       label: Crash dump (if applicable)
-      description: Attach `geoforge.log` + `UEMinidump.dmp` from `Saved/Crashes/`.
+      description: Attach `external host project.log` + `UEMinidump.dmp` from `Saved/Crashes/`.

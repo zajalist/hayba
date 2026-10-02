@@ -16,7 +16,7 @@ export const schema = z.object({
   resource: z
     .string()
     .optional()
-    .describe('Texture2D or Material asset path for the brush, e.g. "/Game/Aphrosia/UI/Icons/T_RoundedBorder"'),
+    .describe('Texture2D or Material asset path for the brush, e.g. "/Game/LanternPuzzle/UI/Icons/T_LanternIcon"'),
   tint: z.array(z.number()).length(4).optional().describe('RGBA tint color (0-1)'),
   // The engine's ESlateBrushDrawType is exactly {NoDrawType, Box, Border,
   // Image, RoundedBox}. This enum previously offered "Mask", which is not a

@@ -1385,12 +1385,12 @@ export const PCG_DESCRIPTORS: ToolDescriptor[] = [
       not_when: 'the registry is current - this rebuilds it from scratch',
     },
     schema: {
-      pluginSourcePath: z.string().optional().describe('Path to PCGExtendedToolkit/Source/ directory'),
+      pluginSourcePath: z.string().optional().describe('Path to PCGExtendedToolkit/Source/ directory; required unless HAYBA_PCGEX_SOURCE is set'),
       outputDbPath: z.string().optional().describe('Output SQLite DB path (default: Resources/pcgex_registry.db)'),
       forceRescan: z.boolean().optional().describe('Force re-scan even if DB exists'),
     },
     cost: 'high',
-    returns: '{ok, nodes, pins, properties, db_path}',
+    returns: '{nodesFound, dbPath, catalogPath?, durationMs, errors}; missing or invalid source leaves the DB untouched',
     handler: async (params) => {
       const result = await scrapeNodeRegistry(params as unknown as ScrapeNodeRegistryParams);
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
@@ -2463,8 +2463,8 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
     returns: '{path, name, parent_class, root?}',
     niche: UI,
     schema: {
-      path: z.string().min(1).describe('UE content package directory, e.g. "/Game/Aphrosia/UI"'),
-      name: z.string().min(1).describe('Asset name, e.g. "WBP_StartScreen"'),
+      path: z.string().min(1).describe('UE content package directory, e.g. "/Game/LanternPuzzle/UI"'),
+      name: z.string().min(1).describe('Asset name, e.g. "WBP_PuzzlePanel"'),
       parent_class: z
         .string()
         .optional()

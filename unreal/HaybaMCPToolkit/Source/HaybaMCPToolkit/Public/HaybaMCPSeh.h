@@ -72,8 +72,7 @@ namespace HaybaSeh
     //     check(CurrentGWorld != PlayWorld || bIsSimulatingInEditor)
     //     [EditorEngine.cpp:1758]
     //   i.e. one frame after the guard logged that the editor was kept alive.
-    //   Observed twice on 2026-08-11 driving Aphrosia, via
-    //   editor_run_console_command -> AphrosiaPlayerController.HandleMapModeChanged.
+    //   Observed during live PIE commands that entered game Blueprint code.
     //
     // So the guard must put the world state back itself. Snapshot it before the
     // guarded call; if the fault left it drifted, undo the engine's switch with

@@ -34,7 +34,7 @@ Path prefixes used in tasks: `P` = `unreal/HaybaMCPToolkit/Source/HaybaMCPToolki
 - **Plan rulings:** R11 protects the files that carry someone else's uncommitted work: no task adds a case to `TS/tools/tool-executor.test.ts` or `TS/tools/asset/asset-delete.test.ts` (the item designs' `tool-executor.test.ts` cases live in the new `TS/tools/ue-refusal-codes.test.ts`), and a new suite gets a new file. Every other existing test file may be extended by the task that owns it, as the spec's own task lists do (`python-run.test.ts`, `check-ue-status.test.ts`, `editor-get-state.test.ts`, `lease-keeper.test.ts`, `tcp-client.test.ts`, `batch-tools.test.ts`, `secret-redaction.test.ts`, `access-policy-drift.test.ts`). The only `index.ts` hunk is T2.5's `editor_get_state` descriptor; never touch the main checkout's uncommitted files (`P/Public/HaybaMCPAssetGuard.h`, `P/Private/handlers/HaybaMCPAssetHandler.cpp`, `TS/tools/tool-executor.test.ts`, `TS/tools/heavy-ops.ts`, `TS/tools/asset/asset-delete.ts` and its test); one refusal builder (R2); no new field on `FHaybaHandlerResult` and no `Public/IHaybaMCPHandler.h` change (R3); ADR-0011 is editor_unsafe and ADR-0012 is editor-state guards (R8).
 - **Five layers** for any new command: `GetCommands` + `Handle`, the sidecar or TS descriptor, `returns`, the `agent_callable` / `has_ts_wrapper` flags, and `list-tool-categories.ts`. Raw TCP works after layer 1, so it looks done early. The C++ registration and the Node `executeCommand` land in the same commit (`wire-command-names.test.ts`).
 - **Tests:** filter with `Hayba`, never `Hayba.MCP` (the narrower prefix silently skips whole files). Verify exact names against `SCR/p0-expected-automation-tests.txt` with `SCR/check-automation-report.mjs`; never trust a count or "Result: Succeeded". Router tests use unique owners `hayba-test-<guid8>`, ConnIds ≥900000, assets under `/Game/__HaybaTest__/…`, release and forget in `ON_SCOPE_EXIT`, and assert exact codes. From T6.2 on, a test that sends an owner-less write or asserts who `other_owners` names declares `HaybaMCPLeaseTest::FScopedCleanPresence` first: the headless run is one process, and owners named on fake connections stay present. Every test that can mark the editor unsafe runs inside `FScopedOverrideForTests` (R-7). Anything that can fault, save, switch worlds or start real PIE is an owned child, never on the InProcess allowlist. Only `NoErrorSaveSurvivesMissedPreflight` declares `AddExpectedError("as it is read only")`. Latent tests have a hard 10 s cap and must report Success.
-- **Builds:** every deploy is a full editor rebuild with the editor closed; Live Coding cannot change class layout and is only for iterating on handler bodies. A new `.cpp` can be silently omitted from the first build, so build twice or check the names (R-30). C++ builds and automation run only on the throwaway UE 5.8 scratch host `D:/UEScratch/h58` with **copied** plugins (never symlinked; satellites symlinked to main go untested). Never build into or launch the maintainer's editor or any project under `D:/UnrealEngine` (the consumer, geoforge, template, Aphrosia). Never `robocopy /MIR` into the consumer's Plugins. Never connect to 52342–52350 from inside `python_run`. Deploying into the consumer happens only in its closed-editor window, through a handoff document.
+- **Builds:** every deploy is a full editor rebuild with the editor closed; Live Coding cannot change class layout and is only for iterating on handler bodies. A new `.cpp` can be silently omitted from the first build, so build twice or check the names (R-30). C++ builds and automation run only on the throwaway UE 5.8 scratch host `D:/UEScratch/h58` with **copied** plugins (never symlinked; satellites symlinked to main go untested). Never build into or launch the maintainer's editor or any non-scratch consumer project. Never `robocopy /MIR` into the consumer's Plugins. Never connect to 52342–52350 from inside `python_run`. Deploying into the consumer happens only in its closed-editor window, through a handoff document.
 - **TS gate** (local; CI is unreliable and is not mentioned in the repo): in `mcp-tools/hayba-mcp`, `npx tsc --noEmit`, `npx vitest run`, `npm run lint:legacy-wrappers`, and `npm run build:server` before any live check. Baseline on this branch: 211 files, 2356 passed, 1 skipped. Wire tests `vi.mock('../../tcp-client.js')`. Contract tests fail closed (minimum file and match counts). Every router edit runs the whole vitest suite: 14 test files scan `HaybaMCPCommandHandler.cpp` (C14). A grep-based guard that is not taught a new form in the same commit fails open.
 - **Commits:** conventional messages, **no Co-Authored-By trailer**, no competitor product names, no "ported from" framing. Work lands on `fix/p0-safety` (worktree `D:/Hackathons/hayba/.worktrees/p0-safety`); deploy and trunk merges use their own branches and worktrees; push when ready.
 
@@ -179,7 +179,7 @@ Deliberate departures from the planning ledger, kept as written (each task says 
 
 ### Task T0.1: Throwaway UE 5.8 scratch host `D:/UEScratch/h58` and the sync procedure
 
-Every C++ build and automation run in this plan happens here, never in the maintainer's editor or any project under `D:/UnrealEngine`. The host is outside the repo and is never committed. It follows the layout of the existing 5.7 host `D:/UEScratch/h57`, on 5.8. No World Partition map is needed: T1.4's `BatchPumpStopsWhileUnsafe` runs in-process with an action recorder, and T2.4's `BatchHoldsDuringPIE` uses a PIE override.
+Every C++ build and automation run in this plan happens here, never in the maintainer's editor or a consumer project. The host is outside the repo and is never committed. It follows the layout of the existing 5.7 scratch host `D:/UEScratch/h57`, on 5.8. No World Partition map is needed: T1.4's `BatchPumpStopsWhileUnsafe` runs in-process with an action recorder, and T2.4's `BatchHoldsDuringPIE` uses a PIE override.
 
 **Files:**
 - Create (outside the repo): `D:/UEScratch/h58/h58.uproject`, `D:/UEScratch/h58/Source/h58.Target.cs`, `D:/UEScratch/h58/Source/h58Editor.Target.cs`, `D:/UEScratch/h58/Source/h58/h58.Build.cs`, `D:/UEScratch/h58/Source/h58/h58.cpp`
@@ -198,7 +198,7 @@ Test-Path "$UE\Engine\Binaries\Win64\UnrealEditor-Cmd.exe"
 Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like "*UEScratch\h58*" } | Select-Object ProcessId, Name
 ```
 
-Expected: `False`, then `True`, then no process. If `$H` exists from an earlier attempt, delete only `$H` (never anything under `D:\UnrealEngine`) and start again.
+Expected: `False`, then `True`, then no process. If `$H` exists from an earlier attempt, delete only the verified scratch path `$H` (never a consumer project) and start again.
 
 - [ ] **Step 2: Write the host project**
 
@@ -5782,7 +5782,7 @@ bool FHaybaMCPStateUserPlayDecisionTest::RunTest(const FString& Parameters)
 
 - [ ] **Step 2: Build the scratch host and confirm the tests do not compile yet**
 
-Scratch host only (`D:\UEScratch\h58`, plugins copied, never symlinked; never an editor under `D:\UnrealEngine`).
+Scratch host only (`D:\UEScratch\h58`, plugins copied, never symlinked; never a consumer editor).
 
 ```powershell
 $UE = "C:\Program Files\Epic Games\UE_5.8"; $WT = "D:\Hackathons\hayba\.worktrees\p0-safety"; $H = "D:\UEScratch\h58"
@@ -30286,7 +30286,7 @@ Ordered roughly by when they would bite first.
 ```powershell
 $UE  = "C:\Program Files\Epic Games\UE_5.8"          # verified: Build.bat, RunUAT.bat, UnrealEditor-Cmd.exe, UnrealEditor.exe present
 $WT  = "D:\Hackathons\hayba\.worktrees\p0-safety"
-$H   = "D:\UEScratch\h58"                             # throwaway host; NEVER under D:\UnrealEngine
+$H   = "D:\UEScratch\h58"                             # throwaway host; never a consumer project
 $SHA = git -C $WT rev-parse --short HEAD
 
 # T0.1 once: minimal C++ host

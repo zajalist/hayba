@@ -18,10 +18,10 @@ bool FHaybaMCPTestSelectionContractTest::RunTest(const FString& Parameters)
             TEXT("failuresaretruthful"), FString()));
     TestFalse(TEXT("both selectors must match when both are supplied"),
         Matches(TEXT("SelectorsAndFailuresAreTruthful"), TEXT("Hayba.Other"),
-            TEXT("failures"), TEXT("Aphrosia")));
+            TEXT("failures"), TEXT("LanternPuzzle")));
     TestFalse(TEXT("partial category outside the prefix is rejected"),
-        Matches(TEXT("Aphrosia"), TEXT("Other.Aphrosia.Test"),
-            FString(), TEXT("Aphrosia")));
+        Matches(TEXT("LanternPuzzle"), TEXT("Other.LanternPuzzle.Test"),
+            FString(), TEXT("LanternPuzzle")));
 
     TestTrue(TEXT("all plus explicit names is rejected"),
         !ValidateCombination(true, 1, false).IsEmpty());

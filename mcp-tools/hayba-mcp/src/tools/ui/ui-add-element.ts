@@ -18,7 +18,7 @@ export const schema = z.object({
   widget_blueprint_path: z
     .string()
     .min(1)
-    .describe('Full path of the target Widget Blueprint, e.g. "/Game/Aphrosia/UI/WBP_StartScreen"'),
+    .describe('Full path of the target Widget Blueprint, e.g. "/Game/LanternPuzzle/UI/WBP_PuzzlePanel"'),
   child_class: z
     .string()
     .min(1)

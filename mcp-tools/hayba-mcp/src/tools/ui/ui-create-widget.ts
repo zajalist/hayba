@@ -14,13 +14,13 @@ export const schema = z.object({
   path: z
     .string()
     .min(1)
-    .describe('UE content package directory for the new Widget Blueprint, e.g. "/Game/Aphrosia/UI"'),
-  name: z.string().min(1).describe('Asset name for the new Widget Blueprint, e.g. "WBP_StartScreen"'),
+    .describe('UE content package directory for the new Widget Blueprint, e.g. "/Game/LanternPuzzle/UI"'),
+  name: z.string().min(1).describe('Asset name for the new Widget Blueprint, e.g. "WBP_PuzzlePanel"'),
   parent_class: z
     .string()
     .optional()
     .describe(
-      'Parent class the widget derives from — MUST descend from UserWidget. A class path like "/Script/Aphrosia.StartScreenWidget" or "/Script/UMG.UserWidget", or a short name. Defaults to UserWidget.',
+      'Parent class the widget derives from — MUST descend from UserWidget. Use "/Script/UMG.UserWidget", a custom UserWidget subclass path, or a short name. Defaults to UserWidget.',
     ),
 });
 
