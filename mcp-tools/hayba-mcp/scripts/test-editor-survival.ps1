@@ -28,7 +28,7 @@ param(
     [ValidateRange(0, [int]::MaxValue)]
     [int]$EditorPid = 0,
 
-    [string]$EditorExe = 'C:\Program Files\Epic Games\UE_5.8\Engine\Binaries\Win64\UnrealEditor.exe',
+    [string]$EditorExe = '',
 
     [string]$ProjectPath = '',
 
@@ -79,6 +79,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+if (-not $EditorExe) { $EditorExe = $env:HAYBA_UNREAL_EDITOR_EXE }
 $Invoker = Join-Path $PSScriptRoot 'invoke-tcp-command.ps1'
 $HostProofHelper = Join-Path $PSScriptRoot 'query-survival-host-proof.ps1'
 $SurvivalOwner = 'survival-' + [guid]::NewGuid().ToString('N')
@@ -159,6 +160,8 @@ if ($List) {
     } | ConvertTo-Json -Depth 5
     exit 0
 }
+
+if (-not $EditorExe) { throw 'Pass -EditorExe or set HAYBA_UNREAL_EDITOR_EXE to the UnrealEditor executable.' }
 
 function Get-SanitizedHash([object]$Value) {
     $json = ConvertTo-Json -InputObject $Value -Compress -Depth 30

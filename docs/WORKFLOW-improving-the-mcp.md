@@ -102,7 +102,7 @@ hayba_invoke { name: "editor_run_console_command", args: { command: "LiveCoding.
 `hayba_invoke` takes **`args`**, not `params`.
 
 `{executed: true}` means "the console command ran" — **not** "the compile
-succeeded". Poll `D:\UEScratch\h58\Saved\Logs\h58.log` for
+succeeded". Poll `$env:HAYBA_SCRATCH_HOST_DIR\Saved\Logs\<project-name>.log` for
 `LogLiveCoding: Display: Live coding succeeded` or `LogLiveCoding: Error`. Match
 on a **count** of terminal lines, not presence — earlier runs are still in the file.
 
@@ -110,9 +110,11 @@ on a **count** of terminal lines, not presence — earlier runs are still in the
 Read `%LOCALAPPDATA%\UnrealBuildTool\Log.txt`.
 
 ### Editor closed → full build
-```
-"C:\Program Files\Epic Games\UE_5.8\Engine\Build\BatchFiles\Build.bat" \
-  h58Editor Win64 Development -Project="D:\UEScratch\h58\h58.uproject" -NoHotReloadFromIDE
+```powershell
+# Set UE_ROOT and HAYBA_SCRATCH_PROJECT for your local scratch host.
+$Target = [IO.Path]::GetFileNameWithoutExtension($env:HAYBA_SCRATCH_PROJECT) + 'Editor'
+& "$env:UE_ROOT\Engine\Build\BatchFiles\Build.bat" `
+  $Target Win64 Development "-Project=$env:HAYBA_SCRATCH_PROJECT" -NoHotReloadFromIDE
 ```
 Use an isolated scratch project whose editor is closed for full builds.
 
@@ -163,7 +165,8 @@ render, and native-handler changes also require the editor-survival gate:
 
 ```powershell
 pwsh mcp-tools/hayba-mcp/scripts/test-editor-survival.ps1 `
-  -ProjectPath D:\UEScratch\h58\h58.uproject `
+  -ProjectPath $env:HAYBA_SCRATCH_PROJECT `
+  -EditorExe "$env:UE_ROOT\Engine\Binaries\Win64\UnrealEditor.exe" `
   -OutputJson Saved\TestResults\hayba-survival.json `
   -OutputJUnit Saved\TestResults\hayba-survival.xml
 ```
@@ -358,8 +361,8 @@ A change is done when **all** of these hold. Anything short, say so explicitly.
 |---|---|
 | MCP server | `mcp-tools/hayba-mcp` (build: `npm run build:server`) |
 | Plugin source | `unreal/HaybaMCPToolkit` (copied into scratch project) |
-| Host project | `D:\UEScratch\h58\h58.uproject` |
-| Editor log | `D:\UEScratch\h58\Saved\Logs\h58.log` |
+| Host project | `$env:HAYBA_SCRATCH_PROJECT` |
+| Editor log | `$env:HAYBA_SCRATCH_HOST_DIR\Saved\Logs\<project-name>.log` |
 | Compile errors | `%LOCALAPPDATA%\UnrealBuildTool\Log.txt` |
 | C++ tests | `unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/Tests/` |
 | Test harness | `mcp-tools/hayba-mcp/src/tools/testing/scripted-ue.ts` |

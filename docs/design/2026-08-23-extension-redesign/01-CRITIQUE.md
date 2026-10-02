@@ -10,7 +10,7 @@ bottom so nobody re-derives them.
 
 `src/plumb/contracts.ts:5-8` states the intent plainly:
 
-> "Mirrors D:/Hackathons/plumb/contracts.py … so the hayba validator can speak
+> "Mirrors the PLUMB contracts … so the hayba validator can speak
 > PLUMB's quantified, *directional* language: every check yields a signed
 > value_m plus a FixVector telling the agent which way to move, **instead of the
 > boolean severity findings the legacy validator emits**."

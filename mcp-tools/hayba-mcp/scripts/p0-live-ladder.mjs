@@ -7,7 +7,7 @@
 // the editor to 52342-52350 deadlocks the game thread). Never point it at
 // the consumer, and never run it while another agent drives the same editor.
 //
-//   node scripts/p0-live-ladder.mjs --deploy a|b|c [--host-dir D:\UEScratch\h58] [--only A1,A2] [--manual]
+//   node scripts/p0-live-ladder.mjs --deploy a|b|c --host-dir <scratch-project> [--only A1,A2] [--manual]
 //
 // Exit 0: every selected step passed. 1: a step failed. 2: bad arguments or no
 // scratch host. 3: steps that need a person at the editor were skipped; rerun
@@ -216,7 +216,7 @@ export function exitCodeFor(results) {
 }
 
 export function parseArgs(argv) {
-  const out = { deploy: null, hostDir: 'D:\\UEScratch\\h58', only: null, manual: false };
+  const out = { deploy: null, hostDir: process.env.HAYBA_SCRATCH_HOST_DIR ?? null, only: null, manual: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--deploy') out.deploy = String(argv[++i] ?? '').toLowerCase();
@@ -226,6 +226,7 @@ export function parseArgs(argv) {
     else throw new Error(`unknown argument ${a}`);
   }
   if (!['a', 'b', 'c'].includes(out.deploy)) throw new Error('--deploy a|b|c is required');
+  if (!out.hostDir) throw new Error('--host-dir or HAYBA_SCRATCH_HOST_DIR is required');
   return out;
 }
 

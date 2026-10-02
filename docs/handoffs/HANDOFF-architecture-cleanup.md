@@ -38,21 +38,22 @@ was verified that way and the commits say so.
 
 ## 1. Verification commands
 
-```bash
+```powershell
 # TS gate — the authoritative one
 cd mcp-tools/hayba-mcp && npx tsc --noEmit && npm test
 npm run lint:legacy-wrappers        # SEPARATE from npm test. Easy to forget.
 
 # C++ build (editor must be CLOSED)
-"C:\Program Files\Epic Games\UE_5.8\Engine\Build\BatchFiles\Build.bat" \
-  h58Editor Win64 Development -Project="D:\UEScratch\h58\h58.uproject" -NoHotReloadFromIDE
+$Target = [IO.Path]::GetFileNameWithoutExtension($env:HAYBA_SCRATCH_PROJECT) + 'Editor'
+& "$env:UE_ROOT\Engine\Build\BatchFiles\Build.bat" `
+  $Target Win64 Development "-Project=$env:HAYBA_SCRATCH_PROJECT" -NoHotReloadFromIDE
 
 # C++ tests, headless
-"C:\Program Files\Epic Games\UE_5.8\Engine\Binaries\Win64\UnrealEditor-Cmd.exe" \
-  "D:\UEScratch\h58\h58.uproject" \
-  -ExecCmds="Automation RunTests Hayba.MCP; Quit" -unattended -nopause -nosplash -NullRHI -log
-# results go to D:\UEScratch\h58\Saved\Logs\h58.log, NOT stdout:
-grep -E "Test Completed" /d/UEScratch/h58/Saved/Logs/h58.log
+& "$env:UE_ROOT\Engine\Binaries\Win64\UnrealEditor-Cmd.exe" `
+  "$env:HAYBA_SCRATCH_PROJECT" `
+  '-ExecCmds=Automation RunTests Hayba.MCP; Quit' -unattended -nopause -nosplash -NullRHI -log
+# results go to $env:HAYBA_SCRATCH_HOST_DIR\Saved\Logs\<project-name>.log, NOT stdout:
+Select-String -Path "$env:HAYBA_SCRATCH_HOST_DIR\Saved\Logs\*.log" -Pattern 'Test Completed'
 ```
 
 Expected: **16 of 17 `Hayba.MCP` tests pass.** The one failure is

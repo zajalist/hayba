@@ -18,7 +18,7 @@ exported EXRs hold TRUE world/UV values.
 Usage (from python_run):
     exec(open(r'.../study_render.py').read())
     print(study_render('/Game/LanternPuzzle/Meshes/SM_Lantern', views=8, res=512,
-                       out_root=r'D:/UEScratch/render-study'))
+                       out_root=r'<scratch-output-dir>'))
 """
 import unreal
 import os

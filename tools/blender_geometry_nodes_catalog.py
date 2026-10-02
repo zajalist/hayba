@@ -4,8 +4,8 @@ A6 — Blender Geometry Nodes catalog scraper.
 
 Run inside Blender's bundled Python, e.g.
 
-  blender --background --python scripts/blender_geometry_nodes_catalog.py -- \\
-      --output D:/hayba/blender_gn_catalog.sqlite
+  blender --background --python tools/blender_geometry_nodes_catalog.py -- \\
+      --output ./blender_gn_catalog.sqlite
 
 Mirrors the PCGEx registry pattern: SQLite tables `nodes`, `inputs`, `properties`.
 Requires Blender 3.x+ with Geometry Nodes.

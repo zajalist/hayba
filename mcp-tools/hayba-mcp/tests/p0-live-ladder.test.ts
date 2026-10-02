@@ -639,7 +639,7 @@ describe('p0-live-ladder runner', () => {
   it('parseArgs requires --deploy and rejects unknown flags', () => {
     expect(() => parseArgs([])).toThrow(/--deploy/);
     expect(() => parseArgs(['--deploy', 'a', '--frobnicate'])).toThrow(/unknown argument/);
-    expect(parseArgs(['--deploy', 'A', '--only', 'A1,A2', '--manual'])).toMatchObject({ deploy: 'a', only: ['A1', 'A2'], manual: true });
+    expect(parseArgs(['--deploy', 'A', '--host-dir', 'UEScratch/host', '--only', 'A1,A2', '--manual'])).toMatchObject({ deploy: 'a', hostDir: 'UEScratch/host', only: ['A1', 'A2'], manual: true });
   });
   it('the Deploy A ladder is A1-A8, with the Play and restart steps manual', () => {
     expect(STEPS.a.map((s: { id: string }) => s.id)).toEqual(['A1', 'A2', 'A3', 'A4', 'A5', 'A6', 'A7', 'A7b', 'A8']);

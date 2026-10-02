@@ -47,6 +47,10 @@ docs/briefs/
 docs/research/
 docs/architecture/
 
+# Third-party tutorial transcripts are research inputs, not distributable source.
+mcp-tools/hayba-mcp/src/gaea/transcripts/
+mcp-tools/hayba-mcp/gaea-mcp-output/
+
 # Sidecar chat/session runtime state — machine-local, not source
 .ai-agent/
 
