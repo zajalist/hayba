@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="330" viewBox="0 0 1120 330" role="img" aria-labelledby="title description">
+  <title id="title">Hayba checks writes inside Unreal Editor</title>
+  <desc id="description">Two agents connect through the MCP server. The native Hayba plugin checks plans, ownership, editor state, busy assets, and saves before an allowed write reaches Unreal Editor. A blocked operation returns a structured refusal.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 1 1 L 9 5 L 1 9" fill="none" stroke="#B56A1D" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+    <marker id="returnArrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 1 1 L 9 5 L 1 9" fill="none" stroke="#C3BAAE" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+  </defs>
+  <rect width="1120" height="330" rx="18" fill="#211F1D"/>
+  <rect x="26" y="80" width="172" height="66" rx="12" fill="#2C2925" stroke="#514B44"/>
+  <rect x="26" y="160" width="172" height="66" rx="12" fill="#2C2925" stroke="#514B44"/>
+  <text x="43" y="107" fill="#F3EEE8" font-family="Segoe UI, Noto Sans, sans-serif" font-size="17" font-weight="600">Agent A</text>
+  <text x="43" y="129" fill="#C3BAAE" font-family="Segoe UI, Noto Sans, sans-serif" font-size="13">Inspect or request a write</text>
+  <text x="43" y="187" fill="#F3EEE8" font-family="Segoe UI, Noto Sans, sans-serif" font-size="17" font-weight="600">Agent B</text>
+  <text x="43" y="209" fill="#C3BAAE" font-family="Segoe UI, Noto Sans, sans-serif" font-size="13">Shares the same editor</text>
+  <path d="M198 113 H222 V153 H261 M198 193 H222 V153" fill="none" stroke="#B56A1D" stroke-width="2" marker-end="url(#arrow)"/>
+  <rect x="264" y="104" width="189" height="100" rx="12" fill="#2C2925" stroke="#514B44"/>
+  <text x="283" y="143" fill="#F3EEE8" font-family="Segoe UI, Noto Sans, sans-serif" font-size="18" font-weight="600">MCP server</text>
+  <text x="283" y="167" fill="#C3BAAE" font-family="Segoe UI, Noto Sans, sans-serif" font-size="14">Routes tool requests</text>
+  <path d="M453 154 H494" fill="none" stroke="#B56A1D" stroke-width="2" marker-end="url(#arrow)"/>
+  <rect x="497" y="42" width="375" height="231" rx="16" fill="#26231F" stroke="#B56A1D" stroke-width="1.5"/>
+  <text x="517" y="75" fill="#F3EEE8" font-family="Segoe UI, Noto Sans, sans-serif" font-size="19" font-weight="600">Hayba editor plugin</text>
+  <text x="517" y="101" fill="#C3BAAE" font-family="Segoe UI, Noto Sans, sans-serif" font-size="14">Native checks at the write boundary</text>
+  <path d="M517 116 H851" stroke="#514B44"/>
+  <text x="517" y="145" fill="#F3EEE8" font-family="Segoe UI, Noto Sans, sans-serif" font-size="15">Plan and owner lease</text>
+  <text x="517" y="174" fill="#F3EEE8" font-family="Segoe UI, Noto Sans, sans-serif" font-size="15">PIE, busy assets, and unsafe state</text>
+  <text x="517" y="203" fill="#F3EEE8" font-family="Segoe UI, Noto Sans, sans-serif" font-size="15">Guarded save and bounded batch</text>
+  <path d="M872 154 H922" fill="none" stroke="#B56A1D" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="879" y="138" fill="#E4A862" font-family="Segoe UI, Noto Sans, sans-serif" font-size="13">Allowed</text>
+  <rect x="925" y="104" width="170" height="100" rx="12" fill="#2C2925" stroke="#514B44"/>
+  <text x="944" y="143" fill="#F3EEE8" font-family="Segoe UI, Noto Sans, sans-serif" font-size="18" font-weight="600">Unreal Editor</text>
+  <text x="944" y="167" fill="#C3BAAE" font-family="Segoe UI, Noto Sans, sans-serif" font-size="14">Applies the change</text>
+  <path d="M497 238 H358 V207" fill="none" stroke="#C3BAAE" stroke-width="1.8" marker-end="url(#returnArrow)"/>
+  <text x="252" y="282" fill="#C3BAAE" font-family="Segoe UI, Noto Sans, sans-serif" font-size="14">A structured refusal goes back to the requesting agent</text>
+</svg>
