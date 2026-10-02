@@ -59,11 +59,9 @@ Hayba does not treat every refusal as failure. A structured refusal tells the ag
 
 ## World, from scene evidence
 
-The current preview scans loaded static meshes progressively. This animation is a real scratch-editor sequence: 120, then 288, then 328, then 1,024 synthetic actors. The final view contains 130,048 sampled points. Each point can be traced to its source; an unloaded cell is still unknown.
+The current preview progressively scans loaded static meshes. The scratch-editor capture above shows 130,048 surface samples from 1,024 synthetic actors. Each sample can be traced to its source; an unloaded cell is still unknown.
 
-![Progressive World scan in a synthetic scratch Unreal level, ending at 130,048 mesh samples](docs/media/world-scan-progress.gif)
-
-[Open a still frame](docs/media/world-mesh-splat-preview.png) · [Read the World model](docs/world-intelligence.md)
+[Open the World capture](docs/media/world-mesh-splat-preview.png) · [Read the World model](docs/world-intelligence.md)
 
 ## The next World layer
 
