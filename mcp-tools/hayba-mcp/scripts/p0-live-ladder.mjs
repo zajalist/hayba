@@ -833,7 +833,8 @@ const C_STEPS = [
       const q = await claimant.send('lease_status');
       check(h.ok === true && q.ok === true && /^conn:\d+$/.test(h.data?.caller_owner ?? '')
         && /^conn:\d+$/.test(q.data?.caller_owner ?? '')
-        && h.data.caller_owner !== q.data.caller_owner, 'C2 needs two distinct synthetic callers');
+        && h.data?.connection_owner === '' && q.data?.connection_owner === ''
+        && h.data.caller_owner !== q.data.caller_owner, 'C2 needs two distinct fresh synthetic callers');
       const mine = h.data.caller_owner; const theirs = q.data.caller_owner;
       for (const claimed of [mine, 'local']) {
         const r = await claimant.send('ping', {}, { owner: claimed, lease: null });
@@ -964,10 +965,46 @@ const C_STEPS = [
             labels: [batchHeld.label, sentinelHeld.label], reason: 'batch terminal state unconfirmed; controlled scratch recovery required' });
           throw new Error(`C3 job ${job ?? '<missing-id>'} may still be running; controlled scratch recovery required`);
         }
-        await bWait(ctx, 'both C3 leases expire naturally', async () => {
-          const status = await watch();
-          return !cLease(status, batchHeld) && !cLease(status, sentinelHeld);
-        }, 120_000, 1_000);
+        const held = [batchHeld, sentinelHeld].filter((lease) => lease.lease_id || lease.ticket);
+        if (!held.length) return;
+        let latest = await watch();
+        const observed = held.map((lease) => {
+          const item = cLease(latest, lease);
+          return { label: lease.label, resource: lease.resource, lease_id: lease.lease_id,
+            ticket: lease.ticket, state: item ? 'visible' : 'absent',
+            expires_in_s: item?.expires_in_s };
+        });
+        const remaining = observed.filter((lease) => lease.state === 'visible');
+        if (!remaining.length) return;
+        const waiting = held.filter((lease) => cLease(latest, lease));
+        check(remaining.every((lease) => Number.isFinite(lease.expires_in_s) && lease.expires_in_s > 0),
+          `C3 post-terminal expiry unreadable: ${JSON.stringify(observed)}`);
+        // The pump may have renewed the unbound batch lease, so measure now,
+        // after completion. Allow 15 s for editor ticks and status polling.
+        const expiryMs = Math.ceil(Math.max(...remaining.map((lease) => lease.expires_in_s)) * 1000);
+        const allowanceMs = 15_000;
+        const capMs = Math.min(180_000, expiryMs + allowanceMs);
+        try {
+          await bWait(ctx, 'both C3 leases expire naturally', async () => {
+            latest = await watch();
+            return waiting.every((lease) => !cLease(latest, lease));
+          }, capMs, 1_000);
+        } catch (e) {
+          const fixture = (lease) => {
+            const item = cLease(latest, lease);
+            return { label: lease.label, resource: lease.resource, lease_id: lease.lease_id,
+              ticket: lease.ticket, state: item ? 'visible' : 'absent',
+              expires_in_s: item?.expires_in_s, orphaned: item?.orphaned,
+              bound_to_connection: item?.bound_to_connection };
+          };
+          (ctx.retainedFixtures ??= []).push({
+            step: 'C3', owner: caller, job_id: job, reason: `post-terminal cleanup failed: ${e.message}`,
+            observed_post_terminal: observed, allowance_ms: allowanceMs, cap_ms: capMs,
+            remaining: held.map(fixture).filter((lease) => lease.state === 'visible'),
+            already_absent: held.map(fixture).filter((lease) => lease.state === 'absent'),
+          });
+          throw e;
+        }
       },
     ]);
   } },

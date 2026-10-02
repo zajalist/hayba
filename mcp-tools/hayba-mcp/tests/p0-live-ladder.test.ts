@@ -438,9 +438,10 @@ describe('Deploy C framed behavior', () => {
     } finally { await ed.close(); }
   });
 
-  it.each(['valid', 'wrong-detail', 'wrong-advisory', 'accepted-foreign'])('C2 pins root refusal and sender identity: %s', async (variant) => {
+  it.each(['valid', 'wrong-detail', 'wrong-advisory', 'accepted-foreign', 'adopted-fresh'])('C2 pins root refusal and sender identity: %s', async (variant) => {
     const ed = await fakeEditor((env, conn) => {
-      if (env.cmd === 'lease_status') return success({ caller_owner: `conn:${conn}`, connection_owner: '' });
+      if (env.cmd === 'lease_status') return success({ caller_owner: `conn:${conn}`,
+        connection_owner: variant === 'adopted-fresh' ? 'foreign' : '' });
       if (env.cmd === 'ping' && env.owner && env.owner !== `conn:${conn}`) {
         if (variant === 'accepted-foreign') return success();
         return { ok: false, code: 'owner_reserved',
@@ -454,18 +455,21 @@ describe('Deploy C framed behavior', () => {
     });
     try {
       if (variant === 'valid') await cStep('C2').run(cContext(ed.port));
-      else await expect(cStep('C2').run(cContext(ed.port))).rejects.toThrow(/C2 reserved-owner/);
+      else await expect(cStep('C2').run(cContext(ed.port))).rejects.toThrow(
+        variant === 'adopted-fresh' ? /C2 needs two distinct fresh synthetic callers/ : /C2 reserved-owner/);
       expect(ed.seen.filter((e) => e.cmd === 'ping').some((e) => e.owner === 'local')).toBe(variant === 'valid');
     } finally { await ed.close(); }
   });
 
-  it.each(['valid', 'missing-envelope', 'accepted-no-id', 'wrong-job', 'wrong-caller', 'missing-orphan', 'missing-native-close',
+  it.each(['valid', 'postterminal-absent', 'missing-envelope', 'accepted-no-id', 'wrong-job', 'wrong-caller', 'missing-orphan', 'missing-native-close',
     'truncated-step', 'pending-step', 'wrong-sentinel', 'wrong-lease-id', 'cleanup-timeout', 'timeout-batch'])(
     'C3 requires a framed close, exact final step witness, and bounded cleanup: %s', async (variant) => {
       let clock = 0; let watcher = ''; let batchConn = 0; let closed = false; let batchAccepted = false;
       let statusCalls = 0; let releases = 0;
       const leases: Reply[] = [];
-      const withLeases = (caller: string) => leases.filter((l) => variant === 'cleanup-timeout' || clock < 60_000)
+      const withLeases = (caller: string) => leases.filter((l) =>
+        ((variant === 'cleanup-timeout' && l.bind_connection) || clock < 60_000)
+          && !(variant === 'postterminal-absent' && statusCalls > 0 && caller === watcher && !l.bind_connection))
         .map((l) => ({ ...l, mine: caller === l.owner,
           ...(caller === l.owner ? { lease_id: l.lease_id } : {}),
           ...(caller !== l.owner ? { lease_id: undefined } : {}),
@@ -524,7 +528,7 @@ describe('Deploy C framed behavior', () => {
       ctx.now = () => clock;
       ctx.sleep = async (ms: number) => { clock += ms; };
       try {
-        if (variant === 'valid') {
+        if (variant === 'valid' || variant === 'postterminal-absent') {
           await cStep('C3').run(ctx);
           expect(ctx.retainedFixtures).toHaveLength(0);
           expect(statusCalls).toBeGreaterThan(0);
@@ -548,6 +552,16 @@ describe('Deploy C framed behavior', () => {
           if (variant === 'timeout-batch') {
             expect(ctx.retainedFixtures).toMatchObject([{ step: 'C3', job_id: 'job_c3' }]);
             expect(statusCalls).toBeGreaterThan(100);
+          }
+          if (variant === 'cleanup-timeout') {
+            expect(ctx.retainedFixtures).toMatchObject([{
+              step: 'C3', owner: `conn:${batchConn}`, job_id: 'job_c3',
+              remaining: [{ label: expect.stringMatching(/^sentinel:/),
+                resource: expect.stringMatching(/^asset:\/Game\/__HaybaTest__/),
+                lease_id: 'ls_2_sentinel', state: 'visible' }],
+              already_absent: [{ label: expect.stringMatching(/^batch:/), lease_id: 'ls_2_batch' }],
+            }]);
+            expect(ctx.retainedFixtures[0].observed_post_terminal[0].expires_in_s).toBeGreaterThan(0);
           }
         }
       } finally { await ed.close(); }
