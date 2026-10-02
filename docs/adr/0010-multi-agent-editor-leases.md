@@ -178,8 +178,8 @@ leases only when it is set. The Node server seeds its envelope lease only from
 ### EnforcedForWrites by default
 
 After authentication, `ProcessCommand` resolves the caller, checks reserved
-owner names and records presence before
-checks the command's locks against other owners' leases. `LeaseEnforcement`
+owner names and records presence, then checks the command's locks against
+other owners' leases. `LeaseEnforcement`
 is read on every check (Project Settings > Hayba MCP Toolkit), so a change
 applies at once:
 
@@ -242,7 +242,10 @@ restart fallback is `Config/DefaultHaybaMCP.ini` with the
   requires both a live id and its matching owner.
 - The table lives in editor memory. An editor restart forgets every lease;
   a TCP-server restart orphans bound leases until their earlier expiry or
-  orphan grace limit, unless their owner renews them.
+  orphan grace limit, unless their owner renews them or a persistent
+  connection adopts a live matching lease to rebind only that owner's
+  orphaned connection-bound leases. Adoption does not move live bindings or
+  extend unbound lease lifetimes.
 - EnforcedForWrites changes nothing for a single-agent client: with no other
   owner present and no other lease held, nothing is refused. Advisory remains
   the live rollback.
