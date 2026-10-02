@@ -3664,11 +3664,11 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
   {
     name: 'copilot_model_list',
     description:
-      'List known model ids for a BYOK provider (advisory starting point only — BYOK users may use any id their key/endpoint supports).',
+      'Read the configured provider model catalog without model inference. Returns live-listed IDs and capability metadata when available; manual model IDs remain allowed.',
     meta: modelListMeta,
     handler: modelListHandler,
     cost: 'low',
-    returns: '{provider, default_model, configured_model, known_models:[string], advisory:true, note}',
+    returns: '{provider, default_model?, configured_model?, known_models:[string], models:[{id,name,chat_capable,tool_use,context_tokens?,...}], discovery_status, stale, reason?, retry_after_seconds?, fetched_at?, manual_entry_allowed:true, advisory:true, note}',
     niche: PACK,
     schema: {
       provider: z.string().min(1).describe('Provider id from copilot_provider_list'),

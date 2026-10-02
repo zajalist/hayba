@@ -619,6 +619,7 @@ async function* runExecutionLoop(params: AgentLoopParams): AsyncGenerator<AgentE
     let toolCalls: LLMToolCall[] = [];
     let stopReason: LLMStopReason = 'end_turn';
     let stopDiagnostic: LLMStopDiagnostic | undefined;
+    let sawTerminalResponse = false;
 
     try {
       const offeredTools = warningLedger.pendingIds().length > 0 ? [...tools, warningReviewTool] : tools;
@@ -632,6 +633,7 @@ async function* runExecutionLoop(params: AgentLoopParams): AsyncGenerator<AgentE
           yield { type: 'text_delta', text: ev.text };
           tokens += estimateTokens(ev.text);
         } else if (ev.type === 'done') {
+          sawTerminalResponse = true;
           content = ev.response.content;
           toolCalls = ev.response.toolCalls;
           stopReason = ev.response.stopReason;
@@ -648,6 +650,18 @@ async function* runExecutionLoop(params: AgentLoopParams): AsyncGenerator<AgentE
         return;
       }
       yield { type: 'error', error: e?.message ?? String(err), kind: e?.kind };
+      return;
+    }
+
+    if (!sawTerminalResponse) {
+      yield { type: 'error', kind: 'provider_protocol', error: 'The provider stream ended without a final response.' };
+      yield { type: 'done', reason: 'provider_protocol_error', stopReason: 'unknown', usage };
+      return;
+    }
+
+    if ((stopReason === 'end_turn' || stopReason === 'stop_sequence') && !content?.trim() && toolCalls.length === 0) {
+      yield { type: 'error', kind: 'provider_protocol', error: 'The provider completed without assistant text or a tool call.' };
+      yield { type: 'done', reason: 'provider_protocol_error', stopReason, usage };
       return;
     }
 

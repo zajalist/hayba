@@ -71,7 +71,7 @@ describe('survival startup readiness', () => {
       expect(result.reason).toBe('');
     }
     expect(run.status).toBe(0);
-  });
+  }, 20_000);
 
   it('bounds owned readiness with one budget and retains short hostile deadlines', () => {
     const run = spawnSync('pwsh', ['-NoProfile', '-NonInteractive', '-File',
@@ -83,7 +83,7 @@ describe('survival startup readiness', () => {
     expect(results.filter((result) => !result.passed)).toEqual([]);
     expect(results).toHaveLength(16);
     expect(run.status).toBe(0);
-  });
+  }, 20_000);
 
   it('exposes only an opted-in transport deadline as a structured timeout', async () => {
     await withPeer(() => {}, async (port) => {

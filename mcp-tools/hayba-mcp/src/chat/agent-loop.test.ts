@@ -658,6 +658,25 @@ describe('runAgentLoop', () => {
     });
   });
 
+  it('does not treat an empty provider stop as a successful assistant reply', async () => {
+    const client = new FakeLLMClient([{ content: null, toolCalls: [], stopReason: 'end_turn' }]);
+    const events = await collect(runAgentLoop(baseParams({ client })));
+    expect(events.at(-2)).toMatchObject({ type: 'error', kind: 'provider_protocol' });
+    expect(events.at(-1)).toMatchObject({ type: 'done', reason: 'provider_protocol_error' });
+  });
+
+  it('does not treat a stream without a terminal response as successful', async () => {
+    const client: LLMClient = {
+      provider: 'deepseek', model: 'deepseek-flash', protocol: 'openai',
+      complete: async () => textResponse('unused'),
+      async *stream() { yield { type: 'text_delta', text: 'partial' }; },
+    };
+    const events = await collect(runAgentLoop(baseParams({ client })));
+    expect(events).toContainEqual({ type: 'text_delta', text: 'partial' });
+    expect(events.at(-2)).toMatchObject({ type: 'error', kind: 'provider_protocol' });
+    expect(events.at(-1)).toMatchObject({ type: 'done', reason: 'provider_protocol_error' });
+  });
+
   it('treats context-window exhaustion as an error with bounded recovery guidance', async () => {
     const secret = 'sk-ant-must-not-leak';
     const client = new FakeLLMClient([

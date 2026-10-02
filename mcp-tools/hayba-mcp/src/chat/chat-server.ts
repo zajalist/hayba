@@ -33,6 +33,8 @@
  *                         the provider + key for a session IN MEMORY only. The
  *                         key is NEVER persisted, echoed, or logged.
  *   GET  /chat/config   — masked read (provider, model, key_last4) only.
+ *   GET  /chat/models   — read-only live model catalog for the configured
+ *                         provider; never returns a key or makes an inference call.
  *
  * KEY SOURCE: option (b) from the brief — an in-memory registration endpoint.
  * Task 6 replaces this source with the C++ DPAPI vault (the sidecar will read
@@ -45,6 +47,7 @@ import type { AddressInfo } from 'node:net';
 import { createHash } from 'node:crypto';
 import { createLLMClient, type LLMMessage } from '../agents/llm-client.js';
 import { getProvider } from '../agents/providers.js';
+import { discoverModels } from '../agents/model-discovery.js';
 import {
   runAgentLoop as runAgentLoopStreaming,
   adaptToLegacy,
@@ -665,6 +668,38 @@ export function registerChatRoutes(app: Express, options: ChatRoutesOptions = {}
       provider: cfg.provider,
       model: cfg.model ?? getProvider(cfg.provider)?.defaultModel ?? null,
       key_last4: last4(cfg.apiKey), // masked — never the raw key
+    });
+  });
+
+  // ── GET /chat/models ────────────────────────────────────────────────────
+  app.get('/chat/models', async (req: Request, res: Response) => {
+    if (!requireLoopback(req, res)) return;
+    const providerQuery = stringQuery(req.query.provider, 'provider');
+    const sessionQuery = stringQuery(req.query.session_id, 'session_id');
+    const refreshQuery = stringQuery(req.query.refresh, 'refresh');
+    if (!providerQuery.ok || !sessionQuery.ok || !refreshQuery.ok) {
+      return res.status(400).json({ error: 'query parameters must appear exactly once' });
+    }
+    const provider = providerQuery.value;
+    if (!provider || !getProvider(provider)) return res.status(400).json({ error: 'known provider is required' });
+    if (refreshQuery.value !== undefined && refreshQuery.value !== '1') {
+      return res.status(400).json({ error: 'refresh must be 1' });
+    }
+    const cfg = resolveSessionConfig(sessionQuery.value);
+    const matches = cfg?.provider === provider;
+    const discovered = await discoverModels({
+      provider,
+      apiKey: matches ? cfg?.apiKey : undefined,
+      baseURL: matches ? cfg?.baseURL : undefined,
+      currentModel: matches ? cfg?.model : undefined,
+      refresh: refreshQuery.value === '1',
+      probeCustom: provider === 'custom' && matches && refreshQuery.value === '1',
+    });
+    return res.json({
+      ...discovered,
+      configured_model: matches ? cfg?.model ?? null : null,
+      default_model: discovered.models.some((m) => m.id === getProvider(provider)?.defaultModel)
+        ? getProvider(provider)?.defaultModel : null,
     });
   });
 

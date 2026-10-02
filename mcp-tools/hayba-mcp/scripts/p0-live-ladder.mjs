@@ -690,9 +690,14 @@ const B_STEPS = [
     await bWithCleanup(async () => {
       await bVetoMode(ctx, 1, opts);
       id = bGrant(await ctx.call('lease_acquire', { resources: ['asset:/Game/__HaybaTest__/B8'], mode: 'exclusive', ttl_s: 300, bind_connection: false, label, lane: 'long' }, opts), owner, false, held);
-      await prompt(`Press Play once. Confirm refusal naming ${owner} and ${label}; leave PIE stopped.`, 120_000);
-      check((await live()).pie === 'none', 'first user Play started PIE');
-      await prompt('Press Play again within 10 s of the refused press. Leave PIE running.', 10_000);
+      // A single human prompt lets the two presses happen within Unreal's real
+      // ten-second override window without chat/terminal round-trip latency.
+      const playTail = bTail(ctx);
+      await prompt(`Press Play once and confirm refusal naming ${owner} and ${label}; immediately press Play again within 10 s and leave PIE running.`, 120_000);
+      check(playTail.lines(/LogHaybaMCPPlayVeto: Warning: Play vetoed \(user request, hayba\.PIEBuildVeto 1\)/).length >= 1,
+        'first user Play was not vetoed');
+      check(playTail.lines(/LogHaybaMCPPlayVeto: Warning: Hayba: Play override accepted while /).length >= 1,
+        'second user Play did not use the ten-second override');
       await bWait(ctx, 'second press user PIE', async () => (await live()).pie === 'user');
       await prompt('Stop PIE.');
       await bWait(ctx, 'PIE stopped', async () => (await live()).pie === 'none');

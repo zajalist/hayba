@@ -22,6 +22,7 @@ import type { HaybaToolMeta } from '../hayba-tool-meta.js';
 import type { ToolHandler, ToolResult } from '../types.js';
 import { listProviders, getProvider, type ProviderEntry } from '../../agents/providers.js';
 import { createLLMClient, type LLMClient, type LLMClientConfig } from '../../agents/llm-client.js';
+import { discoverModels } from '../../agents/model-discovery.js';
 import {
   getConfigEntry,
   setConfigEntry,
@@ -199,30 +200,14 @@ export const providerTestHandler: ToolHandler = async (args) => {
 };
 
 // ---------------------------------------------------------------------------
-// copilot_model_list — advisory, static known-models per provider.
+// copilot_model_list — read-only provider discovery, with manual ID fallback.
 // ---------------------------------------------------------------------------
-
-/**
- * Advisory only: BYOK means the user may point any provider at any model id
- * their key/endpoint supports (esp. `custom` and `openrouter`, whose catalogs
- * rotate). This list is a convenience starting point, NOT a validated set.
- */
-const KNOWN_MODELS: Record<string, string[]> = {
-  mock: ['mock'],
-  anthropic: ['claude-opus-4-8', 'claude-sonnet-4-8', 'claude-haiku-4-5'],
-  openai: ['gpt-4o', 'gpt-4o-mini', 'gpt-4.1'],
-  groq: ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'],
-  openrouter: [], // free-tier slugs rotate — no stable defaults; see providers.ts
-  ollama: ['qwen2.5-coder:7b-instruct', 'llama3.1:8b'],
-  lmstudio: ['local-model'],
-  custom: [],
-};
 
 export const modelListMeta: HaybaToolMeta = {
   cost: 'low',
   effects: [],
   when: 'picking a model id for a provider before calling copilot_provider_set',
-  not_when: 'you already have a model id in hand — this list is advisory, not a validator',
+  not_when: 'you already have a model id in hand — manual entry remains allowed',
   pack: PACK,
 };
 
@@ -237,18 +222,30 @@ export const modelListHandler: ToolHandler = async (args) => {
   }
   const sessionId = sessionIdOf(args);
   const cfg = getConfigEntry(sessionId);
-  const configuredModel = cfg?.provider === provider ? cfg?.model : undefined;
-  const known = KNOWN_MODELS[provider] ?? [];
-  const models = new Set(known);
-  if (configuredModel) models.add(configuredModel);
-  if (entry.defaultModel) models.add(entry.defaultModel);
+  const matches = cfg?.provider === provider;
+  const configuredModel = matches ? cfg?.model : undefined;
+  const discovered = await discoverModels({
+    provider,
+    apiKey: matches ? cfg?.apiKey : undefined,
+    baseURL: matches ? cfg?.baseURL : undefined,
+    currentModel: configuredModel,
+  });
+  const knownModels = discovered.status === 'ok' || discovered.status === 'partial'
+    ? discovered.models.map((m) => m.id) : [];
   return ok({
     provider,
-    default_model: entry.defaultModel || null,
+    default_model: knownModels.includes(entry.defaultModel) ? entry.defaultModel : null,
     configured_model: configuredModel ?? null,
-    known_models: [...models],
+    known_models: knownModels,
+    models: discovered.models,
+    discovery_status: discovered.status,
+    stale: discovered.stale,
+    reason: discovered.reason ?? null,
+    retry_after_seconds: discovered.retry_after_seconds ?? null,
+    fetched_at: discovered.fetched_at,
+    manual_entry_allowed: true,
     advisory: true,
-    note: 'BYOK: any model id your key/endpoint supports may work, even if absent from this list.',
+    note: discovered.note ?? 'Listed IDs are availability evidence, not a ranking or a model validator.',
   });
 };
 

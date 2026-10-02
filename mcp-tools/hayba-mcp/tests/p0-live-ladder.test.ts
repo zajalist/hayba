@@ -301,7 +301,8 @@ describe('Deploy B deterministic behavior', () => {
     await expect(bStep('B7').run(ctx)).rejects.toThrow(/restore.*Enforced For Writes/i);
   });
   it.each([true, false])('B8 observes mode-zero user PIE before asking Stop (%s)', async (starts) => {
-    let mode = 1; let pie = 'none'; let owner = ''; let label = ''; const prompts: string[] = [];
+    let mode = 1; let pie = 'none'; let owner = ''; let label = ''; let playPrompted = false;
+    const prompts: string[] = [];
     const ctx = bContext(({ cmd, params, opts }) => {
       if (cmd === 'lease_acquire') { owner = opts.owner; label = params.label; return grant(owner, { bound_to_connection: false }); }
       if (cmd === 'lease_renew') return success({ lease_id: 'ls_2_fixture', renewed: true });
@@ -312,17 +313,21 @@ describe('Deploy B deterministic behavior', () => {
       throw new Error(cmd);
     });
     ctx.state = async () => (await ctx.call('editor_get_state')).data;
+    ctx.logTail = () => ({ lines: () => playPrompted ? ['observed'] : [] });
     ctx.human = async (instruction: string, options: Reply) => {
       expect(options.timeoutMs).toBeGreaterThan(0); prompts.push(instruction);
-      if (/Press Play again/.test(instruction)) pie = 'user';
-      if (/mode 0.*Press Play/.test(instruction) && starts) pie = 'user';
+      if (/Press Play once/.test(instruction)) {
+        playPrompted = true;
+        if (starts) pie = 'user';
+      }
       if (/Stop PIE/.test(instruction)) pie = 'none';
     };
     if (starts) await bStep('B8').run(ctx); else await expect(bStep('B8').run(ctx)).rejects.toThrow();
     expect(mode).toBe(1);
     expect(ctx.calls.at(-1).cmd).toBe('lease_release');
-    const mode0 = prompts.findIndex((p) => /mode 0.*Press Play/.test(p));
-    expect(prompts.slice(mode0 + 1).some((p) => /Stop PIE/.test(p))).toBe(starts);
+    const play = prompts.findIndex((p) => /Press Play once/.test(p));
+    expect(play).toBeGreaterThanOrEqual(0);
+    expect(prompts.slice(play + 1).some((p) => /Stop PIE/.test(p))).toBe(starts);
     expect(ctx.calls.some((c: Call) => c.cmd === 'editor_start_pie')).toBe(false);
   });
   it('B4 preserves the refusal failure together with cleanup errors', async () => {
