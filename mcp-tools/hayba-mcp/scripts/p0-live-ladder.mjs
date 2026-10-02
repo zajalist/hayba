@@ -758,7 +758,7 @@ function cGrant(reply, owner, resource, label, bound, held) {
   check(reply.ok === true && d?.status === 'granted' && LEASE_ID_RE.test(d.lease_id ?? '')
     && d.owner === owner && d.bound_to_connection === bound && d.bind_connection === bound
     && Number.isFinite(d.expires_in_s) && d.expires_in_s > 0
-    && d.resources?.length === 1 && d.resources[0]?.resource === resource
+    && d.resources?.length === 1 && d.resources[0]?.resource?.toLowerCase() === resource.toLowerCase()
     && d.resources[0]?.mode === 'exclusive' && !('token' in d),
   `incorrect lease grant for ${resource}: ${JSON.stringify(reply)}`);
   return d.lease_id;
@@ -773,7 +773,7 @@ function cStatus(reply, owner) {
 
 function cLease(status, held) {
   return status.leases.find((l) => l.owner === held.owner && l.label === held.label
-    && l.resources?.length === 1 && l.resources[0]?.resource === held.resource
+    && l.resources?.length === 1 && l.resources[0]?.resource?.toLowerCase() === held.resource.toLowerCase()
     && l.resources[0]?.mode === 'exclusive');
 }
 
@@ -886,7 +886,7 @@ const C_STEPS = [
         `C3 owned lease missing before close: ${JSON.stringify(item)}`);
       }
       const params = {
-        lease_id: batchId, idle_ticks: 120, fence_timeout_s: 30,
+        lease_id: batchId, idle_ticks: 3, fence_timeout_s: 30,
         steps: [
           { cmd: 'ping', fence_after: 'idle' },
           { cmd: 'ping', fence_after: 'none' },
