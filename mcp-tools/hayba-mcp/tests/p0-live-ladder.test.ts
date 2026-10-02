@@ -543,7 +543,7 @@ describe('Deploy C framed behavior', () => {
           expect(statusCalls).toBeGreaterThan(0);
           expect(ed.seen.filter((e) => e.cmd === 'editor_batch')).toHaveLength(2);
           const accepted = ed.seen.find((e) => e.cmd === 'editor_batch' && e.lease);
-          expect(accepted?.params).toMatchObject({ idle_ticks: 120, fence_timeout_s: 30,
+          expect(accepted?.params).toMatchObject({ idle_ticks: 3, fence_timeout_s: 30,
             steps: [{ cmd: 'ping', fence_after: 'idle' }, { cmd: 'ping', fence_after: 'none' },
               { cmd: 'lease_status', fence_after: 'none' }] });
           expect(accepted).not.toHaveProperty('owner');

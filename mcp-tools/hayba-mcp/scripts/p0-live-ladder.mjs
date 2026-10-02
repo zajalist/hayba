@@ -886,6 +886,8 @@ const C_STEPS = [
         `C3 owned lease missing before close: ${JSON.stringify(item)}`);
       }
       const params = {
+        // Three quiet editor ticks are enough to fence this read-only step and
+        // stay within the 30-second timeout on a live scratch editor.
         lease_id: batchId, idle_ticks: 3, fence_timeout_s: 30,
         steps: [
           { cmd: 'ping', fence_after: 'idle' },
