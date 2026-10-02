@@ -58,6 +58,35 @@ describe('scrape node registry source selection', () => {
     }
   });
 
+  it('rejects comment-only and quoted PCGEx declarations before forceRescan', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'hayba-fake-source-'));
+    try {
+      const source = join(root, 'Source');
+      const publicDir = join(source, 'UnrelatedModule', 'Public');
+      mkdirSync(publicDir, { recursive: true });
+      writeFileSync(join(publicDir, 'Fake.h'), [
+        '// class UPCGExLineSettings : public UPCGSettings {};',
+        '/* class UPCGExBlockSettings : public UPCGSettings {}; */',
+        'const char* example = "class UPCGExStringSettings : public UPCGSettings {};";',
+        'const char* raw = R"(class UPCGExRawSettings : public UPCGSettings {};)";',
+      ].join('\n'));
+      const dbPath = join(root, 'registry.db');
+      const catalogPath = join(root, 'node_catalog.json');
+      const dbBytes = Buffer.from([0x48, 0x41, 0x59, 0x42, 0x41, 0, 0xff]);
+      const catalogBytes = Buffer.from('{"sentinel":"keep"}\n');
+      writeFileSync(dbPath, dbBytes);
+      writeFileSync(catalogPath, catalogBytes);
+
+      const result = await scrapeNodeRegistry({ pluginSourcePath: source, outputDbPath: dbPath, forceRescan: true });
+      expect(result.nodesFound).toBe(0);
+      expect(result.errors).toEqual([expect.stringContaining('No recognizable PCGEx node headers')]);
+      expect(readFileSync(dbPath)).toEqual(dbBytes);
+      expect(readFileSync(catalogPath)).toEqual(catalogBytes);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('accepts a recognizable public PCGEx node and writes its catalog', async () => {
     const root = mkdtempSync(join(tmpdir(), 'hayba-valid-source-'));
     try {

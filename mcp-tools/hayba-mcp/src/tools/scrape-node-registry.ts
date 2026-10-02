@@ -35,6 +35,17 @@ interface NodeInfo { className: string; module: string; displayName: string; des
 interface PinInfo { nodeClass: string; name: string; direction: 'input' | 'output'; pinType: string; required: boolean; description: string; }
 interface PropertyInfo { nodeClass: string; propertyName: string; cppType: string; isPcgOverridable: boolean; description: string; }
 
+// Mask comments and literals before checking for C++ declarations. A
+// commented-out class must not authorize forceRescan.
+function codeOnly(content: string): string {
+  const tokenRe = /R"([^()\s\\]{0,16})\([\s\S]*?\)\1"|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\/\*[\s\S]*?\*\/|\/\/[^\r\n]*/g;
+  return content.replace(tokenRe, token => token.replace(/[^\r\n]/g, ' '));
+}
+
+function findNodeClass(content: string): string | undefined {
+  return codeOnly(content).match(/\bclass\s+(?:\w+_API\s+)?(UPCGEx\w+Settings)\s*[:{]/)?.[1];
+}
+
 function extractModule(headerPath: string, sourcePath: string): string {
   const rel = headerPath.replace(sourcePath.replace(/\\/g, '/'), '').replace(/\\/g, '/');
   const parts = rel.split('/').filter(Boolean);
@@ -137,9 +148,8 @@ function parseHeader(content: string, headerPath: string, sourcePath: string, cp
 
   // Modern PCGEx uses UCLASS(MinimalAPI, ...) with NO API macro; older code
   // uses MODULE_API. Match both: API macro optional.
-  const classMatch = content.match(/class\s+(?:\w+_API\s+)?(UPCGEx\w+Settings)\s*[:\s{]/);
-  if (!classMatch) return { pins, properties };
-  const className = classMatch[1];
+  const className = findNodeClass(content);
+  if (!className) return { pins, properties };
 
   const nodeInfoMatch = content.match(/PCGEX_NODE_INFOS\s*\(\s*\w+\s*,\s*"([^"]+)"\s*,\s*"([^"]*)"/s);
   const displayName = nodeInfoMatch ? nodeInfoMatch[1] : className;
@@ -229,7 +239,7 @@ export async function scrapeNodeRegistry(params: ScrapeNodeRegistryParams) {
   const hasPcgexNode = headers.some((headerPath) => {
     if (!headerPath.replace(/\\/g, '/').includes('/Public/')) return false;
     try {
-      return /\bclass\s+(?:\w+_API\s+)?UPCGEx\w+Settings\s*[:{]/.test(readFileSync(headerPath, 'utf-8'));
+      return findNodeClass(readFileSync(headerPath, 'utf-8')) !== undefined;
     } catch {
       return false;
     }
