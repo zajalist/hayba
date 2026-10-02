@@ -19,3 +19,9 @@ lease. Commands that inspect or wait without mutation are classified as reads
 and may run during PIE, subject to the editor's separate unsafe-state policy.
 The command classification and lease tests are the source of truth when adding
 or changing a tool.
+
+Lease IDs are reusable client handles, but must not expose the session salt or
+an older `token` field. A redaction marker in the generic request envelope is
+treated as an absent lease ID. A marker passed directly as `editor_batch`'s
+`lease_id` is an explicit redacted value and is refused. These two cases must
+stay distinct when changing routing or redaction behavior.
