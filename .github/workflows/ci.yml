@@ -63,6 +63,9 @@ jobs:
       - name: Install
         run: npm ci --ignore-scripts
 
+      - name: Build shared Brain protocol
+        run: npm run build -w @hayba/brain-protocol
+
       - name: Embedding fallback contract — cold cache + offline network
         working-directory: mcp-tools/hayba-mcp
         run: npx vitest run src/tools/routing/embedding-backends.test.ts src/tools/routing/tool-index.test.ts src/tools/production-dependency-audit-contract.test.ts

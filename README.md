@@ -1,122 +1,107 @@
 <div align="center">
 
+<img src="unreal/HaybaMCPToolkit/Resources/HaybaLogo.svg" width="66" alt="Hayba mark" />
+
 # Hayba
 
-**The agentic engine for spatial and procedural world-building in Unreal Engine 5.**
+**Build Unreal worlds with agents that can share an editor.**
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![UE 5.7+](https://img.shields.io/badge/Unreal_Engine-5.7+-blue.svg)](https://www.unrealengine.com/)
-[![MCP](https://img.shields.io/badge/Model_Context_Protocol-✓-7A8AB8.svg)](https://modelcontextprotocol.io)
-[![Tools](https://img.shields.io/badge/Tools-400+_across_30+_domains-green.svg)](#features)
-[![Node](https://img.shields.io/badge/Node-%E2%89%A522.5-339933.svg)](.nvmrc)
+Inspect, plan, build, and validate Unreal Engine worlds through MCP. Native editor checks keep agent work accountable to the state of the project.
+
+[Get started](docs/getting-started.md) · [Explore the architecture](docs/ARCHITECTURE.md) · [Browse the tools](docs/wiki/) · [Contribute](CONTRIBUTING.md)
 
 </div>
 
----
+Hayba connects MCP-capable agents to Unreal Editor. It gives them a wide tool library, a focused in-editor workspace, and a native safety boundary for changes to a shared project.
 
-Hayba lets your AI agent (Claude / GPT / any MCP host) author UE5 scenes directly: spawn actors, build PCG graphs, validate physics, author materials, run sandboxed Python, and more — over a single MCP connection. **Spatial-first**: Hayba ships a PCG SQLite registry, a native 2D Slate cognitive map, and a visual grounding sidecar.
+> **Release status:** `v0.3.0` is the latest completed release. The editor workspace and `0.4.0` safety train shown here are development previews under final validation. [Versioning and deploy stages](docs/VERSIONING.md)
 
-This repo is the UE5 MCP toolkit: the Node MCP server, the UE5 C++ editor plugin, the Python visual sidecar, and the public website.
+<table>
+  <tr>
+    <td width="50%"><img src="docs/media/chat-development-preview.png" alt="Hayba's quiet in-editor Chat workspace in a scratch Unreal project" /></td>
+    <td width="50%"><img src="docs/media/world-mesh-splat-preview.png" alt="World preview of sampled mesh surfaces in a synthetic scratch scene" /></td>
+  </tr>
+  <tr>
+    <td><strong>Chat</strong><br />One place to ask, inspect, and follow a task.</td>
+    <td><strong>World</strong><br />A scene-derived spatial view of the loaded meshes.</td>
+  </tr>
+</table>
 
-## Features
+*Actual scratch-editor captures from the development branch. Chat shows the empty workspace; it does not demonstrate a connected conversation. World shows 130,048 sampled points from 1,024 synthetic actors, not an entire unloaded project.*
 
-- **400+ editor tools across 30+ domains** — Actor / Level / Scene / Asset / Blueprint / Material / Foliage / Spline / World Partition / ISM / Physics / Python / Editor / Docs / PCG / Sequencer / Animation / Audio / Behavior Tree / Input / UI / Net / Mesh / Texture / Data / Project / Build / Test / Memory / Plan / Conventions, plus GAS and MetaSound as optional [satellite plugins](docs/adr/0008-satellite-plugins-earn-their-place.md)
-- **PCG SQLite registry** — 344 PCGEx nodes / 356 pins / 2270 properties scraped from C++ headers, queryable with semantic + structural intent
-- **Cognitive Map** — 2D top-down semantic clustering of every actor in the level, force-directed mindmap renderer
-- **Visual sidecar** — FastAPI + CLIP / SpatialCLIP / OWL-ViT for deep physics validation and spatial grounding, plus SAM segmentation for AI mask generation
-- **PLUMB constraint system** — a closed primitive set + Semantic Studio for authoring physical-asset profiles, masks, and quantified placement constraints, evaluated as a directional Verdict pre-commit
-- **Plan Mode + native transactions** — with Plan Mode on (the default), destructive steps wait until you approve the plan. Most editor edits land on Unreal's normal undo stack, so Ctrl+Z works — not during Play-In-Editor, and not for asset deletes, saves to disk or arbitrary Python.
-- **Deferred tool discovery** — the server starts with 7 tools; the agent searches the full catalogue and calls the rest on demand, which keeps the initial tool list small
-- **Multi-instance safe** — dynamic port allocation (52342-52350) + heartbeat registry so multiple UE instances coexist
+## See the workflow
 
-## Repository layout
+A typical request is concrete: *“Inspect this level, propose a route to the focal point, then make the approved changes.”* Hayba exposes the scene and relevant tools, lets the agent prepare a reviewable plan, and checks the editor before writes. [The getting-started guide](docs/getting-started.md) walks through installation.
 
-| Path | What it is |
-|---|---|
-| [`mcp-tools/hayba-mcp`](mcp-tools/hayba-mcp) | **Core product** — the Node/TypeScript MCP server (tool surface, schema registry, TCP client to UE) |
-| [`mcp-tools/hayba-mcp/addons/visual-embeddings`](mcp-tools/hayba-mcp/addons/visual-embeddings) | Python FastAPI visual sidecar (CLIP / SpatialCLIP / OWL-ViT + SAM segmentation) |
-| `mcp-tools/pcgex` | PCGEx node-registry tooling (see its README) |
-| [`unreal/HaybaMCPToolkit`](unreal/HaybaMCPToolkit) | The UE5 C++ editor plugin — command-handler domains, Slate panels, the TCP server half of the protocol |
-| [`website/`](website) | Public website (static HTML/CSS/JS) — see [`docs/website-README.md`](docs/website-README.md) |
-| `infra/`, `supabase/` | Self-host infra (docker-compose, Caddy, Cloudflare tunnel) + Supabase backend (auth, migrations, edge functions) |
+## Why Hayba
 
-## Quick start
+| Strength | What it means in practice | Status |
+| --- | --- | --- |
+| **Tools for actual production work** | Actors, assets, levels, Blueprints, PCG, materials, UI, physics, animation, audio, tests, and project operations. Agents can discover signatures as needed instead of loading the whole catalog at once. | Available |
+| **Shared-editor coordination** | Owner-bound leases and busy-asset rules turn competing writes into explicit refusals. Bounded batches stop when editor state changes. The orchestrator can respond instead of guessing what happened. | `0.4.0` candidate |
+| **Native crash and state guards** | A contained native fault leaves the editor in a sticky unsafe state. Play, dirty Blueprints, read-only saves, and unattended execution receive checks at the editor boundary. | `0.4.0` candidate |
+| **Reviewable changes** | Plan Mode can require approval before destructive steps. Supported operations use Unreal undo transactions; structured results expose refusals and partial work. | Available; expanded in `0.4.0` |
+| **A scene-derived World view** | The development preview samples loaded mesh surfaces and links them to source actors, folders, components, instances, and spatial clusters. It reports coverage instead of implying an unloaded region was inspected. | Development branch |
 
-### 1. Build the MCP server
+The [tool reference](docs/wiki/) covers individual operations. Optional [GAS and MetaSound plugins](docs/adr/0008-satellite-plugins-earn-their-place.md) extend the core. The distinction is how the tools work together under a shared editor's live constraints.
+
+## See the safety boundary
+
+![Two agents route requests through the MCP server to native editor checks; allowed writes reach Unreal Editor and blocked writes return a structured reason](docs/media/safety-boundary.svg)
+
+The [TypeScript MCP server](mcp-tools/hayba-mcp/) routes requests to the [C++ editor plugin](unreal/HaybaMCPToolkit/). The editor plugin checks state and ownership where writes actually happen. The [visual sidecar](mcp-tools/hayba-mcp/addons/visual-embeddings/) is optional. [Explore the architecture](docs/ARCHITECTURE.md).
+
+## Safety is part of the workflow
+
+The `0.4.0` candidate adds a coordinated set of protections: sticky refusal after a contained native fault, PIE and asset-busy checks, guarded save paths, owner-bound leases with recovery, and bounded batch execution. These address a shared editor's real failure modes: one agent can hold a resource while another reads stale state, Play can begin during a build, or a native fault can leave the editor unsafe for more writes. The candidate is still finishing release validation; [the scratch-host safety guide](docs/SAFETY-scratch-host-and-leases.md) records the live verification boundaries.
+
+Hayba does not treat every refusal as failure. A structured refusal tells the agent whether to wait, refresh state, request a lease, stop Play, or return control to the user. Plan Mode requires approval for destructive commands when enabled; owner-bound leases, PIE and editor-health guards apply independently. Native undo covers supported operations, with documented exceptions. [Read the safety model](docs/safety-model.md) · [Security policy](SECURITY.md) · [Decision records](docs/adr/)
+
+## World, from scene evidence
+
+The current preview progressively scans loaded static meshes. The scratch-editor capture above shows 130,048 surface samples from 1,024 synthetic actors. Each sample can be traced to its source; an unloaded cell is still unknown.
+
+[Open the World capture](docs/media/world-mesh-splat-preview.png) · [Read the World model](docs/world-intelligence.md)
+
+## The next World layer
+
+The next layer will use that evidence to compare scene composition and production options: sightlines, routes, streaming and NPC pressure, memory, texel density, PCG placement, and hand-placed focal assets. It should score alternatives with measured constraints and call out unknowns. **That decision layer is planned work, not a shipped capability.** [Read the World direction](docs/world-intelligence.md).
+
+## Install in a scratch project
+
+**Requirements:** Node.js 22.5+, Unreal Engine 5.7+, and Visual Studio 2022 on Windows. The optional visual sidecar has separate Python dependencies.
 
 ```bash
 git clone https://github.com/zajalist/hayba.git
 cd hayba
-npm install                                  # all workspaces (Node ≥ 22.5)
+npm install
 npm --prefix mcp-tools/hayba-mcp run build
 ```
 
-### 2. Install the UE plugin
-
-Create `<YourProject>\Plugins` first if it doesn't exist, then link [`unreal/HaybaMCPToolkit/`](unreal/HaybaMCPToolkit) into it from an administrator prompt (or with Windows Developer Mode on):
-
-```bat
-mklink /D "<YourProject>\Plugins\HaybaMCPToolkit" "<repo>\unreal\HaybaMCPToolkit"
-```
-
-Then regenerate Visual Studio project files and recompile (Windows; UE 5.7 or 5.8; Visual Studio with the C++ toolchain your Unreal Engine version requires). The link lets the plugin find the MCP server you just built. If you copy the plugin instead, set `SidecarEntryPath` under `[HaybaMCPToolkit]` in `<YourProject>/Saved/Config/WindowsEditor/EditorPerProjectUserSettings.ini` to the full path of `mcp-tools/hayba-mcp/dist/index.js`.
-
-### 3. Register the MCP server with your agent host
+Copy [`unreal/HaybaMCPToolkit`](unreal/HaybaMCPToolkit/) into a scratch Unreal project's `Plugins/` directory and build the project. Then register the built server with your MCP host. For Claude Code:
 
 ```bash
-# Claude Code
-claude mcp add hayba-toolkit -- node /path/to/hayba/mcp-tools/hayba-mcp/dist/index.js
+claude mcp add hayba-toolkit -- node /absolute/path/to/hayba/mcp-tools/hayba-mcp/dist/index.js
 ```
 
-```jsonc
-// Claude Desktop — claude_desktop_config.json
-{
-  "mcpServers": {
-    "hayba-toolkit": {
-      "command": "node",
-      "args": ["/path/to/hayba/mcp-tools/hayba-mcp/dist/index.js"]
-    }
-  }
-}
-```
+Open the scratch project and use the **Hayba MCP Toolkit** panel to complete setup. The [step-by-step guide](docs/getting-started.md) includes other hosts, add-ons, and troubleshooting. Start with a scratch project while evaluating any tool that can modify editor state.
 
-### 4. Run the editor
+## Explore the repository
 
-On first launch the **Hayba MCP Toolkit** tab opens by itself (later: **Tools > Hayba MCP Toolkit**, or the console command `Hayba.MCP.Open`). Your MCP host drives the agent. To chat inside the editor instead, set a provider (and key, for cloud models) under **Settings > AI / LLM Backend**. Plan Mode is on by default: approve plans in the Plan tab.
+| Area | Purpose |
+| --- | --- |
+| [`unreal/HaybaMCPToolkit`](unreal/HaybaMCPToolkit/) | Native editor integration and tool handlers |
+| [`mcp-tools/hayba-mcp`](mcp-tools/hayba-mcp/) | MCP server, schemas, and tool routing |
+| [`docs/wiki`](docs/wiki/) | Tool and workflow reference |
+| [`docs/adr`](docs/adr/) | Architecture decisions |
+| [`website`](website/) | Public Hayba site |
 
-Then ask Claude: *"Search the PCG node catalog for voronoi, propose a 3-step plan to author a Voronoi graph, and execute it after I approve."*
+Developers can run `npm --prefix mcp-tools/hayba-mcp test` for the Node gate. Unreal tests require a separately built project; [CONTEXT.md](CONTEXT.md) and [the architecture guide](docs/ARCHITECTURE.md) explain the boundaries before changing them.
 
-## Architecture
+<div align="center">
 
-```
-┌──────────────────┐  stdio  ┌──────────────────┐  TCP   ┌────────────────┐
-│  Agent Host      │ ◄────►  │  Node MCP Server │ ◄────► │  UE5 Plugin    │
-│  (Claude / GPT)  │         │  mcp-tools/      │ :52342 │  unreal/       │
-└──────────────────┘         │  hayba-mcp       │        │  HaybaMCP...   │
-                             │  Zod · PCGEx DB  │        │  handlers      │
-                             └──────────────────┘        └────────────────┘
-```
+**A worldbuilding tool should understand the world—and know when to stop.**
 
-Two language boundaries, one protocol. The TCP envelope on `:52342` (auto-fallback `:52343-52350`) carries length-prefixed JSON. With Plan Mode on (the default), destructive steps wait until you approve the plan, and most editor edits run inside editor transactions, so Ctrl+Z works — not during Play-In-Editor, and not for asset deletes, saves to disk or arbitrary Python. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) and [`CONTEXT.md`](CONTEXT.md).
+[Getting started](docs/getting-started.md) · [Changelog](CHANGELOG.md) · [License](LICENSE)
 
-## Documentation
-
-- **[CONTEXT.md](CONTEXT.md)** — domain glossary + repo philosophy (read this first)
-- **[Architecture](docs/ARCHITECTURE.md)** — language boundaries, the TCP seam, data flows
-- **[Getting started](docs/getting-started.md)** — local dev setup and first run
-- **[Wiki](docs/wiki/)** — guides, tool reference, troubleshooting
-- **[ADRs](docs/adr/)** — architectural decision records
-- **[Contributing](CONTRIBUTING.md)** · **[Changelog](CHANGELOG.md)** · **[Security](SECURITY.md)** · **[Code of Conduct](CODE_OF_CONDUCT.md)**
-
-## Development
-
-```bash
-npm install                                   # all workspaces (Node ≥ 22.5 — see .nvmrc)
-npm --prefix mcp-tools/hayba-mcp test         # the authoritative gate (tsc + vitest)
-```
-
-Run the gate locally before pushing.
-
-## License
-
-Hayba's source code is MIT-licensed (see [LICENSE](LICENSE)).
+</div>
