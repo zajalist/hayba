@@ -79,9 +79,9 @@ describe('read-only model discovery', () => {
     __setModelDiscoveryClock(() => clock);
     const fetchMock = vi.fn(async () => new Response('secret-bearing provider error', { status: 429, headers: { 'retry-after': '30' } }));
     __setModelDiscoveryFetch(fetchMock as typeof fetch);
-    const first = await discoverModels({ provider: 'deepseek', apiKey: 'synthetic-key' });
+    const first = await discoverModels({ provider: 'ollama' });
     clock += 1000;
-    const second = await discoverModels({ provider: 'deepseek', apiKey: 'synthetic-key', refresh: true });
+    const second = await discoverModels({ provider: 'ollama', refresh: true });
     expect(first).toMatchObject({ status: 'unavailable', reason: 'rate_limited', retry_after_seconds: 30, models: [] });
     expect(second.cached).toBe(true);
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -107,17 +107,17 @@ describe('read-only model discovery', () => {
   it('marks expired cached models stale after a network failure', async () => {
     let clock = 100000;
     __setModelDiscoveryClock(() => clock);
-    const fetchMock = vi.fn().mockResolvedValueOnce(json({ data: [{ id: 'available-now' }] })).mockRejectedValueOnce(new Error('key=synthetic-key'));
+    const fetchMock = vi.fn().mockResolvedValueOnce(json({ models: [{ type: 'llm', key: 'available-now' }] })).mockRejectedValueOnce(new Error('key=synthetic-key'));
     __setModelDiscoveryFetch(fetchMock as typeof fetch);
-    const first = await discoverModels({ provider: 'openai', apiKey: 'synthetic-key' });
-    clock += 16 * 60_000;
-    const second = await discoverModels({ provider: 'openai', apiKey: 'synthetic-key' });
+    const first = await discoverModels({ provider: 'lmstudio' });
+    clock += 16_000;
+    const second = await discoverModels({ provider: 'lmstudio' });
     expect(first.status).toBe('ok');
     expect(second).toMatchObject({ status: 'unavailable', stale: true, reason: 'network', models: [{ id: 'available-now' }] });
     expect(JSON.stringify(second)).not.toContain('synthetic-key');
   });
 
-  it('keeps hosted catalog cache entries separate when a credential rotates', async () => {
+  it('fetches credentialed catalogs anew, including when a previous credential is reused', async () => {
     const fetchMock = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
       const authorization = (init?.headers as Record<string, string>)?.Authorization;
       return json({ data: [{ id: authorization === 'Bearer synthetic-key-a' ? 'model-a' : 'model-b' }] });
@@ -128,8 +128,8 @@ describe('read-only model discovery', () => {
     const reused = await discoverModels({ provider: 'deepseek', apiKey: 'synthetic-key-a' });
     expect(first.models).toMatchObject([{ id: 'model-a' }]);
     expect(rotated.models).toMatchObject([{ id: 'model-b' }]);
-    expect(reused).toMatchObject({ cached: true, models: [{ id: 'model-a' }] });
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(reused).toMatchObject({ cached: false, models: [{ id: 'model-a' }] });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
   it('discovers Ollama only through loopback and reports loaded context separately', async () => {
@@ -156,7 +156,7 @@ describe('read-only model discovery', () => {
 
   it('reads LM Studio native capabilities without loading or downloading a model', async () => {
     const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
-      expect(String(url)).toBe('http://localhost:1234/api/v1/models');
+      expect(String(url)).toBe('http://127.0.0.1:1234/api/v1/models');
       expect(init?.method).toBe('GET');
       return json({ models: [
         { type: 'llm', key: 'local/agent', display_name: 'Agent', max_context_length: 65536,
@@ -180,5 +180,51 @@ describe('read-only model discovery', () => {
       expect(JSON.stringify(manual)).not.toContain('synthetic-key');
     }
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    'http://169.254.169.254:1234/v1', 'http://localhost.evil.example:1234/v1',
+    'http://localhost:1234/v1?target=evil', 'http://localhost:1234/v1#evil',
+    'http://user:password@localhost:1234/v1', 'https://localhost:1234/v1',
+    'http://localhost:1234/other',
+  ])('rejects unsafe local endpoint %s before sending credentials', async (baseURL) => {
+    const fetchMock = vi.fn();
+    __setModelDiscoveryFetch(fetchMock as typeof fetch);
+    expect(await discoverModels({ provider: 'lmstudio', baseURL, apiKey: 'synthetic-key' }))
+      .toMatchObject({ status: 'unavailable', reason: 'unsafe_endpoint' });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['http://localhost:4321/v1', 'http://127.0.0.1:4321/api/v1/models'],
+    ['http://127.0.0.1:4321/v1/', 'http://127.0.0.1:4321/api/v1/models'],
+    ['http://[::1]:4321/v1', 'http://[::1]:4321/api/v1/models'],
+  ])('uses literal loopback addresses for local endpoint %s', async (baseURL, endpoint) => {
+    const fetchMock = vi.fn(async (url: string | URL | Request) => {
+      expect(String(url)).toBe(endpoint);
+      return json({ models: [] });
+    });
+    __setModelDiscoveryFetch(fetchMock as typeof fetch);
+    expect(await discoverModels({ provider: 'lmstudio', baseURL })).toMatchObject({ status: 'ok' });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('caches anonymous local catalogs but never reuses them for credentialed requests', async () => {
+    const fetchMock = vi.fn(async () => json({ models: [{ type: 'llm', key: 'local-model' }] }));
+    __setModelDiscoveryFetch(fetchMock as typeof fetch);
+    await discoverModels({ provider: 'lmstudio' });
+    expect(await discoverModels({ provider: 'lmstudio' })).toMatchObject({ cached: true });
+    expect(await discoverModels({ provider: 'lmstudio', apiKey: 'synthetic-key' })).toMatchObject({ cached: false });
+    expect(await discoverModels({ provider: 'lmstudio', apiKey: 'synthetic-key' })).toMatchObject({ cached: false });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it('does not return another credentialed catalog as stale after auth failure', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(json({ data: [{ id: 'account-a-model' }] }))
+      .mockResolvedValueOnce(json({}, 401));
+    __setModelDiscoveryFetch(fetchMock as typeof fetch);
+    await discoverModels({ provider: 'openai', apiKey: 'synthetic-key-a' });
+    expect(await discoverModels({ provider: 'openai', apiKey: 'synthetic-key-b' }))
+      .toMatchObject({ status: 'unavailable', reason: 'auth', stale: false, models: [] });
   });
 });

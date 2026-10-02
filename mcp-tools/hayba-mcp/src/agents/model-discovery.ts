@@ -1,5 +1,4 @@
 /** Read-only, bounded provider catalog discovery. No inference request is made. */
-import { createHmac, randomBytes } from 'node:crypto';
 import { getProvider } from './providers.js';
 
 export type ToolUseSupport = 'yes' | 'no' | 'unknown' | 'conditional' | 'trained';
@@ -62,7 +61,6 @@ interface CacheEntry {
   retryUntil: number;
 }
 const cache = new Map<string, CacheEntry>();
-const cacheHmacKey = randomBytes(32);
 const MAX_CACHE_ENTRIES = 64;
 const MAX_BYTES = 2 * 1024 * 1024;
 const MAX_MODELS = 3000;
@@ -83,7 +81,8 @@ function str(value: unknown): string | undefined {
 }
 function modelId(value: unknown): string | undefined {
   const id = str(value)?.trim();
-  return id && !/[\s\x00-\x1f\x7f]/.test(id) ? id : undefined;
+  return id && !/\s/.test(id) && ![...id].some((char) => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127)
+    ? id : undefined;
 }
 function positive(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : undefined;
@@ -175,7 +174,11 @@ function localOrigin(base: string): string {
     url.username || url.password || url.search || url.hash || !['/v1', '/v1/'].includes(url.pathname)) {
     throw new DiscoveryError('unsafe_endpoint');
   }
-  return url.origin;
+  // Never forward an input-derived hostname, even localhost (which uses DNS).
+  // Only the numeric port is configurable; the address comes from literals.
+  const loopback = url.hostname === '[::1]' ? 'http://[::1]' : 'http://127.0.0.1';
+  const port = url.port ? Number.parseInt(url.port, 10) : 80;
+  return `${loopback}:${port}`;
 }
 
 async function discoverRemote(input: ModelDiscoveryInput): Promise<ModelDiscoveryResult> {
@@ -366,11 +369,10 @@ export async function discoverModels(input: ModelDiscoveryInput): Promise<ModelD
     return { ...result(input.provider, 'manual'), note: 'Enter the model ID for this custom endpoint manually.' };
   }
   const base = input.baseURL || entry.baseURLDefault;
-  // A process-random HMAC partitions cache entries by credential without storing
-  // the raw key or a reusable unkeyed digest of it.
-  const keyTag = input.apiKey ? createHmac('sha256', cacheHmacKey).update(input.apiKey).digest('hex') : '';
-  const cacheKey = JSON.stringify([input.provider, base, keyTag, input.currentModel]);
-  const current = cache.get(cacheKey);
+  // Credentialed catalogs are account-specific. Do not retain keys, derived
+  // credential hashes, or results that could be reused by another account.
+  const cacheKey = input.apiKey ? undefined : JSON.stringify([input.provider, base, input.currentModel]);
+  const current = cacheKey === undefined ? undefined : cache.get(cacheKey);
   const time = now();
   if (current && time < current.retryUntil) {
     return { ...current.result, cached: true, stale: time >= current.freshUntil };
@@ -379,7 +381,7 @@ export async function discoverModels(input: ModelDiscoveryInput): Promise<ModelD
   try {
     const fresh = hosted ? await discoverRemote(input) : await discoverLocal(input);
     const ttl = local ? 15_000 : 15 * 60_000;
-    cache.set(cacheKey, { result: fresh, freshUntil: time + ttl, staleUntil: time + 24 * 60 * 60_000, retryUntil: 0 });
+    if (cacheKey !== undefined) cache.set(cacheKey, { result: fresh, freshUntil: time + ttl, staleUntil: time + 24 * 60 * 60_000, retryUntil: 0 });
     if (cache.size > MAX_CACHE_ENTRIES) cache.delete(cache.keys().next().value!);
     return fresh;
   } catch (error) {
@@ -390,7 +392,7 @@ export async function discoverModels(input: ModelDiscoveryInput): Promise<ModelD
       reason: failure.reason, retry_after_seconds: failure.retryAfterSeconds,
       note: fallback.length ? 'Previously listed models are stale; verify before selecting.' : 'Enter a model ID manually or retry discovery.' };
     const delay = failure.reason === 'rate_limited' ? (failure.retryAfterSeconds || 60) * 1000 : 10_000;
-    cache.set(cacheKey, { result: failed, freshUntil: time, staleUntil: time + 24 * 60 * 60_000, retryUntil: time + delay });
+    if (cacheKey !== undefined) cache.set(cacheKey, { result: failed, freshUntil: time, staleUntil: time + 24 * 60 * 60_000, retryUntil: time + delay });
     return failed;
   }
 }
