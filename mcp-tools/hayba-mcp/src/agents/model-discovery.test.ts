@@ -117,6 +117,21 @@ describe('read-only model discovery', () => {
     expect(JSON.stringify(second)).not.toContain('synthetic-key');
   });
 
+  it('keeps hosted catalog cache entries separate when a credential rotates', async () => {
+    const fetchMock = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      const authorization = (init?.headers as Record<string, string>)?.Authorization;
+      return json({ data: [{ id: authorization === 'Bearer synthetic-key-a' ? 'model-a' : 'model-b' }] });
+    });
+    __setModelDiscoveryFetch(fetchMock as typeof fetch);
+    const first = await discoverModels({ provider: 'deepseek', apiKey: 'synthetic-key-a' });
+    const rotated = await discoverModels({ provider: 'deepseek', apiKey: 'synthetic-key-b' });
+    const reused = await discoverModels({ provider: 'deepseek', apiKey: 'synthetic-key-a' });
+    expect(first.models).toMatchObject([{ id: 'model-a' }]);
+    expect(rotated.models).toMatchObject([{ id: 'model-b' }]);
+    expect(reused).toMatchObject({ cached: true, models: [{ id: 'model-a' }] });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it('discovers Ollama only through loopback and reports loaded context separately', async () => {
     const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
       const path = new URL(String(url)).pathname;
@@ -156,14 +171,14 @@ describe('read-only model discovery', () => {
     expect(found.models).toHaveLength(1);
   });
 
-  it('keeps custom model entry manual until an explicit probe', async () => {
-    const fetchMock = vi.fn(async () => json({ data: [{ id: 'custom-chat' }] }));
+  it('never probes custom endpoints, even with a legacy explicit-probe flag', async () => {
+    const fetchMock = vi.fn();
     __setModelDiscoveryFetch(fetchMock as typeof fetch);
-    const manual = await discoverModels({ provider: 'custom', baseURL: 'https://example.com/v1', apiKey: 'synthetic-key' });
-    expect(manual).toMatchObject({ status: 'manual', models: [] });
+    for (const baseURL of ['https://example.com/v1', 'http://localhost:5000/v1', 'https://169.254.169.254/v1']) {
+      const manual = await discoverModels({ provider: 'custom', baseURL, apiKey: 'synthetic-key', probeCustom: true, refresh: true });
+      expect(manual).toMatchObject({ status: 'manual', models: [], manual_entry_allowed: true });
+      expect(JSON.stringify(manual)).not.toContain('synthetic-key');
+    }
     expect(fetchMock).not.toHaveBeenCalled();
-    const probed = await discoverModels({ provider: 'custom', baseURL: 'https://example.com/v1', apiKey: 'synthetic-key', probeCustom: true });
-    expect(probed.models).toMatchObject([{ id: 'custom-chat' }]);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

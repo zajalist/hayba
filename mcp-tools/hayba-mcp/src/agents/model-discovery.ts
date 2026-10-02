@@ -1,5 +1,5 @@
 /** Read-only, bounded provider catalog discovery. No inference request is made. */
-import { createHash } from 'node:crypto';
+import { createHmac, randomBytes } from 'node:crypto';
 import { getProvider } from './providers.js';
 
 export type ToolUseSupport = 'yes' | 'no' | 'unknown' | 'conditional' | 'trained';
@@ -46,7 +46,7 @@ export interface ModelDiscoveryInput {
   baseURL?: string;
   currentModel?: string;
   refresh?: boolean;
-  /** Only the local Settings endpoint may explicitly probe a user-configured custom URL. */
+  /** Legacy caller flag; custom endpoints always require manual model entry. */
   probeCustom?: boolean;
 }
 
@@ -62,6 +62,7 @@ interface CacheEntry {
   retryUntil: number;
 }
 const cache = new Map<string, CacheEntry>();
+const cacheHmacKey = randomBytes(32);
 const MAX_CACHE_ENTRIES = 64;
 const MAX_BYTES = 2 * 1024 * 1024;
 const MAX_MODELS = 3000;
@@ -175,17 +176,6 @@ function localOrigin(base: string): string {
     throw new DiscoveryError('unsafe_endpoint');
   }
   return url.origin;
-}
-
-function customModelsUrl(base: string): string {
-  let url: URL;
-  try { url = new URL(base); } catch { throw new DiscoveryError('unsafe_endpoint'); }
-  const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
-  if ((url.protocol !== 'https:' && !(url.protocol === 'http:' && loopback)) ||
-    url.username || url.password || url.search || url.hash || !url.pathname.endsWith('/v1')) {
-    throw new DiscoveryError('unsafe_endpoint');
-  }
-  return `${url.href.replace(/\/+$/, '')}/models`;
 }
 
 async function discoverRemote(input: ModelDiscoveryInput): Promise<ModelDiscoveryResult> {
@@ -362,20 +352,6 @@ async function discoverLocal(input: ModelDiscoveryInput): Promise<ModelDiscovery
   return result(input.provider, items.length > MAX_MODELS || items.length > LOCAL_DETAIL_LIMIT ? 'partial' : 'ok', dedupe(items));
 }
 
-async function discoverCustom(input: ModelDiscoveryInput): Promise<ModelDiscoveryResult> {
-  if (!input.probeCustom || !input.baseURL) {
-    return { ...result(input.provider, 'manual'), note: 'Enter the model ID for this custom endpoint manually.' };
-  }
-  const url = customModelsUrl(input.baseURL);
-  const headers: Record<string, string> = input.apiKey ? { Authorization: `Bearer ${input.apiKey}` } : {};
-  const data = await getJson(url, headers);
-  if (!Array.isArray(data.data)) throw new DiscoveryError('invalid_response');
-  const items = data.data.map((raw) => {
-    const item = record(raw); return item && model(item.id);
-  }).filter((m): m is DiscoveredModel => Boolean(m));
-  return result(input.provider, items.length > MAX_MODELS ? 'partial' : 'ok', dedupe(items));
-}
-
 /** Returns availability evidence, never a guessed 'best' model or a credential. */
 export async function discoverModels(input: ModelDiscoveryInput): Promise<ModelDiscoveryResult> {
   const entry = getProvider(input.provider);
@@ -386,10 +362,14 @@ export async function discoverModels(input: ModelDiscoveryInput): Promise<ModelD
   }
   const hosted = ['anthropic', 'openai', 'deepseek', 'groq', 'openrouter'].includes(input.provider);
   const local = ['ollama', 'lmstudio'].includes(input.provider);
+  if (!hosted && !local) {
+    return { ...result(input.provider, 'manual'), note: 'Enter the model ID for this custom endpoint manually.' };
+  }
   const base = input.baseURL || entry.baseURLDefault;
-  // Hash stays in memory only. It prevents a rotated credential reusing another key's availability cache.
-  const keyHash = input.apiKey ? createHash('sha256').update(input.apiKey).digest('hex') : '';
-  const cacheKey = JSON.stringify([input.provider, base, keyHash, input.currentModel, input.probeCustom]);
+  // A process-random HMAC partitions cache entries by credential without storing
+  // the raw key or a reusable unkeyed digest of it.
+  const keyTag = input.apiKey ? createHmac('sha256', cacheHmacKey).update(input.apiKey).digest('hex') : '';
+  const cacheKey = JSON.stringify([input.provider, base, keyTag, input.currentModel]);
   const current = cache.get(cacheKey);
   const time = now();
   if (current && time < current.retryUntil) {
@@ -397,7 +377,7 @@ export async function discoverModels(input: ModelDiscoveryInput): Promise<ModelD
   }
   if (!input.refresh && current && time < current.freshUntil) return { ...current.result, cached: true };
   try {
-    const fresh = hosted ? await discoverRemote(input) : local ? await discoverLocal(input) : await discoverCustom(input);
+    const fresh = hosted ? await discoverRemote(input) : await discoverLocal(input);
     const ttl = local ? 15_000 : 15 * 60_000;
     cache.set(cacheKey, { result: fresh, freshUntil: time + ttl, staleUntil: time + 24 * 60 * 60_000, retryUntil: 0 });
     if (cache.size > MAX_CACHE_ENTRIES) cache.delete(cache.keys().next().value!);
