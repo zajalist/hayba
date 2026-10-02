@@ -122,6 +122,16 @@ public:
 	/** Re-bind only Owner's orphaned leases to ConnId; live and unbound leases are unchanged. */
 	int32 ReviveOrphanedLeases(const FString& Owner, int32 ConnId);
 
+	struct FAdoptResult
+	{
+		double ExpiresInSeconds = 0.0;
+		int32 Revived = 0;
+	};
+	/** Validate a named lease, adopt and revive orphans at one table-clock boundary.
+	 *  The handler has already checked required fields, connection and marker.
+	 *  Failure changes neither adoption nor other orphans; success returns copied facts. */
+	bool AdoptLease(int32 ConnId, const FString& Owner, const FString& LeaseId, FAdoptResult& Out, FString& OutError);
+
 	/** What the envelope `lease` names. Only ever classified; never logged. */
 	enum class EEnvelopeLease : uint8
 	{
@@ -251,6 +261,8 @@ private:
 	/** The fact decision and binding diagnostics share the resolved request access. */
 	FVerdict CheckCommandFacts(const FString& Cmd, const FRequiredAccess& Access);
 	void AddLeaseBinding(const FString& Cmd, const FRequiredAccess& Access, FVerdict& Verdict);
+	/** Optional named expiry is copied from Renew, avoiding a post-mutation lookup. */
+	int32 ReviveOrphanedLeases(const FString& Owner, int32 ConnId, const FString& NamedLeaseId, double* OutNamedExpiresAt);
 
 	/** ConnId -> adopted owner. Game thread only; cleared on close/restart. */
 	TMap<int32, FString> AdoptedOwners;

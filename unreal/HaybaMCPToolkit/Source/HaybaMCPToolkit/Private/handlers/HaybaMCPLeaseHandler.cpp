@@ -487,33 +487,23 @@ FHaybaHandlerResult FHaybaMCPLeaseHandler::Adopt(const TSharedPtr<FJsonObject>& 
 	{
 		return FHaybaHandlerResult::Err(TEXT("lease_adopt: [lease_id_redacted] a redacted marker cannot name a lease; send the lease_id lease_acquire returned"));
 	}
-	const HaybaMCPLease::FLease* Lease = Manager.Table().FindLease(LeaseId);
-	if (!Lease)
-	{
-		return FHaybaHandlerResult::Err(TEXT("lease_adopt: [lease_id_unknown] no live lease has that lease_id; acquire again"));
-	}
-	if (Lease->Owner != Owner)
-	{
-		return FHaybaHandlerResult::Err(FString::Printf(TEXT("lease_adopt: [lease_owner_mismatch] lease belongs to '%s'"), *Lease->Owner));
-	}
-	// Reserved-owner and already-adopted checks follow live-id/owner validation.
+	// Live-id/owner validation and adoption share one expiry boundary. Reserved
+	// and already-adopted checks still follow them, before any orphan revival.
+	FHaybaMCPLeaseManager::FAdoptResult Result;
 	FString Error;
-	if (!Manager.AdoptConnection(Context->ConnId, Owner, Error))
+	if (!Manager.AdoptLease(Context->ConnId, Owner, LeaseId, Result, Error))
 	{
 		return FHaybaHandlerResult::Err(TEXT("lease_adopt: ") + Error);
 	}
-	const int32 Revived = Manager.ReviveOrphanedLeases(Owner, Context->ConnId);
-	// Revival can mutate the table; never keep Lease across it.
-	const HaybaMCPLease::FLease* Adopted = Manager.Table().FindLease(LeaseId);
 	TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
 	Out->SetBoolField(TEXT("adopted"), true);
 	Out->SetStringField(TEXT("owner"), Owner);
 	Out->SetStringField(TEXT("lease_id"), LeaseId);
 	Out->SetStringField(TEXT("connection_owner"), Manager.ConnectionOwner(Context->ConnId));
-	Out->SetNumberField(TEXT("expires_in_s"), Adopted ? FMath::Max(0.0, Adopted->ExpiresAt - Manager.Now()) : 0.0);
+	Out->SetNumberField(TEXT("expires_in_s"), Result.ExpiresInSeconds);
 	Out->SetStringField(TEXT("note"), FString::Printf(
 		TEXT("This connection now acts as '%s' whenever an envelope names no owner, until it closes. The editor drops ")
 		TEXT("connections idle for about 5 s: repeat lease_adopt after every reconnect. %d orphaned lease(s) of '%s' were ")
-		TEXT("re-bound to this connection."), *Owner, Revived, *Owner));
+		TEXT("re-bound to this connection."), *Owner, Result.Revived, *Owner));
 	return FHaybaHandlerResult::Ok(Out);
 }

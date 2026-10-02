@@ -12,6 +12,7 @@
 #include "HaybaMCPEditorState.h"
 #include "HaybaMCPLeaseManager.h"
 #include "HaybaMCPLeasePolicy.h"
+#include "handlers/HaybaMCPLeaseHandler.h"
 #include "HaybaMCPModule.h"
 #include "HaybaMCPSettings.h"
 #include "Tests/HaybaMCPLatentTest.h"
@@ -493,7 +494,7 @@ bool FHaybaMCPLeaseAdoptTest::RunTest(const FString& Parameters)
 	const FString P = TEXT("hayba-test-") + T + TEXT("-p");
 	const FString Q = TEXT("hayba-test-") + T + TEXT("-q");
 	const TArray<int32> Conns = { 900101, 900102, 900103, 900104, 900105, 900106, 900107,
-		900108, 900109, 900110, 900111, 900112, 900113 };
+		900108, 900109, 900110, 900111, 900112, 900113, 900114, 900115, 900116, 900117 };
 	double Advanced = 0.0;
 	ON_SCOPE_EXIT
 	{
@@ -624,6 +625,88 @@ bool FHaybaMCPLeaseAdoptTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("queued request does not adopt"), Str(Status(900109), TEXT("connection_owner")), FString());
 	TestEqual(TEXT("synthetic grant does not adopt"), Str(Status(900103), TEXT("connection_owner")), FString());
 	TestEqual(TEXT("in-process status has no adoption"), Str(Status(0), TEXT("connection_owner")), FString());
+
+	// A clock that crosses the named lease's deadline between table calls
+	// deterministically catches success-after-expiry without sleeps or races.
+	const FString Near = Acquire(*this, 900116, O, TEXT("asset:/Game/__HaybaTest__/AdoptNear_") + T, false);
+	const FString Pending = Acquire(*this, 900117, O, TEXT("asset:/Game/__HaybaTest__/AdoptPending_") + T, true);
+	if (Near.IsEmpty() || Pending.IsEmpty()) return false;
+	if (!TestTrue(TEXT("near-expiry TTL"), M.Table().Renew(Near, O, 5.0, RenewedUntil, RenewError))) return false;
+	const double Deadline = RenewedUntil;
+	Router()->NotifyConnectionClosed(900117);
+	Found = M.Table().FindLease(Pending);
+	if (!TestNotNull(TEXT("pending orphan exists"), Found)) return false;
+	TestTrue(TEXT("near-expiry fixture starts orphaned"), Found->OrphanedAt > 0.0);
+	FHaybaMCPLeaseHandler Handler;
+	FHaybaMCPRequestContext BoundaryContext;
+	BoundaryContext.ConnId = 900114;
+	FHaybaMCPLeaseManager::FScope ContextScope(BoundaryContext);
+	int32 ClockReads = 0;
+	{
+		HaybaMCPLease::FTable::FScopedClockOverride Clock(M.Table(), [&ClockReads, Deadline]()
+		{
+			return ++ClockReads == 1 ? Deadline - 0.001 : Deadline + 0.001;
+		});
+		const FHaybaHandlerResult Result = Handler.Handle(TEXT("lease_adopt"), Params({ { TEXT("owner"), O }, { TEXT("lease_id"), Near } }));
+		TestTrue(TEXT("lease live at operation boundary adopts"), Result.bOk);
+		double Remaining = 0.0;
+		if (Result.Data.IsValid()) Result.Data->TryGetNumberField(TEXT("expires_in_s"), Remaining);
+		TestTrue(TEXT("near-expiry success still has a live named lease"), Remaining > 0.0);
+		const HaybaMCPLease::FLease* Revived = M.Table().GetLeases().FindByPredicate([&Pending](const HaybaMCPLease::FLease& L) { return L.Token == Pending; });
+		if (!TestNotNull(TEXT("success keeps the revived orphan"), Revived)) return false;
+		TestEqual(TEXT("success revives orphan at the same boundary"), Revived->OrphanedAt, 0.0);
+		TestEqual(TEXT("success rebinds orphan at the same boundary"), Revived->ConnId, 900114);
+		TestEqual(TEXT("one clock sample defines the complete adoption"), ClockReads, 1);
+		M.Table().Expire();
+		TestEqual(TEXT("table clock restored after success"), ClockReads, 2);
+	}
+
+	// Validate an already expired id before changing even an existing adoption.
+	const FString Expired = Acquire(*this, 900116, O, TEXT("asset:/Game/__HaybaTest__/AdoptDeadline_") + T, false);
+	const FString Untouched = Acquire(*this, 900117, O, TEXT("asset:/Game/__HaybaTest__/AdoptUntouched_") + T, true);
+	if (Expired.IsEmpty() || Untouched.IsEmpty()) return false;
+	if (!TestTrue(TEXT("expiry refusal TTL"), M.Table().Renew(Expired, O, 5.0, RenewedUntil, RenewError))) return false;
+	const double ExpiredDeadline = RenewedUntil;
+	Router()->NotifyConnectionClosed(900117);
+	Found = M.Table().FindLease(Untouched);
+	if (!TestNotNull(TEXT("refusal orphan exists"), Found)) return false;
+	const double UntouchedExpiry = Found->ExpiresAt;
+	const double UntouchedOrphanedAt = Found->OrphanedAt;
+	FString AdoptionError;
+	if (!TestTrue(TEXT("existing target adoption"), M.AdoptConnection(900115, P, AdoptionError))) return false;
+	BoundaryContext.ConnId = 900115;
+	ClockReads = 0;
+	{
+		HaybaMCPLease::FTable::FScopedClockOverride Clock(M.Table(), [&ClockReads, ExpiredDeadline]()
+		{
+			++ClockReads;
+			return ExpiredDeadline + 0.001;
+		});
+		const FHaybaHandlerResult Result = Handler.Handle(TEXT("lease_adopt"), Params({ { TEXT("owner"), O }, { TEXT("lease_id"), Expired } }));
+		TestFalse(TEXT("expired boundary refuses adoption"), Result.bOk);
+		TestTrue(TEXT("expired id precedes already-adopted"), Result.ErrorMessage.Contains(TEXT("[lease_id_unknown]")));
+		TestEqual(TEXT("expired validation leaves existing owner unchanged"), M.ConnectionOwner(900115), P);
+		const HaybaMCPLease::FLease* Orphan = M.Table().GetLeases().FindByPredicate([&Untouched](const HaybaMCPLease::FLease& L) { return L.Token == Untouched; });
+		if (!TestNotNull(TEXT("failed adoption keeps other orphan"), Orphan)) return false;
+		TestEqual(TEXT("refusal does not revive orphan"), Orphan->OrphanedAt, UntouchedOrphanedAt);
+		TestEqual(TEXT("refusal does not extend orphan"), Orphan->ExpiresAt, UntouchedExpiry);
+		TestEqual(TEXT("refusal does not rebind orphan"), Orphan->ConnId, 0);
+		TestEqual(TEXT("one clock sample on refusal"), ClockReads, 1);
+		M.Table().Expire();
+		TestEqual(TEXT("table clock restored on early refusal"), ClockReads, 2);
+	}
+	// The outer injected clock is also restored; no test clock leaks into later cases.
+	const int32 RestoredReads = ClockReads;
+	M.Table().Expire();
+	TestEqual(TEXT("ordinary clock restored after test scope"), ClockReads, RestoredReads);
+	M.AdvanceClockForTests(10.0);
+	Advanced += 10.0;
+	BoundaryContext.ConnId = 900114;
+	const FHaybaHandlerResult NamedOrphan = Handler.Handle(TEXT("lease_adopt"), Params({ { TEXT("owner"), O }, { TEXT("lease_id"), Untouched } }));
+	TestTrue(TEXT("a live named orphan can itself validate adoption"), NamedOrphan.bOk);
+	double OrphanRemaining = 0.0;
+	if (NamedOrphan.Data.IsValid()) NamedOrphan.Data->TryGetNumberField(TEXT("expires_in_s"), OrphanRemaining);
+	TestTrue(TEXT("named orphan reply uses its renewed real TTL, not old grace remainder"), OrphanRemaining > 59.0 && OrphanRemaining <= 60.0);
 
 	{
 		FHaybaEditorHealth::FScopedOverrideForTests Override;

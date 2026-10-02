@@ -190,6 +190,12 @@ void FHaybaMCPLeaseManager::ForgetAllAdoptions()
 
 int32 FHaybaMCPLeaseManager::ReviveOrphanedLeases(const FString& Owner, int32 ConnId)
 {
+	return ReviveOrphanedLeases(Owner, ConnId, FString(), nullptr);
+}
+
+int32 FHaybaMCPLeaseManager::ReviveOrphanedLeases(const FString& Owner, int32 ConnId,
+	const FString& NamedLeaseId, double* OutNamedExpiresAt)
+{
 	LeaseTable.Expire();
 	// Renew expires/mutates the table: copy ids and real TTLs before renewing.
 	TArray<TPair<FString, double>> Orphans;
@@ -208,9 +214,46 @@ int32 FHaybaMCPLeaseManager::ReviveOrphanedLeases(const FString& Owner, int32 Co
 		if (LeaseTable.Renew(Orphan.Key, Owner, Orphan.Value, ExpiresAt, Error, ConnId))
 		{
 			++Revived;
+			if (OutNamedExpiresAt && Orphan.Key == NamedLeaseId)
+			{
+				*OutNamedExpiresAt = ExpiresAt;
+			}
 		}
 	}
 	return Revived;
+}
+
+bool FHaybaMCPLeaseManager::AdoptLease(int32 ConnId, const FString& Owner, const FString& LeaseId,
+	FAdoptResult& Out, FString& OutError)
+{
+	Out = FAdoptResult();
+	OutError.Reset();
+	const double Boundary = LeaseTable.Now();
+	// Game-thread-only synchronous bookkeeping: no dispatch, tick, delegate or
+	// external callback occurs while this stack scope freezes the table clock.
+	// Nested scopes and every early refusal restore the previous clock via RAII.
+	HaybaMCPLease::FTable::FScopedClockOverride Clock(LeaseTable, [Boundary]() { return Boundary; });
+	double NamedExpiresAt = 0.0;
+	{
+		const HaybaMCPLease::FLease* Lease = LeaseTable.FindLease(LeaseId);
+		if (!Lease)
+		{
+			OutError = TEXT("[lease_id_unknown] no live lease has that lease_id; acquire again");
+			return false;
+		}
+		if (Lease->Owner != Owner)
+		{
+			OutError = FString::Printf(TEXT("[lease_owner_mismatch] lease belongs to '%s'"), *Lease->Owner);
+			return false;
+		}
+		NamedExpiresAt = Lease->ExpiresAt;
+	}
+	// All refusals precede mutations. At the captured boundary the named lease
+	// remains live through every Expire/Renew; no post-mutation failure is needed.
+	if (!AdoptConnection(ConnId, Owner, OutError)) return false;
+	Out.Revived = ReviveOrphanedLeases(Owner, ConnId, LeaseId, &NamedExpiresAt);
+	Out.ExpiresInSeconds = NamedExpiresAt - Boundary;
+	return true;
 }
 
 FHaybaMCPLeaseManager::EEnvelopeLease FHaybaMCPLeaseManager::ClassifyEnvelopeLease(const FString& LeaseValue)

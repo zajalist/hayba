@@ -259,6 +259,25 @@ namespace HaybaMCPLease
 		const FTuning& GetTuning() const { return Tuning; }
 		const TArray<FLease>& GetLeases() const { return Leases; }
 		const TArray<FWaiter>& GetWaiters() const { return Waiters; }
+		double Now() const { return Clock(); }
+
+		/** Stack-bound clock override for one synchronous table operation. Restores
+		 *  the previous clock on every exit, including a nested scope's early return. */
+		class FScopedClockOverride
+		{
+		public:
+			FScopedClockOverride(FTable& InTable, TFunction<double()> InClock)
+				: Table(InTable), PreviousClock(MoveTemp(InTable.Clock))
+			{
+				Table.Clock = MoveTemp(InClock);
+			}
+			~FScopedClockOverride() { Table.Clock = MoveTemp(PreviousClock); }
+			FScopedClockOverride(const FScopedClockOverride&) = delete;
+			FScopedClockOverride& operator=(const FScopedClockOverride&) = delete;
+		private:
+			FTable& Table;
+			TFunction<double()> PreviousClock;
+		};
 
 		double ClampTtl(double Requested) const
 		{
