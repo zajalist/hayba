@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { inspect } from 'node:util';
 import {
   installConsoleSecretRedaction,
   installExpressJsonRedaction,
@@ -67,6 +68,19 @@ describe('bounded central secret redaction', () => {
     const veryLong = redactSecrets(`Bearer ${'S'.repeat(10_000)}`);
     expect(veryLong.value).toBe('[REDACTED:bearer]');
     expect(veryLong.value).not.toContain('SSSS');
+  });
+
+  it('masks complete quoted assignment values, including spaces and escaped quotes', () => {
+    const input = [
+      'password="SENTINEL QUOTED SECRET"',
+      'clientSecret=\'SENTINEL SINGLE SECRET\'',
+      'apiKey="SENTINEL \\" ESCAPED TAIL"',
+      'ACCESS_TOKEN=SENTINEL_BARE_SECRET',
+    ].join('\n');
+    const first = redactSecrets(input);
+    expect(first.value).not.toContain('SENTINEL');
+    expect(first.value).not.toContain('ESCAPED TAIL');
+    expect(redactSecrets(first.value).value).toBe(first.value);
   });
 
   it('accepts only exact machine markers and rescans attacker-controlled marker prefixes', () => {
@@ -166,6 +180,26 @@ describe('bounded central secret redaction', () => {
     const proxyResult = redactSecrets(proxy);
     expect(proxyResult.value).toBe('[TRUNCATED:accessor]');
     expect(proxyResult.summary.truncation_reasons).toContain('accessor');
+  });
+
+  it('does not invoke array accessors or leak through array proxy traps', () => {
+    const getter = vi.fn(() => 'Bearer SENTINEL_ARRAY_GETTER');
+    const array: unknown[] = ['safe'];
+    Object.defineProperty(array, '1', { enumerable: true, configurable: true, get: getter });
+    array.length = 2;
+    const redacted = redactSecrets(array);
+    expect(getter).not.toHaveBeenCalled();
+    expect(redacted.value[1]).toBe('[TRUNCATED:accessor]');
+    expect(redacted.summary.truncation_reasons).toContain('accessor');
+
+    const hostile = new Proxy(['safe'], {
+      getOwnPropertyDescriptor() {
+        throw new Error('SENTINEL_ARRAY_PROXY');
+      },
+    });
+    const failedClosed = redactSecrets(hostile);
+    expect(failedClosed.value).toBe('[TRUNCATED:accessor]');
+    expect(JSON.stringify(failedClosed.value)).not.toContain('SENTINEL_ARRAY_PROXY');
   });
 
   it('fails closed on cycles, depth, node, array, object-key, and text budgets', () => {
@@ -305,6 +339,99 @@ describe('bounded central secret redaction', () => {
     const safeHostile = redactThrown(hostile) as Error & { detail: unknown };
     expect(detailGetter).not.toHaveBeenCalled();
     expect(safeHostile.detail).toBe('[TRUNCATED:accessor]');
+  });
+
+  it('redacts nested Error diagnostics and secret-bearing Error property names in console output', () => {
+    const plainNested = { failure: new Error('token=SENTINEL_PLAIN_NESTED') };
+    expect(inspect(redactBoundaryValue(plainNested))).not.toContain('SENTINEL_PLAIN_NESTED');
+    expect(inspect(plainNested)).toContain('SENTINEL_PLAIN_NESTED');
+
+    const nested = new Error('Authorization: Bearer SENTINEL_NESTED_ERROR');
+    Object.defineProperty(nested, 'token=SENTINEL_ERROR_PROPERTY', {
+      enumerable: true,
+      value: 'safe detail',
+    });
+    const payload = { failure: nested };
+    const safe = redactBoundaryValue(payload);
+    expect(inspect(safe)).not.toContain('SENTINEL');
+    expect(inspect(payload)).toContain('SENTINEL_NESTED_ERROR');
+
+    const direct = redactThrown(nested);
+    expect(inspect(direct)).not.toContain('SENTINEL');
+    expect(inspect(nested)).toContain('SENTINEL_ERROR_PROPERTY');
+  });
+
+  it('never calls custom JSON serializers after walking a value', () => {
+    const serializer = vi.fn(() => ({ token: 'SENTINEL_TO_JSON' }));
+    const object = { safe: 1, toJSON: serializer };
+    const array = ['safe'] as string[] & { toJSON?: () => unknown };
+    Object.defineProperty(array, 'toJSON', { value: serializer });
+    const inherited = Object.create({ toJSON: serializer }) as Record<string, unknown>;
+    inherited.safe = 2;
+    const hidden = { safe: 3 };
+    Object.defineProperty(hidden, 'toJSON', { value: serializer });
+    const objectResult = redactSecrets(object);
+    const arrayResult = redactSecrets(array);
+    const inheritedResult = redactSecrets(inherited);
+    const hiddenResult = redactSecrets(hidden);
+    expect(JSON.stringify(objectResult.value)).not.toContain('SENTINEL_TO_JSON');
+    expect(JSON.stringify(arrayResult.value)).not.toContain('SENTINEL_TO_JSON');
+    expect(JSON.stringify(inheritedResult.value)).not.toContain('SENTINEL_TO_JSON');
+    expect(JSON.stringify(hiddenResult.value)).not.toContain('SENTINEL_TO_JSON');
+    expect(serializer).not.toHaveBeenCalled();
+    expect(objectResult.summary.truncation_reasons).toContain('serializer');
+    expect(arrayResult.summary.truncation_reasons).toContain('serializer');
+    expect(inheritedResult.summary.truncation_reasons).toContain('serializer');
+    expect(hiddenResult.summary.truncation_reasons).toContain('serializer');
+  });
+
+  it('never calls custom console inspectors after walking a value', () => {
+    const inspector = vi.fn(() => 'SENTINEL_CUSTOM_INSPECT');
+    const object = { safe: 1, [inspect.custom]: inspector };
+    const array = ['safe'] as string[] & { [inspect.custom]?: () => unknown };
+    Object.defineProperty(array, inspect.custom, { value: inspector });
+    const objectResult = redactSecrets(object);
+    const arrayResult = redactSecrets(array);
+    expect(inspect(objectResult.value)).not.toContain('SENTINEL_CUSTOM_INSPECT');
+    expect(inspect(arrayResult.value)).not.toContain('SENTINEL_CUSTOM_INSPECT');
+    expect(inspector).not.toHaveBeenCalled();
+    expect(objectResult.summary.truncation_reasons).toContain('serializer');
+    expect(arrayResult.summary.truncation_reasons).toContain('serializer');
+  });
+
+  it('drops symbol properties that console inspection would reveal', () => {
+    const symbol = Symbol('SENTINEL_SYMBOL_KEY');
+    const object = { safe: 1, [symbol]: 'token=SENTINEL_SYMBOL_VALUE' };
+    const array = ['safe'] as string[] & Record<symbol, string>;
+    array[symbol] = 'Bearer SENTINEL_ARRAY_SYMBOL';
+    const objectResult = redactSecrets(object);
+    const arrayResult = redactSecrets(array);
+    expect(inspect(objectResult.value)).not.toContain('SENTINEL');
+    expect(inspect(arrayResult.value)).not.toContain('SENTINEL');
+    expect(objectResult.summary.truncation_reasons).toContain('symbol_keys');
+    expect(arrayResult.summary.truncation_reasons).toContain('symbol_keys');
+  });
+
+  it('does not expose internal state from Map, Set, or RegExp through logs', () => {
+    const payload = {
+      map: new Map([['safe', 'token=SENTINEL_MAP']]),
+      set: new Set(['Bearer SENTINEL_SET']),
+      pattern: /SENTINEL_REGEXP/,
+    };
+    const safe = redactBoundaryValue(payload);
+    expect(inspect(safe)).not.toContain('SENTINEL');
+    expect(JSON.stringify(safe)).toContain('opaque_object');
+    expect(inspect(payload)).toContain('SENTINEL_MAP');
+  });
+
+  it('preserves the JSON form of dates while ignoring custom Date serializers', () => {
+    const date = new Date('2026-01-02T03:04:05.000Z');
+    const serializer = vi.fn(() => 'SENTINEL_DATE_TO_JSON');
+    Object.defineProperty(date, 'toJSON', { value: serializer });
+    const result = redactSecrets({ at: date });
+    expect(JSON.stringify(result.value)).toContain('2026-01-02T03:04:05.000Z');
+    expect(JSON.stringify(result.value)).not.toContain('SENTINEL_DATE_TO_JSON');
+    expect(serializer).not.toHaveBeenCalled();
   });
 
   it('console installation is exactly once and sanitizes structured arguments', () => {
