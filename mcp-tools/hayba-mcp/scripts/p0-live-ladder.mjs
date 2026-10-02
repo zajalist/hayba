@@ -742,7 +742,238 @@ const B_STEPS = [
   } },
 ];
 
-export const STEPS = { a: A_STEPS, b: B_STEPS, c: [] };
+// ----------------------------------------------------------------------------- Deploy C (C1-C3)
+
+function cGrant(reply, owner, resource, label, bound, held) {
+  held.label = label;
+  held.resource = resource;
+  held.owner = owner;
+  // Capture the handle before validating the rest of the reply so cleanup can
+  // still release a real grant if one of the later assertions fails.
+  if (reply.ok === true && reply.data?.owner === owner && reply.data?.status === 'granted'
+    && LEASE_ID_RE.test(reply.data?.lease_id ?? '')) held.lease_id = reply.data.lease_id;
+  if (reply.ok === true && reply.data?.owner === owner && reply.data?.status === 'queued'
+    && typeof reply.data.ticket === 'string' && reply.data.ticket) held.ticket = reply.data.ticket;
+  const d = reply.data;
+  check(reply.ok === true && d?.status === 'granted' && LEASE_ID_RE.test(d.lease_id ?? '')
+    && d.owner === owner && d.bound_to_connection === bound && d.bind_connection === bound
+    && Number.isFinite(d.expires_in_s) && d.expires_in_s > 0
+    && d.resources?.length === 1 && d.resources[0]?.resource === resource
+    && d.resources[0]?.mode === 'exclusive' && !('token' in d),
+  `incorrect lease grant for ${resource}: ${JSON.stringify(reply)}`);
+  return d.lease_id;
+}
+
+function cStatus(reply, owner) {
+  check(reply.ok === true && reply.data?.caller_owner === owner
+    && Array.isArray(reply.data.leases) && reply.data.enforcement === 'enforced_for_writes',
+  `incorrect lease_status for ${owner}: ${JSON.stringify(reply)}`);
+  return reply.data;
+}
+
+function cLease(status, held) {
+  return status.leases.find((l) => l.owner === held.owner && l.label === held.label
+    && l.resources?.length === 1 && l.resources[0]?.resource === held.resource
+    && l.resources[0]?.mode === 'exclusive');
+}
+
+const C_STEPS = [
+  { id: 'C1', title: 'lease_adopt persists on one socket, allows explicit override, and resets on reconnect', run: async (ctx) => {
+    const owner = bName('C1'); const override = bName('C1-override');
+    const resource = `asset:/Game/__HaybaTest__/${owner}`; const label = `adopt:${owner}`;
+    const held = {}; let first; let second;
+    await bWithCleanup(async () => {
+      const g = await ctx.call('lease_acquire',
+        { resources: [resource], ttl_s: 120, bind_connection: false, label }, { owner });
+      const id = cGrant(g, owner, resource, label, false, held);
+      first = await ctx.conn({ owner: null, lease: null });
+      const before = await first.send('lease_status');
+      check(before.ok === true && /^conn:\d+$/.test(before.data?.caller_owner ?? '')
+        && before.data?.connection_owner === '', `C1 fresh caller: ${JSON.stringify(before)}`);
+      const synthetic = before.data.caller_owner;
+      const adopt = async (connection) => {
+        const r = await connection.send('lease_adopt', { owner, lease_id: id }, { owner: null, lease: null });
+        check(r.ok === true && r.data?.adopted === true && r.data.owner === owner
+          && r.data.lease_id === id && r.data.connection_owner === owner
+          && Number.isFinite(r.data.expires_in_s) && r.data.expires_in_s > 0,
+        `C1 adoption: ${JSON.stringify(r)}`);
+      };
+      await adopt(first);
+      await adopt(first); // Repeating the same adoption is idempotent.
+      const after = await first.send('lease_status');
+      check(after.ok === true && after.data?.caller_owner === owner
+        && after.data.connection_owner === owner, `C1 adopted status: ${JSON.stringify(after)}`);
+      const explicit = await first.send('lease_status', {}, { owner: override, lease: null });
+      check(explicit.ok === true && explicit.data?.caller_owner === override
+        && explicit.data.connection_owner === owner, `C1 explicit override: ${JSON.stringify(explicit)}`);
+      const reverted = await first.send('lease_status');
+      check(reverted.ok === true && reverted.data?.caller_owner === owner
+        && reverted.data.connection_owner === owner, `C1 override persisted: ${JSON.stringify(reverted)}`);
+      first.close(); first = null;
+      second = await ctx.conn({ owner: null, lease: null });
+      const fresh = await second.send('lease_status');
+      check(fresh.ok === true && /^conn:\d+$/.test(fresh.data?.caller_owner ?? '')
+        && fresh.data.caller_owner !== synthetic && fresh.data.connection_owner === '',
+      `C1 reconnect retained adoption: ${JSON.stringify(fresh)}`);
+      await adopt(second);
+      const again = await second.send('lease_status');
+      check(again.ok === true && again.data?.caller_owner === owner
+        && again.data.connection_owner === owner, `C1 re-adopt status: ${JSON.stringify(again)}`);
+    }, [
+      () => { first?.close(); second?.close(); },
+      async () => { await bRelease((cmd, params) => ctx.call(cmd, params, { owner }), held); },
+    ]);
+  } },
+  { id: 'C2', title: 'another socket cannot claim a reserved synthetic owner or local', run: async (ctx) => {
+    let holder; let claimant;
+    await bWithCleanup(async () => {
+      holder = await ctx.conn({ owner: null, lease: null });
+      claimant = await ctx.conn({ owner: null, lease: null });
+      const h = await holder.send('lease_status');
+      const q = await claimant.send('lease_status');
+      check(h.ok === true && q.ok === true && /^conn:\d+$/.test(h.data?.caller_owner ?? '')
+        && /^conn:\d+$/.test(q.data?.caller_owner ?? '')
+        && h.data.caller_owner !== q.data.caller_owner, 'C2 needs two distinct synthetic callers');
+      const mine = h.data.caller_owner; const theirs = q.data.caller_owner;
+      for (const claimed of [mine, 'local']) {
+        const r = await claimant.send('ping', {}, { owner: claimed, lease: null });
+        check(r.ok === false && r.code === 'owner_reserved'
+          && r.owner?.claimed_owner === claimed && r.owner?.caller_owner === theirs
+          && r.owner?.conn === Number(theirs.slice('conn:'.length))
+          && r.advisory?.state === 'input_rejected'
+          && r.advisory?.mutation_status === 'not_started',
+        `C2 reserved-owner refusal for ${claimed}: ${JSON.stringify(r)}`);
+      }
+      const self = await holder.send('ping', {}, { owner: mine, lease: null });
+      check(self.ok === true, `C2 own synthetic owner refused: ${JSON.stringify(self)}`);
+    }, [() => { claimant?.close(); holder?.close(); }]);
+  } },
+  { id: 'C3', title: 'a conn-owned batch records an orphaned sentinel in a step after socket close', run: async (ctx) => {
+    const watcher = bName('C3-watch'); const name = bName('C3');
+    const batchHeld = {}; const sentinelHeld = {};
+    let socket; let caller; let job; let acceptedUnknown = false; let terminal = false;
+    const watch = async () => cStatus(await ctx.call('lease_status', {}, { owner: watcher }), watcher);
+    await bWithCleanup(async () => {
+      const ping = await ctx.call('ping', {}, { owner: watcher });
+      check(ping.ok === true, `C3 watcher not present: ${JSON.stringify(ping)}`);
+      const state = await ctx.call('editor_get_state', { include_dirty: false });
+      check(state.ok === true && state.data?.pie === 'none' && state.data.editor_unsafe === false,
+        `C3 scratch host not safe for a batch: ${JSON.stringify(state)}`);
+      socket = await ctx.conn({ owner: null, lease: null });
+      const initial = await socket.send('lease_status');
+      check(initial.ok === true && /^conn:\d+$/.test(initial.data?.caller_owner ?? '')
+        && initial.data?.connection_owner === '' && initial.data?.enforcement === 'enforced_for_writes',
+      `C3 anonymous status: ${JSON.stringify(initial)}`);
+      caller = initial.data.caller_owner;
+      const acquire = async (suffix, bound, held) => {
+        const resource = `asset:/Game/__HaybaTest__/${name}_${suffix}`;
+        const label = `${suffix}:${name}`;
+        const g = await socket.send('lease_acquire', {
+          resources: [resource], ttl_s: 60, bind_connection: bound, label,
+        }, { owner: null, lease: null });
+        return cGrant(g, caller, resource, label, bound, held);
+      };
+      const batchId = await acquire('batch', false, batchHeld);
+      const sentinelId = await acquire('sentinel', true, sentinelHeld);
+      check(batchId !== sentinelId, 'C3 leases share one handle');
+      const own = cStatus(await socket.send('lease_status'), caller);
+      for (const held of [batchHeld, sentinelHeld]) {
+        const item = cLease(own, held);
+        check(item?.mine === true && item.lease_id === held.lease_id
+          && item.orphaned === false && item.bound_to_connection === (held === sentinelHeld)
+          && Number.isFinite(item.expires_in_s) && item.expires_in_s > 0,
+        `C3 owned lease missing before close: ${JSON.stringify(item)}`);
+      }
+      const params = {
+        lease_id: batchId, idle_ticks: 120, fence_timeout_s: 30,
+        steps: [
+          { cmd: 'ping', fence_after: 'idle' },
+          { cmd: 'ping', fence_after: 'none' },
+          { cmd: 'lease_status', fence_after: 'none' },
+        ],
+      };
+      const anonymous = await socket.send('editor_batch', params, { owner: null, lease: null });
+      if (anonymous.ok === true && anonymous.data?.job_id) job = anonymous.data.job_id;
+      if (anonymous.ok === true && !job) acceptedUnknown = true;
+      check(anonymous.ok === false && anonymous.code === 'owner_required'
+        && anonymous.lease?.command === 'editor_batch' && anonymous.lease?.caller_owner === caller
+        && anonymous.lease?.enforcement === 'enforced_for_writes'
+        && anonymous.lease?.reason === 'owner_missing' && !anonymous.data?.job_id,
+      `C3 unidentified batch did not refuse: ${JSON.stringify(anonymous)}`);
+      const accepted = await socket.send('editor_batch', params, { owner: null, lease: batchId });
+      if (accepted.ok === true && typeof accepted.data?.job_id === 'string' && accepted.data.job_id) job = accepted.data.job_id;
+      if (accepted.ok === true && !job) {
+        acceptedUnknown = true;
+        (ctx.retainedFixtures ??= []).push({ step: 'C3', owner: caller,
+          labels: [batchHeld.label, sentinelHeld.label], reason: 'batch accepted without a job id; controlled scratch recovery required' });
+        throw new Error('C3 batch accepted without a job id; controlled scratch recovery required');
+      }
+      // Native may accept then a later assertion fail. Preserve the job for recovery.
+      check(accepted.ok === true && accepted.data?.command === 'editor_batch'
+        && accepted.data?.status === 'running' && job && accepted.data.owner === caller
+        && accepted.data.steps_total === 3,
+      `C3 batch acceptance: ${JSON.stringify(accepted)}`);
+      socket.close(); socket = null;
+      const done = await bWait(ctx, 'C3 batch terminal status', async () => {
+        const r = await ctx.call('batch_status', { job_id: job }, { owner: watcher });
+        check(r.ok === true && r.data?.job_id === job && r.data?.owner === caller
+          && r.data.command === 'editor_batch' && r.data.steps_total === 3
+          && ['running', 'succeeded', 'failed'].includes(r.data.status),
+        `C3 batch status mismatch: ${JSON.stringify(r)}`);
+        return r.data.status === 'running' ? null : r.data;
+      }, 60_000, 250);
+      terminal = true;
+      check(done.status === 'succeeded' && done.steps_run === 3 && done.steps?.length === 3,
+        `C3 batch incomplete: ${JSON.stringify(done)}`);
+      for (const [i, command] of ['ping', 'ping', 'lease_status'].entries()) {
+        const step = done.steps[i];
+        check(step?.index === i && step.cmd === command && step.state === 'ok'
+          && step.fence_after === (i === 0 ? 'idle' : 'none')
+          && !step.data_truncated && !('data_text' in step) && step.data && typeof step.data === 'object',
+        `C3 step ${i} is not an exact parsed result: ${JSON.stringify(step)}`);
+        if (i < 2) check(step.data.capabilities?.lease_id === true,
+          `C3 ping step ${i} lacks lease capability`);
+      }
+      const witness = done.steps[2].data;
+      const sentinel = cLease(witness, sentinelHeld);
+      check(witness.caller_owner === caller && witness.connection_owner === ''
+        && sentinel?.mine === true && sentinel.lease_id === sentinelId
+        && sentinel.orphaned === true && sentinel.bound_to_connection === false
+        && sentinel.bind_connection === true
+        && Number.isFinite(sentinel.expires_in_s) && sentinel.expires_in_s > 0,
+      `C3 final step did not record an orphan after native close: ${JSON.stringify(witness)}`);
+      // A watcher must only see foreign status, with no exposed lease ids.
+      const foreign = await watch();
+      for (const held of [batchHeld, sentinelHeld]) {
+        const item = cLease(foreign, held);
+        if (item) check(item.mine === false && !('lease_id' in item),
+          `C3 watcher can see a foreign handle: ${JSON.stringify(item)}`);
+      }
+    }, [
+      async () => {
+        if (socket && !socket.closed && !job && !acceptedUnknown) await bRelease(socket.send.bind(socket), sentinelHeld);
+      },
+      async () => {
+        if (socket && !socket.closed && !job && !acceptedUnknown) await bRelease(socket.send.bind(socket), batchHeld);
+      },
+      () => socket?.close(),
+      async () => {
+        if (!batchHeld.lease_id && !sentinelHeld.lease_id) return;
+        if (acceptedUnknown || (job && !terminal)) {
+          (ctx.retainedFixtures ??= []).push({ step: 'C3', owner: caller, job_id: job,
+            labels: [batchHeld.label, sentinelHeld.label], reason: 'batch terminal state unconfirmed; controlled scratch recovery required' });
+          throw new Error(`C3 job ${job ?? '<missing-id>'} may still be running; controlled scratch recovery required`);
+        }
+        await bWait(ctx, 'both C3 leases expire naturally', async () => {
+          const status = await watch();
+          return !cLease(status, batchHeld) && !cLease(status, sentinelHeld);
+        }, 120_000, 1_000);
+      },
+    ]);
+  } },
+];
+
+export const STEPS = { a: A_STEPS, b: B_STEPS, c: C_STEPS };
 
 async function main(argv) {
   let args;

@@ -9,14 +9,16 @@ import {
 
 type Envelope = { cmd: string; id: string; params: Record<string, unknown>; owner?: string; lease?: string };
 
-async function fakeEditor(answer: (env: Envelope) => Record<string, unknown> | null) {
+async function fakeEditor(answer: (env: Envelope, conn: number) => Record<string, unknown> | null,
+  onClose?: (conn: number) => void) {
   const seen: Envelope[] = [];
   let connections = 0;
   const sockets = new Set<net.Socket>();
   const server = net.createServer((sock) => {
     connections += 1;
+    const conn = connections;
     sockets.add(sock);
-    sock.on('close', () => sockets.delete(sock));
+    sock.on('close', () => { sockets.delete(sock); onClose?.(conn); });
     let buf = Buffer.alloc(0);
     sock.on('data', (d) => {
       buf = Buffer.concat([buf, d]);
@@ -26,7 +28,7 @@ async function fakeEditor(answer: (env: Envelope) => Record<string, unknown> | n
         const env = JSON.parse(buf.subarray(4, 4 + len).toString('utf8')) as Envelope;
         buf = buf.subarray(4 + len);
         seen.push(env);
-        const reply = answer(env);
+        const reply = answer(env, conn);
         if (!reply) continue;
         const body = Buffer.from(JSON.stringify({ id: env.id, ...reply }), 'utf8');
         const head = Buffer.alloc(4);
@@ -376,6 +378,182 @@ describe('Deploy B framed TCP integration', () => {
   });
 });
 
+function cStep(id: string) {
+  const step = STEPS.c.find((s: { id: string }) => s.id === id);
+  expect(step, `${id} must be implemented`).toBeDefined();
+  return step;
+}
+
+function cContext(port: number) {
+  let time = 0;
+  return {
+    retainedFixtures: [] as Reply[],
+    now: () => time,
+    sleep: async (ms: number) => { time += ms; },
+    call: (cmd: string, params: Reply = {}, opts: Reply = {}) => once(port, cmd, params, opts),
+    conn: (opts: Reply = {}) => new Conn(port, opts).open(),
+  };
+}
+
+describe('Deploy C framed behavior', () => {
+  it('C1 confirms every adoption field, the explicit override, and a fresh reconnect', async () => {
+    let owner = ''; let released = false; const adopted = new Map<number, string>();
+    const ed = await fakeEditor((env, conn) => {
+      const caller = env.owner ?? adopted.get(conn) ?? `conn:${conn}`;
+      if (env.cmd === 'lease_acquire') { owner = caller; return success({ owner, status: 'granted',
+        lease_id: 'ls_2_c1', bound_to_connection: false, bind_connection: false,
+        expires_in_s: 120, resources: [{ resource: env.params.resources[0], mode: 'exclusive' }] }); }
+      if (env.cmd === 'lease_adopt') { adopted.set(conn, owner); return success({ adopted: true, owner,
+        lease_id: env.params.lease_id, connection_owner: owner, expires_in_s: 100 }); }
+      if (env.cmd === 'lease_status') return success({ caller_owner: caller, connection_owner: adopted.get(conn) ?? '' });
+      if (env.cmd === 'lease_release') { released = true; return success({ lease_id: env.params.lease_id, released: true }); }
+      throw new Error(env.cmd);
+    }, (conn) => adopted.delete(conn));
+    try {
+      await cStep('C1').run(cContext(ed.port));
+      expect(released).toBe(true);
+      expect(ed.seen.filter((e) => e.cmd === 'lease_adopt')).toHaveLength(3);
+      expect(ed.seen.filter((e) => e.cmd === 'lease_adopt').every((e) => !('owner' in e) && !('lease' in e))).toBe(true);
+      expect(ed.seen.some((e) => e.cmd === 'lease_status' && e.owner?.includes('override'))).toBe(true);
+    } finally { await ed.close(); }
+  });
+
+  it.each(['wrong-owner', 'wrong-connection-owner', 'expired'])('C1 rejects false adoption confirmation: %s', async (variant) => {
+    let owner = ''; let released = false;
+    const ed = await fakeEditor((env, conn) => {
+      if (env.cmd === 'lease_acquire') { owner = env.owner!; return success({ owner, status: 'granted',
+        lease_id: 'ls_2_c1', bound_to_connection: false, bind_connection: false,
+        expires_in_s: 120, resources: [{ resource: env.params.resources[0], mode: 'exclusive' }] }); }
+      if (env.cmd === 'lease_status') return success({ caller_owner: `conn:${conn}`, connection_owner: '' });
+      if (env.cmd === 'lease_adopt') return success({ adopted: true,
+        owner: variant === 'wrong-owner' ? 'foreign' : owner, lease_id: 'ls_2_c1',
+        connection_owner: variant === 'wrong-connection-owner' ? 'foreign' : owner,
+        expires_in_s: variant === 'expired' ? 0 : 100 });
+      if (env.cmd === 'lease_release') { released = true; return success({ released: true, lease_id: env.params.lease_id }); }
+      throw new Error(env.cmd);
+    });
+    try {
+      await expect(cStep('C1').run(cContext(ed.port))).rejects.toThrow(/C1 adoption/);
+      expect(released).toBe(true);
+    } finally { await ed.close(); }
+  });
+
+  it.each(['valid', 'wrong-detail', 'wrong-advisory', 'accepted-foreign'])('C2 pins root refusal and sender identity: %s', async (variant) => {
+    const ed = await fakeEditor((env, conn) => {
+      if (env.cmd === 'lease_status') return success({ caller_owner: `conn:${conn}`, connection_owner: '' });
+      if (env.cmd === 'ping' && env.owner && env.owner !== `conn:${conn}`) {
+        if (variant === 'accepted-foreign') return success();
+        return { ok: false, code: 'owner_reserved',
+          owner: { claimed_owner: variant === 'wrong-detail' ? 'conn:999' : env.owner,
+            caller_owner: `conn:${conn}`, conn },
+          advisory: { state: variant === 'wrong-advisory' ? 'unknown' : 'input_rejected',
+            mutation_status: 'not_started' } };
+      }
+      if (env.cmd === 'ping') return success();
+      throw new Error(env.cmd);
+    });
+    try {
+      if (variant === 'valid') await cStep('C2').run(cContext(ed.port));
+      else await expect(cStep('C2').run(cContext(ed.port))).rejects.toThrow(/C2 reserved-owner/);
+      expect(ed.seen.filter((e) => e.cmd === 'ping').some((e) => e.owner === 'local')).toBe(variant === 'valid');
+    } finally { await ed.close(); }
+  });
+
+  it.each(['valid', 'missing-envelope', 'accepted-no-id', 'wrong-job', 'wrong-caller', 'missing-orphan', 'missing-native-close',
+    'truncated-step', 'pending-step', 'wrong-sentinel', 'wrong-lease-id', 'cleanup-timeout', 'timeout-batch'])(
+    'C3 requires a framed close, exact final step witness, and bounded cleanup: %s', async (variant) => {
+      let clock = 0; let watcher = ''; let batchConn = 0; let closed = false; let batchAccepted = false;
+      let statusCalls = 0; let releases = 0;
+      const leases: Reply[] = [];
+      const withLeases = (caller: string) => leases.filter((l) => variant === 'cleanup-timeout' || clock < 60_000)
+        .map((l) => ({ ...l, mine: caller === l.owner,
+          ...(caller === l.owner ? { lease_id: l.lease_id } : {}),
+          ...(caller !== l.owner ? { lease_id: undefined } : {}),
+          orphaned: l.bind_connection && closed && variant !== 'missing-orphan' && variant !== 'missing-native-close',
+          bound_to_connection: l.bind_connection && (!closed || variant === 'missing-native-close'),
+          expires_in_s: Math.max(1, 60 - clock / 1000) }));
+      const ed = await fakeEditor((env, conn) => {
+        const caller = env.owner ?? `conn:${conn}`;
+        if (env.cmd === 'ping') {
+          if (env.owner) watcher = env.owner;
+          return success({ capabilities: { lease_id: true } });
+        }
+        if (env.cmd === 'editor_get_state') return success({ pie: 'none', editor_unsafe: false });
+        if (env.cmd === 'lease_status') return success({ caller_owner: caller, connection_owner: '',
+          enforcement: 'enforced_for_writes', leases: withLeases(caller) });
+        if (env.cmd === 'lease_acquire') {
+          batchConn = conn; const bind = env.params.bind_connection === true;
+          const l = { owner: caller, label: env.params.label, lease_id: bind ? 'ls_2_sentinel' : 'ls_2_batch',
+            resources: [{ resource: env.params.resources[0], mode: 'exclusive' }],
+            bind_connection: bind };
+          leases.push(l);
+          return success({ ...l, status: 'granted', bound_to_connection: bind, expires_in_s: 60 });
+        }
+        if (env.cmd === 'lease_release') { releases++; return success({ lease_id: env.params.lease_id, released: true }); }
+        if (env.cmd === 'editor_batch') {
+          if (variant === 'missing-envelope' && env.lease) return { ok: false, code: 'owner_required' };
+          if (variant === 'accepted-no-id' && !env.lease) return success({ command: 'editor_batch', status: 'running' });
+          if (!env.lease) return { ok: false, code: 'owner_required',
+            lease: { command: 'editor_batch', caller_owner: caller, enforcement: 'enforced_for_writes', reason: 'owner_missing' } };
+          batchAccepted = true;
+          return success({ command: 'editor_batch', status: 'running', job_id: 'job_c3', owner: caller, steps_total: 3 });
+        }
+        if (env.cmd === 'batch_status') {
+          statusCalls++;
+          const owner = `conn:${batchConn}`;
+          if (variant === 'timeout-batch') return success({ command: 'editor_batch', job_id: 'job_c3',
+            owner, status: 'running', steps_total: 3, steps_run: 1 });
+          const witness = { caller_owner: variant === 'wrong-caller' ? 'conn:999' : owner, connection_owner: '',
+            leases: withLeases(owner).map((l) => variant === 'wrong-sentinel' && l.label?.startsWith('sentinel:')
+              ? { ...l, label: 'wrong' }
+              : variant === 'wrong-lease-id' && l.label?.startsWith('sentinel:')
+                ? { ...l, lease_id: 'ls_2_foreign' } : l) };
+          return success({ command: 'editor_batch', job_id: variant === 'wrong-job' ? 'other' : 'job_c3',
+            owner, status: 'succeeded', steps_total: 3, steps_run: 3,
+            steps: [
+              { index: 0, cmd: 'ping', fence_after: 'idle', state: 'ok', data: { capabilities: { lease_id: true } } },
+              { index: 1, cmd: 'ping', fence_after: 'none', state: variant === 'pending-step' ? 'pending' : 'ok',
+                data: { capabilities: { lease_id: true } } },
+              { index: 2, cmd: 'lease_status', fence_after: 'none', state: 'ok',
+                ...(variant === 'truncated-step' ? { data_text: '{}', data_truncated: true } : { data: witness }) },
+            ] });
+        }
+        throw new Error(env.cmd);
+      }, (conn) => { if (conn === batchConn) closed = true; });
+      const ctx = cContext(ed.port);
+      ctx.now = () => clock;
+      ctx.sleep = async (ms: number) => { clock += ms; };
+      try {
+        if (variant === 'valid') {
+          await cStep('C3').run(ctx);
+          expect(ctx.retainedFixtures).toHaveLength(0);
+          expect(statusCalls).toBeGreaterThan(0);
+          expect(ed.seen.filter((e) => e.cmd === 'editor_batch')).toHaveLength(2);
+          const accepted = ed.seen.find((e) => e.cmd === 'editor_batch' && e.lease);
+          expect(accepted?.params).toMatchObject({ idle_ticks: 120, fence_timeout_s: 30,
+            steps: [{ cmd: 'ping', fence_after: 'idle' }, { cmd: 'ping', fence_after: 'none' },
+              { cmd: 'lease_status', fence_after: 'none' }] });
+          expect(accepted).not.toHaveProperty('owner');
+          expect(closed).toBe(true);
+          expect(releases).toBe(0);
+          expect(watcher).toMatch(/^ladder-c3-watch-/);
+        } else {
+          await expect(cStep('C3').run(ctx)).rejects.toThrow();
+          if (variant === 'missing-envelope') expect(releases).toBe(2);
+          else if (variant !== 'accepted-no-id') expect(batchAccepted).toBe(true);
+          if (variant === 'accepted-no-id') {
+            expect(ctx.retainedFixtures).toMatchObject([{ step: 'C3' }]);
+            expect(releases).toBe(0);
+          }
+          if (variant === 'timeout-batch') {
+            expect(ctx.retainedFixtures).toMatchObject([{ step: 'C3', job_id: 'job_c3' }]);
+            expect(statusCalls).toBeGreaterThan(100);
+          }
+        }
+      } finally { await ed.close(); }
+    });
+});
+
 describe('p0-live-ladder scratch-host guard (R-5)', () => {
   it('returns the live heartbeat port of a scratch host', () => {
     expect(findScratchPort(scratchTree(52343))).toBe(52343);
@@ -392,6 +570,10 @@ describe('p0-live-ladder scratch-host guard (R-5)', () => {
 });
 
 describe('p0-live-ladder runner', () => {
+  it('the Deploy C ladder is C1-C3, all automated', () => {
+    expect(STEPS.c.map((s: { id: string }) => s.id)).toEqual(['C1', 'C2', 'C3']);
+    expect(STEPS.c.some((s: { manual?: boolean }) => s.manual)).toBe(false);
+  });
   it('reports FAIL, SKIP-MANUAL and PASS and picks the exit code', async () => {
     const steps = [
       { id: 'X1', title: 'fails', run: async () => check(false, 'boom') },
