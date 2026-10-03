@@ -18,6 +18,7 @@
 class SWebBrowser;
 class UWorld;
 class ULevel;
+class FHaybaWorldDepthReadback;
 
 class SHaybaMCPSceneMapWebPanel : public SCompoundWidget
 {
@@ -39,6 +40,7 @@ public:
     int32 GetDepthPointCount() const { return DepthPointCount; }
     const FString& GetDepthStatus() const { return DepthStatus; }
     double GetDepthReadbackMs() const { return DepthReadbackMs; }
+    double GetDepthReadbackGameThreadMaxMs() const { return DepthReadbackGameThreadMaxMs; }
     bool DidDepthReadbackExceedBudget() const { return bDepthReadbackBudgetExceeded; }
     double GetDepthProcessingCpuMs() const { return DepthCpuMs; }
     double GetDepthMaxTickCpuMs() const { return DepthMaxTickCpuMs; }
@@ -74,6 +76,7 @@ private:
     TMap<FString, int32> NodeIndexByPath;
     TStrongObjectPtr<USceneCaptureComponent2D> DepthCapture;
     TStrongObjectPtr<UTextureRenderTarget2D> DepthTarget;
+    TSharedPtr<FHaybaWorldDepthReadback, ESPMode::ThreadSafe> DepthReadback;
     TArray<FLinearColor> DepthPixels;
     FVector DepthCameraCm = FVector::ZeroVector;
     FRotator DepthRotation = FRotator::ZeroRotator;
@@ -92,6 +95,9 @@ private:
     int32 DepthPointCount = 0;
     int32 DepthAttributedCount = 0;
     double DepthReadbackMs = 0.0;
+    double DepthReadbackWaitMs = 0.0;
+    double DepthReadbackStartedAt = 0.0;
+    double DepthReadbackGameThreadMaxMs = 0.0;
     bool bDepthReadbackBudgetExceeded = false;
     FString DepthCaptureId;
     double DepthCpuMs = 0.0;

@@ -47,6 +47,8 @@ struct FSnapshot
     int32 ProcessedPixelCount = 0;
     int32 MatchedRayPointCount = 0;
     double ReadbackMs = 0.0;
+    double ReadbackWaitMs = 0.0;
+    double ReadbackGameThreadMaxMs = 0.0;
     bool bReadbackBudgetExceeded = false;
     double ProcessingCpuMs = 0.0;
     TArray<FPoint> Points;

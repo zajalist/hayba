@@ -2,6 +2,7 @@
 #include "HaybaMCPSceneMapWebPanel.h"
 #include "HaybaMCPEditorHealth.h"
 #include "HaybaMCPWorldDepth.h"
+#include "HaybaMCPWorldDepthReadback.h"
 
 #include "SWebBrowser.h"
 #include "IWebBrowserWindow.h"
@@ -239,7 +240,10 @@ void SHaybaMCPSceneMapWebPanel::Refresh()
     NodeIndexBase = 1;
     ActorIndexByPath.Reset(); NodeIndexByPath.Reset(); DepthPixels.Reset();
     DepthPixelCursor = DepthPointCount = DepthAttributedCount = 0;
-    DepthAnchorCursor = 0; DepthAnchors.Reset(); DepthReadbackMs = DepthCpuMs = DepthMaxTickCpuMs = 0.0;
+    DepthAnchorCursor = 0; DepthAnchors.Reset();
+    DepthReadbackMs = DepthReadbackWaitMs = DepthReadbackStartedAt = 0.0;
+    DepthReadbackGameThreadMaxMs = 0.0;
+    DepthCpuMs = DepthMaxTickCpuMs = 0.0;
     bDepthReadbackBudgetExceeded = false;
     DepthCaptureId.Reset();
     DepthPhase = EDepthPhase::NotStarted; DepthStatus = TEXT("not_attempted");
@@ -339,24 +343,36 @@ void SHaybaMCPSceneMapWebPanel::Tick(const FGeometry& AllottedGeometry,
     }
     if (DepthPhase == EDepthPhase::AwaitReadback)
     {
-        const double ReadbackStart = FPlatformTime::Seconds();
-        FTextureRenderTargetResource* Resource = DepthTarget.IsValid() ? DepthTarget->GameThread_GetRenderTargetResource() : nullptr;
-        // Unreal's readback is synchronous. A slow call has already blocked
-        // this frame; keep valid pixels and report its measured cost separately.
-        const bool bRead = Resource && Resource->ReadLinearColorPixels(DepthPixels);
-        DepthReadbackMs = (FPlatformTime::Seconds() - ReadbackStart) * 1000.0;
-        bDepthReadbackBudgetExceeded = DepthReadbackMs > HaybaWorldDepth::ReadbackWarningMs;
-        if (bRead &&
-            DepthPixels.Num() == HaybaWorldDepth::Width * HaybaWorldDepth::Height)
+        const double PollStarted = FPlatformTime::Seconds();
+        if (DepthReadback.IsValid() && !DepthReadback->IsComplete()) DepthReadback->Poll();
+        if (DepthReadback.IsValid() && DepthReadback->IsComplete())
         {
-            DepthPhase = EDepthPhase::Processing;
-            DepthStatus = TEXT("depth_visible");
+            const bool bRead = DepthReadback->TakePixels(DepthPixels, DepthReadbackMs);
+            DepthReadbackWaitMs = (FPlatformTime::Seconds() - DepthReadbackStartedAt) * 1000.0;
+            bDepthReadbackBudgetExceeded = DepthReadbackMs > HaybaWorldDepth::ReadbackWarningMs;
+            DepthReadback.Reset();
+            DepthReadbackGameThreadMaxMs = FMath::Max(DepthReadbackGameThreadMaxMs,
+                (FPlatformTime::Seconds() - PollStarted) * 1000.0);
+            if (bRead)
+            {
+                DepthPhase = EDepthPhase::Processing;
+                DepthStatus = TEXT("depth_visible");
+            }
+            else
+            {
+                DepthStatus = TEXT("readback_unavailable"); DepthPhase = EDepthPhase::Complete;
+                DepthPixels.Reset(); ReleaseDepthCapture(); FinishScan();
+            }
         }
-        else
+        else if (FPlatformTime::Seconds() - DepthReadbackStartedAt > 10.0)
         {
-            DepthStatus = TEXT("readback_unavailable"); DepthPhase = EDepthPhase::Complete;
+            DepthReadbackGameThreadMaxMs = FMath::Max(DepthReadbackGameThreadMaxMs,
+                (FPlatformTime::Seconds() - PollStarted) * 1000.0);
+            DepthStatus = TEXT("readback_timeout"); DepthPhase = EDepthPhase::Complete;
             DepthPixels.Reset(); ReleaseDepthCapture(); FinishScan();
         }
+        else DepthReadbackGameThreadMaxMs = FMath::Max(DepthReadbackGameThreadMaxMs,
+            (FPlatformTime::Seconds() - PollStarted) * 1000.0);
         return;
     }
     if (DepthPhase == EDepthPhase::Processing) { ProcessDepthPixels(World); return; }
@@ -492,6 +508,7 @@ void SHaybaMCPSceneMapWebPanel::SendPendingPointChunk()
 
 void SHaybaMCPSceneMapWebPanel::ReleaseDepthCapture()
 {
+    DepthReadback.Reset();
     if (DepthCapture.IsValid())
     {
         DepthCapture->TextureTarget = nullptr;
@@ -565,6 +582,12 @@ void SHaybaMCPSceneMapWebPanel::BeginDepthCapture()
     DepthCapture->RegisterComponentWithWorld(World);
     DepthCapture->SetWorldLocationAndRotation(DepthCameraCm, DepthRotation);
     DepthCapture->CaptureScene();
+    DepthReadback = FHaybaWorldDepthReadback::Start(DepthTarget->GameThread_GetRenderTargetResource());
+    if (!DepthReadback.IsValid())
+    {
+        DepthStatus = TEXT("readback_unavailable"); ReleaseDepthCapture(); return;
+    }
+    DepthReadbackStartedAt = FPlatformTime::Seconds();
     DepthPhase = EDepthPhase::AwaitReadback;
     DepthStatus = TEXT("capture_queued");
 }
@@ -707,6 +730,8 @@ void SHaybaMCPSceneMapWebPanel::FinishScan()
         ObservedDepth.Status = DepthStatus;
         ObservedDepth.ProcessedPixelCount = DepthPixelCursor;
         ObservedDepth.ReadbackMs = DepthReadbackMs;
+        ObservedDepth.ReadbackWaitMs = DepthReadbackWaitMs;
+        ObservedDepth.ReadbackGameThreadMaxMs = DepthReadbackGameThreadMaxMs;
         ObservedDepth.bReadbackBudgetExceeded = bDepthReadbackBudgetExceeded;
         ObservedDepth.ProcessingCpuMs = DepthCpuMs;
         if (DepthStatus != TEXT("complete_visible_subset"))
@@ -742,11 +767,13 @@ void SHaybaMCPSceneMapWebPanel::FinishScan()
     Depth->SetNumberField(TEXT("attributedPointCount"), DepthAttributedCount);
     Depth->SetNumberField(TEXT("maximumPhysicsRays"), HaybaWorldDepth::MaxPhysicsRays);
     Depth->SetNumberField(TEXT("readbackMs"), DepthReadbackMs);
+    Depth->SetNumberField(TEXT("readbackWaitMs"), DepthReadbackWaitMs);
+    Depth->SetNumberField(TEXT("readbackGameThreadMaxMs"), DepthReadbackGameThreadMaxMs);
     Depth->SetBoolField(TEXT("readbackBudgetExceeded"), bDepthReadbackBudgetExceeded);
     Depth->SetNumberField(TEXT("processingCpuMs"), DepthCpuMs);
     Depth->SetNumberField(TEXT("maxProcessingTickMs"), DepthMaxTickCpuMs);
     Depth->SetNumberField(TEXT("processingBudgetMs"), HaybaWorldDepth::MaxProcessingCpuMs);
-    Depth->SetStringField(TEXT("readbackMode"), TEXT("synchronous_game_thread"));
+    Depth->SetStringField(TEXT("readbackMode"), TEXT("async_gpu_staging_render_thread_copy"));
     Depth->SetNumberField(TEXT("readbackWarningMs"), HaybaWorldDepth::ReadbackWarningMs);
     Depth->SetStringField(TEXT("attribution"), TEXT("anchor_pixel_physics_ray_verified_or_unknown"));
     Depth->SetStringField(TEXT("normalProvenance"), TEXT("view_facing_estimate"));

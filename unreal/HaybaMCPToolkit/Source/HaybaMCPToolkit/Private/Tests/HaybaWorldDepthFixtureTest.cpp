@@ -3,6 +3,7 @@
 #if WITH_DEV_AUTOMATION_TESTS
 
 #include "HaybaMCPWorldDepth.h"
+#include "HaybaMCPWorldDepthReadback.h"
 #include "Components/SceneCaptureComponent2D.h"
 #include "Components/StaticMeshComponent.h"
 #include "DynamicRHI.h"
@@ -14,6 +15,8 @@
 #include "Misc/CommandLine.h"
 #include "Misc/Parse.h"
 #include "Misc/ScopeExit.h"
+#include "HAL/PlatformProcess.h"
+#include "HAL/PlatformTime.h"
 #include "RHIGlobals.h"
 #include "RenderingThread.h"
 #include "UObject/Package.h"
@@ -107,10 +110,26 @@ bool FHaybaWorldDepthFixtureTest::RunTest(const FString&)
     Capture->RegisterComponentWithWorld(World.Get());
     Capture->SetWorldLocationAndRotation(FVector::ZeroVector, FRotator::ZeroRotator);
     Capture->CaptureScene();
-    FlushRenderingCommands();
-
     FTextureRenderTargetResource* Resource = Target->GameThread_GetRenderTargetResource();
     if (!TestNotNull(TEXT("depth target render resource"), Resource)) return false;
+    TSharedPtr<FHaybaWorldDepthReadback, ESPMode::ThreadSafe> Async =
+        FHaybaWorldDepthReadback::Start(Resource);
+    if (!TestTrue(TEXT("RGBA32f asynchronous readback queued"), Async.IsValid())) return false;
+    const double AsyncStarted = FPlatformTime::Seconds();
+    while (!Async->IsComplete() && FPlatformTime::Seconds() - AsyncStarted < 10.0)
+    {
+        Async->Poll();
+        FlushRenderingCommands();
+        FPlatformProcess::Sleep(0.01f);
+    }
+    if (!TestTrue(TEXT("asynchronous readback completed"), Async->IsComplete())) return false;
+    TArray<FLinearColor> AsyncPixels;
+    double AsyncCopyMs = 0.0;
+    if (!TestTrue(TEXT("asynchronous readback returned every pixel"),
+        Async->TakePixels(AsyncPixels, AsyncCopyMs))) return false;
+    AddInfo(FString::Printf(TEXT("Async staging readback: wait %.2f ms, render-thread map/copy %.2f ms"),
+        (FPlatformTime::Seconds() - AsyncStarted) * 1000.0, AsyncCopyMs));
+
     TArray<FLinearColor> Pixels;
     if (!TestTrue(TEXT("RGBA32f scene-depth readback"), Resource->ReadLinearColorPixels(Pixels)))
         return false;
@@ -120,6 +139,12 @@ bool FHaybaWorldDepthFixtureTest::RunTest(const FString&)
     const int32 CenterX = HaybaWorldDepth::Width / 2;
     const int32 CenterY = HaybaWorldDepth::Height / 2;
     const FLinearColor& Center = Pixels[CenterY * HaybaWorldDepth::Width + CenterX];
+    const FLinearColor& AsyncCenter = AsyncPixels[CenterY * HaybaWorldDepth::Width + CenterX];
+    TestTrue(TEXT("asynchronous center pixel matches standard readback"),
+        FMath::Abs(Center.A - AsyncCenter.A) <= 0.01f &&
+        FMath::Abs(Center.R - AsyncCenter.R) <= 0.01f &&
+        FMath::Abs(Center.G - AsyncCenter.G) <= 0.01f &&
+        FMath::Abs(Center.B - AsyncCenter.B) <= 0.01f);
     const double DepthCm = static_cast<double>(Center.A);
     AddInfo(FString::Printf(TEXT("Synthetic cube face: expected %.2f cm, aligned SceneDepth A %.2f cm"),
         ExpectedDepthCm, DepthCm));

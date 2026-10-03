@@ -75,6 +75,9 @@ TSharedRef<FJsonObject> HaybaViewDepthSnapshot::BuildPage(const FSnapshot& Snaps
     Out->SetNumberField(TEXT("valid_depth_point_count"), Snapshot.Points.Num());
     Out->SetNumberField(TEXT("matched_ray_point_count"), Snapshot.MatchedRayPointCount);
     Out->SetNumberField(TEXT("readback_ms"), Snapshot.ReadbackMs);
+    Out->SetNumberField(TEXT("readback_wait_ms"), Snapshot.ReadbackWaitMs);
+    Out->SetNumberField(TEXT("readback_game_thread_max_ms"), Snapshot.ReadbackGameThreadMaxMs);
+    Out->SetStringField(TEXT("readback_mode"), TEXT("async_gpu_staging_render_thread_copy"));
     Out->SetBoolField(TEXT("readback_budget_exceeded"), Snapshot.bReadbackBudgetExceeded);
     Out->SetNumberField(TEXT("processing_cpu_ms"), Snapshot.ProcessingCpuMs);
     if (Snapshot.bCameraValid)

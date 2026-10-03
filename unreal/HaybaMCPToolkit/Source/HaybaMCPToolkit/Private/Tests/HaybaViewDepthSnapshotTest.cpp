@@ -18,6 +18,9 @@ bool FHaybaViewDepthSnapshotTest::RunTest(const FString&)
     Snapshot.bCameraValid = true;
     Snapshot.CameraCm = FVector(100.0, 200.0, 300.0);
     Snapshot.HorizontalFovDegrees = 90.0;
+    Snapshot.ReadbackMs = 1.25;
+    Snapshot.ReadbackWaitMs = 32.0;
+    Snapshot.ReadbackGameThreadMaxMs = 0.15;
     FPoint Unknown;
     Unknown.PositionCm = FVector(1.0, 2.0, 3.0);
     Unknown.PixelX = 3;
@@ -42,6 +45,11 @@ bool FHaybaViewDepthSnapshotTest::RunTest(const FString&)
     TestEqual(TEXT("group total spans all pages"),
         static_cast<int32>(Groups->GetNumberField(TEXT("total_items"))), 2);
     const TSharedRef<FJsonObject> Points = BuildPage(Snapshot, TEXT("points"), 0, 32, FString());
+    TestEqual(TEXT("readback mode describes asynchronous staging"),
+        Points->GetStringField(TEXT("readback_mode")),
+        FString(TEXT("async_gpu_staging_render_thread_copy")));
+    TestEqual(TEXT("game-thread readback poll cost is exposed separately"),
+        Points->GetNumberField(TEXT("readback_game_thread_max_ms")), 0.15);
     const TArray<TSharedPtr<FJsonValue>>& Rows = Points->GetArrayField(TEXT("items"));
     TestEqual(TEXT("unknown point declares unknown attribution"),
         Rows[0]->AsObject()->GetStringField(TEXT("source_attribution")), FString(TEXT("unknown")));

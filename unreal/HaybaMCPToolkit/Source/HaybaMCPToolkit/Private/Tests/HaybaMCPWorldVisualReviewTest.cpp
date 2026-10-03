@@ -86,12 +86,13 @@ bool FHaybaWorldVisualReview::RunTest(const FString&)
             Context->Panel.IsValid() && Context->Panel->GetCellCount() > 0);
         if (Context->Panel.IsValid())
         {
-            AddInfo(FString::Printf(TEXT("World native depth: status=%s, points=%d, pixels=%d, readback=%.2f ms, processing=%.2f ms, maxTick=%.2f ms"),
+            AddInfo(FString::Printf(TEXT("World native depth: status=%s, points=%d, pixels=%d, render readback copy=%.2f ms, game-thread poll max=%.2f ms, processing=%.2f ms, maxTick=%.2f ms"),
                 *Context->Panel->GetDepthStatus(), Context->Panel->GetDepthPointCount(),
                 Context->Panel->GetDepthProcessedPixelCount(), Context->Panel->GetDepthReadbackMs(),
+                Context->Panel->GetDepthReadbackGameThreadMaxMs(),
                 Context->Panel->GetDepthProcessingCpuMs(), Context->Panel->GetDepthMaxTickCpuMs()));
             if (Context->Panel->DidDepthReadbackExceedBudget())
-                AddWarning(FString::Printf(TEXT("World depth readback stalled the editor thread for %.2f ms (%.0f ms warning threshold); valid captured pixels were retained."),
+                AddWarning(FString::Printf(TEXT("World depth render-thread map/copy took %.2f ms (%.0f ms warning threshold); valid captured pixels were retained."),
                     Context->Panel->GetDepthReadbackMs(), HaybaWorldDepth::ReadbackWarningMs));
             TestTrue(TEXT("World scan completed before screenshot"), Context->Panel->IsScanDone());
             // This fixture contains open sky and empty background. Valid scene
