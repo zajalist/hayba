@@ -103,6 +103,7 @@ $CleanupAttempted = $false
 $LogCursors = @{}
 $LogCriticalCount = 0
 $CaseClock = $null
+$CaseMaxMs = $MaxCaseMs
 $StartupClock = $null
 $StartupReadinessEvidence = $null
 $FrameReadTimeoutMs = 5000
@@ -335,7 +336,9 @@ function Test-ExactCommandLineArgument([string]$CommandLine, [string]$Argument) 
 
 function New-CaseClock { return [Diagnostics.Stopwatch]::StartNew() }
 
-function Start-CaseBudget {
+function Start-CaseBudget([int]$BudgetMs = $MaxCaseMs) {
+    if ($BudgetMs -lt $MaxCaseMs -or $BudgetMs -gt 120000) { throw 'case budget is outside the bounded range' }
+    $script:CaseMaxMs = $BudgetMs
     $script:CaseStartTimestamp = [Diagnostics.Stopwatch]::GetTimestamp()
     $script:CaseClock = New-CaseClock
     $script:CasePhases = [Collections.Generic.List[object]]::new()
@@ -349,7 +352,7 @@ function Invoke-CasePhase([string]$Name, [scriptblock]$Action) {
     if ($null -eq $CaseClock) { return & $Action }
     $phase = [pscustomobject]@{
         name = $Name; start_ms = [long]$CaseClock.ElapsedMilliseconds; end_ms = $null
-        duration_ms = $null; remaining_ms = [Math]::Max(0, $MaxCaseMs - $CaseClock.ElapsedMilliseconds)
+        duration_ms = $null; remaining_ms = [Math]::Max(0, $CaseMaxMs - $CaseClock.ElapsedMilliseconds)
         status = 'started'; diagnostic = $null
     }
     $CasePhases.Add($phase)
@@ -361,14 +364,14 @@ function Invoke-CasePhase([string]$Name, [scriptblock]$Action) {
         return $value
     }
     catch {
-        $phase.status = if ($_.Exception -is [TimeoutException] -or $CaseClock.ElapsedMilliseconds -ge $MaxCaseMs) { 'timed_out' } else { 'failed' }
+        $phase.status = if ($_.Exception -is [TimeoutException] -or $CaseClock.ElapsedMilliseconds -ge $CaseMaxMs) { 'timed_out' } else { 'failed' }
         $phase.diagnostic = New-DiagnosticDigest $_.Exception.Message 'phase_failure'
         throw
     }
     finally {
         $phase.end_ms = [long]$CaseClock.ElapsedMilliseconds
         $phase.duration_ms = $phase.end_ms - $phase.start_ms
-        $phase.remaining_ms = [Math]::Max(0, $MaxCaseMs - $CaseClock.ElapsedMilliseconds)
+        $phase.remaining_ms = [Math]::Max(0, $CaseMaxMs - $CaseClock.ElapsedMilliseconds)
         if ($Name -ceq 'hostile.command' -or $Name -ceq 'hostile.action') { $script:HostileDurationMs = $phase.duration_ms }
     }
 }
@@ -501,7 +504,7 @@ function Invoke-HostProofQuery {
                 $state = if ($last.state -ceq 'completed') { 'completed' } elseif ($timedOut) { 'timed_out' } else { 'failed' }
                 $CasePhases.Add([pscustomobject]@{
                     name = "$HealthPhasePrefix.$name"; start_ms = $startMs; end_ms = $endMs
-                    duration_ms = $endMs - $startMs; remaining_ms = [Math]::Max(0, $MaxCaseMs - $endMs)
+                    duration_ms = $endMs - $startMs; remaining_ms = [Math]::Max(0, $CaseMaxMs - $endMs)
                     status = $state; diagnostic = if ($state -ceq 'completed') { $null } else { $LastHostQueryEvidence.diagnostic }
                 })
             }
@@ -589,7 +592,7 @@ function Get-CrashRoots {
 function Get-CrashEvidence {
     $scanClock = [Diagnostics.Stopwatch]::StartNew()
     $scanLimitMs = $CrashScanTimeoutMs
-    if ($null -ne $CaseClock) { $scanLimitMs = [Math]::Min($scanLimitMs, $MaxCaseMs - $CaseClock.ElapsedMilliseconds - 250) }
+    if ($null -ne $CaseClock) { $scanLimitMs = [Math]::Min($scanLimitMs, $CaseMaxMs - $CaseClock.ElapsedMilliseconds - 250) }
     if ($scanLimitMs -le 0) { throw 'no bounded case budget remained for crash evidence' }
     $artifacts = 0
     $filesSeen = 0
@@ -656,7 +659,7 @@ function Assert-CrashEvidenceUnchanged {
 function Get-ProjectFilesystemEvidence {
     $scanClock = [Diagnostics.Stopwatch]::StartNew()
     $scanLimitMs = $FilesystemScanTimeoutMs
-    if ($null -ne $CaseClock) { $scanLimitMs = [Math]::Min($scanLimitMs, $MaxCaseMs - $CaseClock.ElapsedMilliseconds - 250) }
+    if ($null -ne $CaseClock) { $scanLimitMs = [Math]::Min($scanLimitMs, $CaseMaxMs - $CaseClock.ElapsedMilliseconds - 250) }
     if ($scanLimitMs -le 0) { throw 'no bounded case budget remained for project filesystem evidence' }
     $root = Split-Path -Parent $ProjectPath
     $manifest = [Collections.Generic.List[string]]::new()
@@ -712,7 +715,7 @@ function Initialize-LogEvidence {
 function Read-NewCriticalLogEvidence {
     $scanClock = [Diagnostics.Stopwatch]::StartNew()
     $scanLimitMs = $LogScanTimeoutMs
-    if ($null -ne $CaseClock) { $scanLimitMs = [Math]::Min($scanLimitMs, $MaxCaseMs - $CaseClock.ElapsedMilliseconds - 250) }
+    if ($null -ne $CaseClock) { $scanLimitMs = [Math]::Min($scanLimitMs, $CaseMaxMs - $CaseClock.ElapsedMilliseconds - 250) }
     if ($scanLimitMs -le 0) { throw 'no bounded case budget remained for log evidence' }
     $logs = Join-Path (Split-Path -Parent $ProjectPath) 'Saved\Logs'
     if (-not (Test-Path -LiteralPath $logs -PathType Container)) {
@@ -1014,8 +1017,8 @@ function Wait-EditorReady {
 
 function Get-RemainingCaseMs([string]$Operation = 'case operation') {
     if ($null -eq $CaseClock) { return $MaxCaseMs }
-    $remaining = $MaxCaseMs - [long]$CaseClock.ElapsedMilliseconds
-    if ($remaining -lt 100) { throw [TimeoutException]::new("$Operation exhausted the absolute ${MaxCaseMs}ms case deadline") }
+    $remaining = $CaseMaxMs - [long]$CaseClock.ElapsedMilliseconds
+    if ($remaining -lt 100) { throw [TimeoutException]::new("$Operation exhausted the absolute ${CaseMaxMs}ms case deadline") }
     return [Math]::Min($remaining, 60000)
 }
 
@@ -1147,6 +1150,7 @@ function Add-Result {
         sanitized_params_sha256 = $ParamsHash
         passed = $Passed
         duration_ms = $DurationMs
+        case_deadline_ms = if ($null -ne $CaseClock) { $CaseMaxMs } else { $null }
         editor_pid = $EditorPid
         recovery = $Recovery
         preflight = if ($null -ne $CaseClock) { $CasePreflight } else { $null }
@@ -1184,7 +1188,7 @@ function Test-CommandRejection {
         $script:HealthPhasePrefix = 'recovery'
         $recovery = Assert-EditorHealthy
         $recovery | Add-Member -NotePropertyName preflight -NotePropertyValue $preflight -Force
-        if ($clock.ElapsedMilliseconds -gt $MaxCaseMs) { throw "case exceeded ${MaxCaseMs}ms" }
+        if ($clock.ElapsedMilliseconds -gt $CaseMaxMs) { throw "case exceeded ${CaseMaxMs}ms" }
         Add-Result $Name $true $clock.ElapsedMilliseconds ([string]$response.error) $Command $paramsHash $recovery
     }
     catch {
@@ -1222,7 +1226,7 @@ function Test-CommandSuccess {
         $script:HealthPhasePrefix = 'recovery'
         $recovery = Assert-EditorHealthy -ExpectedPieRunning $ExpectedPieRunning
         $recovery | Add-Member -NotePropertyName preflight -NotePropertyValue $preflight -Force
-        if ($clock.ElapsedMilliseconds -gt $MaxCaseMs) { throw "case exceeded ${MaxCaseMs}ms" }
+        if ($clock.ElapsedMilliseconds -gt $CaseMaxMs) { throw "case exceeded ${CaseMaxMs}ms" }
         Add-Result $Name $true $clock.ElapsedMilliseconds 'command completed; editor, listener, dirty baseline, and fresh ping survived' $Command $paramsHash $recovery
     }
     catch {
@@ -1526,12 +1530,21 @@ function Invoke-SlowlorisDeadlineProbe {
     }
 }
 
+function Get-SlowlorisCaseBudgetMs {
+    # This probe must wait for the server's total-frame timeout while all
+    # admitted clients continue making progress. Keep complete preflight and
+    # postflight health proofs inside the same finite case deadline; the
+    # ordinary MaxCaseMs remains unchanged for every other hostile case.
+    return [Math]::Max($MaxCaseMs, ($FrameReadTimeoutMs + 12000))
+}
+
 function Test-RawCase {
     param(
         [string]$Name,
-        [scriptblock]$Action
+        [scriptblock]$Action,
+        [int]$BudgetMs = $MaxCaseMs
     )
-    Start-CaseBudget
+    Start-CaseBudget -BudgetMs $BudgetMs
     $clock = $CaseClock
     $script:RawProbeEvidence = $null
     try {
@@ -1543,7 +1556,7 @@ function Test-RawCase {
         $script:HealthPhasePrefix = 'recovery'
         $recovery = Assert-EditorHealthy
         $recovery | Add-Member -NotePropertyName preflight -NotePropertyValue $preflight -Force
-        if ($clock.ElapsedMilliseconds -gt $MaxCaseMs) { throw "case exceeded ${MaxCaseMs}ms" }
+        if ($clock.ElapsedMilliseconds -gt $CaseMaxMs) { throw "case exceeded ${CaseMaxMs}ms" }
         Add-Result $Name $true $clock.ElapsedMilliseconds 'connection rejected; editor and listener survived' 'raw_frame' (Get-SanitizedHash @{ case = $Name }) $recovery
     }
     catch {
@@ -1895,7 +1908,7 @@ p.write_text('this line must never execute', encoding='utf-8')
 
     Test-RawCase 'slowloris_total_frame_deadline' {
         Invoke-SlowlorisDeadlineProbe
-    }
+    } -BudgetMs (Get-SlowlorisCaseBudgetMs)
 
     Test-RawCase 'pipelined_request_limit' {
         $client = Open-BoundedClient

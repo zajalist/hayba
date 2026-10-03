@@ -173,6 +173,7 @@ public sealed class HaybaClientProbePeer : IDisposable {
 '@
 
 $MaxCaseMs = 10000
+$CaseMaxMs = $MaxCaseMs
 $Auth = 'synthetic-auth'
 $results = [Collections.Generic.List[object]]::new()
 foreach ($test in @(
@@ -193,7 +194,7 @@ foreach ($test in @(
     $ConfiguredMaxClients = if ($test.clients) { $test.clients } else { 2 }
     $FrameReadTimeoutMs = if ($test.frame_ms) { $test.frame_ms } else { 350 }
     $timeout = if ($test.mode -ceq 'silent') { 250 } elseif ($test.frame_ms) { 10000 } else { 2500 }
-    $MaxCaseMs = $timeout; $CaseClock = [Diagnostics.Stopwatch]::StartNew()
+    $MaxCaseMs = $timeout; $CaseMaxMs = $MaxCaseMs; $CaseClock = [Diagnostics.Stopwatch]::StartNew()
     $RawProbeEvidence = $null
     $peerFrameMs = if ($test.peer_frame_ms) { $test.peer_frame_ms } else { $FrameReadTimeoutMs }
     $peer = [HaybaClientProbePeer]::new($test.mode, $ConfiguredMaxClients, $peerFrameMs)
@@ -246,7 +247,7 @@ $clients = [Collections.Generic.List[Net.Sockets.TcpClient]]::new()
 $RawProbeEvidence = [pscustomobject]@{ admitted=0 }
 $ConfiguredMaxClients = 1
 $FrameReadTimeoutMs = 350
-$MaxCaseMs = 2000; $CaseClock = [Diagnostics.Stopwatch]::StartNew()
+$MaxCaseMs = 2000; $CaseMaxMs = $MaxCaseMs; $CaseClock = [Diagnostics.Stopwatch]::StartNew()
 $peer = [HaybaClientProbePeer]::new('premature', 1, $FrameReadTimeoutMs)
 $Port = $peer.Listener.LocalEndpoint.Port
 try {
@@ -279,7 +280,7 @@ foreach ($test in @(
 )) {
     $terminalException = [IO.IOException]::new('synthetic terminal socket error', [Net.Sockets.SocketException]::new($test.code))
     $task = [Threading.Tasks.Task]::FromException($terminalException)
-    $MaxCaseMs = 1000; $CaseClock = [Diagnostics.Stopwatch]::StartNew()
+    $MaxCaseMs = 1000; $CaseMaxMs = $MaxCaseMs; $CaseClock = [Diagnostics.Stopwatch]::StartNew()
     $passed = $false
     $diagnostic = ''
     try {

@@ -68,6 +68,7 @@ public sealed class HaybaHalfClosePeer {
 '@
 
 $MaxCaseMs = 1000
+$CaseMaxMs = $MaxCaseMs
 $CaseClock = $null
 $results = [Collections.Generic.List[object]]::new()
 function Start-IsolatedLoopbackListener([Net.Sockets.TcpListener]$Listener) {
@@ -119,7 +120,7 @@ foreach ($scenario in @('fragmented_read', 'early_eof', 'stalled_deadline', 'inv
         }
         [byte[]]$buffer = if ($isInvoker) { [byte[]]@(238,0,0,0,0,238) } else { [byte[]]::new(4) }
         $timeoutMs = if ($behavior -ceq 'stalled_deadline') { 250 } else { 1000 }
-        $MaxCaseMs = $timeoutMs; $CaseClock = [Diagnostics.Stopwatch]::StartNew()
+        $MaxCaseMs = $timeoutMs; $CaseMaxMs = $MaxCaseMs; $CaseClock = [Diagnostics.Stopwatch]::StartNew()
         $Clock = [Diagnostics.Stopwatch]::StartNew()
         $caseTimer = [Diagnostics.Stopwatch]::StartNew()
         # Start the delayed fragment after the measurement begins. Scheduling
@@ -175,7 +176,7 @@ foreach ($scenario in @('truncated_header_halfclose', 'truncated_body_halfclose'
         $body = if ($scenario -ceq 'truncated_header_halfclose') { [byte[]]@() } else { [byte[]]@(0x7b) }
         $expected = if ($scenario -ceq 'truncated_header_halfclose') { '0,0' } else { '0,0,0,100,123' }
         $timeoutMs = if ($neverCloses) { 250 } else { 1000 }
-        $MaxCaseMs = $timeoutMs; $CaseClock = [Diagnostics.Stopwatch]::StartNew()
+        $MaxCaseMs = $timeoutMs; $CaseMaxMs = $MaxCaseMs; $CaseClock = [Diagnostics.Stopwatch]::StartNew()
         $caseTimer = [Diagnostics.Stopwatch]::StartNew()
         try {
             $response = Send-RawFrame -Header $header -Body $body -HalfCloseSend -ExpectPeerClose
