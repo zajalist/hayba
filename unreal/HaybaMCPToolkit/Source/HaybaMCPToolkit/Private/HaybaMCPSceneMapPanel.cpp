@@ -143,10 +143,14 @@ void SHaybaMCPSceneMapPanel::OnCellClicked(int32 CellIndex)
     if (!World) return;
 
     GEditor->SelectNone(false, true);
-    TSet<FString> Labels(Cells[CellIndex].ActorLabels);
+    TSet<FString> Paths;
+    for (const FHaybaCogMapCell::FActor& Entry : Cells[CellIndex].Actors)
+    {
+        Paths.Add(Entry.Path);
+    }
     for (TActorIterator<AActor> It(World); It; ++It)
     {
-        if (AActor* A = *It; Labels.Contains(A->GetActorLabel()))
+        if (AActor* A = *It; Paths.Contains(A->GetPathName()))
         {
             GEditor->SelectActor(A, true, /*bNotify=*/false, /*bSelectEvenIfHidden=*/true);
         }

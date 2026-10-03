@@ -4,6 +4,7 @@
 
 class SVerticalBox;
 class SScrollBox;
+class SButton;
 
 struct FHaybaPlanStep
 {
@@ -32,6 +33,9 @@ public:
         for human approval before timing out. */
     void LoadPlan(const TArray<FHaybaPlanStep>& InSteps, int32 AwaitSeconds);
 
+    /** Number of steps currently shown in this review surface. */
+    int32 GetStepCount() const { return Steps.Num(); }
+
     /** Mark a specific step completed (called from the destructive-op gate). */
     void MarkStepCompleted(int32 StepIndex);
 
@@ -43,8 +47,12 @@ public:
     bool IsApproved() const { return bApproved; }
 
 private:
+#if WITH_DEV_AUTOMATION_TESTS
+    friend class FHaybaReviewSafetyTest;
+#endif
     TArray<TSharedPtr<FHaybaPlanStep>> Steps;
     TSharedPtr<SVerticalBox> StepContainer;
+    TSharedPtr<SButton> ApproveButton;
     int32 AwaitSeconds = 0;
     bool  bApproved = false;
     FDateTime LoadedAt = FDateTime::MinValue();
@@ -55,9 +63,6 @@ private:
     TSharedRef<SWidget> BuildActionBar();
     void RebuildSteps();
 
-    // Test action — populate with a sample plan so the tab can be
-    // exercised end-to-end without an agent.
-    FReply OnLoadSamplePlan();
     FReply OnApprove();
     FReply OnReject();
 };

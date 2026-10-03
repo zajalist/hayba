@@ -1,5 +1,10 @@
 #include "HaybaMCPToolStreamPanel.h"
 #include "HaybaMCPModule.h"
+#include "HaybaMCPSecretRedaction.h"
+#include "HaybaMCPStyle.h"
+#include "Dom/JsonObject.h"
+#include "Serialization/JsonSerializer.h"
+#include "Serialization/JsonWriter.h"
 #include "Widgets/Layout/SExpandableArea.h"
 #include "Widgets/Layout/SBorder.h"
 #include "Widgets/Layout/SScrollBox.h"
@@ -22,6 +27,10 @@
 #include "Framework/Notifications/NotificationManager.h"
 #include "Widgets/Notifications/SNotificationList.h"
 #include "Framework/MultiBox/MultiBoxBuilder.h"
+#include <initializer_list>
+#if WITH_DEV_AUTOMATION_TESTS
+#include "Misc/AutomationTest.h"
+#endif
 
 namespace
 {
@@ -61,33 +70,211 @@ namespace
         }
     }
 
-    // JSON-escape — minimal, just the chars that would break parsing.
-    FString JsonEscape(const FString& In)
+    constexpr int32 MaxInputChars = 256 * 1024;
+    constexpr int32 MaxPayloadChars = 32 * 1024;
+
+    // A lease ID is a bearer handle and must not travel through Activity copy.
+    void HideActivityHandles(const TSharedPtr<FJsonValue>& Value)
     {
-        FString Out; Out.Reserve(In.Len() + 8);
-        for (TCHAR C : In)
+        if (!Value.IsValid()) return;
+        if (Value->Type == EJson::Array)
         {
-            switch (C)
+            for (const TSharedPtr<FJsonValue>& Child : Value->AsArray()) HideActivityHandles(Child);
+        }
+        else if (Value->Type == EJson::Object)
+        {
+            const TSharedPtr<FJsonObject>& Object = Value->AsObject();
+            if (!Object.IsValid()) return;
+            TArray<FString> Keys;
+            for (const auto& Pair : Object->Values) Keys.Add(FString(*Pair.Key));
+            for (const FString& Key : Keys)
             {
-                case TEXT('"'):  Out += TEXT("\\\""); break;
-                case TEXT('\\'): Out += TEXT("\\\\"); break;
-                case TEXT('\n'): Out += TEXT("\\n");  break;
-                case TEXT('\r'): Out += TEXT("\\r");  break;
-                case TEXT('\t'): Out += TEXT("\\t");  break;
-                default: Out.AppendChar(C);
+                const FString Lower = Key.ToLower();
+                const TSharedPtr<FJsonValue> Child = Object->TryGetField(Key);
+                const bool bScalarLease = Lower == TEXT("lease") && Child.IsValid() && Child->Type != EJson::Object;
+                if (Lower == TEXT("lease_id") || Lower == TEXT("leaseid") || bScalarLease ||
+                    Lower == TEXT("ticket") || Lower == TEXT("approval_token"))
+                    Object->SetStringField(Key, TEXT("[REDACTED]"));
+                else
+                    HideActivityHandles(Child);
             }
         }
-        return Out;
+    }
+
+    FString SafeActivityPayload(const FString& Input)
+    {
+        if (Input.IsEmpty()) return TEXT("");
+        if (Input.Len() > MaxInputChars)
+            return TEXT("{\"_truncated\":true,\"reason\":\"input_limit\"}");
+
+        TSharedPtr<FJsonObject> Parsed;
+        if (!FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Input), Parsed) || !Parsed.IsValid())
+        {
+            // Non-JSON errors remain useful; malformed JSON is never copied raw.
+            if (!Input.StartsWith(TEXT("ERROR:")))
+                return TEXT("{\"_truncated\":true,\"reason\":\"invalid_json\"}");
+            if (Input.Len() > 4096)
+                return TEXT("ERROR: [TRUNCATED:input_limit]");
+            const FString SafeText = HaybaMCPSecretRedaction::RedactTextForLog(Input, 4096);
+            if (SafeText.Contains(TEXT("lease_id"), ESearchCase::IgnoreCase) ||
+                SafeText.Contains(TEXT("leaseid"), ESearchCase::IgnoreCase) ||
+                SafeText.Contains(TEXT("ticket"), ESearchCase::IgnoreCase))
+                return TEXT("ERROR: [REDACTED:unstructured_handle]");
+            return SafeText;
+        }
+
+        HaybaMCPSecretRedaction::FLimits Limits;
+        Limits.MaxDepth = 12;
+        Limits.MaxNodes = 4096;
+        Limits.MaxArrayItems = 128;
+        Limits.MaxObjectKeys = 128;
+        Limits.MaxKeyChars = 128;
+        Limits.MaxStringChars = 4096;
+        Limits.MaxTotalStringChars = MaxPayloadChars;
+        const HaybaMCPSecretRedaction::FResult Redacted = HaybaMCPSecretRedaction::Redact(Parsed, Limits);
+        HideActivityHandles(MakeShared<FJsonValueObject>(Redacted.Value));
+
+        FString Output;
+        const auto Writer = TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&Output);
+        if (!FJsonSerializer::Serialize(Redacted.Value.ToSharedRef(), Writer) || Output.Len() > MaxPayloadChars)
+            return TEXT("{\"_truncated\":true,\"reason\":\"output_limit\"}");
+        if (Redacted.Summary.bTruncated)
+        {
+            // The redactor's own markers identify omitted fields in place.
+            // A top-level marker makes truncation clear even when collapsed.
+            Redacted.Value->SetBoolField(TEXT("_truncated"), true);
+            Output.Reset();
+            const auto MarkedWriter = TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&Output);
+            if (!FJsonSerializer::Serialize(Redacted.Value.ToSharedRef(), MarkedWriter) || Output.Len() > MaxPayloadChars)
+                return TEXT("{\"_truncated\":true,\"reason\":\"output_limit\"}");
+        }
+        return Output;
     }
 
     FString CallToJsonLine(const FHaybaToolCall& Call)
     {
-        return FString::Printf(
-            TEXT("{\"tool\":\"%s\",\"timestamp\":\"%s\",\"params\":\"%s\",\"result\":\"%s\"}"),
-            *JsonEscape(Call.ToolName),
-            *JsonEscape(Call.Timestamp.ToString(TEXT("%Y-%m-%dT%H:%M:%S"))),
-            *JsonEscape(Call.ParamsJson),
-            *JsonEscape(Call.ResultJson));
+        TSharedRef<FJsonObject> Line = MakeShared<FJsonObject>();
+        Line->SetStringField(TEXT("tool"), Call.ToolName);
+        Line->SetStringField(TEXT("timestamp"), Call.Timestamp.ToString(TEXT("%Y-%m-%dT%H:%M:%S")));
+        Line->SetStringField(TEXT("params"), Call.ParamsJson);
+        Line->SetStringField(TEXT("result"), Call.ResultJson);
+        FString Output;
+        FJsonSerializer::Serialize(Line, TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&Output));
+        return Output;
+    }
+
+    FString FirstStringField(const TSharedPtr<FJsonObject>& Object, std::initializer_list<const TCHAR*> Keys)
+    {
+        if (!Object.IsValid()) return TEXT("");
+        FString Value;
+        for (const TCHAR* Key : Keys)
+            if (Object->TryGetStringField(Key, Value) && !Value.IsEmpty()) return Value;
+        return TEXT("");
+    }
+
+    TSharedPtr<FJsonObject> ParseObject(const FString& Input)
+    {
+        TSharedPtr<FJsonObject> Object;
+        FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Input), Object);
+        return Object;
+    }
+
+    FString ShortLabel(const FString& Value, int32 MaxChars = 48)
+    {
+        const FString SingleLine = Value.Replace(TEXT("\n"), TEXT(" ")).Replace(TEXT("\r"), TEXT(" "));
+        return SingleLine.Len() <= MaxChars ? SingleLine : SingleLine.Left(MaxChars - 1) + TEXT("…");
+    }
+
+    struct FCallPresentation
+    {
+        FString Action;
+        FString Target;
+        FString Outcome;
+        FName OutcomeColor = TEXT("Hayba.Color.Status.Info");
+    };
+
+    FCallPresentation PresentCall(const FHaybaToolCall& Call)
+    {
+        FCallPresentation P;
+        static const TMap<FString, FString> Actions = {
+            {TEXT("actor_tag"), TEXT("Tag actor")},
+            {TEXT("actor_spawn"), TEXT("Spawn actor")},
+            {TEXT("actor_delete"), TEXT("Delete actor")},
+            {TEXT("actor_transform"), TEXT("Set actor transform")},
+            {TEXT("actor_set_visibility"), TEXT("Set actor visibility")},
+            {TEXT("actor_set_properties"), TEXT("Set actor properties")},
+            {TEXT("lease_acquire"), TEXT("Reserve edit scope")},
+            {TEXT("lease_release"), TEXT("Release edit scope")},
+            {TEXT("scene_get_graph"), TEXT("Read scene graph")},
+            {TEXT("editor_capture_viewport"), TEXT("Capture viewport")}
+        };
+        if (const FString* Known = Actions.Find(Call.ToolName)) P.Action = *Known;
+        else
+        {
+            P.Action = Call.ToolName;
+            P.Action.ReplaceInline(TEXT("_"), TEXT(" "));
+            if (!P.Action.IsEmpty()) P.Action[0] = FChar::ToUpper(P.Action[0]);
+        }
+        P.Action = ShortLabel(P.Action, 56);
+
+        const TSharedPtr<FJsonObject> Params = ParseObject(Call.ParamsJson);
+        P.Target = FirstStringField(Params, {TEXT("actor_id"), TEXT("actorId"), TEXT("asset_path"), TEXT("object_path"), TEXT("path"), TEXT("name")});
+        if (P.Target.IsEmpty() && Params.IsValid())
+        {
+            const TArray<TSharedPtr<FJsonValue>>* Resources = nullptr;
+            if (Params->TryGetArrayField(TEXT("resources"), Resources) && Resources && Resources->Num() > 0 && (*Resources)[0].IsValid())
+                P.Target = (*Resources)[0]->AsString();
+        }
+        P.Target = ShortLabel(P.Target);
+
+        if (Call.ResultJson.IsEmpty()) P.Outcome = TEXT("Requested");
+        else if (Call.ResultJson.StartsWith(TEXT("ERROR:")))
+        {
+            P.Outcome = TEXT("Failed");
+            P.OutcomeColor = TEXT("Hayba.Color.Status.Fail");
+        }
+        else
+        {
+            const TSharedPtr<FJsonObject> Result = ParseObject(Call.ResultJson);
+            bool bOk = true;
+            const bool bHasError = Result.IsValid() && Result->HasField(TEXT("error")) &&
+                Result->TryGetField(TEXT("error")).IsValid() &&
+                Result->TryGetField(TEXT("error"))->Type != EJson::Null;
+            const FString Status = FirstStringField(Result, {TEXT("status")}).ToLower();
+            if (Result.IsValid())
+            {
+                Result->TryGetBoolField(TEXT("ok"), bOk);
+            }
+            if (!bOk || bHasError || Status == TEXT("error") || Status == TEXT("failed") || Status == TEXT("refused"))
+            {
+                P.Outcome = TEXT("Failed");
+                P.OutcomeColor = TEXT("Hayba.Color.Status.Fail");
+            }
+            else if (Status == TEXT("pending") || Status == TEXT("plan_mode_required"))
+            {
+                P.Outcome = TEXT("Pending");
+                P.OutcomeColor = TEXT("Hayba.Color.Status.Warn");
+            }
+            else P.Outcome = TEXT("Returned");
+        }
+        if (Call.ParamsJson.Contains(TEXT("_truncated")) || Call.ResultJson.Contains(TEXT("_truncated")) ||
+            Call.ParamsJson.Contains(TEXT("[TRUNCATED:")) || Call.ResultJson.Contains(TEXT("[TRUNCATED:")))
+            P.Outcome += TEXT(" · truncated");
+        return P;
+    }
+
+    FString WrapDetailText(const FString& Input)
+    {
+        FString Out;
+        Out.Reserve(Input.Len() + Input.Len() / 40 + 1);
+        int32 Column = 0;
+        for (TCHAR C : Input)
+        {
+            if (C == TEXT('\n')) Column = 0;
+            else if (++Column > 40) { Out.AppendChar(TEXT('\n')); Column = 1; }
+            Out.AppendChar(C);
+        }
+        return Out;
     }
 
     void Toast(const FText& Msg)
@@ -176,9 +363,9 @@ void SHaybaMCPToolStreamPanel::Construct(const FArguments& InArgs)
         for (const FHaybaToolCallRecord& R : Hist)
         {
             FHaybaToolCall Call;
-            Call.ToolName     = R.ToolName;
-            Call.ParamsJson   = R.ParamsJson;
-            Call.ResultJson   = R.ResultJson;
+            Call.ToolName     = HaybaMCPSecretRedaction::RedactTextForLog(R.ToolName, 128);
+            Call.ParamsJson   = SafeActivityPayload(R.ParamsJson);
+            Call.ResultJson   = SafeActivityPayload(R.ResultJson);
             Call.RendererType = ResolveRenderer(R.ToolName);
             Call.Timestamp    = R.Timestamp;
             Turns.Last()->Calls.Add(MoveTemp(Call));
@@ -293,17 +480,19 @@ void SHaybaMCPToolStreamPanel::RebuildTurnsContainer()
 
 TSharedRef<SWidget> SHaybaMCPToolStreamPanel::BuildToolbar()
 {
-    // UE5-stock layout: SSearchBox on the left filling, then small action buttons.
+    // Keep search useful in a narrow dock; secondary actions move into More.
     return SNew(SHorizontalBox)
         + SHorizontalBox::Slot().FillWidth(1.f).VAlign(VAlign_Center)
         [
             SNew(SSearchBox)
-            .HintText(NSLOCTEXT("Hayba", "Stream.SearchHint", "Search tool name, params, or result..."))
+            .HintText(NSLOCTEXT("Hayba", "Stream.SearchHint", "Search calls"))
+            .ToolTipText(NSLOCTEXT("Hayba", "Stream.SearchTT", "Search tool name, request, and response"))
             .OnTextChanged(this, &SHaybaMCPToolStreamPanel::OnSearchChanged)
         ]
         + SHorizontalBox::Slot().AutoWidth().Padding(8.f, 0.f, 0.f, 0.f)
         [
             SNew(SComboButton)
+            .Visibility_Lambda([this](){ return IsCompactToolbar() ? EVisibility::Collapsed : EVisibility::Visible; })
             .ButtonStyle(FAppStyle::Get(), "SimpleButton")
             .HasDownArrow(true)
             .ContentPadding(FMargin(8.f, 4.f))
@@ -325,7 +514,7 @@ TSharedRef<SWidget> SHaybaMCPToolStreamPanel::BuildToolbar()
         + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(8.f, 0.f, 0.f, 0.f)
         [
             SNew(STextBlock)
-            .Visibility_Lambda([this](){ return CountSelected() > 0 ? EVisibility::Visible : EVisibility::Collapsed; })
+            .Visibility_Lambda([this](){ return !IsCompactToolbar() && CountSelected() > 0 ? EVisibility::Visible : EVisibility::Collapsed; })
             .ColorAndOpacity(FSlateColor(FLinearColor(1.0f, 0.78f, 0.30f)))
             .Text_Lambda([this](){ return FText::FromString(FString::Printf(TEXT("%d turn%s selected"),
                 CountSelected(), CountSelected() == 1 ? TEXT("") : TEXT("s"))); })
@@ -335,7 +524,7 @@ TSharedRef<SWidget> SHaybaMCPToolStreamPanel::BuildToolbar()
             SNew(SButton)
             .ButtonStyle(FAppStyle::Get(), "SimpleButton")
             .ToolTipText(NSLOCTEXT("Hayba", "Stream.ClearSelTT", "Clear selection"))
-            .Visibility_Lambda([this](){ return CountSelected() > 0 ? EVisibility::Visible : EVisibility::Collapsed; })
+            .Visibility_Lambda([this](){ return !IsCompactToolbar() && CountSelected() > 0 ? EVisibility::Visible : EVisibility::Collapsed; })
             .ContentPadding(FMargin(6.f, 2.f))
             .OnClicked(this, &SHaybaMCPToolStreamPanel::OnClearSelection)
             [ SNew(STextBlock).Text(NSLOCTEXT("Hayba", "Stream.ClearSel", "Clear")) ]
@@ -343,6 +532,7 @@ TSharedRef<SWidget> SHaybaMCPToolStreamPanel::BuildToolbar()
         + SHorizontalBox::Slot().AutoWidth().Padding(6.f, 0.f, 0.f, 0.f)
         [
             SNew(SButton)
+            .Visibility_Lambda([this](){ return IsCompactToolbar() ? EVisibility::Collapsed : EVisibility::Visible; })
             .ButtonStyle(FAppStyle::Get(), "SimpleButton")
             .ToolTipText_Lambda([this]()
             {
@@ -359,6 +549,7 @@ TSharedRef<SWidget> SHaybaMCPToolStreamPanel::BuildToolbar()
         + SHorizontalBox::Slot().AutoWidth().Padding(6.f, 0.f, 0.f, 0.f)
         [
             SNew(SButton)
+            .Visibility_Lambda([this](){ return IsCompactToolbar() ? EVisibility::Collapsed : EVisibility::Visible; })
             .ButtonStyle(FAppStyle::Get(), "SimpleButton")
             .ToolTipText_Lambda([this]()
             {
@@ -375,6 +566,7 @@ TSharedRef<SWidget> SHaybaMCPToolStreamPanel::BuildToolbar()
         + SHorizontalBox::Slot().AutoWidth().Padding(6.f, 0.f, 0.f, 0.f)
         [
             SNew(SButton)
+            .Visibility_Lambda([this](){ return IsCompactToolbar() ? EVisibility::Collapsed : EVisibility::Visible; })
             .ButtonStyle(FAppStyle::Get(), "SimpleButton")
             .ToolTipText(NSLOCTEXT("Hayba", "Stream.ClearAllTT", "Clear the panel without archiving"))
             .ContentPadding(FMargin(6.f))
@@ -382,7 +574,69 @@ TSharedRef<SWidget> SHaybaMCPToolStreamPanel::BuildToolbar()
             [
                 SNew(SImage).Image(FAppStyle::GetBrush("Icons.Delete"))
             ]
+        ]
+        + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(6.f, 0.f, 0.f, 0.f)
+        [
+            SNew(SButton)
+            .Visibility_Lambda([this](){ return IsCompactToolbar() ? EVisibility::Visible : EVisibility::Collapsed; })
+            .ButtonStyle(FAppStyle::Get(), "SimpleButton")
+            .ToolTipText_Lambda([this]()
+            {
+                return CountSelected() > 0
+                    ? NSLOCTEXT("Hayba", "Stream.CompactCopySelTT", "Copy selected turns as redacted JSONL")
+                    : NSLOCTEXT("Hayba", "Stream.CompactCopyTT", "Copy visible calls as redacted JSONL");
+            })
+            .ContentPadding(FMargin(6.f, 3.f))
+            .OnClicked(this, &SHaybaMCPToolStreamPanel::OnCopyAll)
+            [ SNew(STextBlock).Text(NSLOCTEXT("Hayba", "Stream.CompactCopy", "Copy")) ]
+        ]
+        + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(4.f, 0.f, 0.f, 0.f)
+        [
+            SNew(SComboButton)
+            .Visibility_Lambda([this](){ return IsCompactToolbar() ? EVisibility::Visible : EVisibility::Collapsed; })
+            .ButtonStyle(FAppStyle::Get(), "SimpleButton")
+            .HasDownArrow(true)
+            .ToolTipText(NSLOCTEXT("Hayba", "Stream.MoreTT", "Activity actions and statistics"))
+            .ContentPadding(FMargin(6.f, 3.f))
+            .ButtonContent()
+            [ SNew(STextBlock).Text(NSLOCTEXT("Hayba", "Stream.More", "More")) ]
+            .OnGetMenuContent(this, &SHaybaMCPToolStreamPanel::BuildCompactMenu)
         ];
+}
+
+bool SHaybaMCPToolStreamPanel::IsCompactToolbar() const
+{
+    return GetCachedGeometry().GetLocalSize().X < 520.f;
+}
+
+TSharedRef<SWidget> SHaybaMCPToolStreamPanel::BuildCompactMenu()
+{
+    FMenuBuilder Menu(true, nullptr, nullptr, false, &FAppStyle::Get(), false);
+    Menu.AddSubMenu(
+        NSLOCTEXT("Hayba", "Stream.MoreStats", "Stats"),
+        NSLOCTEXT("Hayba", "Stream.MoreStatsTT", "Call counts by tool and domain"),
+        FNewMenuDelegate::CreateLambda([this](FMenuBuilder& Submenu)
+        {
+            Submenu.AddWidget(BuildStatsMenu(), FText::GetEmpty(), true, false);
+        }));
+    if (CountSelected() > 0)
+    {
+        Menu.AddMenuEntry(
+            NSLOCTEXT("Hayba", "Stream.MoreClearSelection", "Clear selection"), FText::GetEmpty(), FSlateIcon(),
+            FUIAction(FExecuteAction::CreateLambda([this]() { OnClearSelection(); })));
+    }
+    Menu.AddMenuSeparator();
+    Menu.AddMenuEntry(
+        CountSelected() > 0
+            ? NSLOCTEXT("Hayba", "Stream.MoreArchiveSelected", "Archive selected turns")
+            : NSLOCTEXT("Hayba", "Stream.MoreArchiveAll", "Archive all calls"),
+        NSLOCTEXT("Hayba", "Stream.MoreArchiveTT", "Save redacted JSONL to the project's Saved folder"),
+        FSlateIcon(), FUIAction(FExecuteAction::CreateLambda([this]() { OnArchive(); })));
+    Menu.AddMenuEntry(
+        NSLOCTEXT("Hayba", "Stream.MoreClear", "Clear Activity"),
+        NSLOCTEXT("Hayba", "Stream.MoreClearTT", "Clear Activity without archiving"),
+        FSlateIcon(), FUIAction(FExecuteAction::CreateLambda([this]() { OnClear(); })));
+    return Menu.MakeWidget();
 }
 
 TSharedRef<SWidget> SHaybaMCPToolStreamPanel::BuildStatsMenu()
@@ -400,7 +654,7 @@ TSharedRef<SWidget> SHaybaMCPToolStreamPanel::BuildStatsMenu()
             ++Total;
             ToolCounts.FindOrAdd(Call.ToolName)++;
             DomainCounts.FindOrAdd(Call.RendererType)++;
-            if (Call.ResultJson.StartsWith(TEXT("ERROR:"))) ++Errors;
+            if (PresentCall(Call).Outcome.StartsWith(TEXT("Failed"))) ++Errors;
         }
     }
 
@@ -480,9 +734,9 @@ void SHaybaMCPToolStreamPanel::AddToolCall(const FString& ToolName, const FStrin
 {
     if (Turns.IsEmpty()) BeginNewTurn();
     FHaybaToolCall Call;
-    Call.ToolName     = ToolName;
-    Call.ParamsJson   = ParamsJson;
-    Call.ResultJson   = ResultJson;
+    Call.ToolName     = HaybaMCPSecretRedaction::RedactTextForLog(ToolName, 128);
+    Call.ParamsJson   = SafeActivityPayload(ParamsJson);
+    Call.ResultJson   = SafeActivityPayload(ResultJson);
     Call.RendererType = ResolveRenderer(ToolName);
     Call.Timestamp    = FDateTime::Now();
     Turns.Last()->Calls.Add(Call);
@@ -492,17 +746,10 @@ void SHaybaMCPToolStreamPanel::AddToolCall(const FString& ToolName, const FStrin
 
 void SHaybaMCPToolStreamPanel::RebuildSummary(TSharedPtr<FHaybaTurn> Turn) const
 {
-    TArray<FString> Names;
-    for (const auto& C : Turn->Calls)
-    {
-        Names.AddUnique(C.ToolName);
-        if (Names.Num() >= 3) break;
-    }
-    Turn->Summary = FString::Printf(TEXT("Turn %d  -  %d call%s  (%s)"),
+    Turn->Summary = FString::Printf(TEXT("Turn %d · %d call%s"),
         Turn->TurnIndex + 1,
         Turn->Calls.Num(),
-        Turn->Calls.Num() == 1 ? TEXT("") : TEXT("s"),
-        *FString::Join(Names, TEXT(", ")));
+        Turn->Calls.Num() == 1 ? TEXT("") : TEXT("s"));
 }
 
 bool SHaybaMCPToolStreamPanel::CallMatchesFilter(const FHaybaToolCall& Call) const
@@ -647,65 +894,40 @@ TSharedRef<SWidget> SHaybaMCPToolStreamPanel::BuildCallRow(const FHaybaToolCall&
 
 TSharedRef<SWidget> SHaybaMCPToolStreamPanel::BuildGenericRenderer(const FHaybaToolCall& Call, int32 TurnIdx, int32 CallIdx)
 {
-    const bool bIsError = Call.ResultJson.StartsWith(TEXT("ERROR:"));
-    const FLinearColor DomainColor = bIsError
-        ? FLinearColor(1.0f, 0.4f, 0.4f)
-        : ColorForRenderer(Call.RendererType);
-    const FString TypeChip = bIsError ? TEXT("ERROR") : LabelForRenderer(Call.RendererType);
-    const FString TimeStr  = Call.Timestamp.ToString(TEXT("%H:%M:%S"));
-    const FString PreviewParams = (Call.ParamsJson.IsEmpty() || Call.ParamsJson == TEXT("{}"))
-        ? TEXT("") : Call.ParamsJson.Left(140);
-    const FString PreviewResult = Call.ResultJson.Left(220);
-    const FLinearColor StatusDot = bIsError ? FLinearColor(1.0f, 0.35f, 0.35f) : FLinearColor(0.40f, 0.95f, 0.55f);
-
-    // Copy this row -- captured by value so the lambda survives.
-    FHaybaToolCall CallCopy = Call;
+    const FCallPresentation Presentation = PresentCall(Call);
+    const FString TimeStr = Call.Timestamp.ToString(TEXT("%H:%M:%S"));
+    const FHaybaToolCall CallCopy = Call;
+    const FLinearColor Primary = FHaybaMCPStyle::Colour(TEXT("Hayba.Color.Text.Primary"));
+    const FLinearColor Secondary = FHaybaMCPStyle::Colour(TEXT("Hayba.Color.Text.Secondary"));
+    const FLinearColor Muted = FHaybaMCPStyle::Colour(TEXT("Hayba.Color.Text.Muted"));
 
     return SNew(SBorder)
-        .BorderImage(FAppStyle::Get().GetBrush("Brushes.Panel"))
+        .BorderImage(FHaybaMCPStyle::GetBrush(TEXT("Hayba.Brush.Settings.Section")))
         .Padding(FMargin(10.f, 8.f))
         [
             SNew(SVerticalBox)
-            // Header row.
-            + SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 4.f)
+            + SVerticalBox::Slot().AutoHeight()
             [
                 SNew(SHorizontalBox)
-                // Status dot — selection now lives on the turn header, not per call.
-                + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0.f, 0.f, 8.f, 0.f)
-                [
-                    SNew(STextBlock)
-                    .ColorAndOpacity(FSlateColor(StatusDot))
-                    .Text(FText::FromString(TEXT("●")))
-                ]
-                + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0.f, 0.f, 8.f, 0.f)
-                [
-                    SNew(SBorder)
-                    .BorderImage(FAppStyle::Get().GetBrush("Brushes.Header"))
-                    .Padding(FMargin(6.f, 2.f))
-                    [
-                        SNew(STextBlock)
-                        .ColorAndOpacity(FSlateColor(DomainColor))
-                        .Text(FText::FromString(TypeChip))
-                    ]
-                ]
                 + SHorizontalBox::Slot().FillWidth(1.f).VAlign(VAlign_Center)
                 [
                     SNew(STextBlock)
-                    .ColorAndOpacity(FSlateColor(DomainColor))
-                    .Text(FText::FromString(Call.ToolName))
+                    .ColorAndOpacity(FSlateColor(Primary))
+                    .AutoWrapText(true)
+                    .ToolTipText(FText::FromString(Call.ToolName))
+                    .Text(FText::FromString(Presentation.Action))
                 ]
-                + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0.f, 0.f, 6.f, 0.f)
+                + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(6.f, 0.f)
                 [
                     SNew(STextBlock)
-                    .ColorAndOpacity(FSlateColor(FLinearColor(0.55f, 0.57f, 0.65f)))
+                    .ColorAndOpacity(FSlateColor(Muted))
                     .Text(FText::FromString(TimeStr))
                 ]
-                // Per-row copy button — UE5 stock simple-button.
                 + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
                 [
                     SNew(SButton)
                     .ButtonStyle(FAppStyle::Get(), "SimpleButton")
-                    .ToolTipText(NSLOCTEXT("Hayba", "Stream.CopyRowTT", "Copy this tool call as JSON"))
+                    .ToolTipText(NSLOCTEXT("Hayba", "Stream.CopyRowTT", "Copy redacted tool call as JSONL"))
                     .ContentPadding(FMargin(4.f))
                     .OnClicked_Lambda([this, CallCopy]()
                     {
@@ -717,44 +939,113 @@ TSharedRef<SWidget> SHaybaMCPToolStreamPanel::BuildGenericRenderer(const FHaybaT
                     ]
                 ]
             ]
-            // Params line.
-            + SVerticalBox::Slot().AutoHeight().Padding(18.f, 2.f, 0.f, 2.f)
+            + SVerticalBox::Slot().AutoHeight().Padding(0.f, 4.f, 0.f, 0.f)
             [
                 SNew(SHorizontalBox)
-                .Visibility(PreviewParams.IsEmpty() ? EVisibility::Collapsed : EVisibility::Visible)
-                + SHorizontalBox::Slot().AutoWidth().Padding(0.f, 0.f, 6.f, 0.f)
+                + SHorizontalBox::Slot().FillWidth(1.f).VAlign(VAlign_Center)
                 [
                     SNew(STextBlock)
-                    .ColorAndOpacity(FSlateColor(FLinearColor(0.50f, 0.52f, 0.60f)))
-                    .Text(FText::FromString(TEXT("params")))
+                    .Visibility(Presentation.Target.IsEmpty() ? EVisibility::Collapsed : EVisibility::Visible)
+                    .ColorAndOpacity(FSlateColor(Secondary))
+                    .Text(FText::FromString(Presentation.Target))
                 ]
-                + SHorizontalBox::Slot().FillWidth(1.f)
+                + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
                 [
                     SNew(STextBlock)
-                    .ColorAndOpacity(FSlateColor(FLinearColor(0.78f, 0.78f, 0.85f)))
-                    .AutoWrapText(true)
-                    .Text(FText::FromString(PreviewParams))
+                    .ColorAndOpacity(FSlateColor(FHaybaMCPStyle::Colour(Presentation.OutcomeColor)))
+                    .Text(FText::FromString(Presentation.Outcome))
                 ]
             ]
-            // Result line.
-            + SVerticalBox::Slot().AutoHeight().Padding(18.f, 2.f, 0.f, 0.f)
+            + SVerticalBox::Slot().AutoHeight().Padding(0.f, 4.f, 0.f, 0.f)
             [
-                SNew(SHorizontalBox)
-                + SHorizontalBox::Slot().AutoWidth().Padding(0.f, 0.f, 6.f, 0.f)
+                SNew(SExpandableArea)
+                .InitiallyCollapsed(true)
+                .AreaTitleFont(FHaybaMCPStyle::Font(10))
+                .HeaderContent()
                 [
                     SNew(STextBlock)
-                    .ColorAndOpacity(FSlateColor(FLinearColor(0.50f, 0.52f, 0.60f)))
-                    .Text(FText::FromString(bIsError ? TEXT("error") : TEXT("→")))
+                    .ColorAndOpacity(FSlateColor(Muted))
+                    .Text(NSLOCTEXT("Hayba", "Stream.Details", "Details"))
                 ]
-                + SHorizontalBox::Slot().FillWidth(1.f)
+                .BodyContent()
                 [
-                    SNew(STextBlock)
-                    .ColorAndOpacity(FSlateColor(bIsError
-                        ? FLinearColor(1.0f, 0.55f, 0.55f)
-                        : FLinearColor(0.92f, 0.93f, 0.96f)))
-                    .AutoWrapText(true)
-                    .Text(FText::FromString(PreviewResult))
+                    SNew(SBox)
+                    .MaxDesiredHeight(220.f)
+                    [
+                        SNew(SScrollBox)
+                        + SScrollBox::Slot()
+                        [
+                            SNew(SVerticalBox)
+                            + SVerticalBox::Slot().AutoHeight().Padding(0.f, 5.f, 0.f, 2.f)
+                            [
+                                SNew(STextBlock)
+                                .ColorAndOpacity(FSlateColor(Muted))
+                                .Text(NSLOCTEXT("Hayba", "Stream.Request", "Request"))
+                            ]
+                            + SVerticalBox::Slot().AutoHeight()
+                            [
+                                SNew(STextBlock)
+                                .ColorAndOpacity(FSlateColor(Secondary))
+                                .AutoWrapText(true)
+                                .Text(FText::FromString(WrapDetailText(Call.ParamsJson.IsEmpty() ? TEXT("{}") : Call.ParamsJson)))
+                            ]
+                            + SVerticalBox::Slot().AutoHeight().Padding(0.f, 8.f, 0.f, 2.f)
+                            [
+                                SNew(STextBlock)
+                                .ColorAndOpacity(FSlateColor(Muted))
+                                .Text(NSLOCTEXT("Hayba", "Stream.Response", "Response"))
+                            ]
+                            + SVerticalBox::Slot().AutoHeight()
+                            [
+                                SNew(STextBlock)
+                                .ColorAndOpacity(FSlateColor(Secondary))
+                                .AutoWrapText(true)
+                                .Text(FText::FromString(WrapDetailText(Call.ResultJson.IsEmpty()
+                                    ? TEXT("No response recorded") : Call.ResultJson)))
+                            ]
+                        ]
+                    ]
                 ]
             ]
         ];
 }
+
+#if WITH_DEV_AUTOMATION_TESTS
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FHaybaToolStreamSafeActivityTest,
+    "Hayba.ToolStream.SafeActivity", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FHaybaToolStreamSafeActivityTest::RunTest(const FString& Parameters)
+{
+    FHaybaToolCall Call;
+    Call.ToolName = TEXT("actor_tag");
+    Call.Timestamp = FDateTime(2026, 1, 1);
+    Call.ParamsJson = SafeActivityPayload(TEXT("{\"actor_id\":\"Actor.synthetic\",\"count\":3,\"nested\":{\"lease_id\":\"synthetic-handle\",\"api_key\":\"synthetic-secret\"}}"));
+    Call.ResultJson = SafeActivityPayload(TEXT("{\"ok\":true,\"tag\":\"synthetic-tag\"}"));
+    const FString Line = CallToJsonLine(Call);
+    TestTrue(TEXT("Non-secret target and diagnostic field survive"),
+        Line.Contains(TEXT("Actor.synthetic")) && Line.Contains(TEXT("synthetic-tag")) && Line.Contains(TEXT("count")));
+    TestFalse(TEXT("Lease handle never enters copied JSONL"), Line.Contains(TEXT("synthetic-handle")));
+    TestFalse(TEXT("Nested API key never enters copied JSONL"), Line.Contains(TEXT("synthetic-secret")));
+    TSharedPtr<FJsonObject> ParsedLine = ParseObject(Line);
+    TestTrue(TEXT("Copied line remains structured JSONL"), ParsedLine.IsValid() && ParsedLine->HasField(TEXT("params")) && ParsedLine->HasField(TEXT("result")));
+    TestFalse(TEXT("One call occupies one JSONL line"), Line.Contains(TEXT("\n")));
+
+    TestEqual(TEXT("Returned is not verification"), PresentCall(Call).Outcome, FString(TEXT("Returned")));
+    Call.ResultJson.Empty();
+    TestEqual(TEXT("Unanswered call is requested"), PresentCall(Call).Outcome, FString(TEXT("Requested")));
+    Call.ResultJson = SafeActivityPayload(TEXT("{\"error\":{\"code\":\"denied\"}}"));
+    TestEqual(TEXT("Error object is failure"), PresentCall(Call).Outcome, FString(TEXT("Failed")));
+    Call.ResultJson = SafeActivityPayload(TEXT("{\"verified\":true}"));
+    TestEqual(TEXT("A claimed verification without readback remains returned"), PresentCall(Call).Outcome, FString(TEXT("Returned")));
+
+    const FString Oversize = SafeActivityPayload(TEXT("{\"value\":\"") + FString::ChrN(MaxInputChars, TEXT('x')) + TEXT("\"}"));
+    TestTrue(TEXT("Oversize payload is visibly truncated"), Oversize.Contains(TEXT("_truncated")));
+    TestTrue(TEXT("Payload remains bounded"), Oversize.Len() <= MaxPayloadChars);
+    TestEqual(TEXT("Unstructured lease error cannot copy bearer handle"),
+        SafeActivityPayload(TEXT("ERROR: lease_id=synthetic-handle")),
+        FString(TEXT("ERROR: [REDACTED:unstructured_handle]")));
+    TestTrue(TEXT("Malformed JSON fails closed with explicit marker"),
+        SafeActivityPayload(TEXT("{\"api_key\":\"synthetic-secret\"" )).Contains(TEXT("_truncated")));
+    return true;
+}
+#endif

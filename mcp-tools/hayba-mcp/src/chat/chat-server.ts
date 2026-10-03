@@ -33,6 +33,10 @@
  *                         the provider + key for a session IN MEMORY only. The
  *                         key is NEVER persisted, echoed, or logged.
  *   GET  /chat/config   — masked read (provider, model, key_last4) only.
+ *   DELETE /chat/config?session_id=ue_settings_<guid> — revoke a temporary
+ *                         Settings discovery config. Live chat config is kept.
+ *   GET  /chat/models   — read-only live model catalog for the configured
+ *                         provider; never returns a key or makes an inference call.
  *
  * KEY SOURCE: option (b) from the brief — an in-memory registration endpoint.
  * Task 6 replaces this source with the C++ DPAPI vault (the sidecar will read
@@ -42,12 +46,15 @@
 
 import type { Express, Request, Response } from 'express';
 import type { AddressInfo } from 'node:net';
+import { createHash } from 'node:crypto';
 import { createLLMClient, type LLMMessage } from '../agents/llm-client.js';
 import { getProvider } from '../agents/providers.js';
+import { discoverModels } from '../agents/model-discovery.js';
 import {
   runAgentLoop as runAgentLoopStreaming,
   adaptToLegacy,
   argsHash,
+  WarningReviewLedger,
   buildToolCatalog,
   type AgentEvent,
   type ApprovedCall,
@@ -55,6 +62,7 @@ import {
 } from './agent-loop.js';
 import type { LLMTool, LLMUsage } from '../agents/llm-client.js';
 import { createChatDispatcher } from './tool-dispatch.js';
+import { withExactReview } from '../tools/tool-executor.js';
 import { buildHandsManifest, isExploreReadOnlyTool, type GuardContext } from '../brain/hands-guard.js';
 import type { BrainConnector } from '../brain/brain-connector.js';
 import type { BrainSession } from '../brain/brain-session.js';
@@ -67,6 +75,13 @@ import { jsonObjectBody, stringQuery } from '../http/express-boundary.js';
 import { isLocalRequest, isLoopback } from '../http/loopback-guard.js';
 import { SessionStore, isValidSessionId, type SavedActivity, type SavedSession } from './session-store.js';
 import type { AgentStreamEvent } from './activity-events.js';
+import {
+  chatSessionDir,
+  loadChatState,
+  pruneChatContexts,
+  saveChatContext,
+  validChatSessionId,
+} from './session-store.js';
 
 // ---------------------------------------------------------------------------
 // Localhost enforcement
@@ -94,6 +109,45 @@ interface SessionConfig {
 
 const DEFAULT_CONFIG_KEY = '__default__';
 const configStore = new Map<string, SessionConfig>();
+// Opaque revision numbers track configuration replacement without deriving a
+// stable digest from a BYOK secret. They stay in memory and are never sent.
+const configRevisions = new Map<string, number>();
+let nextConfigRevision = 0;
+const SETTINGS_CONFIG_PREFIX = 'ue_settings_';
+const SETTINGS_CONFIG_TTL_MS = 120_000;
+const settingsConfigId = /^ue_settings_[0-9a-f]{32}$/i;
+type SettingsConfigLifetime = { expiresAt: number; timer: ReturnType<typeof setTimeout>; revoked: boolean };
+const settingsConfigLifetimes = new Map<string, SettingsConfigLifetime>();
+
+function isSettingsConfigNamespace(id: string): boolean {
+  return id.startsWith(SETTINGS_CONFIG_PREFIX);
+}
+
+function retireSettingsConfig(id: string, revoked: boolean): void {
+  const previous = settingsConfigLifetimes.get(id);
+  if (previous) clearTimeout(previous.timer);
+  configStore.delete(id);
+  configRevisions.delete(id);
+  const expiresAt = Date.now() + SETTINGS_CONFIG_TTL_MS;
+  const timer = setTimeout(() => {
+    configStore.delete(id);
+    configRevisions.delete(id);
+    settingsConfigLifetimes.delete(id);
+  }, SETTINGS_CONFIG_TTL_MS);
+  timer.unref();
+  settingsConfigLifetimes.set(id, { expiresAt, timer, revoked });
+}
+
+function activeSettingsConfig(id: string): boolean {
+  const lifetime = settingsConfigLifetimes.get(id);
+  if (!lifetime || lifetime.revoked) return false;
+  if (Date.now() < lifetime.expiresAt) return true;
+  clearTimeout(lifetime.timer);
+  settingsConfigLifetimes.delete(id);
+  configStore.delete(id);
+  configRevisions.delete(id);
+  return false;
+}
 
 function last4(key: string | undefined): string | null {
   if (!key) return null;
@@ -101,8 +155,19 @@ function last4(key: string | undefined): string | null {
 }
 
 function resolveSessionConfig(sessionId: string | undefined): SessionConfig | undefined {
+  // A missing/expired Settings slot must not inherit the user's live default key.
+  if (sessionId && isSettingsConfigNamespace(sessionId)) {
+    return activeSettingsConfig(sessionId) ? configStore.get(sessionId) : undefined;
+  }
   if (sessionId && configStore.has(sessionId)) return configStore.get(sessionId);
   return configStore.get(DEFAULT_CONFIG_KEY);
+}
+
+function resolvedConfigRevision(sessionId: string | undefined): number {
+  if (sessionId && isSettingsConfigNamespace(sessionId))
+    return activeSettingsConfig(sessionId) ? configRevisions.get(sessionId) ?? 0 : 0;
+  if (sessionId && configStore.has(sessionId)) return configRevisions.get(sessionId) ?? 0;
+  return configRevisions.get(DEFAULT_CONFIG_KEY) ?? 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -130,14 +195,24 @@ export function getConfigEntry(sessionId?: string): SessionConfig | undefined {
 
 /** Write (or replace) the config entry for a session/default slot. */
 export function setConfigEntry(sessionId: string | undefined, cfg: SessionConfig): void {
-  configStore.set(sessionId || DEFAULT_CONFIG_KEY, cfg);
+  const key = sessionId || DEFAULT_CONFIG_KEY;
+  if (isSettingsConfigNamespace(key)) {
+    if (!settingsConfigId.test(key)) throw new Error('invalid temporary Settings session ID');
+    if (settingsConfigLifetimes.get(key)?.revoked) throw new Error('temporary Settings session is revoked');
+    retireSettingsConfig(key, false);
+  }
+  configStore.set(key, cfg);
+  configRevisions.set(key, ++nextConfigRevision);
 }
 
 /** Clear only the API key on a config entry, leaving provider/model/baseURL intact. */
 export function clearConfigKey(sessionId?: string): void {
   const key = sessionId || DEFAULT_CONFIG_KEY;
   const existing = configStore.get(key);
-  if (existing) configStore.set(key, { ...existing, apiKey: undefined });
+  if (existing) {
+    configStore.set(key, { ...existing, apiKey: undefined });
+    configRevisions.set(key, ++nextConfigRevision);
+  }
 }
 
 /** True once `registerChatRoutes` has wired the /chat/* routes onto the sidecar app. */
@@ -169,6 +244,21 @@ type TurnLoop = 'community' | 'pro';
 /** A plan-gated call plus the loop that raised it; an approval never crosses loops. */
 interface OriginatedCall extends ApprovedCall {
   origin: TurnLoop;
+  nativeProposalId?: string;
+  nativeOperationDigest?: string;
+}
+
+function hasNativeApprovalFields(event: {
+  source: 'ts' | 'ue';
+  nativeProposalId?: string;
+  nativeOperationDigest?: string;
+  nativeTargetRef?: string;
+  nativeTargetFingerprint?: string;
+}): boolean {
+  if (event.source !== 'ue') return true;
+  return [event.nativeProposalId, event.nativeOperationDigest,
+    event.nativeTargetRef, event.nativeTargetFingerprint].every((value) =>
+      typeof value === 'string' && value.trim().length > 0);
 }
 
 /** The approval a turn on `loop` may use, stripped of its origin tag. */
@@ -178,6 +268,7 @@ function approvalFor(call: OriginatedCall | undefined, loop: TurnLoop): Approved
 
 interface ChatSession {
   id: string;
+  contextDir: string;
   abortController: AbortController;
   seq: number;
   buffer: BufferedFrame[];
@@ -195,14 +286,23 @@ interface ChatSession {
    * Honoured only by a turn on the same loop that raised it (`origin`).
    */
   approvedCall?: OriginatedCall;
+  /** Hash of the exact request that paused at the Plan-Mode gate. In memory only. */
+  requestFingerprint?: string;
+  approvedRequestFingerprint?: string;
   assistantText: string;
   toolTrace: ToolTraceEntry[];
+  warningLedger: WarningReviewLedger;
+  pendingWarningIds?: string[];
+  warningReviews?: ReturnType<WarningReviewLedger['snapshot']>['reviews'];
+  warningOverflow?: boolean;
   /** Epoch ms of the last activity on this session; drives TTL/LRU eviction. */
   lastActivity: number;
   /** Set once the current/last turn has ended (final done frame emitted). */
   lastDone?: BufferedFrame;
   /** Hayba Pro: the live remote brain session carrying this chat's Pro turns. */
   brain?: BrainSession;
+  /** Digest of the Pro hello LLM mode, so BYOK changes reopen the session. */
+  brainLlmFingerprint?: string;
   /**
    * Hayba Pro: true while the brain holds a turn PARKED at an approval request
    * (no `done` yet). Resolved either by an approve-resume or by a `cancel`.
@@ -221,6 +321,28 @@ const SWEEP_INTERVAL_MS = 60_000;
 /** Hard cap on concurrent sessions; oldest inactive are LRU-evicted past this. */
 const MAX_SESSIONS = 64;
 const sessions = new Map<string, ChatSession>();
+/** A single unref'd timer prunes all directories registered in this process. */
+const contextDirs = new Set<string>();
+const CONTEXT_PRUNE_INTERVAL_MS = 60_000;
+let contextPruner: ReturnType<typeof setInterval> | null = null;
+
+function sweepChatContexts(now: number = Date.now()): void {
+  for (const dir of contextDirs) {
+    try {
+      pruneChatContexts(dir, now);
+    } catch {
+      // Live chat remains available; any write failure is reported to the turn.
+    }
+  }
+}
+
+function registerContextDir(dir: string): void {
+  contextDirs.add(dir);
+  sweepChatContexts();
+  if (contextPruner) return;
+  contextPruner = setInterval(() => sweepChatContexts(), CONTEXT_PRUNE_INTERVAL_MS);
+  contextPruner.unref?.();
+}
 
 // ---------------------------------------------------------------------------
 // Session eviction (I1): idle-TTL + LRU cap. Evicting an active session aborts
@@ -264,12 +386,13 @@ function evictSession(session: ChatSession): void {
 function dropBrain(session: ChatSession): Promise<void> {
   const closing = session.brain?.close() ?? Promise.resolve();
   session.brain = undefined;
+  session.brainLlmFingerprint = undefined;
   session.brainTurnParked = false;
   return closing;
 }
 
 /** Hosted providers Hayba Pro accepts a BYOK key for; anything else (local, custom) stays on Community. */
-const PRO_BYOK_PROVIDERS: ReadonlySet<string> = new Set(['anthropic', 'openai', 'groq', 'openrouter']);
+const PRO_BYOK_PROVIDERS: ReadonlySet<string> = new Set(['anthropic', 'openai', 'deepseek', 'groq', 'openrouter']);
 const CUSTOM_ENDPOINT_MESSAGE = "Custom endpoints aren't supported in Hayba Pro — use Community for local models";
 const NO_BYOK_KEY_MESSAGE = 'No API key configured for Bring-your-own-key. Add one in Settings or switch Hayba Pro to Hayba models.';
 
@@ -345,21 +468,24 @@ function newSessionId(): string {
   return `sess_${Date.now().toString(36)}_${sessionCounter}`;
 }
 
-function getOrCreateSession(id: string): ChatSession {
+function getOrCreateSession(id: string, contextDir: string): ChatSession {
   startSweeper();
   sweepSessions();
   let s = sessions.get(id);
   if (!s) {
+    const stored = loadChatState(contextDir, id);
     s = {
       id,
+      contextDir,
       abortController: new AbortController(),
       seq: 0,
       buffer: [],
-      messages: [],
+      messages: stored.messages,
       clients: new Set(),
       running: false,
       assistantText: '',
       toolTrace: [],
+      warningLedger: new WarningReviewLedger(stored.warnings),
       lastActivity: Date.now(),
       approvals: new LocalApprovals(),
     };
@@ -433,6 +559,24 @@ function normalizeMessages(body: { messages?: unknown; prompt?: unknown }): LLMM
   return null;
 }
 
+function requestFingerprint(body: {
+  messages?: unknown;
+  prompt?: unknown;
+  provider?: unknown;
+  model?: unknown;
+  reasoning_effort?: unknown;
+  archetype?: unknown;
+  archetype_filter?: unknown;
+  mode?: unknown;
+  loop?: unknown;
+  llm?: unknown;
+  permissions?: unknown;
+}): string {
+  const request = [body.messages, body.prompt, body.provider, body.model, body.reasoning_effort, body.archetype,
+    body.archetype_filter, body.mode, body.loop, body.llm, body.permissions];
+  return createHash('sha256').update(JSON.stringify(request)).digest('hex');
+}
+
 const DEFAULT_SYSTEM =
   'You are the Hayba in-editor copilot. You help build Unreal Engine worlds by ' +
   'calling Hayba tools. Prefer reads before writes; respect Plan Mode.';
@@ -462,6 +606,8 @@ function modeGuidance(mode: AgentWorkMode): string {
 export interface ChatRoutesOptions {
   /** Durable text and activity history. Defaults to Saved/HaybaMCP/sessions. */
   sessionStore?: SessionStore;
+  /** Override the per-user, project-keyed context directory (test seam). */
+  sessionDir?: string;
   /** Override the tool dispatcher (test seam). Defaults to full-coverage dispatch. */
   dispatchTool?: DispatchTool;
   /** Inject a client factory (test seam). Defaults to createLLMClient. */
@@ -551,11 +697,14 @@ export function registerChatRoutes(app: Express, options: ChatRoutesOptions = {}
       if (!sessionStore.remove(id)) return res.status(404).json({ error: 'unknown session' });
       if (active) evictSession(active);
       configStore.delete(id);
+      configRevisions.delete(id);
       return res.status(204).end();
     } catch {
       return res.status(500).json({ error: 'Unable to delete session' });
     }
   });
+  const contextDir = options.sessionDir ?? chatSessionDir();
+  registerContextDir(contextDir);
 
   // ── POST /chat/config ────────────────────────────────────────────────────
   app.post('/chat/config', (req: Request, res: Response) => {
@@ -573,8 +722,17 @@ export function registerChatRoutes(app: Express, options: ChatRoutesOptions = {}
     if (!getProvider(body.provider)) {
       return res.status(400).json({ error: `unknown provider: ${body.provider}` });
     }
+    if (body.session_id !== undefined && typeof body.session_id !== 'string') {
+      return res.status(400).json({ error: 'invalid session_id' });
+    }
     const key = body.session_id || DEFAULT_CONFIG_KEY;
-    configStore.set(key, {
+    if (isSettingsConfigNamespace(key)) {
+      if (!settingsConfigId.test(key)) return res.status(400).json({ error: 'invalid temporary Settings session_id' });
+      if (settingsConfigLifetimes.get(key)?.revoked) {
+        return res.status(410).json({ error: 'temporary Settings session was revoked' });
+      }
+    }
+    setConfigEntry(key, {
       provider: body.provider,
       model: body.model,
       baseURL: body.base_url,
@@ -587,6 +745,20 @@ export function registerChatRoutes(app: Express, options: ChatRoutesOptions = {}
       model: body.model ?? getProvider(body.provider)?.defaultModel ?? null,
       key_last4: last4(body.api_key),
     });
+  });
+
+  // Settings discovery uses a separate ephemeral config, never a live chat
+  // session. Revocation is idempotent and leaves a short tombstone so a delayed
+  // POST cannot recreate the secret after the client cancels its request.
+  app.delete('/chat/config', (req: Request, res: Response) => {
+    if (!requireLoopback(req, res)) return;
+    const parsed = stringQuery(req.query.session_id, 'session_id');
+    if (!parsed.ok || !parsed.value) return res.status(400).json({ error: 'session_id is required exactly once' });
+    if (!settingsConfigId.test(parsed.value)) {
+      return res.status(403).json({ error: 'only temporary Settings config can be revoked here' });
+    }
+    retireSettingsConfig(parsed.value, true);
+    return res.status(204).end();
   });
 
   // ── GET /chat/config ─────────────────────────────────────────────────────
@@ -605,6 +777,42 @@ export function registerChatRoutes(app: Express, options: ChatRoutesOptions = {}
     });
   });
 
+  // ── GET /chat/models ────────────────────────────────────────────────────
+  app.get('/chat/models', async (req: Request, res: Response) => {
+    if (!requireLoopback(req, res)) return;
+    const providerQuery = stringQuery(req.query.provider, 'provider');
+    const sessionQuery = stringQuery(req.query.session_id, 'session_id');
+    const refreshQuery = stringQuery(req.query.refresh, 'refresh');
+    if (!providerQuery.ok || !sessionQuery.ok || !refreshQuery.ok) {
+      return res.status(400).json({ error: 'query parameters must appear exactly once' });
+    }
+    const provider = providerQuery.value;
+    if (!provider || !getProvider(provider)) return res.status(400).json({ error: 'known provider is required' });
+    if (refreshQuery.value !== undefined && refreshQuery.value !== '1') {
+      return res.status(400).json({ error: 'refresh must be 1' });
+    }
+    if (sessionQuery.value && isSettingsConfigNamespace(sessionQuery.value) &&
+        !activeSettingsConfig(sessionQuery.value)) {
+      return res.status(410).json({ error: 'temporary Settings config expired or was revoked' });
+    }
+    const cfg = resolveSessionConfig(sessionQuery.value);
+    const matches = cfg?.provider === provider;
+    const discovered = await discoverModels({
+      provider,
+      apiKey: matches ? cfg?.apiKey : undefined,
+      baseURL: matches ? cfg?.baseURL : undefined,
+      currentModel: matches ? cfg?.model : undefined,
+      refresh: refreshQuery.value === '1',
+      probeCustom: provider === 'custom' && matches && refreshQuery.value === '1',
+    });
+    return res.json({
+      ...discovered,
+      configured_model: matches ? cfg?.model ?? null : null,
+      default_model: discovered.models.some((m) => m.id === getProvider(provider)?.defaultModel)
+        ? getProvider(provider)?.defaultModel : null,
+    });
+  });
+
   // ── POST /chat/cancel ────────────────────────────────────────────────────
   app.post('/chat/cancel', (req: Request, res: Response) => {
     if (!requireLoopback(req, res)) return;
@@ -620,7 +828,11 @@ export function registerChatRoutes(app: Express, options: ChatRoutesOptions = {}
   // ── POST /chat/approve ───────────────────────────────────────────────────
   app.post('/chat/approve', (req: Request, res: Response) => {
     if (!requireLoopback(req, res)) return;
-    const { session_id } = jsonObjectBody(req) as { session_id?: string };
+    const { session_id, native_proposal_id, native_operation_digest } = jsonObjectBody(req) as {
+      session_id?: string;
+      native_proposal_id?: string;
+      native_operation_digest?: string;
+    };
     if (!session_id) return res.status(400).json({ error: 'session_id is required' });
     const session = sessions.get(session_id);
     if (!session) return res.status(404).json({ error: 'unknown session' });
@@ -630,7 +842,13 @@ export function registerChatRoutes(app: Express, options: ChatRoutesOptions = {}
     if (!session.pendingPlanCall) {
       return res.status(409).json({ error: 'no pending plan request to approve' });
     }
+    if (session.pendingPlanCall.nativeProposalId &&
+        (native_proposal_id !== session.pendingPlanCall.nativeProposalId ||
+         native_operation_digest !== session.pendingPlanCall.nativeOperationDigest)) {
+      return res.status(409).json({ error: 'native approval does not match the pending proposal' });
+    }
     session.approvedCall = session.pendingPlanCall;
+    session.approvedRequestFingerprint = session.requestFingerprint;
     session.pendingPlanCall = undefined;
     // Resume = the C++ panel re-issues POST /chat/stream with the same
     // session_id; the stored transcript continues and ONLY this exact call
@@ -651,6 +869,7 @@ export function registerChatRoutes(app: Express, options: ChatRoutesOptions = {}
       prompt?: string;
       provider?: string;
       model?: string;
+      reasoning_effort?: string;
       archetype?: string;
       archetype_filter?: string[];
       mode?: AgentWorkMode;
@@ -665,10 +884,22 @@ export function registerChatRoutes(app: Express, options: ChatRoutesOptions = {}
     if (body.mode !== undefined && !isAgentWorkMode(body.mode)) {
       return res.status(400).json({ error: 'invalid agent mode' });
     }
+    if (body.reasoning_effort !== undefined &&
+        (typeof body.reasoning_effort !== 'string' || body.reasoning_effort.length > 32 ||
+         !/^[a-z]+$/.test(body.reasoning_effort))) {
+      return res.status(400).json({ error: 'invalid reasoning effort' });
+    }
+    if (body.reasoning_effort && body.loop === 'pro') {
+      return res.status(400).json({ error: 'Hayba Pro does not support per-turn reasoning effort' });
+    }
     if (body.loop !== undefined && !(LOOPS as readonly unknown[]).includes(body.loop)) {
       return res.status(400).json({ error: 'invalid loop' });
     }
     const mode: AgentWorkMode = body.mode ?? 'production';
+
+    if (body.session_id !== undefined && !validChatSessionId(body.session_id)) {
+      return res.status(400).json({ error: 'invalid session_id' });
+    }
 
     // ── Branch on resume vs new turn BEFORE any SSE headers are flushed (I3) ──
     // Emitting a 409 after flushHeaders() would append JSON mid-stream (the 200 +
@@ -676,6 +907,25 @@ export function registerChatRoutes(app: Express, options: ChatRoutesOptions = {}
     // only flush SSE headers once we're committed to streaming.
     const existing = body.session_id ? sessions.get(body.session_id) : undefined;
     const isResume = existing !== undefined && typeof body.last_seq === 'number';
+    if (!isResume && existing?.approvedCall) {
+      const turnLoop = body.loop ?? 'community';
+      if (existing.approvedCall.origin !== turnLoop) {
+        // Main's loop-bound approval cannot cross Community/Pro. A new turn
+        // on the other loop simply abandons it.
+        existing.approvedCall = undefined;
+        existing.approvedRequestFingerprint = undefined;
+      } else if (turnLoop === 'community' && existing.approvedRequestFingerprint !== requestFingerprint(body)) {
+        // Community restarts its local model turn, so bind that retry to the
+        // exact paused request. A Pro turn resumes in the already-open brain
+        // session and legitimately sends an empty prompt instead.
+        existing.approvedCall = undefined;
+        existing.approvedRequestFingerprint = undefined;
+        return res.status(409).json({ error: 'approved plan request changed; submit the new prompt again' });
+      }
+    }
+    if (!existing && body.last_seq !== undefined) {
+      return res.status(409).json({ error: 'live stream unavailable; start a new turn without last_seq' });
+    }
 
     // Reject a second concurrent NEW turn on a running session with a real 409.
     // (Resumes are allowed to attach to a running session — that is the point.)
@@ -746,21 +996,29 @@ export function registerChatRoutes(app: Express, options: ChatRoutesOptions = {}
     }
 
     // ── NEW TURN path ────────────────────────────────────────────────────────
-    const session = getOrCreateSession(sessionId);
-    if (!session.messages.length && saved) session.messages = saved.messages;
+    const session = getOrCreateSession(sessionId, contextDir);
+    // The explicit session-history store is authoritative when present;
+    // bounded context supplies restart recovery when it has no record.
+    if (saved?.messages.length) session.messages = saved.messages;
     touch(session);
     // Fresh AbortController per turn (a prior cancel leaves an aborted one).
     session.abortController = new AbortController();
     session.running = true;
     session.assistantText = '';
     session.toolTrace = [];
+    session.pendingWarningIds = undefined;
+    session.warningReviews = undefined;
+    session.warningOverflow = undefined;
     session.clients.add(res);
 
-    // Resolve messages: explicit body wins; else reuse stored transcript
-    // (post-approval resume) if present.
-    let messages = normalizeMessages(body);
-    if (!Array.isArray(body.messages) && messages && session.messages.length) {
-      messages = [...session.messages, ...messages];
+    // Explicit transcript replaces context. A prompt extends it; a Plan-Mode
+    // approval replays the paused prompt without adding a duplicate user turn.
+    let messages = Array.isArray(body.messages) ? normalizeMessages(body) : null;
+    if (!messages && typeof body.prompt === 'string' && body.prompt.length > 0) {
+      messages =
+        session.approvedCall && session.messages.length > 0
+          ? session.messages
+          : [...session.messages, { role: 'user', content: body.prompt }];
     }
     if (!messages && session.messages.length > 0) messages = session.messages;
     if (!messages) {
@@ -771,11 +1029,20 @@ export function registerChatRoutes(app: Express, options: ChatRoutesOptions = {}
       return res.end();
     }
     session.messages = messages;
+    session.requestFingerprint = requestFingerprint(body);
     try {
       // An explicit client transcript is authoritative, including edits and
       // deletions. Prompt-only callers already include restored history above.
       // Replace the text snapshot so an older divergent suffix cannot survive.
-      sessionStore.replaceMessages(sessionId, messages);
+      const turnConfig = resolveSessionConfig(sessionId);
+      const turnModel = body.model ?? turnConfig?.model;
+      sessionStore.replaceMessages(sessionId, messages, {
+        mode,
+        loop: body.loop ?? 'community',
+        ...(turnConfig?.provider ? { provider: turnConfig.provider } : {}),
+        ...(turnModel && turnModel.length <= 256 ? { model: turnModel } : {}),
+        ...(body.reasoning_effort ? { reasoningEffort: body.reasoning_effort } : {}),
+      });
     } catch {
       emit(session, 'error', { error: 'Unable to save session history', kind: 'persistence' });
       finalize(session, 'error');
@@ -789,15 +1056,38 @@ export function registerChatRoutes(app: Express, options: ChatRoutesOptions = {}
       const catalog = options.tools ?? buildToolCatalog();
       // A session that was closed or gave up can never carry another turn.
       if (session.brain && !session.brain.isAlive()) void dropBrain(session);
+      const configured = resolveSessionConfig(sessionId);
+      const llm = proLlmMode(body.llm,
+        configured && body.model ? { ...configured, model: body.model } : configured);
+      if (!llm.ok) {
+        emit(session, 'error', { error: llm.message, kind: 'brain_unavailable', reason: llm.reason });
+        finalize(session, 'brain_unavailable');
+        cleanup();
+        return;
+      }
+      // Track the public mode and an opaque config revision. No digest or
+      // fingerprint is ever derived from the BYOK API key itself.
+      const publicLlmMode = llm.mode.mode === 'byok'
+        ? { mode: 'byok', provider: llm.mode.provider, model: llm.mode.model }
+        : { mode: 'subscription' };
+      const llmFingerprint = JSON.stringify([publicLlmMode,
+        llm.mode.mode === 'byok' ? resolvedConfigRevision(sessionId) : 0]);
+      if (session.brain && session.brainLlmFingerprint !== llmFingerprint) {
+        await dropBrain(session).catch(() => undefined);
+        session.approvedCall = undefined;
+        session.pendingPlanCall = undefined;
+      }
       if (!session.brain) {
-        const llm = proLlmMode(body.llm, resolveSessionConfig(sessionId));
-        const opened = !llm.ok ? llm : await withProOpenSlot(async () => {
+        const opened = await withProOpenSlot(async () => {
           await makeRoomForProSession(session);
           const r = options.brain
             ? await options.brain.openSession(sessionId, llm.mode, buildHandsManifest(catalog), permissions)
             : { ok: false as const, reason: 'not_configured', message: 'Hayba Pro is not configured on this machine.' };
           // Counted as open before the next opener takes the slot.
-          if (r.ok) session.brain = r.session;
+          if (r.ok) {
+            session.brain = r.session;
+            session.brainLlmFingerprint = llmFingerprint;
+          }
           return r;
         });
         if (!opened.ok) {
@@ -894,6 +1184,7 @@ export function registerChatRoutes(app: Express, options: ChatRoutesOptions = {}
       client = makeClient({
         provider,
         model,
+        reasoningEffort: body.reasoning_effort,
         baseURL: cfg?.baseURL,
         apiKey: resolvedApiKey, // key follows the resolved provider (see above)
       });
@@ -944,6 +1235,7 @@ export function registerChatRoutes(app: Express, options: ChatRoutesOptions = {}
       cleanup();
       // Consume the one-shot call-bound approval so a later turn re-gates.
       session.approvedCall = undefined;
+      session.approvedRequestFingerprint = undefined;
     });
 
     return undefined;
@@ -1007,6 +1299,11 @@ interface TurnError {
 }
 
 async function runTurn(session: ChatSession, params: RunTurnParams): Promise<void> {
+  // Native exact review is mandatory for Chat Production, including captured
+  // TS handlers and Pro calls. Scope each dispatch so concurrent turns cannot
+  // weaken one another and no policy field enters model-owned tool parameters.
+  const dispatchTool: DispatchTool = (name, args) =>
+    withExactReview(params.mode === 'production', () => params.dispatchTool(name, args));
   let finalReason: string | null = null;
   let lastError: TurnError | null = null;
   // Hayba Pro: set when the brain became unavailable mid-turn.
@@ -1022,6 +1319,9 @@ async function runTurn(session: ChatSession, params: RunTurnParams): Promise<voi
   const observe = (event: AgentStreamEvent): void => {
     // The native Agent surface observes these structured frames directly. Keep
     // legacy frames below for older clients until their migration lands.
+    // A malformed remote native pause must not appear as an actionable review.
+    // The legacy adapter below emits an error instead of parking the session.
+    if (event.type === 'approval_requested' && !hasNativeApprovalFields(event)) return;
     emit(session, event.type, event);
     switch (event.type) {
       case 'activity_started':
@@ -1070,7 +1370,7 @@ async function runTurn(session: ChatSession, params: RunTurnParams): Promise<voi
           pinnedSpecialistId: params.remote.pinnedSpecialistId,
           approvals: params.remote.approvals,
           approvedCall: params.approvedCall,
-          dispatchTool: params.dispatchTool,
+          dispatchTool,
           guard: params.remote.guard,
           signal: params.signal,
           onUnavailable: (reason) => { unavailableReason = reason; },
@@ -1085,12 +1385,13 @@ async function runTurn(session: ChatSession, params: RunTurnParams): Promise<voi
               : params.tools,
           archetypeFilter: params.archetypeFilter,
           pinnedSpecialistId: params.pinnedSpecialistId,
-          dispatchTool: params.dispatchTool,
+          dispatchTool,
           signal: params.signal,
           planMode: true, // honour Plan Mode; UE side is authoritative, TS side gated
           approvedCall: params.approvedCall,
+          warningLedger: session.warningLedger,
         });
-    for await (const legacy of adaptToLegacy(source, observe)) {
+    for await (const legacy of adaptToLegacy(source, observe, session.warningLedger)) {
       let ev = legacy;
       if (ev.type === 'error' && ev.kind === 'brain_unavailable') {
         brainLost = true;
@@ -1115,6 +1416,19 @@ async function runTurn(session: ChatSession, params: RunTurnParams): Promise<voi
       activity.status = 'failed';
       activity.reason = 'error';
     }
+  }
+
+  // A Pro turn cannot silently turn previously discovered local warnings into
+  // a clean completion. The ledger persists across both paths until review.
+  const warningState = session.warningLedger.snapshot();
+  session.pendingWarningIds = session.warningLedger.pendingIds();
+  session.warningReviews = warningState.reviews;
+  session.warningOverflow = warningState.overflow;
+  if (finalReason === 'end_turn' && session.pendingWarningIds.length) finalReason = 'warnings_unreviewed';
+  else if (finalReason === 'end_turn' && session.warningLedger.hasDeferred()) finalReason = 'reviewed_with_deferred';
+  if (activity && (finalReason === 'warnings_unreviewed' || finalReason === 'reviewed_with_deferred')) {
+    activity.status = 'failed';
+    activity.reason = finalReason;
   }
 
   try {
@@ -1146,12 +1460,30 @@ async function runTurn(session: ChatSession, params: RunTurnParams): Promise<voi
   // reported any (even on an aborted/error turn — partial usage still cost
   // real tokens and is worth surfacing).
   const usageExtra = usage ? { usage } : {};
+  let contextPersisted = true;
+  try {
+    saveChatContext(session.contextDir, session.id, session.messages, Date.now(), session.warningLedger.snapshot());
+  } catch {
+    contextPersisted = false;
+    emit(session, 'error', {
+      kind: 'persistence',
+      error: 'Chat context and warning review state could not be saved; they may be lost after the sidecar restarts.',
+    });
+  }
+  const contextExtra = contextPersisted ? {} : { context_persisted: false };
   if (finalReason === 'aborted') {
-    finalize(session, 'aborted', usageExtra);
+    finalize(session, 'aborted', { ...usageExtra, ...contextExtra });
   } else if (lastError && !finalReason) {
-    finalize(session, 'error', { error: lastError, ...usageExtra });
+    finalize(session, 'error', { error: lastError, ...usageExtra, ...contextExtra });
   } else {
-    finalize(session, finalReason ?? 'end_turn', { ...(lastError ? { error: lastError } : {}), ...usageExtra });
+    finalize(session, finalReason ?? 'end_turn', {
+      ...(lastError ? { error: lastError } : {}),
+      ...usageExtra,
+      ...contextExtra,
+      ...(session.pendingWarningIds?.length ? { pending_warning_ids: session.pendingWarningIds } : {}),
+      ...(session.warningReviews?.length ? { warning_reviews: session.warningReviews } : {}),
+      ...(session.warningOverflow ? { warning_overflow: true } : {}),
+    });
   }
 }
 
@@ -1194,8 +1526,23 @@ function forwardEvent(
     case 'plan_request': {
       // C1: record the identity of the paused call so /chat/approve can bind the
       // approval to THIS exact {name, argsHash} rather than the whole turn.
+      if (!hasNativeApprovalFields(ev)) {
+        const error = 'The editor requested approval without complete native proposal details.';
+        emit(session, 'error', { error, kind: 'approval_metadata_invalid' });
+        setError({ error, kind: 'approval_metadata_invalid' });
+        setReason('error');
+        break;
+      }
       const hash = ev.argsHash ?? argsHash(ev.call.input);
-      session.pendingPlanCall = { name: ev.call.name, argsHash: hash, origin };
+      session.pendingPlanCall = {
+        name: ev.call.name,
+        argsHash: hash,
+        origin,
+        ...(ev.source === 'ue' ? {
+          nativeProposalId: ev.nativeProposalId,
+          nativeOperationDigest: ev.nativeOperationDigest,
+        } : {}),
+      };
       const input = redactBoundaryValue(ev.call.input) as Record<string, unknown>;
       emit(session, 'plan_request', {
         id: ev.call.id,
@@ -1204,6 +1551,12 @@ function forwardEvent(
         source: ev.source,
         hint: ev.hint,
         args_hash: hash,
+        ...(ev.source === 'ue' ? {
+          proposal_id: ev.nativeProposalId,
+          operation_digest: ev.nativeOperationDigest,
+          target_ref: ev.nativeTargetRef,
+          target_fingerprint: ev.nativeTargetFingerprint,
+        } : {}),
       });
       // Loop RETURNS after plan_request — the turn pauses pending approval.
       setReason('plan_request');
@@ -1212,6 +1565,9 @@ function forwardEvent(
     case 'done':
       setReason(ev.reason);
       setUsage(ev.usage);
+      session.pendingWarningIds = ev.pendingWarningIds;
+      session.warningReviews = ev.warningReviews;
+      session.warningOverflow = ev.warningOverflow;
       break;
     case 'error':
       setError({ error: ev.error, kind: ev.kind });
@@ -1229,7 +1585,11 @@ function forwardEvent(
 export function __resetChatState(): void {
   for (const session of sessions.values()) void dropBrain(session);
   sessions.clear();
+  for (const lifetime of settingsConfigLifetimes.values()) clearTimeout(lifetime.timer);
+  settingsConfigLifetimes.clear();
   configStore.clear();
+  configRevisions.clear();
+  nextConfigRevision = 0;
   sessionCounter = 0;
   proOpenQueue = Promise.resolve();
   chatRoutesRegistered = false;
@@ -1237,11 +1597,26 @@ export function __resetChatState(): void {
     clearInterval(sweeper);
     sweeper = null;
   }
+  if (contextPruner) {
+    clearInterval(contextPruner);
+    contextPruner = null;
+  }
+  contextDirs.clear();
 }
 
 /** Test hook: run the idle-TTL sweep at a given wall-clock time. */
 export function __sweepSessions(now?: number): void {
   sweepSessions(now);
+}
+
+/** Test hook: run the periodic on-disk retention sweep at a given wall-clock time. */
+export function __sweepChatContexts(now?: number): void {
+  sweepChatContexts(now);
+}
+
+/** Test hook: the context pruner is a process-wide singleton. */
+export function __contextPrunerCount(): number {
+  return contextPruner ? 1 : 0;
 }
 
 /** Test hook: number of live sessions. */

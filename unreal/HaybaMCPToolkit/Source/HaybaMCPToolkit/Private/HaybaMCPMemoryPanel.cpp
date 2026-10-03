@@ -10,6 +10,7 @@
 #include "Widgets/SBoxPanel.h"
 #include "Widgets/SOverlay.h"
 #include "Widgets/Layout/SBorder.h"
+#include "Widgets/Layout/SWrapBox.h"
 #include "Styling/AppStyle.h"
 #include "Dom/JsonObject.h"
 #include "Serialization/JsonReader.h"
@@ -18,6 +19,7 @@
 #include "Misc/Paths.h"
 #include "HAL/PlatformMisc.h"
 #include "Modules/ModuleManager.h"
+#include "Framework/Docking/TabManager.h"
 
 #define LOCTEXT_NAMESPACE "HaybaLibrary"
 
@@ -70,12 +72,16 @@ void SHaybaMCPMemoryPanel::Construct(const FArguments& InArgs)
         // ── Bulk action bar ──────────────────────────────────────────────
         + SVerticalBox::Slot().AutoHeight().Padding(6, 2)
         [
-            SNew(SBorder).BorderImage(FAppStyle::Get().GetBrush("Brushes.Header")).Padding(FMargin(6, 3))
+            SNew(SBorder)
+            .Visibility_Lambda([this](){ return AllEntries.IsEmpty() ? EVisibility::Collapsed : EVisibility::Visible; })
+            .BorderImage(FAppStyle::Get().GetBrush("Brushes.Header")).Padding(FMargin(6, 3))
             [
-                SNew(SHorizontalBox)
-                + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)[ SNew(SButton).Text(LOCTEXT("All", "All")).OnClicked(this, &SHaybaMCPMemoryPanel::OnCheckAll) ]
-                + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(2, 0)[ SNew(SButton).Text(LOCTEXT("None", "None")).OnClicked(this, &SHaybaMCPMemoryPanel::OnCheckNone) ]
-                + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(12, 0, 2, 0)
+                SNew(SWrapBox).UseAllottedSize(true)
+                + SWrapBox::Slot().VAlign(VAlign_Center)
+                [ SNew(SButton).Text(LOCTEXT("All", "All")).OnClicked(this, &SHaybaMCPMemoryPanel::OnCheckAll) ]
+                + SWrapBox::Slot().VAlign(VAlign_Center).Padding(2, 0)
+                [ SNew(SButton).Text(LOCTEXT("None", "None")).OnClicked(this, &SHaybaMCPMemoryPanel::OnCheckNone) ]
+                + SWrapBox::Slot().VAlign(VAlign_Center).Padding(8, 0, 2, 0)
                 [
                     SNew(SComboBox<TSharedPtr<FString>>)
                     .OptionsSource(&PrimitiveOptions)
@@ -84,9 +90,10 @@ void SHaybaMCPMemoryPanel::Construct(const FArguments& InArgs)
                     .InitiallySelectedItem(SelectedPrimitive)
                     [ SNew(STextBlock).Text_Lambda([this](){ return FText::FromString(SelectedPrimitive.IsValid() ? *SelectedPrimitive : FString()); }) ]
                 ]
-                + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(2, 0)[ SNew(SButton).Text(LOCTEXT("ApplyTmpl", "Apply to checked")).OnClicked(this, &SHaybaMCPMemoryPanel::OnApplyTemplate) ]
-                + SHorizontalBox::Slot().FillWidth(1.f)[ SNullWidget::NullWidget ]
-                + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)[ SNew(SButton).Text(LOCTEXT("RemoveChecked", "Remove checked")).OnClicked(this, &SHaybaMCPMemoryPanel::OnRemoveChecked) ]
+                + SWrapBox::Slot().VAlign(VAlign_Center).Padding(2, 0)
+                [ SNew(SButton).Text(LOCTEXT("ApplyTmpl", "Apply to checked")).OnClicked(this, &SHaybaMCPMemoryPanel::OnApplyTemplate) ]
+                + SWrapBox::Slot().VAlign(VAlign_Center).Padding(4, 0)
+                [ SNew(SButton).Text(LOCTEXT("RemoveChecked", "Remove checked")).OnClicked(this, &SHaybaMCPMemoryPanel::OnRemoveChecked) ]
             ]
         ]
         + SVerticalBox::Slot().FillHeight(1.f).Padding(6, 2)
@@ -106,20 +113,36 @@ void SHaybaMCPMemoryPanel::Construct(const FArguments& InArgs)
                 // fresh project (no profiles.json yet) reads as "empty", not "broken".
                 + SOverlay::Slot().HAlign(HAlign_Center).VAlign(VAlign_Center).Padding(24)
                 [
-                    SNew(STextBlock)
-                    .Justification(ETextJustify::Center)
-                    .AutoWrapText(true)
-                    .ColorAndOpacity(FSlateColor::UseSubduedForeground())
+                    SNew(SVerticalBox)
                     .Visibility_Lambda([this]()
                     {
-                        return RootNodes.Num() == 0 ? EVisibility::HitTestInvisible : EVisibility::Collapsed;
+                        return RootNodes.IsEmpty() ? EVisibility::Visible : EVisibility::Collapsed;
                     })
-                    .Text_Lambda([this]()
-                    {
-                        return Filter.IsEmpty()
-                            ? LOCTEXT("EmptyLibrary", "No profiled assets yet — profile an asset in the Semantic Studio to populate the Library.")
-                            : LOCTEXT("EmptyFilter", "No assets match the current filter.");
-                    })
+                    + SVerticalBox::Slot().AutoHeight().HAlign(HAlign_Center)
+                    [
+                        SNew(STextBlock)
+                        .Justification(ETextJustify::Center)
+                        .AutoWrapText(true)
+                        .ColorAndOpacity(FSlateColor::UseSubduedForeground())
+                        .Text_Lambda([this]()
+                        {
+                            return AllEntries.IsEmpty()
+                                ? LOCTEXT("EmptyLibrary", "No assets profiled yet. Right-click a Static Mesh in the Content Browser and choose Open with Hayba.")
+                                : LOCTEXT("EmptyFilter", "No assets match the current filter.");
+                        })
+                    ]
+                    + SVerticalBox::Slot().AutoHeight().HAlign(HAlign_Center).Padding(0.f, 10.f, 0.f, 0.f)
+                    [
+                        SNew(SButton)
+                        .Visibility_Lambda([this](){ return AllEntries.IsEmpty() ? EVisibility::Visible : EVisibility::Collapsed; })
+                        .Text(LOCTEXT("OpenStudioEmpty", "Open Semantic Studio"))
+                        .ToolTipText(LOCTEXT("OpenStudioEmptyTT", "Open the asset profiling workspace."))
+                        .OnClicked_Lambda([]()
+                        {
+                            FGlobalTabmanager::Get()->TryInvokeTab(FHaybaMCPModule::TabStudio);
+                            return FReply::Handled();
+                        })
+                    ]
                 ]
             ]
         ]
@@ -179,6 +202,7 @@ void SHaybaMCPMemoryPanel::Reload()
         AllEntries.Add(E);
     }
     RebuildTree();
+    Invalidate(EInvalidateWidgetReason::Layout);
 }
 
 void SHaybaMCPMemoryPanel::RebuildTree()

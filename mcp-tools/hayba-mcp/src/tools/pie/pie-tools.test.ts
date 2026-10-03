@@ -29,6 +29,8 @@ import { pieActorListHandler } from './pie-actor-list.js';
 import { pieActorInspectHandler } from './pie-actor-inspect.js';
 import { pieProjectWorldHandler } from './pie-project-world.js';
 import { pieClickActorHandler } from './pie-click-actor.js';
+import { pieCaptureStartHandler, pieCaptureGetHandler } from './pie-capture.js';
+import { pieSightlinesHandler } from './pie-sightlines.js';
 import type { SessionManager, ToolHandler } from '../types.js';
 
 // PIE wrappers ignore the session; a stub keeps the ToolHandler signature honest.
@@ -62,6 +64,10 @@ const TOOLS: Array<{ name: string; cmd: string; handler: ToolHandler; args: Reco
   // NB: `key` is an axis KEY (Gamepad_LeftX), not an input-mapping axis name.
   { name: 'pie_axis', cmd: 'editor_pie_axis', handler: pieAxisHandler, args: { key: 'Gamepad_LeftX', value: 1 } },
   { name: 'pie_screenshot', cmd: 'editor_pie_screenshot', handler: pieScreenshotHandler, args: {} },
+  { name: 'pie_capture_start', cmd: 'editor_pie_capture_start', handler: pieCaptureStartHandler, args: { sample_frames: 60 } },
+  { name: 'pie_capture_get', cmd: 'editor_pie_capture_get', handler: pieCaptureGetHandler, args: { capture_id: 'abc123' } },
+  { name: 'pie_sightlines', cmd: 'editor_pie_sightlines', handler: pieSightlinesHandler,
+    args: { eye_positions: [[0, 0, 170]], target_location: [500, 0, 170] } },
   {
     name: 'pie_actor_list',
     cmd: 'editor_pie_actor_list',

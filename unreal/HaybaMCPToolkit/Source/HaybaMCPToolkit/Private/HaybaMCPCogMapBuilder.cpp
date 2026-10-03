@@ -234,7 +234,17 @@ namespace
             Cell.DominantClasses = DominantClasses(Bin, /*Limit=*/5);
             Cell.Tags = AggregateTagsForCell(Bin, /*Limit=*/5);
             ClassifyDominant(Cell.DominantClasses, Cell.Label, Cell.Semantic);
-            for (AActor* A : Bin) Cell.ActorLabels.Add(A->GetActorLabel());
+            for (AActor* A : Bin)
+            {
+                FHaybaCogMapCell::FActor Entry;
+                Entry.Path = A->GetPathName();
+                const FGuid ActorGuid = A->GetActorGuid();
+                Entry.Id = ActorGuid.IsValid() ? ActorGuid.ToString(EGuidFormats::DigitsWithHyphens) : Entry.Path;
+                Entry.Label = A->GetActorLabel();
+                Entry.ClassName = A->GetClass()->GetName();
+                Entry.Folder = A->GetFolderPath().ToString();
+                Cell.Actors.Add(MoveTemp(Entry));
+            }
             Cells.Add(MoveTemp(Cell));
         }
         return Cells;

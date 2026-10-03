@@ -65,6 +65,19 @@ Agent host ──stdio──▶ Node MCP server ──TCP──▶ UE5 C++ plugi
   TS-layer tool name over the wire yields `Unknown command` while unit tests
   pass. Guarded statically — and every guard must know every call form that
   reaches it (ADR-0007).
+- **Lease** — a time-limited, owner-scoped claim on editor resources
+  (`global`, `world:`, `wp-region:`, `asset:`, `actor:`, `pie`) that lets
+  several agents share one editor. The editor checks leases but never waits on
+  them: `lease_acquire` answers granted or queued. **Owner** is the envelope
+  `owner` field, else the connection's adopted owner (`lease_adopt`), else one
+  owner per connection (`conn:<id>`, or `local` in-process). Those synthetic
+  names are reserved; the envelope `lease` never changes the owner. Plan-Mode
+  approval is per owner too.
+  See ADR-0010.
+- **Lease id** — the handle of a granted lease, `ls_<seq>_<mac12>` (a queued
+  request's ticket is `lq_…`). Always named `lease_id`, never `token`, because
+  both redaction layers erase values under secret-shaped keys. The envelope
+  field that carries it is still `lease`. See ADR-0010, "Lease ids".
 - **Re-emulation doctrine** — when a pre-restructure branch's behaviour
   must land on the restructured layout, reproduce its *effect* as fresh
   commits; never git-merge the old layout back in (see ADR-0001).

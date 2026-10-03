@@ -1,9 +1,36 @@
 import type { HaybaToolCost } from './hayba-tool-meta.js';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import type { TcpResponse } from '../tcp-client.js';
 import { getToolMeta } from './tool-meta-registry.js';
 import { isHeavyOp, HEAVY_OP_TIMEOUT_MS } from './heavy-ops.js';
 
-export type UeToolErrorCode = 'transport' | 'timeout' | 'plan_gate' | 'tool_disabled' | 'ue_error' | 'editor_busy';
+export type UeToolErrorCode =
+  | 'transport'
+  | 'timeout'
+  | 'plan_gate'
+  | 'tool_disabled'
+  | 'ue_error'
+  | 'editor_busy'
+  // Another agent holds a lease on what this command touches (Enforced mode).
+  | 'lease_conflict'
+  // An earlier native fault left the editor unsafe; nothing runs until it restarts (ADR-0011).
+  | 'editor_unsafe_restart_required'
+  // This command raised a native fault; its outcome is unknown and the editor must restart (ADR-0011).
+  | 'native_fault_contained'
+  // PIE is running or queued and the command is not PIE-safe; nothing ran (docs/adr/0012).
+  | 'pie_active'
+  // editor_start_pie found loaded Blueprints that would open a modal dialog before play.
+  | 'pie_blocked'
+  // Another owner is building an asset this command would use half-built; nothing ran (P0 T3).
+  | 'asset_busy'
+  // A handler preflight found a read-only package file (T5); data.make_writable_hint says how to fix it.
+  | 'package_read_only'
+  // A write named no owner while other agents are connected (EnforcedForWrites, T8).
+  | 'owner_required'
+  // An envelope claimed another connection's conn:<n> or local (T9).
+  | 'owner_reserved'
+  // Exact native review could not freeze the target or complete parameter display.
+  | 'exact_approval_unavailable';
 
 export class UeToolError extends Error {
   readonly code: UeToolErrorCode;
@@ -16,7 +43,20 @@ export class UeToolError extends Error {
   }
 }
 
-const KNOWN_UE_CODES = new Set<UeToolErrorCode>(['plan_gate', 'tool_disabled']);
+const KNOWN_UE_CODES = new Set<UeToolErrorCode>([
+  'plan_gate',
+  'tool_disabled',
+  'lease_conflict',
+  'editor_unsafe_restart_required',
+  'native_fault_contained',
+  'pie_active',
+  'pie_blocked',
+  'asset_busy',
+  'package_read_only',
+  'owner_required',
+  'owner_reserved',
+  'exact_approval_unavailable',
+]);
 function mapUeCode(raw: string | undefined): UeToolErrorCode {
   if (raw && KNOWN_UE_CODES.has(raw as UeToolErrorCode)) return raw as UeToolErrorCode;
   return 'ue_error';
@@ -50,6 +90,13 @@ export const NON_IDEMPOTENT = new Set<string>([
   'actor_duplicate',
   'actor_batch_spawn',
   'actor_spawn_from_asset',
+  // Actor edits may have landed even when the TCP reply is lost. Replaying
+  // them can duplicate editor transactions or report a false failure when
+  // the actor's state changed after the first call.
+  'actor_transform',
+  'actor_set_properties',
+  'actor_tag',
+  'actor_set_visibility',
   // Asset lifecycle
   'asset_delete',
   'asset_duplicate',
@@ -158,6 +205,14 @@ export const NON_IDEMPOTENT = new Set<string>([
   // A world click can select, move, attack or open game state. Never repeat it
   // after a lost response; the first dispatch may already have landed.
   'editor_pie_click_actor',
+  // Arbitrary editor Python. A transport timeout does not mean the script did
+  // not run: the game thread may still be executing it (or have finished and
+  // lost the reply). Re-sending ran the same mutation twice, including World
+  // Partition load/unload sequences that must never overlap.
+  'python_run',
+  // Starts a multi-step job under a lease. A resend after a lost reply would
+  // start the same steps a second time (a second region load, a second save).
+  'editor_batch',
   // GAS
   'gas_create_ability',
   'gas_create_effect',
@@ -223,7 +278,15 @@ async function makeEditorBusyError(cmd: string, cause: unknown): Promise<UeToolE
   );
 }
 
-export type Sender = (cmd: string, params: Record<string, unknown>, timeoutMs: number) => Promise<TcpResponse>;
+export type Sender = (cmd: string, params: Record<string, unknown>, timeoutMs: number,
+  options?: { requireExactReview?: boolean }) => Promise<TcpResponse>;
+
+// The chat turn's safety requirement follows async captured TS handlers without
+// becoming a model-visible tool argument. Concurrent chat turns stay isolated.
+const exactReviewScope = new AsyncLocalStorage<boolean>();
+export function withExactReview<T>(required: boolean, operation: () => Promise<T>): Promise<T> {
+  return exactReviewScope.run(required || exactReviewScope.getStore() === true, operation);
+}
 
 export interface ExecuteOpts {
   /** Override the cost-derived default timeout. */
@@ -250,7 +313,11 @@ export async function executeCommand<T = Record<string, unknown>>(
   const heavy = isHeavyOp(cmd);
   const timeout = opts.timeout ?? resolveTimeoutMs(cmd);
 
-  const attemptOnce = async (): Promise<TcpResponse> => sender(cmd, params, timeout);
+  const requireExactReview = exactReviewScope.getStore() === true;
+  const attemptOnce = async (): Promise<TcpResponse> =>
+    requireExactReview
+      ? sender(cmd, params, timeout, { requireExactReview: true })
+      : sender(cmd, params, timeout);
 
   let resp: TcpResponse;
   try {
@@ -277,7 +344,22 @@ export async function executeCommand<T = Record<string, unknown>>(
     }
   }
 
-  if (resp.ok) return (resp.data ?? {}) as T;
+  if (resp.ok) {
+    const data = resp.data ?? {};
+    // Advisory mode runs the command but says why it was risky. Two cases:
+    // it collided with another agent's lease (lease_warning), or it ran while
+    // another owner builds its asset (state_warning, P0 T3). Both are
+    // top-level envelope fields; surface them in the data every tool
+    // returns, so the agent actually sees them.
+    if ((resp.lease_warning || resp.state_warning) && typeof data === 'object' && !Array.isArray(data)) {
+      return {
+        ...data,
+        ...(resp.lease_warning ? { lease_warning: resp.lease_warning } : {}),
+        ...(resp.state_warning ? { state_warning: resp.state_warning } : {}),
+      } as T;
+    }
+    return data as T;
+  }
   const code = mapUeCode(resp.code);
   throw new UeToolError(resp.error ?? 'unknown UE error', { code, uePayload: resp });
 }
@@ -312,8 +394,10 @@ export class InMemoryToolExecutor {
  *  unit-tested without the network. */
 export async function installLiveSender(): Promise<void> {
   const { ensureConnected } = await import('../tcp-client.js');
-  setDefaultSender(async (cmd, params, timeoutMs) => {
+  setDefaultSender(async (cmd, params, timeoutMs, options) => {
     const client = await ensureConnected();
-    return client.send(cmd, params, timeoutMs);
+    return options?.requireExactReview
+      ? client.send(cmd, params, timeoutMs, options)
+      : client.send(cmd, params, timeoutMs);
   });
 }

@@ -6,10 +6,10 @@
  * Plan-Mode safety gate honoured on both sides:
  *
  *   - UE-bridged commands: C++ is the AUTHORITATIVE gate. When Plan Mode is on
- *     and a destructive command runs without an approved plan, `ProcessCommand`
- *     returns `{ status: 'plan_mode_required', hint }` (ok:true). The loop
- *     recognises that payload, emits a `plan_request` event and PAUSES — it is
- *     NOT counted as a tool failure and no further tools are dispatched.
+ *     and a destructive command runs without exact approval, `ProcessCommand`
+ *     returns `plan_mode_required` with a proposal ID, operation digest, target
+ *     reference and fingerprint. The loop validates those fields, emits a
+ *     `plan_request` event and PAUSES without dispatching further tools.
  *   - TS-side handlers: many tools resolve entirely in Node and never reach the
  *     C++ gate, so the loop mirrors the C++ `IsDestructiveCommand` semantics via
  *     `isDestructiveToolName()` and pauses BEFORE dispatch when Plan Mode is on
@@ -31,6 +31,7 @@
 import { randomUUID } from 'node:crypto';
 import { z, type ZodRawShape, type ZodTypeAny } from 'zod';
 import type { AgentStreamEvent } from './activity-events.js';
+import { createHash } from 'node:crypto';
 import type {
   LLMClient,
   LLMContentBlock,
@@ -55,6 +56,8 @@ import {
 } from '../agents/agent-registry.js';
 import { selectSpecialist } from '../agents/specialist-router.js';
 import { listChatCapturedToolNames } from './tool-dispatch.js';
+import { redactBoundaryValue } from '../security/secret-redaction.js';
+import { warningIdForFinding } from './warning-identity.js';
 
 // ---------------------------------------------------------------------------
 // Destructive-name predicate — mirrors C++ IsDestructiveCommand semantics.
@@ -63,17 +66,18 @@ import { listChatCapturedToolNames } from './tool-dispatch.js';
 // ---------------------------------------------------------------------------
 
 /**
- * Command names that are destructive but not already in NON_IDEMPOTENT (e.g.
- * idempotent-on-retry setters and the wildcard/exec escape hatches). Kept in
- * sync with the C++ DestructiveCommands set in HaybaMCPCommandHandler.cpp.
+ * Additional command names requiring a plan, including setters and wildcard
+ * escape hatches. Some also appear in NON_IDEMPOTENT because a lost TCP reply
+ * must not replay their editor mutation. Kept in sync with the C++
+ * DestructiveCommands set in HaybaMCPCommandHandler.cpp.
  */
 const EXTRA_DESTRUCTIVE = new Set<string>([
   // Arbitrary code / wildcard invocation
   'python_run',
   'actor_call_function',
   'editor_run_console_command',
-  // Setters / mutations that are safe to retry (so not in NON_IDEMPOTENT) but
-  // still mutate scene/asset state and must be plan-gated.
+  // Setters / mutations that change scene or asset state and must be plan-gated.
+  'actor_transform',
   'actor_set_properties',
   'actor_set_visibility',
   'actor_snap_to_socket',
@@ -232,6 +236,177 @@ export function buildToolCatalog(opts: ToolCatalogOptions = {}): LLMTool[] {
 
 export type DispatchTool = (name: string, args: Record<string, unknown>) => Promise<unknown>;
 
+const WARNING_REVIEW_TOOL = 'hayba_warning_review';
+const UNKNOWN_WARNING_SOURCE = '0000000000000000';
+const warningReviewTool: LLMTool = {
+  name: WARNING_REVIEW_TOOL,
+  description: 'Review one pending validator warning with a concrete reason. An overflow may be deferred, or acknowledged only after complete fresh validation reports zero warnings for its affected scope. Review never claims an individual finding was fixed.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      warning_id: { type: 'string' },
+      disposition: { type: 'string', enum: ['acknowledged', 'deferred'] },
+      reason: { type: 'string', description: 'What was inspected or why review is deferred.' },
+    },
+    required: ['warning_id', 'disposition', 'reason'],
+  },
+};
+
+export interface WarningReviewRecord {
+  id: string;
+  status: 'pending' | 'acknowledged' | 'deferred';
+  reason?: string;
+}
+
+/** Bounded, session-scoped follow-through. A fresh finding reopens review. */
+export class WarningReviewLedger {
+  private readonly reviews = new Map<string, WarningReviewRecord>();
+  private overflow = false;
+  private readonly overflowSources = new Set<string>();
+  private readonly overflowValidatedSources = new Set<string>();
+  private overflowReview?: { status: 'deferred'; reason: string };
+
+  constructor(state?: { reviews?: WarningReviewRecord[]; overflow?: boolean; overflowSources?: string[]; overflowValidatedSources?: string[]; overflowReview?: { status: 'deferred'; reason: string } }) {
+    for (const record of state?.reviews ?? []) {
+      if (this.reviews.size >= 63 || !/^[a-z][a-z0-9_]{0,79}$/.test(record.id)) continue;
+      if (!['pending', 'acknowledged', 'deferred'].includes(record.status)) continue;
+      this.reviews.set(record.id, {
+        id: record.id, status: record.status,
+        ...(typeof record.reason === 'string' ? { reason: record.reason.slice(0, 500) } : {}),
+      });
+    }
+    this.overflow = state?.overflow === true;
+    for (const key of state?.overflowSources ?? []) {
+      if (/^[a-f0-9]{16}$/.test(key) && this.overflowSources.size < 16) this.overflowSources.add(key);
+    }
+    for (const key of state?.overflowValidatedSources ?? []) {
+      if (this.overflowSources.has(key)) this.overflowValidatedSources.add(key);
+    }
+    if (state?.overflowReview?.status === 'deferred' && typeof state.overflowReview.reason === 'string')
+      this.overflowReview = { status: 'deferred', reason: state.overflowReview.reason.slice(0, 500) };
+  }
+
+  record(ids: readonly string[], sourceKey?: string): void {
+    if (ids.length > 0 && sourceKey) this.overflowValidatedSources.delete(sourceKey);
+    for (const id of ids) {
+      if (!/^[a-z][a-z0-9_]{0,79}$/.test(id)) continue;
+      if (!this.reviews.has(id) && this.reviews.size >= 63) {
+        this.overflow = true;
+        this.overflowReview = undefined;
+        this.overflowSources.add(sourceKey && /^[a-f0-9]{16}$/.test(sourceKey) &&
+          (this.overflowSources.has(sourceKey) || this.overflowSources.size < 16)
+          ? sourceKey : UNKNOWN_WARNING_SOURCE);
+        continue;
+      }
+      this.reviews.set(id, { id, status: 'pending' });
+    }
+  }
+
+  /** Record fresh complete zero-warning evidence; explicit review clears later. */
+  reconcileCompleteValidation(sourceKey: string, warningCount: number): boolean {
+    if (!this.overflow || !this.overflowSources.has(sourceKey)) return false;
+    if (warningCount !== 0) { this.overflowValidatedSources.delete(sourceKey); return false; }
+    this.overflowValidatedSources.add(sourceKey);
+    return true;
+  }
+
+  pendingIds(): string[] {
+    const pending = [...this.reviews.values()].filter((review) => review.status === 'pending').map((review) => review.id);
+    if (this.overflow && !this.overflowReview) pending.push('warning_overflow');
+    return pending;
+  }
+
+  snapshot(): { reviews: WarningReviewRecord[]; overflow: boolean; overflowSources: string[]; overflowValidatedSources: string[]; overflowReview?: { status: 'deferred'; reason: string } } {
+    return { reviews: [...this.reviews.values()].map((record) => ({ ...record })), overflow: this.overflow,
+      overflowSources: [...this.overflowSources], overflowValidatedSources: [...this.overflowValidatedSources],
+      ...(this.overflowReview ? { overflowReview: { ...this.overflowReview } } : {}) };
+  }
+
+  hasDeferred(): boolean {
+    return !!this.overflowReview || [...this.reviews.values()].some((review) => review.status === 'deferred');
+  }
+
+  review(input: Record<string, unknown>): Record<string, unknown> {
+    const id = input.warning_id;
+    const status = input.disposition;
+    const reason = input.reason;
+    if (id === 'warning_overflow' && this.overflow) {
+      if (typeof reason !== 'string' || reason.trim().length < 4 || reason.length > 500)
+        return { ok: false, error: 'a concrete, bounded review reason is required' };
+      if (status === 'acknowledged') {
+        if (this.overflowSources.size === 0 || [...this.overflowSources].some((key) =>
+          key === UNKNOWN_WARNING_SOURCE || !this.overflowValidatedSources.has(key)))
+          return { ok: false, error: 'complete fresh zero-warning validation is required for every overflow scope' };
+        this.overflow = false;
+        this.overflowSources.clear();
+        this.overflowValidatedSources.clear();
+        this.overflowReview = undefined;
+        return { ok: true, warning_id: id, review_status: 'acknowledged', resolved: false, overflow_cleared: true };
+      }
+      if (status !== 'deferred') return { ok: false, error: 'disposition must be acknowledged or deferred' };
+      this.overflowReview = { status: 'deferred', reason: redactBoundaryValue(reason.trim()) as string };
+      return { ok: true, warning_id: id, review_status: 'deferred', resolved: false, overflow: true };
+    }
+    if (typeof id !== 'string' || this.reviews.get(id)?.status !== 'pending')
+      return { ok: false, error: 'warning_id is not pending in this chat session' };
+    if (status !== 'acknowledged' && status !== 'deferred')
+      return { ok: false, error: 'disposition must be acknowledged or deferred' };
+    if (typeof reason !== 'string' || reason.trim().length < 4 || reason.length > 500)
+      return { ok: false, error: 'a concrete, bounded review reason is required' };
+    this.reviews.set(id, { id, status, reason: redactBoundaryValue(reason.trim()) as string });
+    return { ok: true, warning_id: id, review_status: status, resolved: false };
+  }
+}
+
+function warningIdsFromToolResult(result: unknown): string[] {
+  const explicitIds = new Set<string>();
+  const fallbackIds = new Set<string>();
+  let findingOrdinal = 0;
+  const add = (set: Set<string>, id: unknown): void => {
+    if (typeof id === 'string' && /^[a-z][a-z0-9_]{0,79}$/.test(id) && set.size < 65) set.add(id);
+  };
+  const visit = (value: unknown, depth = 0): void => {
+    if (depth > 7 || !value || typeof value !== 'object') return;
+    if (Array.isArray(value)) {
+      for (const item of value.slice(0, 256)) visit(item, depth + 1);
+      return;
+    }
+    const object = value as Record<string, unknown>;
+    if (Array.isArray(object.warning_ids)) object.warning_ids.forEach((id) => add(explicitIds, id));
+    if (object.severity === 'warning') add(fallbackIds, warningIdForFinding(object, findingOrdinal++));
+    if (object.type === 'text' && typeof object.text === 'string') {
+      try { visit(JSON.parse(object.text), depth + 1); } catch { /* non-JSON text */ }
+    }
+    for (const child of Object.values(object).slice(0, 256)) visit(child, depth + 1);
+  };
+  visit(result);
+  return [...(explicitIds.size > 0 ? explicitIds : fallbackIds)];
+}
+
+function warningSourceKey(name: string, input: Record<string, unknown>): string {
+  const scope = { ...input };
+  delete scope.persist;
+  return createHash('sha256').update(stableStringify({ name, scope })).digest('hex').slice(0, 16);
+}
+
+/** Only a fully evaluated UI pass can supply overflow-retirement evidence.
+ *  validator_run lacks evaluated/skipped/editor-ready coverage today. */
+function isCompleteValidation(name: string, input: Record<string, unknown>, result: unknown): boolean {
+  if (name !== 'ui_validate') return false;
+  if (!result || typeof result !== 'object' || Array.isArray(result)) return false;
+  const value = result as Record<string, unknown>;
+  if (value.isError === true || value.ok === false || !Array.isArray(value.findings)) return false;
+  const counts = value.counts as Record<string, unknown> | undefined;
+  return !Object.hasOwn(input, 'rule_ids') &&
+    typeof input.widget_blueprint_path === 'string' && value.widget_blueprint_path === input.widget_blueprint_path &&
+    value.layout_resolved === true && !value.layout_error &&
+    Array.isArray(value.rules_skipped_no_layout) && value.rules_skipped_no_layout.length === 0 &&
+    Array.isArray(value.rules_disabled) && value.rules_disabled.length === 0 &&
+    Array.isArray(value.rules_below_strictness) && value.rules_below_strictness.length === 0 &&
+    typeof value.rules_evaluated === 'number' && Number.isInteger(value.rules_evaluated) && value.rules_evaluated > 0 &&
+    counts !== undefined && counts !== null && !Array.isArray(counts) && counts.warning === 0;
+}
+
 /**
  * Identity of a plan-gated tool call: the tool name plus a stable hash of its
  * arguments. Approval is bound to THIS identity (C1) so a resumed turn cannot
@@ -263,6 +438,8 @@ export const defaultDispatchTool: DispatchTool = (name, args) => executeCommand(
 
 export type AgentDoneReason =
   | 'end_turn'
+  | 'warnings_unreviewed'
+  | 'reviewed_with_deferred'
   | 'max_tokens'
   | 'context_window_exceeded'
   | 'provider_refusal'
@@ -273,12 +450,19 @@ export type AgentDoneReason =
   | 'aborted'
   | 'wall_clock';
 
+interface NativeApprovalMetadata {
+  nativeProposalId: string;
+  nativeOperationDigest: string;
+  nativeTargetRef: string;
+  nativeTargetFingerprint: string;
+}
+
 export type AgentEvent =
   | { type: 'text_delta'; text: string }
   | { type: 'tool_call'; call: LLMToolCall }
   | { type: 'tool_result'; id: string; name: string; result: unknown; isError?: boolean }
-  | { type: 'plan_request'; call: LLMToolCall; hint?: string; source: 'ts' | 'ue'; argsHash?: string }
-  | { type: 'done'; reason: AgentDoneReason; stopReason?: LLMStopReason; usage?: LLMUsage }
+  | ({ type: 'plan_request'; call: LLMToolCall; hint?: string; source: 'ts' | 'ue'; argsHash?: string } & Partial<NativeApprovalMetadata>)
+  | { type: 'done'; reason: AgentDoneReason; stopReason?: LLMStopReason; usage?: LLMUsage; pendingWarningIds?: string[]; warningReviews?: WarningReviewRecord[]; warningOverflow?: boolean }
   | { type: 'error'; error: string; kind?: string; reason?: string };
 
 export interface AgentLoopParams {
@@ -320,6 +504,7 @@ export interface AgentLoopParams {
   tokenBudget?: number;
   maxTokens?: number;
   dispatchTool?: DispatchTool;
+  warningLedger?: WarningReviewLedger;
   signal?: AbortSignal;
 }
 
@@ -341,32 +526,44 @@ function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);
 }
 
-/** Is a dispatch result the C++ Plan-Mode pause payload? */
-function isPlanModeRequired(result: unknown): result is { status: string; hint?: string } {
-  if (typeof result !== 'object' || result === null) return false;
+/** Find the C++ Plan-Mode pause payload, including MCP text envelopes. */
+function planModePayload(result: unknown): Record<string, unknown> | null {
+  if (typeof result !== 'object' || result === null) return null;
   const payload = result as {
     status?: unknown;
     stages?: Array<{ status?: unknown; code?: unknown }>;
     content?: Array<{ type?: unknown; text?: string }>;
   };
-  if (payload.status === 'plan_mode_required') return true;
+  if (payload.status === 'plan_mode_required') return result as Record<string, unknown>;
   if (
     Array.isArray(payload.stages) &&
     payload.stages.some((stage) => stage?.status === 'pending' && stage.code === 'plan_mode_required')
   )
-    return true;
+    return result as Record<string, unknown>;
   // Direct MCP dispatch may retain text blocks instead of unwrapping JSON.
-  return (
-    Array.isArray(payload.content) &&
-    payload.content.some((block) => {
-      if (block.type !== 'text' || typeof block.text !== 'string') return false;
-      try {
-        return isPlanModeRequired(JSON.parse(block.text));
-      } catch {
-        return false;
-      }
-    })
-  );
+  if (!Array.isArray(payload.content)) return null;
+  for (const block of payload.content) {
+    if (block.type !== 'text' || typeof block.text !== 'string') continue;
+    try {
+      const nested = planModePayload(JSON.parse(block.text));
+      if (nested) return nested;
+    } catch { /* A non-JSON text block is not a native approval response. */ }
+  }
+  return null;
+}
+
+function nativeApprovalMetadata(payload: Record<string, unknown>): NativeApprovalMetadata | null {
+  const valid = (value: unknown, max: number): value is string =>
+    typeof value === 'string' && value.trim().length > 0 && value.length <= max && !/[\x00-\x1f\x7f]/.test(value);
+  const { proposal_id, operation_digest, target_ref, target_fingerprint } = payload;
+  if (!valid(proposal_id, 128) || !valid(operation_digest, 128) ||
+      !valid(target_ref, 1024) || !valid(target_fingerprint, 128)) return null;
+  return {
+    nativeProposalId: proposal_id,
+    nativeOperationDigest: operation_digest,
+    nativeTargetRef: target_ref,
+    nativeTargetFingerprint: target_fingerprint,
+  };
 }
 
 /**
@@ -386,6 +583,7 @@ async function* runExecutionLoop(params: AgentLoopParams): AsyncGenerator<AgentE
     signal,
   } = params;
   const dispatchTool = params.dispatchTool ?? defaultDispatchTool;
+  const warningLedger = params.warningLedger ?? new WarningReviewLedger();
   // Call-bound approval is one-shot: consumed on the first matching dispatch.
   let approvalUsed = false;
 
@@ -440,9 +638,11 @@ async function* runExecutionLoop(params: AgentLoopParams): AsyncGenerator<AgentE
     let toolCalls: LLMToolCall[] = [];
     let stopReason: LLMStopReason = 'end_turn';
     let stopDiagnostic: LLMStopDiagnostic | undefined;
+    let sawTerminalResponse = false;
 
     try {
-      for await (const ev of client.stream({ system, messages, tools, maxTokens, signal })) {
+      const offeredTools = warningLedger.pendingIds().length > 0 ? [...tools, warningReviewTool] : tools;
+      for await (const ev of client.stream({ system, messages, tools: offeredTools, maxTokens, signal })) {
         if (signal?.aborted) {
           yield { type: 'error', error: 'aborted', kind: 'aborted' };
           yield { type: 'done', reason: 'aborted', usage };
@@ -452,6 +652,7 @@ async function* runExecutionLoop(params: AgentLoopParams): AsyncGenerator<AgentE
           yield { type: 'text_delta', text: ev.text };
           tokens += estimateTokens(ev.text);
         } else if (ev.type === 'done') {
+          sawTerminalResponse = true;
           content = ev.response.content;
           toolCalls = ev.response.toolCalls;
           stopReason = ev.response.stopReason;
@@ -468,6 +669,18 @@ async function* runExecutionLoop(params: AgentLoopParams): AsyncGenerator<AgentE
         return;
       }
       yield { type: 'error', error: e?.message ?? String(err), kind: e?.kind };
+      return;
+    }
+
+    if (!sawTerminalResponse) {
+      yield { type: 'error', kind: 'provider_protocol', error: 'The provider stream ended without a final response.' };
+      yield { type: 'done', reason: 'provider_protocol_error', stopReason: 'unknown', usage };
+      return;
+    }
+
+    if ((stopReason === 'end_turn' || stopReason === 'stop_sequence') && !content?.trim() && toolCalls.length === 0) {
+      yield { type: 'error', kind: 'provider_protocol', error: 'The provider completed without assistant text or a tool call.' };
+      yield { type: 'done', reason: 'provider_protocol_error', stopReason, usage };
       return;
     }
 
@@ -489,7 +702,15 @@ async function* runExecutionLoop(params: AgentLoopParams): AsyncGenerator<AgentE
     // ── Halt when the model is done ──────────────────────────────────────
     if (stopReason !== 'tool_use') {
       if (stopReason === 'end_turn' || stopReason === 'stop_sequence') {
-        yield { type: 'done', reason: 'end_turn', stopReason, usage };
+        const pendingWarningIds = warningLedger.pendingIds();
+        const snapshot = warningLedger.snapshot();
+        const reason = pendingWarningIds.length > 0 ? 'warnings_unreviewed'
+          : warningLedger.hasDeferred() ? 'reviewed_with_deferred' : 'end_turn';
+        yield { type: 'done', reason, stopReason, usage,
+          ...(pendingWarningIds.length > 0 ? { pendingWarningIds } : {}),
+          ...(snapshot.reviews.length > 0 ? { warningReviews: snapshot.reviews } : {}),
+          ...(snapshot.overflow ? { warningOverflow: true } : {}),
+        };
         return;
       }
       if (stopReason === 'max_tokens') {
@@ -567,6 +788,14 @@ async function* runExecutionLoop(params: AgentLoopParams): AsyncGenerator<AgentE
       }
       yield { type: 'tool_call', call };
 
+      if (call.name === WARNING_REVIEW_TOOL && warningLedger.pendingIds().length > 0) {
+        const result = warningLedger.review(call.input);
+        const isError = result.ok !== true;
+        yield { type: 'tool_result', id: call.id, name: call.name, result, isError };
+        toolResultBlocks.push({ type: 'tool_result', tool_use_id: call.id, content: JSON.stringify(result), is_error: isError });
+        continue;
+      }
+
       // Filtered / disabled: refuse without dispatching. Feed the refusal back
       // so the model can adapt rather than silently stalling.
       if (!allowedNames.has(call.name)) {
@@ -630,20 +859,39 @@ async function* runExecutionLoop(params: AgentLoopParams): AsyncGenerator<AgentE
       }
 
       // C++ Plan-Mode gate response: pause, NOT a failure, no further dispatch.
-      if (isPlanModeRequired(result)) {
+      const nativePause = planModePayload(result);
+      if (nativePause) {
+        const metadata = nativeApprovalMetadata(nativePause);
+        if (!metadata) {
+          yield {
+            type: 'error',
+            kind: 'approval_metadata_invalid',
+            error: 'The editor requested approval without complete native proposal details. The edit was not approved; start a new review after checking the editor.',
+          };
+          return;
+        }
         yield {
           type: 'plan_request',
           call,
           source: 'ue',
-          hint: (result as { hint?: string }).hint,
+          hint: typeof nativePause.hint === 'string' ? nativePause.hint : undefined,
+          ...metadata,
         };
         return;
       }
 
       yield { type: 'tool_result', id: call.id, name: call.name, result };
       const serialized = JSON.stringify(result);
-      toolResultBlocks.push({ type: 'tool_result', tool_use_id: call.id, content: serialized });
-      tokens += estimateTokens(serialized);
+      const warningIds = warningIdsFromToolResult(result);
+      const sourceKey = warningSourceKey(call.name, call.input);
+      if (isCompleteValidation(call.name, call.input, result))
+        warningLedger.reconcileCompleteValidation(sourceKey, warningIds.length);
+      warningLedger.record(warningIds, sourceKey);
+      const reviewInstruction = warningIds.length > 0
+        ? `\nHayba warning review required for IDs: ${warningIds.join(', ')}. Inspect the finding and call ${WARNING_REVIEW_TOOL} for each ID with acknowledged or deferred and a concrete reason. Review does not mean resolved; only revalidation can establish that.`
+        : '';
+      toolResultBlocks.push({ type: 'tool_result', tool_use_id: call.id, content: serialized + reviewInstruction });
+      tokens += estimateTokens(serialized + reviewInstruction);
     }
 
     // Feed the batch of tool_result blocks back to the model and continue.
@@ -730,6 +978,12 @@ export async function* runAgentLoop(params: AgentLoopParams): AsyncGenerator<Age
           argsHash: event.argsHash ?? argsHash(event.call.input),
           source: event.source,
           hint: event.hint,
+          ...(event.source === 'ue' ? {
+            nativeProposalId: event.nativeProposalId,
+            nativeOperationDigest: event.nativeOperationDigest,
+            nativeTargetRef: event.nativeTargetRef,
+            nativeTargetFingerprint: event.nativeTargetFingerprint,
+          } : {}),
         };
         break;
       case 'error':
@@ -739,6 +993,21 @@ export async function* runAgentLoop(params: AgentLoopParams): AsyncGenerator<Age
         break;
       case 'done': {
         const { reason, stopReason, usage } = event;
+        if (reason === 'warnings_unreviewed' || reason === 'reviewed_with_deferred') {
+          // The shared brain-protocol termination enum predates local warning
+          // review. Preserve its schema while making unresolved review a
+          // visible failed activity. The legacy adapter restores the precise
+          // reason and ledger details for the in-editor chat response.
+          yield {
+            type: 'error', activityId, kind: reason,
+            error: reason === 'warnings_unreviewed'
+              ? 'Hayba warnings require review before this turn can be considered complete.'
+              : 'Hayba warnings were deferred and remain unresolved.',
+            termination: { reason: 'end_turn', stopReason, usage },
+          };
+          pendingError = undefined;
+          break;
+        }
         if (pendingError && reason !== 'aborted') {
           yield { ...pendingError, activityId, termination: { reason, stopReason, usage } };
         } else {
@@ -766,6 +1035,7 @@ export async function* runAgentLoop(params: AgentLoopParams): AsyncGenerator<Age
 export async function* adaptToLegacy(
   source: AsyncIterable<AgentStreamEvent>,
   observe?: (event: AgentStreamEvent) => void,
+  warningLedger?: WarningReviewLedger,
 ): AsyncGenerator<AgentEvent, void, unknown> {
   for await (const event of source) {
     observe?.(event);
@@ -795,6 +1065,12 @@ export async function* adaptToLegacy(
           source: event.source,
           hint: event.hint,
           ...(event.source === 'ts' ? { argsHash: event.argsHash } : {}),
+          ...(event.source === 'ue' ? {
+            nativeProposalId: event.nativeProposalId,
+            nativeOperationDigest: event.nativeOperationDigest,
+            nativeTargetRef: event.nativeTargetRef,
+            nativeTargetFingerprint: event.nativeTargetFingerprint,
+          } : {}),
         };
         break;
       case 'activity_completed':
@@ -802,6 +1078,16 @@ export async function* adaptToLegacy(
         yield { type: 'done', reason: event.reason, stopReason: event.stopReason, usage: event.usage };
         break;
       case 'error':
+        if (event.kind === 'warnings_unreviewed' || event.kind === 'reviewed_with_deferred') {
+          const snapshot = warningLedger?.snapshot();
+          yield { type: 'done', reason: event.kind, stopReason: event.termination?.stopReason,
+            usage: event.termination?.usage,
+            ...(warningLedger?.pendingIds().length ? { pendingWarningIds: warningLedger.pendingIds() } : {}),
+            ...(snapshot?.reviews.length ? { warningReviews: snapshot.reviews } : {}),
+            ...(snapshot?.overflow ? { warningOverflow: true } : {}),
+          };
+          break;
+        }
         yield { type: 'error', error: event.error, kind: event.kind };
         if (event.termination) yield { type: 'done', ...event.termination };
         break;
@@ -814,5 +1100,6 @@ export async function* runLegacyAgentLoop(
   params: AgentLoopParams,
   observe?: (event: AgentStreamEvent) => void,
 ): AsyncGenerator<AgentEvent, void, unknown> {
-  yield* adaptToLegacy(runAgentLoop(params), observe);
+  const warningLedger = params.warningLedger ?? new WarningReviewLedger();
+  yield* adaptToLegacy(runAgentLoop({ ...params, warningLedger }), observe, warningLedger);
 }

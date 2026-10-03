@@ -836,7 +836,7 @@ namespace
             // whenever a preview is attached — so a value could be read from
             // one place, modified, and written through another, and anchors in
             // particular could be rebuilt from a stale copy. Field report
-            // (2026-07/08, Aphrosia): ui_set_slot_layout anchors were a silent
+            // from live UMG testing: ui_set_slot_layout anchors were a silent
             // no-op and the working workaround was object_set_property with a
             // full LayoutData literal on the slot. This is that workaround made
             // first-class: build the complete FAnchorData from the serialized
@@ -2858,10 +2858,20 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleCompile(const TSharedPtr<FJsonObje
     if (!WBP)
         return FHaybaHandlerResult::Err(TEXT("ui_compile_widget: widget blueprint not found"));
 
-    FCompileResult CR = CompileWidgetBlueprint(WBP);
-
     bool bSaveOnSuccess = false;
     P->TryGetBoolField(TEXT("save_on_success"), bSaveOnSuccess);
+    if (bSaveOnSuccess)
+    {
+        // Compiling reconciles widget GUIDs (a mutation), so refuse first.
+        FHaybaHandlerResult ReadOnly;
+        if (HaybaSaveVerify::RefuseIfReadOnly(TEXT("ui_compile_widget"), WBP->GetOutermost()->GetName(), ReadOnly,
+                TEXT("Or pass save_on_success:false to compile without saving.")))
+        {
+            return ReadOnly;
+        }
+    }
+
+    FCompileResult CR = CompileWidgetBlueprint(WBP);
 
     HaybaSaveVerify::FResult SaveResult;
     bool bAttemptedSave = false;
@@ -2893,6 +2903,16 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleSave(const TSharedPtr<FJsonObject>
     UWidgetBlueprint* WBP = LoadObject<UWidgetBlueprint>(nullptr, *BPPath);
     if (!WBP)
         return FHaybaHandlerResult::Err(TEXT("ui_save_widget: widget blueprint not found"));
+
+    // Before ReconcileWidgetVariableGuids, which can rewrite the GUID map: a
+    // refusal after a mutation would read as session_suspect.
+    {
+        FHaybaHandlerResult ReadOnly;
+        if (HaybaSaveVerify::RefuseIfReadOnly(TEXT("ui_save_widget"), WBP->GetOutermost()->GetName(), ReadOnly))
+        {
+            return ReadOnly;
+        }
+    }
 
     FString InvariantError;
     if (!ReconcileWidgetVariableGuids(WBP, TEXT("ui_save_widget preflight"), InvariantError))

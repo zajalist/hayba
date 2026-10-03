@@ -26,10 +26,6 @@ packs:
       - hayba_ambientcg_download
       - hayba_sketchfab_search
       - hayba_sketchfab_download
-      - hayba_fab_login_status
-      - hayba_fab_library_list
-      - hayba_fab_marketplace_search
-      - hayba_fab_download
 
   - name: editor
     kind: workflow

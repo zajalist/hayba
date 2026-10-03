@@ -44,6 +44,9 @@ namespace
     bool IsTipField(const FString& Field)
     {
         const FString Name = Field.ToLower();
+        // Required read-only recovery data must survive ErrorsOnly alongside
+        // the mandatory next action that directs callers to this field.
+        if (Name == TEXT("make_writable_hint")) return false;
         return Name == TEXT("tip") || Name == TEXT("tips")
             || Name == TEXT("hint") || Name == TEXT("hints")
             || Name == TEXT("suggestion") || Name == TEXT("suggestions")
@@ -280,6 +283,14 @@ namespace HaybaMCPAdvisory
                 // not optional coaching, and survives ErrorsOnly.
                 AddUniqueNonEmpty(Result.MandatoryRecovery, Result.NextAction);
             }
+            else if (Result.Code == TEXT("package_read_only"))
+            {
+                // A read-only package fails the same way on every retry; the fix
+                // is outside the editor, so the step is safety data and survives
+                // ErrorsOnly.
+                Result.NextAction = TEXT("Make the package file writable (take its source-control lock), then retry; see data.make_writable_hint. Retrying unchanged will fail again.");
+                AddUniqueNonEmpty(Result.MandatoryRecovery, Result.NextAction);
+            }
             else
             {
                 AddUniqueNonEmpty(Result.Tips, Result.NextAction);
@@ -378,6 +389,17 @@ namespace HaybaMCPAdvisory
                 Result.Summary = FString::Printf(TEXT("%s completed successfully."), *Operation);
             }
             break;
+        }
+
+        // A contained native fault (ADR-0011): whatever the state, the only
+        // recovery is a restart, and nothing is retryable until then.
+        if (Signals.bEditorUnsafe)
+        {
+            static const TCHAR* const RestartLine = TEXT("Fault contained; restart the editor before further work.");
+            Result.SessionHealth = EHaybaMCPSessionHealth::RestartRequired;
+            Result.bRetryable = false;
+            Result.NextAction = RestartLine;
+            AddUniqueNonEmpty(Result.MandatoryRecovery, RestartLine);
         }
 
         return Result;

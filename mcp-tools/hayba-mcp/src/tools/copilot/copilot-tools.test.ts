@@ -14,6 +14,7 @@ import {
 import { __resetChatState, registerChatRoutes } from '../../chat/chat-server.js';
 import { setDefaultSender, type Sender } from '../tool-executor.js';
 import type { LLMClient } from '../../agents/llm-client.js';
+import { __resetModelDiscovery, __setModelDiscoveryFetch } from '../../agents/model-discovery.js';
 
 function textOf(result: { content: Array<{ type: 'text'; text: string }> }): unknown {
   return JSON.parse(result.content[0].text);
@@ -22,10 +23,16 @@ function textOf(result: { content: Array<{ type: 'text'; text: string }> }): unk
 beforeEach(() => {
   __resetChatState();
   __resetClientFactory();
+  __resetModelDiscovery();
+  __setModelDiscoveryFetch(vi.fn(async () => new Response(JSON.stringify({
+    data: [{ id: 'claude-sonnet-4-8', display_name: 'Claude Sonnet', max_input_tokens: 128000 }],
+    has_more: false,
+  }), { status: 200 })) as typeof fetch);
 });
 afterEach(() => {
   __resetChatState();
   __resetClientFactory();
+  __resetModelDiscovery();
 });
 
 describe('copilot_provider_list / copilot_provider_set — config store round-trip', () => {
@@ -126,17 +133,30 @@ describe('key-safety canary — no handler ever returns the raw key', () => {
 });
 
 describe('copilot_model_list', () => {
-  it('is advisory and includes the configured + default model', async () => {
+  it('is advisory and lists only verified IDs while retaining the manual configured ID', async () => {
+    await keySetHandler({ provider: 'anthropic', api_key: 'synthetic-key' }, {});
     await providerSetHandler({ provider: 'anthropic', model: 'claude-sonnet-4-8' }, {});
     const data = textOf(await modelListHandler({ provider: 'anthropic' }, {})) as {
       known_models: string[];
       configured_model: string;
+      default_model: string | null;
+      discovery_status: string;
+      models: Array<{ id: string; context_tokens: number }>;
       advisory: boolean;
     };
     expect(data.advisory).toBe(true);
+    expect(data.discovery_status).toBe('ok');
     expect(data.configured_model).toBe('claude-sonnet-4-8');
-    expect(data.known_models).toContain('claude-sonnet-4-8');
-    expect(data.known_models).toContain('claude-opus-4-8'); // catalog default
+    expect(data.known_models).toEqual(['claude-sonnet-4-8']);
+    expect(data.default_model).toBeNull(); // Static default was not verified by the provider.
+    expect(data.models[0]).toMatchObject({ id: 'claude-sonnet-4-8', context_tokens: 128000 });
+  });
+
+  it('does not suggest stale catalog IDs when no key is configured', async () => {
+    const data = textOf(await modelListHandler({ provider: 'groq' }, {})) as {
+      known_models: string[]; default_model: string | null; discovery_status: string;
+    };
+    expect(data).toMatchObject({ known_models: [], default_model: null, discovery_status: 'no_key' });
   });
 
   it('rejects an unknown provider', async () => {

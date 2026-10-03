@@ -1,6 +1,6 @@
 {
   "name": "hayba",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "description": "Agentic spatial & procedural world-building for Unreal Engine 5 — MCP server + UE5 plugin + worldbuilding packages + website.",
   "keywords": ["mcp", "unreal-engine", "ue5", "procedural-generation", "pcg", "worldbuilding", "ai-agents", "conlang"],
@@ -19,13 +19,14 @@
     "lint:fix": "eslint . --fix",
     "format": "prettier --check \"**/*.{ts,js,json,md}\"",
     "format:fix": "prettier --write \"**/*.{ts,js,json,md}\"",
-    "typecheck": "tsc -b --noEmit",
+    "typecheck": "npm run typecheck --workspaces --if-present",
     "audit:production": "node mcp-tools/hayba-mcp/scripts/audit-production-dependencies.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "eslint": "^10.8.0",
     "eslint-config-prettier": "^10.0.0",
+    "globals": "^17.13.0",
     "prettier": "^3.9.6",
     "typescript-eslint": "^8.66.0"
   },

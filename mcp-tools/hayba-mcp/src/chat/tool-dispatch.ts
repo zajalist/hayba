@@ -66,11 +66,36 @@ export function unwrapMcpResult(result: unknown): unknown {
     const content = (result as { content: Array<Record<string, unknown>> }).content;
     const first = content[0];
     if (first && first.type === 'text' && typeof first.text === 'string') {
+      let value: unknown;
       try {
-        return JSON.parse(first.text);
+        value = JSON.parse(first.text);
       } catch {
-        return first.text;
+        value = first.text;
       }
+      // Advisory filtering may append the minimal validator warning IDs as a
+      // later MCP text block. The in-editor dispatcher historically unwrapped
+      // only content[0], causing the chat orchestrator to miss those warnings.
+      const ids = new Set<string>();
+      let validatorExtra: Record<string, unknown> = {};
+      for (const block of content.slice(1)) {
+        if (block?.type !== 'text' || typeof block.text !== 'string') continue;
+        try {
+          const parsed = JSON.parse(block.text) as { validator?: Record<string, unknown> };
+          if (parsed?.validator && typeof parsed.validator === 'object')
+            validatorExtra = { ...validatorExtra, ...parsed.validator };
+          for (const id of Array.isArray(parsed?.validator?.warning_ids) ? parsed.validator.warning_ids : []) {
+            if (typeof id === 'string' && /^[a-z][a-z0-9_]{0,79}$/.test(id) && ids.size < 65) ids.add(id);
+          }
+        } catch { /* other MCP prose retains the existing first-block behavior */ }
+      }
+      if (ids.size === 0 && Object.keys(validatorExtra).length === 0) return value;
+      const base = value && typeof value === 'object' && !Array.isArray(value)
+        ? value as Record<string, unknown> : { value };
+      return { ...base, validator: {
+        ...(typeof base.validator === 'object' && base.validator ? base.validator : {}),
+        ...validatorExtra,
+        ...(ids.size > 0 ? { warning_ids: [...ids] } : {}),
+      } };
     }
   }
   return result;

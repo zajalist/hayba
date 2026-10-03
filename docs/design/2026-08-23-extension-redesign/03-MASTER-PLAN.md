@@ -132,7 +132,7 @@ TS side [01c ranked list, endorsed]:
 - **F7.** W0 from 02-PLAN, sharpened by the reviews: generate `sidecar.json`
   and `CAPABILITIES.md` from `GetCommands()` at build; CI gate on drift
   (82 implemented-but-undescribed commands today); fix `.codex/config.toml`
-  geoforge paths.
+  external host project paths.
 - **F8.** W1b: precompute the `searchNodes` haystack (afternoon; 10–50×).
 
 C++ side [01b ranked list, endorsed]:

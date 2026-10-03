@@ -1,11 +1,13 @@
 #include "HaybaMCPAgentClient.h"
 #include "HaybaMCPActivityModel.h"
 #include "HaybaMCPModule.h"
+#include "HaybaMCPModelDiscovery.h"
 #include "HaybaMCPSettings.h"
 #include "HttpModule.h"
 #include "Interfaces/IHttpResponse.h"
 #include "Json.h"
 #include "Misc/Guid.h"
+#include "Editor.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogHaybaAgentClient, Log, All);
 
@@ -14,6 +16,15 @@ DEFINE_LOG_CATEGORY_STATIC(LogHaybaAgentClient, Log, All);
 // ─────────────────────────────────────────────────────────────────────────────
 namespace
 {
+	// HTTP completion delegates run inside FHttpManager's request iteration.
+	// Registering another request there can invalidate its ranged-for iterator.
+	template <typename F>
+	void AfterHttpTick(F&& Continuation)
+	{
+		if (!GEditor) return; // editor shutdown: never run a continuation inline
+		GEditor->GetTimerManager()->SetTimerForNextTick(Forward<F>(Continuation));
+	}
+
 	/** Serialize a JSON object to a compact string. */
 	FString JsonToString(const TSharedRef<FJsonObject>& Root)
 	{
@@ -65,12 +76,36 @@ namespace
 		if (!Root->TryGetBoolField(TEXT("signed_in"), bSignedIn)) return EHaybaBrainSignIn::Unknown;
 		return bSignedIn ? EHaybaBrainSignIn::SignedIn : EHaybaBrainSignIn::NotSignedIn;
 	}
+
+	// The sidecar's warning ledger emits identifiers with this restricted shape.
+	// Revalidate at the SSE boundary so arbitrary server text cannot become a
+	// saved Chat notice, and never log or copy the raw pending_warning_ids field.
+	bool IsSafeWarningId(const FString& Id)
+	{
+		if (Id.IsEmpty() || Id.Len() > 80 || Id[0] < TEXT('a') || Id[0] > TEXT('z'))
+		{
+			return false;
+		}
+		for (const TCHAR Character : Id)
+		{
+			const bool bLower = Character >= TEXT('a') && Character <= TEXT('z');
+			const bool bDigit = Character >= TEXT('0') && Character <= TEXT('9');
+			if (!bLower && !bDigit && Character != TEXT('_')) return false;
+		}
+		return true;
+	}
 }
 
 FHaybaMCPAgentClient::~FHaybaMCPAgentClient()
 {
 	// Best-effort: drop callbacks and cancel any in-flight request so a late HTTP
 	// tick cannot re-enter a destroyed client. (Callbacks also capture a weak ptr.)
+	if (ConfigRequest.IsValid())
+	{
+		ConfigRequest->OnProcessRequestComplete().Unbind();
+		ConfigRequest->CancelRequest();
+		ConfigRequest.Reset();
+	}
 	if (StreamRequest.IsValid())
 	{
 		if (!bTerminalEmitted) MarkActivitiesDisconnected();
@@ -89,13 +124,14 @@ FString FHaybaMCPAgentClient::MakeSessionId()
 // ─────────────────────────────────────────────────────────────────────────────
 // Public entry
 // ─────────────────────────────────────────────────────────────────────────────
-void FHaybaMCPAgentClient::SendPrompt(const FString& UserPrompt, const FString& InWorkMode)
+void FHaybaMCPAgentClient::SendPrompt(const FString& UserPrompt, const FString& InWorkMode,
+	const FString& InModelId, const FString& InReasoningEffort)
 {
 	// Re-entrancy guard: a second SendPrompt while a turn is in flight would
 	// start a second /chat/stream sharing this instance's ParseCursor +
 	// AccumulatedText (reset in StartStream), corrupting the live parse. The
 	// server 409s a concurrent turn, but self-guard so the UI can't garble it.
-	if (bStreaming || bTurnPending)
+	if (bStreaming || bTurnPending || ConfigGate.IsPending())
 	{
 		FHaybaChatError Busy;
 		Busy.Error = TEXT("a chat turn is already in progress; cancel it or wait for done");
@@ -109,7 +145,19 @@ void FHaybaMCPAgentClient::SendPrompt(const FString& UserPrompt, const FString& 
 		bForceCommunityThisChat = false;
 	}
 	bTerminalEmitted = false;
+	bApprovalPauseSeen = false;
+	ApprovalActivityId.Empty();
 	WorkMode = InWorkMode;
+	TurnPrompt = UserPrompt;
+	const FHaybaMCPSettings& Settings = FHaybaMCPSettings::Get();
+	const bool bLoopbackSidecar = FHaybaMCPModelDiscoveryClient::TryCanonicalLoopbackBase(
+		Settings.SidecarURL, TurnSidecarURL);
+	TurnProviderId = Settings.SelectedProviderId;
+	TurnBaseURL = Settings.BaseURL;
+	TurnFallbackModel = Settings.Model;
+	TurnBrainLlmMode = Settings.BrainLlmMode;
+	TurnModelId = InModelId;
+	TurnReasoningEffort = InReasoningEffort;
 	// The turn is pending until /chat/stream starts (or it terminates). Every
 	// pre-stream continuation checks this generation, so a Stop pressed during
 	// the /brain/status, /brain/config or /chat/config round-trip wins.
@@ -117,20 +165,80 @@ void FHaybaMCPAgentClient::SendPrompt(const FString& UserPrompt, const FString& 
 	++TurnGeneration;
 	AccumulatedText.Empty();
 	bCurrentTurnPro = IsProLoopActive();
-
-	if (IsProLoopActive())
+	if (!bLoopbackSidecar)
 	{
-		CheckBrainThenStream(UserPrompt);
+		OnError.Broadcast(FHaybaChatError{TEXT("Chat sidecar address must be a local loopback origin."), TEXT("config")});
+		EmitLocalDone(TEXT("error"), /*cancelled*/ false);
 		return;
 	}
-	ConfigureAndStream(UserPrompt);
+
+	CheckSidecarThenStream(UserPrompt);
+}
+
+bool FHaybaMCPAgentClient::HasCompatibleSidecarIdentity(const FJsonObject& Health)
+{
+	FString Service;
+	FString Protocol;
+	FString Status;
+	return Health.TryGetStringField(TEXT("service"), Service) && Service == TEXT("hayba-mcp") &&
+		Health.TryGetStringField(TEXT("chatProtocol"), Protocol) &&
+		Protocol == TEXT("hayba-chat-2026-10-03") &&
+		Health.TryGetStringField(TEXT("status"), Status) && Status == TEXT("ok");
+}
+
+void FHaybaMCPAgentClient::CheckSidecarThenStream(const FString& UserPrompt)
+{
+	TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();
+	IdentityRequest = Request;
+	Request->SetURL(TurnSidecarURL / TEXT("api/health"));
+	Request->SetVerb(TEXT("GET"));
+	Request->SetTimeout(5.0f);
+	const uint32 Generation = TurnGeneration;
+	TWeakPtr<FHaybaMCPAgentClient> WeakSelf = AsShared();
+	Request->OnProcessRequestComplete().BindLambda(
+		[WeakSelf, UserPrompt, Generation](FHttpRequestPtr Req, FHttpResponsePtr Response, bool bConnected)
+		{
+			TSharedPtr<FHaybaMCPAgentClient> Self = WeakSelf.Pin();
+			if (!Self.IsValid() || !Self->IsTurnCurrent(Generation)) return;
+			Self->IdentityRequest.Reset();
+			TSharedPtr<FJsonObject> Health;
+			const bool bCompatible = bConnected && Response.IsValid() && Req.IsValid() &&
+				Req->GetEffectiveURL().Equals(Self->TurnSidecarURL / TEXT("api/health"), ESearchCase::CaseSensitive) &&
+				Response->GetResponseCode() == 200 && Response->GetContent().Num() <= 4096 &&
+				FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Response->GetContentAsString()), Health) &&
+				Health.IsValid() && FHaybaMCPAgentClient::HasCompatibleSidecarIdentity(*Health);
+			if (!bCompatible)
+			{
+				Self->OnError.Broadcast(FHaybaChatError{
+					TEXT("The chat sidecar is unavailable or incompatible. Restart Hayba's sidecar, then retry; your message is still here."),
+					TEXT("sidecar_identity") });
+				Self->EmitLocalDone(TEXT("error"), /*cancelled*/ false);
+				return;
+			}
+			// Never register the next HTTP request from FHttpManager's own
+			// completion iteration.
+			AfterHttpTick([WeakSelf, UserPrompt, Generation]()
+			{
+				TSharedPtr<FHaybaMCPAgentClient> Next = WeakSelf.Pin();
+				if (!Next.IsValid() || !Next->IsTurnCurrent(Generation)) return;
+				if (Next->bCurrentTurnPro) Next->CheckBrainThenStream(UserPrompt);
+				else Next->ConfigureAndStream(UserPrompt);
+			});
+		});
+	if (!Request->ProcessRequest() && IsTurnCurrent(Generation))
+	{
+		IdentityRequest.Reset();
+		OnError.Broadcast(FHaybaChatError{
+			TEXT("Could not connect to the Hayba chat sidecar. Restart it, then retry."), TEXT("transport") });
+		EmitLocalDone(TEXT("error"), /*cancelled*/ false);
+	}
 }
 
 void FHaybaMCPAgentClient::ForceCommunityThisChat()
 {
 	bForceCommunityThisChat = true;
-	// Re-post /chat/config so the Community turn runs with the current provider key.
-	bConfigDone = false;
+	// Every new turn posts /chat/config, so the next Community turn uses the
+	// current provider key without retaining a stale sidecar configuration.
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -144,8 +252,9 @@ void FHaybaMCPAgentClient::ForceCommunityThisChat()
 void FHaybaMCPAgentClient::CheckBrainThenStream(const FString& UserPrompt)
 {
 	TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();
-	Request->SetURL(FHaybaMCPSettings::Get().SidecarURL / TEXT("brain/status"));
+	Request->SetURL(TurnSidecarURL / TEXT("brain/status"));
 	Request->SetVerb(TEXT("GET"));
+	Request->SetTimeout(10.0f);
 
 	TWeakPtr<FHaybaMCPAgentClient> WeakSelf = AsShared();
 	const FString CapturedPrompt = UserPrompt;
@@ -166,13 +275,27 @@ void FHaybaMCPAgentClient::CheckBrainThenStream(const FString& UserPrompt)
 				const FString RefreshToken = FHaybaMCPSettings::GetProviderKey(TEXT("hayba-brain"));
 				if (!RefreshToken.IsEmpty())
 				{
-					Self->PostBrainConfig(CapturedPrompt, RefreshToken);
+					AfterHttpTick([WeakSelf, CapturedPrompt, RefreshToken, Generation]()
+					{
+						TSharedPtr<FHaybaMCPAgentClient> Next = WeakSelf.Pin();
+						if (Next.IsValid() && Next->IsTurnCurrent(Generation))
+							Next->PostBrainConfig(CapturedPrompt, RefreshToken);
+					});
 					return;
 				}
 			}
-			Self->ConfigureAndStream(CapturedPrompt);
+			AfterHttpTick([WeakSelf, CapturedPrompt, Generation]()
+			{
+				TSharedPtr<FHaybaMCPAgentClient> Next = WeakSelf.Pin();
+				if (Next.IsValid() && Next->IsTurnCurrent(Generation))
+					Next->ConfigureAndStream(CapturedPrompt);
+			});
 		});
-	Request->ProcessRequest();
+	if (!Request->ProcessRequest() && IsTurnCurrent(Generation))
+	{
+		OnError.Broadcast(FHaybaChatError{TEXT("Could not start the Hayba brain status request."), TEXT("transport")});
+		EmitLocalDone(TEXT("error"), /*cancelled*/ false);
+	}
 }
 
 bool FHaybaMCPAgentClient::IsTurnCurrent(uint32 Generation) const
@@ -187,14 +310,8 @@ bool FHaybaMCPAgentClient::IsProLoopActive() const
 
 void FHaybaMCPAgentClient::ConfigureAndStream(const FString& UserPrompt)
 {
-	if (bConfigDone)
-	{
-		StartStream(UserPrompt);
-	}
-	else
-	{
-		PostConfig(UserPrompt);
-	}
+	ConfigGate.Begin();
+	PostConfig(UserPrompt);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -212,10 +329,11 @@ void FHaybaMCPAgentClient::PostBrainConfig(const FString& UserPrompt, const FStr
 	}
 
 	TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();
-	Request->SetURL(Settings.SidecarURL / TEXT("brain/config"));
+	Request->SetURL(TurnSidecarURL / TEXT("brain/config"));
 	Request->SetVerb(TEXT("POST"));
 	Request->SetHeader(TEXT("Content-Type"), TEXT("application/json"));
 	Request->SetContentAsString(JsonToString(Body));
+	Request->SetTimeout(10.0f);
 
 	// NB: never log the body — it carries the refresh token.
 	UE_LOG(LogHaybaAgentClient, Verbose, TEXT("POST /brain/config (token %d bytes, not logged)"), RefreshToken.Len());
@@ -235,10 +353,19 @@ void FHaybaMCPAgentClient::PostBrainConfig(const FString& UserPrompt, const FStr
 				UE_LOG(LogHaybaAgentClient, Verbose, TEXT("POST /brain/config did not succeed (HTTP %d)"),
 					Response.IsValid() ? Response->GetResponseCode() : 0);
 			}
-			Self->ConfigureAndStream(CapturedPrompt);
+			AfterHttpTick([WeakSelf, CapturedPrompt, Generation]()
+			{
+				TSharedPtr<FHaybaMCPAgentClient> Next = WeakSelf.Pin();
+				if (Next.IsValid() && Next->IsTurnCurrent(Generation))
+					Next->ConfigureAndStream(CapturedPrompt);
+			});
 		});
 
-	Request->ProcessRequest();
+	if (!Request->ProcessRequest() && IsTurnCurrent(Generation))
+	{
+		OnError.Broadcast(FHaybaChatError{TEXT("Could not start the Hayba brain setup request."), TEXT("transport")});
+		EmitLocalDone(TEXT("error"), /*cancelled*/ false);
+	}
 }
 
 // Supabase rotates the refresh token on every refresh; the sidecar hands the new
@@ -246,50 +373,75 @@ void FHaybaMCPAgentClient::PostBrainConfig(const FString& UserPrompt, const FStr
 void FHaybaMCPAgentClient::StoreRotatedBrainToken()
 {
 	TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();
-	Request->SetURL(FHaybaMCPSettings::Get().SidecarURL / TEXT("brain/status"));
+	Request->SetURL(TurnSidecarURL / TEXT("brain/status"));
 	Request->SetVerb(TEXT("GET"));
+	Request->SetTimeout(10.0f);
 	Request->OnProcessRequestComplete().BindLambda(
 		[](FHttpRequestPtr /*Req*/, FHttpResponsePtr Response, bool bConnected)
 		{
 			ApplyBrainStatusResponse(Response, bConnected);
 		});
-	Request->ProcessRequest();
+	AfterHttpTick([Request]() { Request->ProcessRequest(); });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Step 1 — POST /chat/config (key handoff, loopback only, never logged)
 // ─────────────────────────────────────────────────────────────────────────────
+bool HaybaChatEndpoint::IsCustom(const FString& ProviderId, const FString& BaseURL)
+{
+	FString Actual = BaseURL.TrimStartAndEnd();
+	if (Actual.IsEmpty()) return false;
+	while (Actual.RemoveFromEnd(TEXT("/"))) {}
+	const FHaybaProviderInfo* Provider = FHaybaMCPSettings::FindProvider(ProviderId);
+	if (!Provider || !Provider->BaseURLDefault) return true;
+	FString Standard(Provider->BaseURLDefault);
+	while (Standard.RemoveFromEnd(TEXT("/"))) {}
+	if (Actual.Equals(Standard, ESearchCase::IgnoreCase)) return false;
+	// Older editor settings stored Anthropic's Messages route as its default.
+	return !(ProviderId == TEXT("anthropic") &&
+		Actual.Equals(TEXT("https://api.anthropic.com/v1/messages"), ESearchCase::IgnoreCase));
+}
+
 void FHaybaMCPAgentClient::PostConfig(const FString& UserPrompt)
 {
-	const FHaybaMCPSettings& Settings = FHaybaMCPSettings::Get();
-	const FString Provider = Settings.SelectedProviderId;
+	const FString Provider = TurnProviderId;
 	const FHaybaProviderInfo* Info = FHaybaMCPSettings::FindProvider(Provider);
 
-	const FString Model   = (Info && Info->DefaultModel)   ? FString(Info->DefaultModel)   : Settings.Model;
-	const FString BaseURL = (Info && Info->BaseURLDefault) ? FString(Info->BaseURLDefault) : Settings.BaseURL;
+	// Settings Save keeps user-edited values. Send those exact values to the
+	// sidecar; provider defaults are only a fallback for an empty field.
+	const FString Model = !TurnModelId.IsEmpty() ? TurnModelId : !TurnFallbackModel.IsEmpty() ? TurnFallbackModel
+		: (Info && Info->DefaultModel ? FString(Info->DefaultModel) : FString());
+	const FString BaseURL = !TurnBaseURL.IsEmpty() ? TurnBaseURL
+		: (Info && Info->BaseURLDefault ? FString(Info->BaseURLDefault) : FString());
 
-	// Key of record lives DPAPI-encrypted in the vault; fall back to the legacy
-	// shared accessor (which also routes through the vault).
+	// The vault lookup stays bound to the provider selected at SendPrompt.
+	// GetSharedApiKey reads the mutable current selection and must not be used
+	// after the listener/provider preflight begins.
 	FString ApiKey = FHaybaMCPSettings::GetProviderKey(Provider);
-	if (ApiKey.IsEmpty())
-	{
-		ApiKey = FHaybaMCPSettings::GetSharedApiKey();
-	}
 
 	TSharedRef<FJsonObject> Body = MakeShared<FJsonObject>();
 	Body->SetStringField(TEXT("session_id"), SessionId);
 	Body->SetStringField(TEXT("provider"), Provider);
 	Body->SetStringField(TEXT("model"), Model);
-	Body->SetStringField(TEXT("base_url"), BaseURL);
-	Body->SetStringField(TEXT("api_key"), ApiKey);   // loopback only — never logged
+	if (HaybaChatEndpoint::IsCustom(Provider, BaseURL))
+		Body->SetStringField(TEXT("base_url"), BaseURL);
+	// Omission lets the sidecar use its provider-specific environment key.
+	// An explicit empty api_key sent by other clients still suppresses that
+	// fallback; never turn an absent vault value into an explicit clear.
+	if (!ApiKey.IsEmpty())
+	{
+		Body->SetStringField(TEXT("api_key"), ApiKey);   // loopback only — never logged
+	}
 
-	const FString ConfigUrl = Settings.SidecarURL / TEXT("chat/config");
+	const FString ConfigUrl = TurnSidecarURL / TEXT("chat/config");
 
 	TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();
+	ConfigRequest = Request;
 	Request->SetURL(ConfigUrl);
 	Request->SetVerb(TEXT("POST"));
 	Request->SetHeader(TEXT("Content-Type"), TEXT("application/json"));
 	Request->SetContentAsString(JsonToString(Body));
+	Request->SetTimeout(10.0f);
 
 	// NB: never log the body — it carries the raw key.
 	UE_LOG(LogHaybaAgentClient, Verbose, TEXT("POST /chat/config provider=%s (key %d bytes, not logged)"),
@@ -297,13 +449,16 @@ void FHaybaMCPAgentClient::PostConfig(const FString& UserPrompt)
 
 	TWeakPtr<FHaybaMCPAgentClient> WeakSelf = AsShared();
 	const FString CapturedPrompt = UserPrompt;
-	const uint32 Generation = TurnGeneration;
+	const uint32 CapturedTurn = TurnGeneration;
+	const uint64 CapturedConfig = ConfigGate.Generation;
 	Request->OnProcessRequestComplete().BindLambda(
-		[WeakSelf, CapturedPrompt, Generation](FHttpRequestPtr /*Req*/, FHttpResponsePtr Response, bool bConnected)
+		[WeakSelf, CapturedPrompt, CapturedTurn, CapturedConfig](FHttpRequestPtr /*Req*/, FHttpResponsePtr Response, bool bConnected)
 		{
 			TSharedPtr<FHaybaMCPAgentClient> Self = WeakSelf.Pin();
-			// Stopped (or superseded) while /chat/config was in flight: do not stream.
-			if (!Self.IsValid() || !Self->IsTurnCurrent(Generation)) return;
+			// Both the Pro pre-stream turn and config handoff must still be live.
+			if (!Self.IsValid() || !Self->IsTurnCurrent(CapturedTurn)) return;
+			if (!Self->ConfigGate.Complete(CapturedConfig)) return;
+			Self->ConfigRequest.Reset();
 
 			if (!bConnected || !Response.IsValid())
 			{
@@ -321,11 +476,16 @@ void FHaybaMCPAgentClient::PostConfig(const FString& UserPrompt)
 				Self->EmitLocalDone(TEXT("error"), /*cancelled*/ false);
 				return;
 			}
-			Self->bConfigDone = true;
 			Self->StartStream(CapturedPrompt);
 		});
 
-	Request->ProcessRequest();
+	if (!Request->ProcessRequest() && IsTurnCurrent(CapturedTurn) && ConfigGate.Complete(CapturedConfig))
+	{
+		ConfigRequest.Reset();
+		OnError.Broadcast(FHaybaChatError{
+			TEXT("Could not start chat configuration request."), TEXT("transport") });
+		EmitLocalDone(TEXT("error"), /*cancelled*/ false);
+	}
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -333,18 +493,34 @@ void FHaybaMCPAgentClient::PostConfig(const FString& UserPrompt)
 // ─────────────────────────────────────────────────────────────────────────────
 void FHaybaMCPAgentClient::StartStream(const FString& UserPrompt)
 {
-	CreateStreamRequest(UserPrompt)->ProcessRequest();
+	TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request = CreateStreamRequest(UserPrompt);
+	TWeakPtr<FHaybaMCPAgentClient> WeakSelf = AsShared();
+	const uint32 Generation = TurnGeneration;
+	AfterHttpTick([WeakSelf, Request, Generation]()
+	{
+		TSharedPtr<FHaybaMCPAgentClient> Self = WeakSelf.Pin();
+		if (!Self.IsValid() || Self->TurnGeneration != Generation || !Self->bStreaming ||
+			Self->StreamRequest.Get() != &Request.Get()) return;
+		if (!Request->ProcessRequest() && Self->bStreaming &&
+			Self->StreamRequest.Get() == &Request.Get())
+		{
+			Self->StreamRequest.Reset();
+			Self->bStreaming = false;
+			Self->OnError.Broadcast(FHaybaChatError{
+				TEXT("Could not start chat stream request."), TEXT("transport") });
+			Self->EmitLocalDone(TEXT("error"), /*cancelled*/ false);
+		}
+	});
 }
 
 bool FHaybaMCPAgentClient::AdoptSavedSession(const FString& InSessionId)
 {
-	if (bStreaming || InSessionId.IsEmpty() || InSessionId.Len() > 128) return false;
+	if (IsTurnActive() || ConfigGate.IsPending() || InSessionId.IsEmpty() || InSessionId.Len() > 128) return false;
 	for (TCHAR Character : InSessionId)
 	{
 		if (!FChar::IsAlnum(Character) && Character != TEXT('_') && Character != TEXT('-')) return false;
 	}
 	SessionId = InSessionId;
-	bConfigDone = false;
 	bForceCommunityThisChat = false;
 	StreamActivityIds.Reset();
 	return true;
@@ -352,12 +528,13 @@ bool FHaybaMCPAgentClient::AdoptSavedSession(const FString& InSessionId)
 
 TSharedRef<IHttpRequest, ESPMode::ThreadSafe> FHaybaMCPAgentClient::CreateStreamRequest(const FString& UserPrompt)
 {
-	const FHaybaMCPSettings& Settings = FHaybaMCPSettings::Get();
-	const FString StreamUrl = Settings.SidecarURL / TEXT("chat/stream");
+	const FString StreamUrl = TurnSidecarURL / TEXT("chat/stream");
 
 	// Reset per-turn parse state.
 	ParseCursor = 0;
 	AccumulatedText.Empty();
+	bApprovalPauseSeen = false;
+	ApprovalActivityId.Empty();
 	// An approval resume may fail before its first semantic frame. Keep its
 	// unresolved identity across requests so that loss can still mark it Unknown.
 	bStreaming = true;
@@ -367,11 +544,14 @@ TSharedRef<IHttpRequest, ESPMode::ThreadSafe> FHaybaMCPAgentClient::CreateStream
 	Body->SetStringField(TEXT("session_id"), SessionId);
 	Body->SetStringField(TEXT("prompt"), UserPrompt);
 	Body->SetStringField(TEXT("mode"), WorkMode);
-	const bool bPro = Settings.bUseHaybaPro && !bForceCommunityThisChat;
+	if (!TurnModelId.IsEmpty()) Body->SetStringField(TEXT("model"), TurnModelId);
+	const bool bPro = bCurrentTurnPro;
 	Body->SetStringField(TEXT("loop"), bPro ? TEXT("pro") : TEXT("community"));
+	if (!bPro && !TurnReasoningEffort.IsEmpty())
+		Body->SetStringField(TEXT("reasoning_effort"), TurnReasoningEffort);
 	if (bPro)
 	{
-		Body->SetStringField(TEXT("llm"), Settings.BrainLlmMode);
+		Body->SetStringField(TEXT("llm"), TurnBrainLlmMode);
 	}
 	bCurrentTurnPro = bPro;
 	// provider/model/key already registered via /chat/config for this session.
@@ -420,9 +600,27 @@ TSharedRef<IHttpRequest, ESPMode::ThreadSafe> FHaybaMCPAgentClient::CreateStream
 				Self->ParseNewFrames(Response->GetContentAsString());
 			}
 
-			// If the server already sent a `done` frame it drives the terminus;
-			// otherwise this was a transport drop / local cancel.
-			if (Self->bTerminalEmitted)
+			// A rejected JSON request is not an empty successful SSE turn. Preserve
+			// the sidecar's bounded error message so the composer can show the cause.
+			if (Response.IsValid() && Response->GetResponseCode() != 200 && !Self->bTerminalEmitted)
+			{
+				FString Message = FString::Printf(TEXT("Chat request failed (HTTP %d)."), Response->GetResponseCode());
+				if (Response->GetContent().Num() <= 16 * 1024)
+				{
+					TSharedPtr<FJsonObject> Failure;
+					FString Detail;
+					if (FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Response->GetContentAsString()), Failure) &&
+						Failure.IsValid() && Failure->TryGetStringField(TEXT("error"), Detail) && Detail.Len() <= 400)
+						Message += TEXT(" ") + Detail;
+				}
+				Self->OnError.Broadcast(FHaybaChatError{Message, TEXT("request")});
+				Self->EmitLocalDone(TEXT("error"), /*cancelled*/ false);
+			}
+
+			// A server `done` already notified Chat. An approval pause without
+			// `done` remains parked for the explicit human decision. A semantic
+			// activity result alone is not a Chat terminal notification.
+			if (Self->bTerminalEmitted || Self->bApprovalPauseSeen)
 			{
 				Self->StreamRequest.Reset();
 				return;
@@ -435,8 +633,14 @@ TSharedRef<IHttpRequest, ESPMode::ThreadSafe> FHaybaMCPAgentClient::CreateStream
 			}
 			else
 			{
-				// Stream closed without an explicit done frame — synthesize one.
-				Self->EmitLocalDone(TEXT("end_turn"), /*cancelled*/ false);
+				// A successful HTTP response is not proof that the agent finished.
+				// Preserve any partial text, but surface the missing terminal frame so
+				// Chat can offer recovery instead of presenting a truncated answer as
+				// a completed turn.
+				Self->OnError.Broadcast(FHaybaChatError{
+					TEXT("Chat stream ended before completion. Review any partial work before sending again."),
+					TEXT("protocol") });
+				Self->EmitLocalDone(TEXT("error"), /*cancelled*/ false);
 			}
 			Self->StreamRequest.Reset();
 		});
@@ -557,9 +761,19 @@ void FHaybaMCPAgentClient::DispatchFrame(const FString& FrameBlock)
 			StreamActivityIds.Remove(ActivityId);
 		else
 			StreamActivityIds.Add(ActivityId);
-		// A pause is an intentional stream boundary, not a disconnect.
-		if (EventType == TEXT("approval_requested") || EventType == TEXT("activity_completed") || EventType == TEXT("error"))
-			bTerminalEmitted = true;
+		// An approval can park the request; activity completion/error only
+		// updates the activity model. Chat still needs a `done` or EOF fallback.
+		if (EventType == TEXT("approval_requested"))
+		{
+			bApprovalPauseSeen = true;
+			ApprovalActivityId = ActivityId;
+		}
+		else if ((EventType == TEXT("activity_completed") || EventType == TEXT("error")) &&
+			ActivityId == ApprovalActivityId)
+		{
+			bApprovalPauseSeen = false;
+			ApprovalActivityId.Empty();
+		}
 		OnActivityEvent.Broadcast(*Event);
 		return;
 	}
@@ -613,17 +827,76 @@ void FHaybaMCPAgentClient::DispatchFrame(const FString& FrameBlock)
 	}
 	else if (EventType == TEXT("done"))
 	{
+		if (bTerminalEmitted) return;
 		FHaybaChatDone Done;
 		if (Data.IsValid())
 		{
 			Data->TryGetStringField(TEXT("reason"), Done.Reason);
+			if (Done.Reason == TEXT("error"))
+			{
+				const TSharedPtr<FJsonObject>* Failure = nullptr;
+				if (Data->TryGetObjectField(TEXT("error"), Failure) && Failure && Failure->IsValid())
+					(*Failure)->TryGetStringField(TEXT("error"), Done.Error);
+				else Data->TryGetStringField(TEXT("error"), Done.Error);
+				if (Done.Error.Len() > 400) Done.Error = Done.Error.Left(400);
+			}
 			// Prefer assistant_text; fall back to partial_text.
 			if (!Data->TryGetStringField(TEXT("assistant_text"), Done.AssistantText))
 			{
 				Data->TryGetStringField(TEXT("partial_text"), Done.AssistantText);
 			}
 			Data->TryGetBoolField(TEXT("cancelled"), Done.bCancelled);
+			Data->TryGetBoolField(TEXT("warning_overflow"), Done.bWarningOverflow);
+			const TArray<TSharedPtr<FJsonValue>>* WarningIds = nullptr;
+			if (Data->TryGetArrayField(TEXT("pending_warning_ids"), WarningIds) && WarningIds)
+			{
+				// The server caps the list at 64. Keep the native boundary
+				// independently bounded if a malformed sidecar sends more.
+				for (int32 Index = 0; Index < FMath::Min(WarningIds->Num(), 256); ++Index)
+				{
+					const TSharedPtr<FJsonValue>& Value = (*WarningIds)[Index];
+					if (!Value.IsValid() || Value->Type != EJson::String) continue;
+					const FString Id = Value->AsString();
+					if (!IsSafeWarningId(Id) || Done.PendingWarningIds.Contains(Id)) continue;
+					if (Done.PendingWarningIds.Num() >= 64)
+					{
+						Done.bPendingWarningIdsTruncated = true;
+						break;
+					}
+					Done.PendingWarningIds.Add(Id);
+				}
+				if (WarningIds->Num() > 256) Done.bPendingWarningIdsTruncated = true;
+			}
+			const TArray<TSharedPtr<FJsonValue>>* Reviews = nullptr;
+			if (Data->TryGetArrayField(TEXT("warning_reviews"), Reviews) && Reviews)
+			{
+				TArray<FString> SeenIds;
+				for (int32 Index = 0; Index < FMath::Min(Reviews->Num(), 256); ++Index)
+				{
+					const TSharedPtr<FJsonValue>& Value = (*Reviews)[Index];
+					if (!Value.IsValid() || Value->Type != EJson::Object) continue;
+					const TSharedPtr<FJsonObject> Review = Value->AsObject();
+					if (!Review.IsValid()) continue;
+					FString Id;
+					FString Status;
+					if (!Review->TryGetStringField(TEXT("id"), Id) || !IsSafeWarningId(Id) ||
+						!Review->TryGetStringField(TEXT("status"), Status) || SeenIds.Contains(Id)) continue;
+					if (Status != TEXT("pending") && Status != TEXT("acknowledged") && Status != TEXT("deferred")) continue;
+					if (SeenIds.Num() >= 64)
+					{
+						Done.bWarningReviewsTruncated = true;
+						break;
+					}
+					SeenIds.Add(Id);
+					if (Status == TEXT("pending")) ++Done.PendingWarningReviewCount;
+					else if (Status == TEXT("acknowledged")) ++Done.AcknowledgedWarningReviewCount;
+					else ++Done.DeferredWarningReviewCount;
+				}
+				if (Reviews->Num() > 256) Done.bWarningReviewsTruncated = true;
+			}
 		}
+		bApprovalPauseSeen = false;
+		ApprovalActivityId.Empty();
 		bTerminalEmitted = true;
 		OnDone.Broadcast(Done);
 	}
@@ -646,7 +919,8 @@ void FHaybaMCPAgentClient::DispatchFrame(const FString& FrameBlock)
 // ─────────────────────────────────────────────────────────────────────────────
 // Plan-mode resume — POST /chat/approve, then re-issue /chat/stream (empty prompt)
 // ─────────────────────────────────────────────────────────────────────────────
-void FHaybaMCPAgentClient::ApproveAndResume()
+void FHaybaMCPAgentClient::ApproveAndResume(const FString& NativeProposalId,
+	const FString& NativeOperationDigest)
 {
 	if (SessionId.IsEmpty())
 	{
@@ -654,38 +928,55 @@ void FHaybaMCPAgentClient::ApproveAndResume()
 			TEXT("Cannot resume: no chat session is active."), TEXT("resume") });
 		return;
 	}
-	if (bStreaming)
+	if (bStreaming || bTurnPending || ApprovalRequest.IsValid())
 	{
-		// A turn is already running; nothing to approve/resume against.
+		// A turn or approval request is already running.
 		return;
 	}
-	PostApprove();
+	bTurnPending = true;
+	++TurnGeneration;
+	bTerminalEmitted = false;
+	PostApprove(NativeProposalId, NativeOperationDigest);
 }
 
-void FHaybaMCPAgentClient::PostApprove()
+void FHaybaMCPAgentClient::PostApprove(const FString& NativeProposalId,
+	const FString& NativeOperationDigest)
 {
-	const FHaybaMCPSettings& Settings = FHaybaMCPSettings::Get();
-
 	TSharedRef<FJsonObject> Body = MakeShared<FJsonObject>();
 	Body->SetStringField(TEXT("session_id"), SessionId);
+	if (!NativeProposalId.IsEmpty() && !NativeOperationDigest.IsEmpty())
+	{
+		Body->SetStringField(TEXT("native_proposal_id"), NativeProposalId);
+		Body->SetStringField(TEXT("native_operation_digest"), NativeOperationDigest);
+	}
 
 	TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();
-	Request->SetURL(Settings.SidecarURL / TEXT("chat/approve"));
+	ApprovalRequest = Request;
+	Request->SetURL(TurnSidecarURL / TEXT("chat/approve"));
 	Request->SetVerb(TEXT("POST"));
 	Request->SetHeader(TEXT("Content-Type"), TEXT("application/json"));
 	Request->SetContentAsString(JsonToString(Body));
+	Request->SetTimeout(10.0f);
 
 	TWeakPtr<FHaybaMCPAgentClient> WeakSelf = AsShared();
+	const uint32 Generation = TurnGeneration;
 	Request->OnProcessRequestComplete().BindLambda(
-		[WeakSelf](FHttpRequestPtr /*Req*/, FHttpResponsePtr Response, bool bConnected)
+		[WeakSelf, Generation](FHttpRequestPtr /*Req*/, FHttpResponsePtr Response, bool bConnected)
 		{
 			TSharedPtr<FHaybaMCPAgentClient> Self = WeakSelf.Pin();
-			if (!Self.IsValid()) return;
+			if (!Self.IsValid() || !Self->IsTurnCurrent(Generation)) return;
+			Self->ApprovalRequest.Reset();
 
 			if (!bConnected || !Response.IsValid())
 			{
 				Self->OnError.Broadcast(FHaybaChatError{
 					TEXT("Could not reach the Hayba sidecar to approve the plan."), TEXT("transport") });
+				AfterHttpTick([WeakSelf, Generation]()
+				{
+					if (TSharedPtr<FHaybaMCPAgentClient> Next = WeakSelf.Pin();
+						Next.IsValid() && Next->TurnGeneration == Generation) Next->PostCancel();
+				});
+				Self->EmitLocalDone(TEXT("error"), /*cancelled*/ false);
 				return;
 			}
 			const int32 Code = Response->GetResponseCode();
@@ -694,16 +985,32 @@ void FHaybaMCPAgentClient::PostApprove()
 				Self->OnError.Broadcast(FHaybaChatError{
 					FString::Printf(TEXT("Sidecar /chat/approve rejected the request (HTTP %d)."), Code),
 					TEXT("approve") });
+				AfterHttpTick([WeakSelf, Generation]()
+				{
+					if (TSharedPtr<FHaybaMCPAgentClient> Next = WeakSelf.Pin();
+						Next.IsValid() && Next->TurnGeneration == Generation) Next->PostCancel();
+				});
+				Self->EmitLocalDone(TEXT("error"), /*cancelled*/ false);
 				return;
 			}
-			// Approval bound server-side; resume the paused turn. The stored
-			// transcript continues — an empty prompt just re-drives the loop.
+			// The Community gate fingerprints the whole original request. Replay
+			// that prompt to match it; the sidecar uses its stored transcript while
+			// approvedCall is present, so it does not append a duplicate user turn.
+			// Pro resumes its parked remote turn with an empty prompt.
 			Self->bTerminalEmitted = false;
-			Self->StartStream(FString());
+			Self->bApprovalPauseSeen = false;
+			Self->ApprovalActivityId.Empty();
+			Self->StartStream(Self->bCurrentTurnPro ? FString() : Self->TurnPrompt);
 		});
 
 	UE_LOG(LogHaybaAgentClient, Verbose, TEXT("POST /chat/approve session=%s"), *SessionId);
-	Request->ProcessRequest();
+	if (!Request->ProcessRequest() && IsTurnCurrent(Generation))
+	{
+		ApprovalRequest.Reset();
+		OnError.Broadcast(FHaybaChatError{TEXT("Could not start the plan approval request."), TEXT("transport")});
+		PostCancel();
+		EmitLocalDone(TEXT("error"), /*cancelled*/ false);
+	}
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -712,16 +1019,46 @@ void FHaybaMCPAgentClient::PostApprove()
 void FHaybaMCPAgentClient::Cancel()
 {
 	// Stop during the pre-stream round-trips (/brain/status, /brain/config,
-	// /chat/config): no server turn exists yet. Invalidate the pending
-	// continuations and finish the turn locally.
-	if (bTurnPending && !bStreaming)
+	// /chat/config): no server turn exists yet. Invalidate both generations
+	// and cancel a pending config request before it can launch a stream.
+	if ((bTurnPending || ConfigGate.IsPending()) && !bStreaming)
 	{
+		const bool bApprovalPending = ApprovalRequest.IsValid();
 		bTurnPending = false;
 		++TurnGeneration;
+		ConfigGate.Cancel();
+		if (IdentityRequest.IsValid())
+		{
+			IdentityRequest->OnProcessRequestComplete().Unbind();
+			IdentityRequest->CancelRequest();
+			IdentityRequest.Reset();
+		}
+		if (ConfigRequest.IsValid())
+		{
+			ConfigRequest->OnProcessRequestComplete().Unbind();
+			ConfigRequest->CancelRequest();
+			ConfigRequest.Reset();
+		}
+		if (ApprovalRequest.IsValid())
+		{
+			ApprovalRequest->OnProcessRequestComplete().Unbind();
+			ApprovalRequest->CancelRequest();
+			ApprovalRequest.Reset();
+		}
+		if (bApprovalPending) PostCancel();
 		if (bCurrentTurnPro)
 		{
 			StoreRotatedBrainToken();
 		}
+		EmitLocalDone(TEXT("cancelled"), /*cancelled*/ true);
+		return;
+	}
+	if (bApprovalPauseSeen && !bStreaming && !StreamRequest.IsValid())
+	{
+		// An approval_requested frame may park a turn without a done frame.
+		// Stop still needs to cancel the parked server turn and release Chat's
+		// Responding state, even though the local SSE request has ended.
+		PostCancel();
 		EmitLocalDone(TEXT("cancelled"), /*cancelled*/ true);
 		return;
 	}
@@ -764,12 +1101,11 @@ void FHaybaMCPAgentClient::PostCancel()
 		return;
 	}
 
-	const FHaybaMCPSettings& Settings = FHaybaMCPSettings::Get();
 	TSharedRef<FJsonObject> Body = MakeShared<FJsonObject>();
 	Body->SetStringField(TEXT("session_id"), SessionId);
 
 	TSharedRef<IHttpRequest, ESPMode::ThreadSafe> CancelReq = FHttpModule::Get().CreateRequest();
-	CancelReq->SetURL(Settings.SidecarURL / TEXT("chat/cancel"));
+	CancelReq->SetURL(TurnSidecarURL / TEXT("chat/cancel"));
 	CancelReq->SetVerb(TEXT("POST"));
 	CancelReq->SetHeader(TEXT("Content-Type"), TEXT("application/json"));
 	CancelReq->SetContentAsString(JsonToString(Body));
@@ -795,6 +1131,8 @@ void FHaybaMCPAgentClient::EmitLocalDone(const FString& Reason, bool bCancelled)
 	// Local completion/cancel only describes the HTTP request. It cannot confirm
 	// whether a server-side operation committed; wait for a semantic result.
 	MarkActivitiesDisconnected();
+	bApprovalPauseSeen = false;
+	ApprovalActivityId.Empty();
 	bTerminalEmitted = true;
 	FHaybaChatDone Done;
 	Done.Reason = Reason;

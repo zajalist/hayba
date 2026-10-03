@@ -80,6 +80,11 @@ export async function* runRemoteLoop(p: RemoteLoopParams): AsyncGenerator<AgentS
   // there (no `done` follows), so we return immediately; the eventual `approve`
   // call reopens the same turn and is the one that consumes through its `done`.
   let awaitingDone = false;
+  // The legacy chat adapter treats an activity outcome as its terminal frame.
+  // Hold that outcome until the brain's wire-level done has actually arrived,
+  // otherwise the adapter closes this generator and leaves done for the next turn.
+  let pendingOutcome: AgentStreamEvent | undefined;
+  let sawError = false;
 
   const gen = p.session.frames();
   try {
@@ -97,6 +102,10 @@ export async function* runRemoteLoop(p: RemoteLoopParams): AsyncGenerator<AgentS
       if (race.result.done) {
         // The frame stream ended (session closed/gave up) without a `done` frame.
         if (p.signal.aborted) yield { type: 'activity_completed', activityId: lastActivityId, outcome: 'cancelled', reason: 'aborted' };
+        else {
+          p.onUnavailable?.('stream_ended');
+          yield { type: 'error', activityId: lastActivityId, error: 'Hayba Pro connection ended before the turn completed.', kind: 'brain_unavailable' };
+        }
         return;
       }
       const f = race.result.value;
@@ -106,12 +115,23 @@ export async function* runRemoteLoop(p: RemoteLoopParams): AsyncGenerator<AgentS
           yield f.event;
           return;
         }
-        if (!awaitingDone) yield f.event; // stray events after the outcome are defensively ignored
-        if (isTerminal(f.event)) awaitingDone = true;
+        if (!awaitingDone) {
+          if (isTerminal(f.event)) {
+            pendingOutcome = f.event;
+            awaitingDone = true;
+          } else {
+            if (f.event.type === 'error') sawError = true;
+            yield f.event;
+          }
+        } // stray events after the outcome are defensively ignored
       } else if (f.type === 'tool_call') {
         p.session.send({ type: 'tool_result', id: f.id, ...(await executeLocally(p, f.name, f.args)) });
       } else if (f.type === 'done') {
         p.approvals.clear();
+        if (pendingOutcome) yield pendingOutcome;
+        else if (!sawError) {
+          yield { type: 'error', activityId: lastActivityId, error: 'Hayba Pro ended the turn without an activity outcome.', kind: 'brain_unavailable' };
+        }
         return;
       } else if (f.type === 'pro_unavailable') {
         p.onUnavailable?.(f.reason);

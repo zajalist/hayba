@@ -1,6 +1,6 @@
 {
   "name": "@hayba/mcp",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Hayba MCP Toolkit — AI-powered terrain and PCG authoring for Unreal Engine",
   "type": "module",
   "bin": {

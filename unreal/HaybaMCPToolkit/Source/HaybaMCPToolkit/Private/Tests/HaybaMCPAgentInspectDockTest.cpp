@@ -7,12 +7,15 @@
 #include "Input/Events.h"
 #include "Widgets/Input/SButton.h"
 #include "Widgets/Text/STextBlock.h"
+#include "Widgets/Text/SMultiLineEditableText.h"
 
 #if WITH_DEV_AUTOMATION_TESTS
 namespace
 {
     bool ContainsText(const TSharedRef<SWidget>& Widget, const FString& Needle)
     {
+        if (Widget->GetType() == TEXT("SMultiLineEditableText"))
+            return StaticCastSharedRef<SMultiLineEditableText>(Widget)->GetText().ToString().Contains(Needle);
         if (Widget->GetType() == TEXT("STextBlock"))
         {
             const TSharedRef<STextBlock> Text = StaticCastSharedRef<STextBlock>(Widget);
@@ -28,8 +31,11 @@ namespace
 
     TSharedPtr<SButton> FindButtonWithText(const TSharedRef<SWidget>& Widget, const FString& Needle)
     {
-        if (Widget->GetType() == TEXT("SButton") && ContainsText(Widget, Needle))
-            return StaticCastSharedRef<SButton>(Widget);
+        if (Widget->GetType() == TEXT("SButton"))
+        {
+            if (ContainsText(Widget, Needle))
+                return StaticCastSharedRef<SButton>(Widget);
+        }
         FChildren* Children = Widget->GetChildren();
         for (int32 Index = 0; Children && Index < Children->Num(); ++Index)
         {
@@ -51,7 +57,7 @@ bool FHaybaAgentInspectDockTest::RunTest(const FString&)
     const bool bWasDirty = World->GetPackage()->IsDirty();
 
     const TSharedRef<SHaybaMCPChatPanel> Panel = SNew(SHaybaMCPChatPanel, Module);
-    TSharedPtr<SButton> Inspect = FindButtonWithText(Panel, TEXT("Inspect world"));
+    TSharedPtr<SButton> Inspect = FindButtonWithText(Panel, TEXT("Inspect loaded world"));
     if (!TestTrue(TEXT("Agent dock offers a direct Inspect world action"), Inspect.IsValid())) return false;
     TestTrue(TEXT("Inspect is available when idle"), Inspect->IsEnabled());
     const FKeyEvent Accept(EKeys::Enter, FModifierKeysState(), 0, false, 0, 0);

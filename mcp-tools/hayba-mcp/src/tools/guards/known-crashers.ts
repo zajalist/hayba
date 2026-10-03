@@ -29,6 +29,21 @@ export const MAX_PYTHON_SCRIPT_CHARS = 256 * 1024;
 
 export const PYTHON_CRASH_RULES: readonly PythonCrashRule[] = [
   {
+    code: 'HCR-ANIM-001',
+    family: 'animation_timing_mutation',
+    patterns: [
+      'animationdatacontroller.set_frame_rate(',
+      'animationdatacontroller.set_number_of_frames(',
+      'animationdatacontroller.set_play_length(',
+      'animationdatacontroller.resize_number_of_frames(',
+      'animationdatacontroller.resize_play_length(',
+      'animationdatacontroller.resize_in_frames(',
+      'animationdatacontroller.resize(',
+    ],
+    reason: 'it can leave animation frame data and compression out of sync and trigger a native editor assertion',
+    alternative: 'use a validated animation timing workflow outside python_run',
+  },
+  {
     code: 'HCR-STATICMESH-001',
     family: 'known_static_mesh_crash',
     patterns: ['set_lod_build_settings', 'build_scale3d'],
@@ -272,6 +287,207 @@ function executablePythonPolicySource(script: string): string {
   return result;
 }
 
+const ANIMATION_TIMING_METHODS = new Set([
+  'set_frame_rate',
+  'set_number_of_frames',
+  'set_play_length',
+  'resize_number_of_frames',
+  'resize_play_length',
+  'resize_in_frames',
+  'resize',
+]);
+const ANIMATION_CONTROLLER_GETTERS = new Set([
+  'get_controller',
+  'get_data_controller',
+  'get_animation_data_controller',
+]);
+const ANIMATION_SEQUENCE_NAMES = new Set([
+  'anim', 'animation', 'anim_sequence', 'animation_sequence',
+  'animsequence', 'animationsequence', 'anim_seq', 'sequence',
+]);
+
+/** Only f-string replacement fields execute. Ignore its ordinary text, including
+ * escaped braces, then apply the same comment/string stripping to each field. */
+function pythonFStringExpressions(source: string): string {
+  const expressions: string[] = [];
+  const skipQuoted = (start: number): number => {
+    const quote = source[start];
+    const triple = source.slice(start, start + 3) === quote.repeat(3);
+    let at = start + (triple ? 3 : 1);
+    while (at < source.length) {
+      if (source[at] === '\\') { at += 2; continue; }
+      if (triple ? source.slice(at, at + 3) === quote.repeat(3) : source[at] === quote) {
+        return at + (triple ? 3 : 1);
+      }
+      at += 1;
+    }
+    return at;
+  };
+
+  for (let at = 0; at < source.length;) {
+    if (source[at] === '#') {
+      while (at < source.length && source[at] !== '\n' && source[at] !== '\r') at += 1;
+      continue;
+    }
+    const start = at;
+    if (/[a-z_]/i.test(source[at])) {
+      while (at < source.length && /[a-z_0-9]/i.test(source[at])) at += 1;
+    }
+    const prefix = source.slice(start, at);
+    if (source[at] !== "'" && source[at] !== '"') {
+      if (at === start) at += 1;
+      continue;
+    }
+    // A prefix must be an actual Python string prefix, not an identifier
+    // preceding an unrelated quote.
+    const isPrefix = prefix.length > 0 && prefix.length <= 3 && /^[frbu]+$/i.test(prefix);
+    if (prefix && !isPrefix) continue;
+    const quote = source[at];
+    const triple = source.slice(at, at + 3) === quote.repeat(3);
+    let bodyAt = at + (triple ? 3 : 1);
+    if (!isPrefix || !prefix.toLowerCase().includes('f')) {
+      at = skipQuoted(at);
+      continue;
+    }
+    while (bodyAt < source.length) {
+      if (source[bodyAt] === '\\') { bodyAt += 2; continue; }
+      if (triple ? source.slice(bodyAt, bodyAt + 3) === quote.repeat(3) : source[bodyAt] === quote) {
+        bodyAt += triple ? 3 : 1;
+        break;
+      }
+      if (source[bodyAt] === '{') {
+        if (source[bodyAt + 1] === '{') { bodyAt += 2; continue; }
+        const expressionStart = ++bodyAt;
+        let depth = 1;
+        while (bodyAt < source.length && depth > 0) {
+          if (source[bodyAt] === "'" || source[bodyAt] === '"') {
+            bodyAt = skipQuoted(bodyAt);
+            continue;
+          }
+          if (source[bodyAt] === '{') depth += 1;
+          else if (source[bodyAt] === '}') depth -= 1;
+          bodyAt += 1;
+        }
+        expressions.push(source.slice(expressionStart, depth === 0 ? bodyAt - 1 : bodyAt));
+        continue;
+      }
+      bodyAt += 1;
+    }
+    at = bodyAt;
+  }
+  return expressions.join(';');
+}
+
+/** A small lexical mirror of the native animation-controller rule. The native
+ * guard remains authoritative; this gives immediate feedback to Node clients.
+ * Unlike a substring search, an exact receiver and method token are required. */
+function animationTimingPattern(script: string): string | null {
+  const executable = executablePythonPolicySource(script);
+  const fStringExpressions = pythonFStringExpressions(script);
+  const source = executable + (fStringExpressions ? `;${executablePythonPolicySource(fStringExpressions)}` : '');
+  const tokens = source.match(/[a-z_][a-z_0-9]*|\r\n|[\r\n]|[.();:=]/gi)?.map((part) => part.toLowerCase()) ?? [];
+  const controllerNames = new Map<string, boolean>();
+  const classAliases = new Set<string>(['animationdatacontroller']);
+  const importedClass = /\bfrom\s+unreal\s+import\s+animationdatacontroller\s+as\s+([a-z_]\w*)/gi;
+  for (const match of executable.matchAll(importedClass)) classAliases.add(match[1].toLowerCase());
+  const isId = (part: string | undefined): part is string => !!part && /^[a-z_][a-z_0-9]*$/.test(part);
+  const skipNewlines = (from: number): number => {
+    while (tokens[from] === '\n' || tokens[from] === '\r' || tokens[from] === '\r\n') from += 1;
+    return from;
+  };
+  const dotted = (from: number): { path: string; after: number } | null => {
+    if (!isId(tokens[from])) return null;
+    const components = [tokens[from]];
+    let at = from + 1;
+    while (tokens[at] === '.' && isId(tokens[at + 1])) {
+      components.push(tokens[at + 1]);
+      at += 2;
+    }
+    return { path: components.join('.'), after: at };
+  };
+  const canonical = (method: string): string | null =>
+    ANIMATION_TIMING_METHODS.has(method) ? `animationdatacontroller.${method}(` : null;
+  const requiresEvidence = (method: string): boolean => method === 'resize' || method === 'set_frame_rate';
+  const animationNamed = (path: string): boolean => ANIMATION_SEQUENCE_NAMES.has(path.split('.').at(-1) ?? '');
+  const getterPath = (path: string): boolean => ANIMATION_CONTROLLER_GETTERS.has(path.split('.').at(-1) ?? '') && path.includes('.');
+  // Python source cannot prove an object's runtime type. Treat Unreal's explicit
+  // animation getter and the conventional `asset.get_controller()` spelling as
+  // animation evidence; leave unrelated `widget.get_controller()` alone.
+  const getterHasAnimationEvidence = (path: string): boolean => {
+    const parts = path.split('.');
+    return parts.at(-1) === 'get_animation_data_controller'
+      || parts.at(-2) === 'asset'
+      || animationNamed(parts.slice(0, -1).join('.'));
+  };
+  const classPath = (path: string): boolean => {
+    const parts = path.split('.');
+    return classAliases.has(parts.at(-1) ?? '');
+  };
+  const zeroArgCallEnd = (from: number): number | null => {
+    if (tokens[from] !== '(') return null;
+    const close = skipNewlines(from + 1);
+    return tokens[close] === ')' ? close + 1 : null;
+  };
+  const controllerExpression = (from: number): boolean | null => {
+    let at = from;
+    let wrappers = 0;
+    while (tokens[at] === '(') { wrappers += 1; at = skipNewlines(at + 1); }
+    const name = dotted(at);
+    if (!name) return null;
+    at = name.after;
+    const aliasEvidence = controllerNames.get(name.path);
+    const getter = getterPath(name.path);
+    const klass = classPath(name.path);
+    if (aliasEvidence === undefined && !getter && !klass) return null;
+    if (getter || klass) {
+      const afterCall = zeroArgCallEnd(at);
+      if (afterCall === null) return null;
+      at = afterCall;
+    }
+    while (wrappers-- > 0) {
+      at = skipNewlines(at);
+      if (tokens[at] !== ')') return null;
+      at += 1;
+    }
+    if (at < tokens.length && !['\n', '\r', '\r\n', ';'].includes(tokens[at])) return null;
+    return aliasEvidence ?? (klass || getterHasAnimationEvidence(name.path));
+  };
+
+  for (let at = 0; at < tokens.length; at += 1) {
+    if (!isId(tokens[at])) continue;
+    const statementStart = at === 0 || ['\n', '\r', '\r\n', ';', ':'].includes(tokens[at - 1]);
+    if (statementStart && tokens[at + 1] === '=' && tokens[at + 2] !== '=') {
+      const evidence = controllerExpression(at + 2);
+      if (evidence === null) controllerNames.delete(tokens[at]);
+      else controllerNames.set(tokens[at], evidence);
+    }
+    if (tokens[at - 1] === '.') continue;
+    const name = dotted(at);
+    if (!name) continue;
+    const pathParts = name.path.split('.');
+    const method = pathParts.at(-1) ?? '';
+    if (pathParts.length >= 2 && ANIMATION_TIMING_METHODS.has(method)) {
+      const receiver = pathParts.slice(0, -1).join('.');
+      if (classPath(receiver)) return canonical(method);
+      const evidence = controllerNames.get(receiver);
+      if (evidence !== undefined && (!requiresEvidence(method) || evidence)) return canonical(method);
+    }
+    if (getterPath(name.path)) {
+      const afterCall = zeroArgCallEnd(name.after);
+      if (afterCall !== null) {
+        const afterGetter = skipNewlines(afterCall);
+        const chainedMethod = tokens[afterGetter + 1];
+        if (tokens[afterGetter] === '.' && isId(chainedMethod)
+          && tokens[afterGetter + 2] === '(' && ANIMATION_TIMING_METHODS.has(chainedMethod)
+          && (!requiresEvidence(chainedMethod) || getterHasAnimationEvidence(name.path))) {
+          return canonical(chainedMethod);
+        }
+      }
+    }
+  }
+  return null;
+}
+
 /** Bare call patterns must begin at a token boundary. Without this,
  * `set_input()` matches `input(` and `.recompile()` matches `compile(`. */
 function compactContainsPolicyPattern(compact: string, pattern: string): boolean {
@@ -314,7 +530,12 @@ export function scanPythonForCrashers(script: string): CrashGuardHit | null {
       alternative: 'use application-owned variable names and leave the deadline hook private',
     };
   }
+  const animationPattern = animationTimingPattern(script);
+  if (animationPattern) {
+    return { ...PYTHON_CRASH_RULES[0], pattern: animationPattern };
+  }
   for (const rule of PYTHON_CRASH_RULES) {
+    if (rule.code === 'HCR-ANIM-001') continue;
     for (const pattern of rule.patterns) {
       const policySource = pattern === 'importlib.' ? executableCompact : compact;
       if (compactContainsPolicyPattern(policySource, pattern)) {

@@ -3,13 +3,13 @@
 // Single-purpose chat panel — see HaybaMCPChatPanel.h for the design contract.
 // All Wizard / ModeSelect / MCPStatus / inline-Settings / Steps-sidebar code
 // was removed; those concerns live in dedicated panels. This file should stay
-// focused on conversation, input, footer status, and per-message affordances.
+// focused on conversation, input, and per-message affordances.
 //
 #include "HaybaMCPChatPanel.h"
 #include "HaybaMCPModule.h"
-#include "HaybaMCPMainPanel.h"
 #include "HaybaMCPAgentClient.h"
 #include "HaybaMCPActivityModel.h"
+#include "HaybaMCPMainPanel.h"
 #include "HaybaMCPStyle.h"
 #include "Slate/SHaybaActivityCard.h"
 #include "HaybaMCPSettings.h"
@@ -18,11 +18,12 @@
 #include "Widgets/Layout/SBox.h"
 #include "Widgets/Layout/SBorder.h"
 #include "Widgets/Layout/SSeparator.h"
-#include "Widgets/Layout/SWrapBox.h"
 #include "Widgets/Layout/SScrollBox.h"
 #include "Widgets/Input/SButton.h"
 #include "Widgets/Input/SComboButton.h"
+#include "Widgets/Input/SEditableTextBox.h"
 #include "Widgets/Text/STextBlock.h"
+#include "Widgets/Text/SMultiLineEditableText.h"
 #include "Widgets/Images/SImage.h"
 #include "Widgets/SBoxPanel.h"
 #include "Widgets/SOverlay.h"
@@ -33,9 +34,15 @@
 #include "Widgets/Notifications/SNotificationList.h"
 
 #include "HAL/PlatformApplicationMisc.h"
+#include "HAL/PlatformMisc.h"
+#include "HAL/PlatformTime.h"
 #include "DragAndDrop/AssetDragDropOp.h"
 #include "Input/DragAndDrop.h"          // FExternalDragOperation (SlateCore)
 #include "AssetRegistry/AssetData.h"
+#include "AssetRegistry/AssetRegistryModule.h"
+#include "ContentBrowserModule.h"
+#include "IContentBrowserSingleton.h"
+#include "Misc/PackageName.h"
 #include "Json.h"
 #include "JsonUtilities.h"
 #include "Editor.h"
@@ -50,7 +57,107 @@ namespace
     const FLinearColor ColorSuccess(0.40f, 0.95f, 0.55f);
     const FLinearColor ColorError  (1.00f, 0.40f, 0.40f);
     const FLinearColor ColorMuted  (0.55f, 0.57f, 0.65f);
-    const FLinearColor ColorRoleAI (0.78f, 0.80f, 0.88f);
+
+    bool SupportsReasoningEffort(const FString& Provider, const FString& Effort)
+    {
+        if (Provider == TEXT("anthropic"))
+            return Effort == TEXT("low") || Effort == TEXT("medium") || Effort == TEXT("high") ||
+                Effort == TEXT("xhigh") || Effort == TEXT("max");
+        if (Provider == TEXT("deepseek"))
+            return Effort == TEXT("low") || Effort == TEXT("high") || Effort == TEXT("max");
+        if (Provider == TEXT("openai") || Provider == TEXT("openrouter"))
+            return Effort == TEXT("none") || Effort == TEXT("minimal") || Effort == TEXT("low") ||
+                Effort == TEXT("medium") || Effort == TEXT("high") || Effort == TEXT("xhigh") ||
+                (Provider == TEXT("openrouter") && Effort == TEXT("max"));
+        return false;
+    }
+
+    bool ValidModelId(const FString& Id)
+    {
+        if (Id.IsEmpty() || Id.Len() > 256) return false;
+        for (const TCHAR Character : Id)
+            if (FChar::IsWhitespace(Character) || Character < 32 || Character == 127) return false;
+        return true;
+    }
+
+    FString ExactReviewChange(const FHaybaExactExternalApproval& Operation, bool& bNeedsDetails)
+    {
+        bNeedsDetails = false;
+        TSharedPtr<FJsonObject> Params;
+        if (!FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Operation.ReviewParamsJson), Params)
+            || !Params.IsValid())
+        {
+            bNeedsDetails = true;
+            return TEXT("Review the exact parameters before approving.");
+        }
+        if (Operation.Command == TEXT("actor_delete")) return TEXT("Delete this actor");
+        if (Operation.Command == TEXT("actor_set_visibility"))
+        {
+            bool bVisible = false;
+            if (Params->TryGetBoolField(TEXT("visible"), bVisible))
+                return bVisible ? TEXT("Show this actor") : TEXT("Hide this actor");
+        }
+        if (Operation.Command == TEXT("actor_transform"))
+        {
+            TArray<FString> Changes;
+            const auto AddVector = [&Params, &Changes](const TCHAR* Key, const TCHAR* Label, const TCHAR* Unit)
+            {
+                const TArray<TSharedPtr<FJsonValue>>* Values = nullptr;
+                if (!Params->TryGetArrayField(Key, Values) || !Values || Values->Num() != 3) return;
+                double X = 0.0, Y = 0.0, Z = 0.0;
+                if (!(*Values)[0].IsValid() || !(*Values)[1].IsValid() || !(*Values)[2].IsValid() ||
+                    !(*Values)[0]->TryGetNumber(X) || !(*Values)[1]->TryGetNumber(Y) ||
+                    !(*Values)[2]->TryGetNumber(Z) || !FMath::IsFinite(X) ||
+                    !FMath::IsFinite(Y) || !FMath::IsFinite(Z)) return;
+                Changes.Add(FString::Printf(TEXT("%s %.2f, %.2f, %.2f%s"), Label, X, Y, Z, Unit));
+            };
+            AddVector(TEXT("location"), TEXT("Move to"), TEXT(" cm"));
+            AddVector(TEXT("rotation"), TEXT("Rotate to"), TEXT("° (pitch, yaw, roll)"));
+            AddVector(TEXT("scale"), TEXT("Scale to"), TEXT(""));
+            if (!Changes.IsEmpty()) return FString::Join(Changes, TEXT(" · "));
+        }
+        if (Operation.Command == TEXT("actor_tag"))
+        {
+            TArray<FString> Changes;
+            for (const TCHAR* Key : { TEXT("add"), TEXT("remove") })
+            {
+                const TArray<TSharedPtr<FJsonValue>>* Values = nullptr;
+                if (!Params->TryGetArrayField(Key, Values) || !Values) continue;
+                TArray<FString> Tags;
+                for (const TSharedPtr<FJsonValue>& Value : *Values)
+                    if (Value.IsValid() && Value->Type == EJson::String) Tags.Add(Value->AsString());
+                if (!Tags.IsEmpty()) Changes.Add(FString::Printf(TEXT("%s %s"),
+                    FCString::Strcmp(Key, TEXT("add")) == 0 ? TEXT("Add tags") : TEXT("Remove tags"),
+                    *FString::Join(Tags, TEXT(", "))));
+            }
+            if (!Changes.IsEmpty())
+            {
+                FString Summary = FString::Join(Changes, TEXT(" · "));
+                if (Summary.Len() > 160)
+                {
+                    bNeedsDetails = true;
+                    Summary = Summary.Left(157) + TEXT("…");
+                }
+                return Summary;
+            }
+        }
+        if (Operation.Command == TEXT("actor_set_properties"))
+        {
+            const TSharedPtr<FJsonObject>* Properties = nullptr;
+            if (Params->TryGetObjectField(TEXT("properties"), Properties) && Properties && Properties->IsValid())
+            {
+                TArray<FString> Names;
+                for (const auto& Pair : (*Properties)->Values)
+                    Names.Add(FString(*Pair.Key));
+                Names.Sort();
+                bNeedsDetails = true; // Names alone do not reveal the values being written.
+                return FString::Printf(TEXT("Set %d properties: %s. Review values below."), Names.Num(),
+                    *FString::Join(Names, TEXT(", ")).Left(120));
+            }
+        }
+        bNeedsDetails = true;
+        return TEXT("Review the exact parameters before approving.");
+    }
 
     void Toast(const FText& Msg)
     {
@@ -59,66 +166,492 @@ namespace
         FSlateNotificationManager::Get().AddNotification(Info);
     }
 
-    void OpenSettings(SHaybaMCPMainPanel* Main)
+    void CollectButtons(const TSharedRef<SWidget>& Widget, TArray<TSharedRef<SButton>>& Out)
     {
-        if (Main) Main->ShowPanel(EHaybaPanel::Settings);
-        else      Toast(LOCTEXT("Footer.OpenSettings", "Open the Settings tab from the sidebar."));
+        if (Widget->GetType() == TEXT("SButton")) Out.Add(StaticCastSharedRef<SButton>(Widget));
+        FChildren* Children = Widget->GetChildren();
+        for (int32 I = 0; Children && I < Children->Num(); ++I) CollectButtons(Children->GetChildAt(I), Out);
     }
+
+    bool ContainsWidget(const TSharedRef<SWidget>& Root, const TSharedRef<SWidget>& Target)
+    {
+        if (Root == Target) return true;
+        FChildren* Children = Root->GetChildren();
+        for (int32 I = 0; Children && I < Children->Num(); ++I)
+            if (ContainsWidget(Children->GetChildAt(I), Target)) return true;
+        return false;
+    }
+
+    FString FirstText(const TSharedRef<SWidget>& Widget)
+    {
+        if (Widget->GetType() == TEXT("STextBlock"))
+            return StaticCastSharedRef<STextBlock>(Widget)->GetText().ToString();
+        FChildren* Children = Widget->GetChildren();
+        for (int32 I = 0; Children && I < Children->Num(); ++I)
+        {
+            const FString Value = FirstText(Children->GetChildAt(I));
+            if (!Value.IsEmpty()) return Value;
+        }
+        return FString();
+    }
+
+}
+
+void HaybaChatFocus::ReplaceActivityContent(const TSharedRef<SBox>& Slot, const TSharedRef<SWidget>& Content)
+{
+    TSharedPtr<SWidget> Focused = FSlateApplication::IsInitialized()
+        ? FSlateApplication::Get().GetKeyboardFocusedWidget() : nullptr;
+    FString FocusedAction;
+    bool bFocusedHeader = false;
+    if (Focused.IsValid())
+    {
+        TArray<TSharedRef<SButton>> OldButtons;
+        CollectButtons(Slot, OldButtons);
+        for (int32 I = 0; I < OldButtons.Num(); ++I)
+        {
+            if (!ContainsWidget(OldButtons[I], Focused.ToSharedRef())) continue;
+            bFocusedHeader = I == 0;
+            if (!bFocusedHeader) FocusedAction = FirstText(OldButtons[I]);
+            break;
+        }
+    }
+    Slot->SetContent(Content);
+    if (!bFocusedHeader && FocusedAction.IsEmpty()) return;
+
+    TArray<TSharedRef<SButton>> NewButtons;
+    CollectButtons(Content, NewButtons);
+    if (NewButtons.IsEmpty()) return;
+    TSharedRef<SButton> FocusTarget = NewButtons[0]; // A removed action returns focus to the activity header.
+    if (!bFocusedHeader)
+        for (int32 I = 1; I < NewButtons.Num(); ++I)
+            if (FirstText(NewButtons[I]) == FocusedAction) { FocusTarget = NewButtons[I]; break; }
+    FSlateApplication::Get().SetKeyboardFocus(FocusTarget, EFocusCause::SetDirectly);
+}
+
+bool HaybaChatText::IsSafeWebLink(const FString& Target)
+{
+    // Deliberately narrow: no OS protocols, credentials, local paths, ports,
+    // Unicode host spoofing or shell metacharacters passed to LaunchURL.
+    if (!Target.StartsWith(TEXT("https://"), ESearchCase::CaseSensitive) || Target.Len() > 2048) return false;
+    for (TCHAR C : Target)
+        if (C <= 32 || C >= 127 || FString(TEXT("\\\"'<>`|^{}")).Contains(FString::Chr(C))) return false;
+    FString Host = Target.Mid(8);
+    int32 End = Host.Len();
+    for (TCHAR Delimiter : FString(TEXT("/?#")))
+    {
+        int32 At;
+        if (Host.FindChar(Delimiter, At)) End = FMath::Min(End, At);
+    }
+    Host.LeftInline(End);
+    if (!Host.Contains(TEXT(".")) || Host.StartsWith(TEXT(".")) || Host.EndsWith(TEXT("."))) return false;
+    TArray<FString> Labels;
+    Host.ParseIntoArray(Labels, TEXT("."), false);
+    for (const FString& Label : Labels)
+    {
+        if (Label.IsEmpty() || Label.Len() > 63 || Label.StartsWith(TEXT("-")) || Label.EndsWith(TEXT("-"))) return false;
+        for (TCHAR C : Label) if (!FChar::IsAlnum(C) && C != '-') return false;
+    }
+    if (Labels.Last().Len() < 2) return false;
+    for (TCHAR C : Labels.Last()) if (!FChar::IsAlpha(C)) return false;
+    return true;
+}
+
+bool HaybaChatText::IsSafeAssetReference(const FString& Target)
+{
+    // Content Browser navigation only; never load an object or execute a path.
+    if (!Target.StartsWith(TEXT("/Game/"), ESearchCase::CaseSensitive) || Target.Len() > 1024) return false;
+    for (TCHAR C : Target)
+        if (C >= 127 || (!FChar::IsAlnum(C) && C != '_' && C != '/' && C != '.')) return false;
+    return !Target.Contains(TEXT("..")) && FPackageName::IsValidObjectPath(Target);
+}
+
+TArray<HaybaChatText::FBlock> HaybaChatText::Parse(const FString& Text)
+{
+    TArray<FBlock> Result;
+    TArray<FString> Lines;
+    Text.Replace(TEXT("\r\n"), TEXT("\n")).ParseIntoArray(Lines, TEXT("\n"), false);
+    FBlock Paragraph;
+    auto FlushParagraph = [&]()
+    {
+        if (!Paragraph.Text.IsEmpty()) Result.Add(MoveTemp(Paragraph));
+        Paragraph = FBlock{};
+    };
+    bool bCode = false;
+    FBlock Code;
+    for (int32 Index = 0; Index < Lines.Num(); ++Index)
+    {
+        const FString& Line = Lines[Index];
+        if (bCode)
+        {
+            if (Line.TrimStartAndEnd() == TEXT("```"))
+            {
+                Result.Add(MoveTemp(Code));
+                bCode = false;
+            }
+            else Code.Text += Line + (Index + 1 < Lines.Num() ? TEXT("\n") : TEXT(""));
+            continue;
+        }
+        if (Line.StartsWith(TEXT("```")) && !Line.Mid(3).Contains(TEXT("`")))
+        {
+            FlushParagraph();
+            Code = FBlock{};
+            Code.Kind = EBlock::Code;
+            Code.Label = Line.Mid(3).TrimStartAndEnd().Left(32);
+            bCode = true;
+            continue;
+        }
+        if (Line.TrimStartAndEnd().IsEmpty()) { FlushParagraph(); continue; }
+        int32 MarkerLength = 0;
+        if (Line.StartsWith(TEXT("- ")) || Line.StartsWith(TEXT("* ")) || Line.StartsWith(TEXT("+ "))) MarkerLength = 2;
+        else
+        {
+            int32 Digit = 0;
+            while (Digit < Line.Len() && Digit < 9 && FChar::IsDigit(Line[Digit])) ++Digit;
+            if (Digit > 0 && Line.Mid(Digit, 2) == TEXT(". ")) MarkerLength = Digit + 2;
+        }
+        if (MarkerLength > 0)
+        {
+            FlushParagraph();
+            FBlock Item;
+            Item.Kind = EBlock::ListItem;
+            Item.Label = Line.Left(MarkerLength).TrimEnd();
+            Item.Text = Line.Mid(MarkerLength);
+            Result.Add(MoveTemp(Item));
+            continue;
+        }
+        int32 Heading = 0;
+        while (Heading < Line.Len() && Heading < 6 && Line[Heading] == '#') ++Heading;
+        if (Heading > 0 && Line.IsValidIndex(Heading) && Line[Heading] == ' ')
+        {
+            FlushParagraph();
+            FBlock Item;
+            Item.Kind = EBlock::Heading;
+            Item.Text = Line.Mid(Heading + 1);
+            Result.Add(MoveTemp(Item));
+            continue;
+        }
+        // Only a complete standalone link is recognized. Inline/HTML/image
+        // markup, unknown protocols and approval-looking text remain literal.
+        const int32 Split = Line.Find(TEXT("]("));
+        if (Line.StartsWith(TEXT("[")) && Split > 1 && Line.EndsWith(TEXT(")")))
+        {
+            const FString Target = Line.Mid(Split + 2, Line.Len() - Split - 3);
+            if (IsSafeWebLink(Target) || IsSafeAssetReference(Target))
+            {
+                FlushParagraph();
+                FBlock Link;
+                Link.Kind = EBlock::Link;
+                Link.Text = Line.Left(Split).Mid(1);
+                Link.Target = Target;
+                Result.Add(MoveTemp(Link));
+                continue;
+            }
+        }
+        if (!Paragraph.Text.IsEmpty()) Paragraph.Text += TEXT("\n");
+        Paragraph.Text += Line;
+    }
+    FlushParagraph();
+    if (bCode) Result.Add(MoveTemp(Code));
+    return Result;
+}
+
+void SHaybaChatMessageBody::Construct(const FArguments& Args)
+{
+    bPlainText = Args._PlainText;
+    ChildSlot [ SAssignNew(Stack, SVerticalBox) ];
+}
+
+SHaybaChatMessageBody::FRenderedBlock SHaybaChatMessageBody::BuildBlock(const HaybaChatText::FBlock& Block)
+{
+    FRenderedBlock Rendered;
+    Rendered.Block = Block;
+    const bool bCode = Block.Kind == HaybaChatText::EBlock::Code;
+    const FTextBlockStyle& Style = FHaybaMCPStyle::Get().GetWidgetStyle<FTextBlockStyle>("Hayba.Text.Body");
+    SAssignNew(Rendered.Text, SMultiLineEditableText)
+        .Text(FText::FromString(Block.Text))
+        .TextStyle(&Style)
+        .Font(bCode ? FCoreStyle::GetDefaultFontStyle("Mono", 11) : FHaybaMCPStyle::Font(13, Block.Kind == HaybaChatText::EBlock::Heading))
+        .IsReadOnly(true).AutoWrapText(true).WrapTextAt(720.f)
+        .WrappingPolicy(ETextWrappingPolicy::AllowPerCharacterWrapping)
+        .LineHeightPercentage(1.2f).Margin(FMargin(0.f));
+    Rendered.Widget = Rendered.Text;
+    if (Block.Kind == HaybaChatText::EBlock::ListItem)
+    {
+        Rendered.Widget = SNew(SHorizontalBox)
+            + SHorizontalBox::Slot().AutoWidth().Padding(0.f, 0.f, 8.f, 0.f)
+            [ SNew(STextBlock).Text(FText::FromString(Block.Label)).Font(FHaybaMCPStyle::Font(13)) ]
+            + SHorizontalBox::Slot().FillWidth(1.f) [ Rendered.Text.ToSharedRef() ];
+    }
+    else if (bCode)
+    {
+        const TWeakPtr<SMultiLineEditableText> WeakText = Rendered.Text;
+        Rendered.Widget = SNew(SBorder)
+            .BorderImage(FHaybaMCPStyle::GetBrush(TEXT("Hayba.Brush.Settings.Section"))).Padding(10.f)
+            [ SNew(SVerticalBox)
+                + SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 6.f)
+                [ SNew(SHorizontalBox)
+                    + SHorizontalBox::Slot().FillWidth(1.f).VAlign(VAlign_Center)
+                    [ SNew(STextBlock).Text(FText::FromString(Block.Label.IsEmpty() ? TEXT("Code") : Block.Label))
+                        .Font(FHaybaMCPStyle::Font(11)).OverflowPolicy(ETextOverflowPolicy::Ellipsis) ]
+                    + SHorizontalBox::Slot().AutoWidth()
+                    [ SNew(SButton).ButtonStyle(&FHaybaMCPStyle::Get().GetWidgetStyle<FButtonStyle>("Hayba.Button.Switcher"))
+                        .Text(LOCTEXT("CopyCode", "Copy code")).ToolTipText(LOCTEXT("CopyCodeTip", "Copy the complete code block, without fences"))
+                        .OnClicked_Lambda([WeakText]()
+                        {
+                            if (const auto Text = WeakText.Pin()) FPlatformApplicationMisc::ClipboardCopy(*Text->GetText().ToString());
+                            return FReply::Handled();
+                        }) ] ]
+                + SVerticalBox::Slot().AutoHeight() [ Rendered.Text.ToSharedRef() ] ];
+    }
+    else if (Block.Kind == HaybaChatText::EBlock::Link)
+    {
+        const FString Target = Block.Target;
+        const bool bAsset = HaybaChatText::IsSafeAssetReference(Target);
+        FString Host = bAsset ? FString() : Target.Mid(8);
+        if (!bAsset)
+        {
+            int32 End = Host.Len();
+            for (TCHAR Delimiter : FString(TEXT("/?#")))
+            {
+                int32 At;
+                if (Host.FindChar(Delimiter, At)) End = FMath::Min(End, At);
+            }
+            Host.LeftInline(End);
+        }
+        const FText ActionLabel = bAsset ? LOCTEXT("ShowLinkedAsset", "Show asset") :
+            FText::FromString(TEXT("Open ") + Host);
+        Rendered.Widget = SNew(SVerticalBox)
+            + SVerticalBox::Slot().AutoHeight() [ Rendered.Text.ToSharedRef() ]
+            + SVerticalBox::Slot().AutoHeight().HAlign(HAlign_Left).Padding(0.f, 3.f)
+            [ SNew(SButton).ButtonStyle(&FHaybaMCPStyle::Get().GetWidgetStyle<FButtonStyle>("Hayba.Button.Switcher"))
+                .ToolTipText_Lambda([Target, bAsset]()
+                {
+                    if (!bAsset) return FText::FromString(Target);
+                    const FAssetData Current = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry")).Get().GetAssetByObjectPath(FSoftObjectPath(Target));
+                    return FText::FromString(Current.IsValid() ? Target : TEXT("Asset not found in this project's registry:\n") + Target);
+                })
+                .IsEnabled_Lambda([Target, bAsset]()
+                {
+                    return !bAsset || FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry")).Get().GetAssetByObjectPath(FSoftObjectPath(Target)).IsValid();
+                })
+                .OnClicked_Lambda([Target, bAsset]()
+                {
+                    if (bAsset && HaybaChatText::IsSafeAssetReference(Target))
+                    {
+                        const FAssetData Current = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry")).Get().GetAssetByObjectPath(FSoftObjectPath(Target));
+                        if (Current.IsValid()) FModuleManager::LoadModuleChecked<FContentBrowserModule>(TEXT("ContentBrowser")).Get().SyncBrowserToAssets(TArray<FAssetData>{Current});
+                    }
+                    else if (HaybaChatText::IsSafeWebLink(Target)) FPlatformProcess::LaunchURL(*Target, nullptr, nullptr);
+                    return FReply::Handled();
+                })
+                [ SNew(STextBlock).Text(ActionLabel).Font(FHaybaMCPStyle::Font(11))
+                    .OverflowPolicy(ETextOverflowPolicy::Ellipsis) ] ];
+    }
+    return Rendered;
+}
+
+void SHaybaChatMessageBody::SetMessageText(const FString& Text)
+{
+    PendingText = Text;
+    if (Text == DisplayedText) { bPendingUpdate = false; bWaitingForSelection = false; return; }
+    // A selected block whose grammar changed cannot be replaced yet. Keep the
+    // latest source without reparsing it on every subsequent SSE delta.
+    if (bWaitingForSelection && Blocks.ContainsByPredicate([](const FRenderedBlock& Block) { return Block.Text->AnyTextSelected(); }))
+    { bPendingUpdate = true; return; }
+    const double Now = FPlatformTime::Seconds();
+    // SSE can deliver hundreds of tiny deltas. Beyond a short message, coalesce
+    // appended display updates to about 20 Hz so parsing/layout cannot consume
+    // the game thread once per token. PendingText still retains every byte.
+    if (!bPlainText && Text.Len() > 4096 && !DisplayedText.IsEmpty() &&
+        Text.StartsWith(DisplayedText, ESearchCase::CaseSensitive) &&
+        Now - LastRenderedAt < 0.05)
+    { bPendingUpdate = true; return; }
+    TArray<HaybaChatText::FBlock> Parsed;
+    if (bPlainText)
+    {
+        if (!Text.IsEmpty()) { HaybaChatText::FBlock Block; Block.Text = Text; Parsed.Add(MoveTemp(Block)); }
+    }
+    else Parsed = HaybaChatText::Parse(Text);
+    auto SameShape = [](const HaybaChatText::FBlock& A, const HaybaChatText::FBlock& B)
+    { return A.Kind == B.Kind && A.Label == B.Label && A.Target == B.Target; };
+    // A partially typed delimiter can change the grammar. Do not discard a
+    // user's selection to promote it; retry the display update after selection ends.
+    for (int32 I = 0; I < Blocks.Num(); ++I)
+    {
+        if (Blocks[I].Text->AnyTextSelected() && (!Parsed.IsValidIndex(I) || !SameShape(Blocks[I].Block, Parsed[I]) ||
+            !Parsed[I].Text.StartsWith(Blocks[I].Block.Text, ESearchCase::CaseSensitive)))
+        { bPendingUpdate = true; bWaitingForSelection = true; return; }
+    }
+    while (Blocks.Num() > Parsed.Num())
+    {
+        Stack->RemoveSlot(Blocks.Last().Widget.ToSharedRef());
+        Blocks.Pop();
+    }
+    for (int32 I = 0; I < Parsed.Num(); ++I)
+    {
+        if (!Blocks.IsValidIndex(I))
+        {
+            Blocks.Add(BuildBlock(Parsed[I]));
+            Stack->AddSlot().AutoHeight().Padding(0.f, I == 0 ? 0.f : 8.f, 0.f, 0.f) [ Blocks[I].Widget.ToSharedRef() ];
+        }
+        else if (!SameShape(Blocks[I].Block, Parsed[I]))
+        {
+            Stack->RemoveSlot(Blocks[I].Widget.ToSharedRef());
+            Blocks[I] = BuildBlock(Parsed[I]);
+            Stack->InsertSlot(I).AutoHeight().Padding(0.f, I == 0 ? 0.f : 8.f, 0.f, 0.f) [ Blocks[I].Widget.ToSharedRef() ];
+        }
+        else if (Blocks[I].Block.Text != Parsed[I].Text)
+        {
+            const bool bSelected = Blocks[I].Text->AnyTextSelected();
+            const FTextSelection Selection = Blocks[I].Text->GetSelection();
+            Blocks[I].Text->SetText(FText::FromString(Parsed[I].Text));
+            if (bSelected) Blocks[I].Text->SelectText(Selection.GetBeginning(), Selection.GetEnd());
+            Blocks[I].Block = Parsed[I];
+        }
+    }
+    DisplayedText = Text;
+    LastRenderedAt = Now;
+    bPendingUpdate = false;
+    bWaitingForSelection = false;
+}
+
+void SHaybaChatMessageBody::Tick(const FGeometry& Geometry, double Time, float Delta)
+{
+    SCompoundWidget::Tick(Geometry, Time, Delta);
+    if (!bPendingUpdate) return;
+    if (bWaitingForSelection)
+    {
+        if (Blocks.ContainsByPredicate([](const FRenderedBlock& Block) { return Block.Text->AnyTextSelected(); })) return;
+    }
+    else if (FPlatformTime::Seconds() - LastRenderedAt < 0.05) return;
+    SetMessageText(PendingText);
 }
 
 // ── Construct ──────────────────────────────────────────────────────────────
 
-void SHaybaMCPChatPanel::Construct(const FArguments& InArgs, FHaybaMCPModule* InModule)
+void SHaybaMCPChatPanel::Construct(const FArguments&, FHaybaMCPModule* InModule)
 {
     Module = InModule;
-    MainPanel = InArgs._MainPanel;
+    ModelDiscoveryClient = MakeShared<FHaybaMCPModelDiscoveryClient>();
 
     ChildSlot
     [
         SNew(SVerticalBox)
-        // Toolbar — new conversation + recent dropdown (Q18-a).
-        + SVerticalBox::Slot().AutoHeight().Padding(4.f, 4.f, 4.f, 0.f)
-        [ BuildToolbar() ]
-        + SVerticalBox::Slot().AutoHeight().Padding(8.f, 6.f)
+        + SVerticalBox::Slot().AutoHeight().HAlign(HAlign_Left).Padding(8.f, 6.f)
         [
-            SNew(SBorder).BorderImage(FHaybaMCPStyle::GetBrush(TEXT("Hayba.Composer"))).Padding(12.f)
+            SNew(SBox).MaxDesiredWidth(720.f)
+            [
+            SNew(SBorder).BorderImage(FHaybaMCPStyle::GetBrush(TEXT("Hayba.Brush.Settings.Section"))).Padding(14.f)
             .Visibility_Lambda([this]() { return Module && !Module->PendingExternalPlan.IsEmpty() ? EVisibility::Visible : EVisibility::Collapsed; })
             [
                 SNew(SVerticalBox)
                 + SVerticalBox::Slot().AutoHeight()
-                [ SNew(STextBlock).Text(LOCTEXT("ExternalPlanTitle", "External MCP proposal"))
-                    .Font(FCoreStyle::GetDefaultFontStyle("Bold", 11)) ]
-                + SVerticalBox::Slot().AutoHeight().Padding(0.f, 6.f)
-                [ SNew(SBox).MaxDesiredHeight(150.f)
+                [ SNew(STextBlock).Text_Lambda([this]()
+                    {
+                        return Module && Module->PendingExternalPlanIsExact
+                            ? (bAwaitingPlanApproval && !IsNativeApprovalForCurrentActivity(Module->PendingExternalPlanId)
+                                ? LOCTEXT("ExternalOtherOperationTitle", "External request")
+                                : LOCTEXT("ExternalOperationTitle", "Review edit"))
+                            : LOCTEXT("ExternalPlanTitle", "Plan preview");
+                    })
+                    .Font(FHaybaMCPStyle::Font(15, true)) ]
+                + SVerticalBox::Slot().AutoHeight().Padding(0.f, 10.f, 0.f, 4.f)
+                [ SNew(SBox).MaxDesiredHeight(230.f)
                     [ SNew(SScrollBox) + SScrollBox::Slot()
-                        [ SNew(STextBlock).Text_Lambda([this]() { return FText::FromString(Module ? Module->PendingExternalPlan : FString()); }).AutoWrapText(true) ] ] ]
-                + SVerticalBox::Slot().AutoHeight()
-                [ SNew(STextBlock).Text(LOCTEXT("ExternalPlanScope", "Approval permits the next native write command. Review the external client's proposed scope."))
-                    .AutoWrapText(true).ColorAndOpacity(FSlateColor(ColorMuted)) ]
+                        [ SAssignNew(ExternalPlanStepsBox, SVerticalBox) ] ] ]
                 + SVerticalBox::Slot().AutoHeight().Padding(0.f, 8.f, 0.f, 0.f)
+                [ SNew(STextBlock).Text_Lambda([this]()
+                    {
+                        return Module && Module->PendingExternalPlanIsExact
+                            ? (bAwaitingPlanApproval && !IsNativeApprovalForCurrentActivity(Module->PendingExternalPlanId)
+                                ? LOCTEXT("ExternalOtherScope", "This request is separate from the Chat action awaiting review.")
+                                : LOCTEXT("ExternalExactScope", "One use while the target is unchanged. Save separately."))
+                            : LOCTEXT("ExternalPreviewScope", "This outline cannot authorize an edit. The agent must submit a specific operation for review.");
+                    })
+                    .Font(FHaybaMCPStyle::Font(11)).AutoWrapText(true)
+                    .ColorAndOpacity(FHaybaMCPStyle::Colour(TEXT("Hayba.Color.Text.Secondary"))) ]
+                + SVerticalBox::Slot().AutoHeight().Padding(0.f, 12.f, 0.f, 0.f)
                 [
                     SNew(SHorizontalBox)
                     + SHorizontalBox::Slot().AutoWidth()
-                    [ SNew(SButton).Text(LOCTEXT("ExternalApprove", "Approve next command"))
-                        .OnClicked_Lambda([this]() { if (Module) Module->ResolveExternalPlan(true); return FReply::Handled(); }) ]
+                    [ SNew(SButton)
+                        .ButtonStyle(&FHaybaMCPStyle::Get().GetWidgetStyle<FButtonStyle>("Hayba.Button.Review.Primary"))
+                        .ContentPadding(FMargin(14.f, 7.f))
+                        .ToolTipText_Lambda([this]()
+                        {
+                            if (bExternalChangeNeedsDetails && !bExternalDetailsExpanded)
+                                return LOCTEXT("ExternalReviewValuesFirst", "Review the exact values before approving.");
+                            if (AgentClient.IsValid() && AgentClient->IsStreaming())
+                                return LOCTEXT("ExternalWaitForStream", "Wait for the current review to finish.");
+                            return LOCTEXT("ExternalApproveOnceTip", "Authorize one retry while the target is unchanged.");
+                        })
+                        .Visibility_Lambda([this]() { return Module && Module->PendingExternalPlanIsExact
+                            ? EVisibility::Visible : EVisibility::Collapsed; })
+                        .IsEnabled_Lambda([this]()
+                        {
+                            if (!Module || !Module->PendingExternalPlanIsExact ||
+                                DisplayedExternalPlanId != Module->PendingExternalPlanId) return false;
+                            return (!bExternalChangeNeedsDetails || bExternalDetailsExpanded) &&
+                                (!IsNativeApprovalForCurrentActivity(DisplayedExternalPlanId) ||
+                                    !AgentClient.IsValid() || !AgentClient->IsStreaming());
+                        })
+                        .OnClicked_Lambda([this]()
+                        {
+                            const FString Command = Module ? Module->PendingExternalOperation.Command : FString();
+                            const bool bResumesThisChat = IsNativeApprovalForCurrentActivity(DisplayedExternalPlanId);
+                            if (Module && Module->ResolveExternalPlan(DisplayedExternalPlanId, true))
+                            {
+                                if (bResumesThisChat) HandlePlanApproved();
+                                else
+                                {
+                                    FHaybaMCPChatMessage Status{};
+                                    Status.bToolResult = true;
+                                    Status.Text = FString::Printf(TEXT("Approved %s for one retry. No edit has been confirmed."), *Command);
+                                    const bool bPinned = IsScrolledNearBottom();
+                                    Session.Messages.Add(MoveTemp(Status));
+                                    if (!bPinned) ++UnseenWhileScrolledUp;
+                                    RebuildChat();
+                                    if (bPinned) ScrollToBottomIfPinned();
+                                }
+                            }
+                            else
+                                Toast(LOCTEXT("ExternalApprovalExpired", "Operation changed or expired. Review the latest request."));
+                            return FReply::Handled();
+                        })
+                        [ SNew(STextBlock).Text(LOCTEXT("ExternalApprove", "Approve operation"))
+                            .Font(FHaybaMCPStyle::Font(12, true))
+                            .ColorAndOpacity(FHaybaMCPStyle::Colour(TEXT("Hayba.Color.Surface.Canvas"))) ] ]
                     + SHorizontalBox::Slot().AutoWidth().Padding(8.f, 0.f)
-                    [ SNew(SButton).Text(LOCTEXT("ExternalReject", "Reject"))
-                        .OnClicked_Lambda([this]() { if (Module) Module->ResolveExternalPlan(false); return FReply::Handled(); }) ]
+                    [ SNew(SButton)
+                        .ButtonStyle(&FHaybaMCPStyle::Get().GetWidgetStyle<FButtonStyle>("Hayba.Button.Switcher"))
+                        .ContentPadding(FMargin(14.f, 7.f))
+                        .OnClicked_Lambda([this]()
+                        {
+                            const bool bRejectsThisChat = IsNativeApprovalForCurrentActivity(DisplayedExternalPlanId);
+                            if (Module && Module->ResolveExternalPlan(DisplayedExternalPlanId, false) && bRejectsThisChat)
+                                HandlePlanRejected();
+                            return FReply::Handled();
+                        })
+                        [ SNew(STextBlock).Text_Lambda([this]() { return Module && Module->PendingExternalPlanIsExact
+                            ? LOCTEXT("ExternalReject", "Reject") : LOCTEXT("ExternalDismiss", "Dismiss"); })
+                            .Font(FHaybaMCPStyle::Font(12)) ] ]
                 ]
+            ]
             ]
         ]
 
-        // Chat scroll. SOverlay so we can float a "↓ N new" chip on top.
-        + SVerticalBox::Slot().FillHeight(1.f)
+        // The conversation is one uninterrupted surface; the new-message
+        // control floats above it only when the user has scrolled away.
+        + SVerticalBox::Slot().FillHeight(1.f).Padding(0.f)
         [
             SNew(SOverlay)
             + SOverlay::Slot() [ BuildChatArea() ]
             + SOverlay::Slot()
             .HAlign(HAlign_Right).VAlign(VAlign_Bottom)
-            .Padding(FMargin(0.f, 0.f, 14.f, 14.f))
+            .Padding(FMargin(0.f, 0.f, 18.f, 18.f))
             [
                 SNew(SButton)
-                .ButtonStyle(FAppStyle::Get(), "PrimaryButton")
+                .ButtonStyle(&FHaybaMCPStyle::Get().GetWidgetStyle<FButtonStyle>("Hayba.Button.Switcher"))
                 .ContentPadding(FMargin(10.f, 4.f))
                 .Visibility(this, &SHaybaMCPChatPanel::GetNewMessagesChipVisibility)
                 .OnClicked_Lambda([this]()
@@ -130,26 +663,126 @@ void SHaybaMCPChatPanel::Construct(const FArguments& InArgs, FHaybaMCPModule* In
                 [
                     SNew(STextBlock).Text_Lambda([this]()
                     {
-                        return FText::FromString(FString::Printf(TEXT("↓ %d new"), UnseenWhileScrolledUp));
+                        return FText::Format(LOCTEXT("NewMessages", "{0} new messages"), FText::AsNumber(UnseenWhileScrolledUp));
                     })
                 ]
             ]
         ]
 
-        // Footer (clickable status segments) and input.
-        + SVerticalBox::Slot().AutoHeight().Padding(8.f, 6.f, 8.f, 0.f)
-        [ BuildFooter() ]
-        + SVerticalBox::Slot().AutoHeight().Padding(8.f, 4.f, 8.f, 8.f)
+        // Keep the composer as the only persistent bottom control.
+        + SVerticalBox::Slot().AutoHeight().Padding(12.f, 8.f, 12.f, 12.f)
         [ BuildInput() ]
     ];
 
     RebuildChat();
+    RebuildExternalProposal();
     RefreshRecentSessions();
+}
+
+void SHaybaMCPChatPanel::Tick(const FGeometry& Geometry, double Time, float Delta)
+{
+    SCompoundWidget::Tick(Geometry, Time, Delta);
+    const FString CurrentId = Module ? Module->PendingExternalPlanId : FString();
+    if (CurrentId != DisplayedExternalPlanId) RebuildExternalProposal();
+}
+
+void SHaybaMCPChatPanel::RebuildExternalProposal()
+{
+    if (!ExternalPlanStepsBox.IsValid()) return;
+    ExternalPlanStepsBox->ClearChildren();
+    ExternalDetailsButton.Reset();
+    bExternalChangeNeedsDetails = false;
+    if (DisplayedExternalPlanId != (Module ? Module->PendingExternalPlanId : FString()))
+        bExternalDetailsExpanded = false;
+    DisplayedExternalPlanId = Module ? Module->PendingExternalPlanId : FString();
+    if (!Module || Module->PendingExternalPlan.IsEmpty()) return;
+    if (Module->PendingExternalPlanIsExact)
+    {
+        const FHaybaExactExternalApproval& Operation = Module->PendingExternalOperation;
+        auto AddReviewLine = [this](const FString& Label, const FString& Value)
+        {
+            if (Value.IsEmpty()) return;
+            ExternalPlanStepsBox->AddSlot().AutoHeight().Padding(0.f, 2.f)
+            [ SNew(STextBlock).Text(FText::FromString(Label + Value))
+                .Font(FHaybaMCPStyle::Font(11)).AutoWrapText(true) ];
+        };
+        const FString Change = ExactReviewChange(Operation, bExternalChangeNeedsDetails);
+        ExternalPlanStepsBox->AddSlot().AutoHeight().Padding(0.f, 2.f, 0.f, 5.f)
+        [ SNew(STextBlock).Text(FText::FromString(Change))
+            .Font(FHaybaMCPStyle::Font(13, true)).AutoWrapText(true) ];
+        AddReviewLine(TEXT("Target  "), Operation.TargetRef);
+        AddReviewLine(TEXT("Source  "), Operation.Source);
+        if (!Operation.ReviewParamsJson.IsEmpty())
+        {
+            ExternalPlanStepsBox->AddSlot().AutoHeight().HAlign(HAlign_Left).Padding(0.f, 6.f, 0.f, 0.f)
+            [ SAssignNew(ExternalDetailsButton, SButton)
+                .ButtonStyle(&FHaybaMCPStyle::Get().GetWidgetStyle<FButtonStyle>("Hayba.Button.Switcher"))
+                .ContentPadding(FMargin(8.f, 4.f))
+                .ToolTipText(LOCTEXT("ExternalParamsTip", "Show or hide the exact parameters and target fingerprint for this approval."))
+                .OnClicked_Lambda([this]()
+                {
+                    bExternalDetailsExpanded = !bExternalDetailsExpanded;
+                    RebuildExternalProposal();
+                    if (ExternalDetailsButton.IsValid() && FSlateApplication::IsInitialized())
+                        FSlateApplication::Get().SetKeyboardFocus(ExternalDetailsButton);
+                    return FReply::Handled();
+                })
+                [ SNew(STextBlock).Text_Lambda([this]() { return bExternalDetailsExpanded
+                    ? LOCTEXT("ExternalHideParams", "Hide exact parameters")
+                    : LOCTEXT("ExternalShowParams", "View exact parameters"); })
+                    .Font(FHaybaMCPStyle::Font(11)) ] ];
+            if (bExternalDetailsExpanded)
+            {
+                AddReviewLine(TEXT("Owner  "), Operation.Owner);
+                AddReviewLine(TEXT("Operation  "), Operation.Command);
+                AddReviewLine(TEXT("Effect  "), Operation.Consequence);
+                AddReviewLine(TEXT("Parameters  "), Operation.ReviewParamsJson);
+                AddReviewLine(TEXT("Operation digest  "), Operation.OperationDigest);
+                AddReviewLine(TEXT("Target fingerprint  "), Operation.TargetFingerprint);
+                AddReviewLine(TEXT("Expires  "), Operation.ExpiresAt.ToString());
+            }
+        }
+        return;
+    }
+    if (Module->PendingExternalSteps.IsEmpty())
+    {
+        ExternalPlanStepsBox->AddSlot().AutoHeight()
+        [ SNew(STextBlock).Text(FText::FromString(Module->PendingExternalPlan))
+            .Font(FHaybaMCPStyle::Font(12)).AutoWrapText(true) ];
+        return;
+    }
+    for (int32 Index = 0; Index < Module->PendingExternalSteps.Num(); ++Index)
+    {
+        const FHaybaExternalPlanStep& Step = Module->PendingExternalSteps[Index];
+        TSharedRef<SVerticalBox> Content = SNew(SVerticalBox);
+        Content->AddSlot().AutoHeight()
+        [ SNew(STextBlock).Text(FText::FromString(Step.Title))
+            .Font(FHaybaMCPStyle::Font(12, true)).AutoWrapText(true) ];
+        if (!Step.Description.IsEmpty())
+            Content->AddSlot().AutoHeight().Padding(0.f, 3.f, 0.f, 0.f)
+            [ SNew(STextBlock).Text(FText::FromString(Step.Description))
+                .Font(FHaybaMCPStyle::Font(11)).AutoWrapText(true)
+                .ColorAndOpacity(FHaybaMCPStyle::Colour(TEXT("Hayba.Color.Text.Secondary"))) ];
+        if (!Step.Tool.IsEmpty())
+            Content->AddSlot().AutoHeight().Padding(0.f, 3.f, 0.f, 0.f)
+            [ SNew(STextBlock).Text(FText::FromString(Step.Tool))
+                .Font(FHaybaMCPStyle::Font(10))
+                .ColorAndOpacity(FHaybaMCPStyle::Colour(TEXT("Hayba.Color.Text.Muted"))) ];
+        ExternalPlanStepsBox->AddSlot().AutoHeight().Padding(0.f, 3.f, 0.f, 7.f)
+        [ SNew(SHorizontalBox)
+            + SHorizontalBox::Slot().AutoWidth().Padding(0.f, 1.f, 12.f, 0.f)
+            [ SNew(STextBlock).Text(FText::AsNumber(Index + 1))
+                .Font(FHaybaMCPStyle::Font(11))
+                .ColorAndOpacity(FHaybaMCPStyle::Colour(TEXT("Hayba.Color.Text.Muted"))) ]
+            + SHorizontalBox::Slot().FillWidth(1.f) [ Content ] ];
+    }
 }
 
 SHaybaMCPChatPanel::~SHaybaMCPChatPanel()
 {
+    InvalidateCurrentChatNativeApproval();
     InspectGeneration.Invalidate();
+    if (ModelDiscoveryClient.IsValid()) ModelDiscoveryClient->Cancel();
     // Tear down the streaming client: clear our delegate bindings so a late HTTP
     // tick can't fan out into this destroyed panel, then cancel the stream. The
     // client itself captures a weak ptr, so the ordering is belt-and-braces.
@@ -164,77 +797,90 @@ SHaybaMCPChatPanel::~SHaybaMCPChatPanel()
     }
 }
 
-// ── Toolbar (top-right new + recent) ──────────────────────────────────────
+// ── Task switcher hosted in the shared dock header ────────────────────────
 
-TSharedRef<SWidget> SHaybaMCPChatPanel::BuildToolbar()
+TSharedRef<SWidget> SHaybaMCPChatPanel::BuildTaskSwitcher()
 {
-    return SNew(SHorizontalBox)
-        + SHorizontalBox::Slot().FillWidth(1.f).VAlign(VAlign_Center)
-        [ SNew(STextBlock).Text(LOCTEXT("AgentHeading", "Agent")).Font(FCoreStyle::GetDefaultFontStyle("Bold", 16)) ]
-        // Active loop: Hayba Pro (hosted) or the local Community loop.
-        + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0.f, 0.f, 8.f, 0.f)
-        [ SNew(STextBlock)
-            .Text_Lambda([this]() { return IsProLoopActive() ? LOCTEXT("LoopPro", "Pro") : LOCTEXT("LoopCommunity", "Community"); })
-            .ToolTipText(LOCTEXT("LoopTip", "Which agent loop this chat uses. Change it in Settings > Hayba Pro."))
-            .ColorAndOpacity(FSlateColor(ColorMuted)) ]
-        + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0.f, 0.f, 5.f, 0.f)
-        [ SNew(SButton).ButtonStyle(FAppStyle::Get(), "SimpleButton")
-            .Text(LOCTEXT("InspectWorldAction", "Inspect world"))
-            .ToolTipText(LOCTEXT("InspectWorldActionTip", "Read the loaded world. No AI model, level changes, or save."))
-            .IsEnabled_Lambda([this]() { return Module && !bInspectInFlight && !bIsStreaming && CanSend(); })
-            .OnClicked(this, &SHaybaMCPChatPanel::OnInspectWorld) ]
-        + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
+    return SAssignNew(TaskSwitcherButton, SComboButton)
+        .ButtonStyle(&FHaybaMCPStyle::Get().GetWidgetStyle<FButtonStyle>("Hayba.Button.Task"))
+        .HasDownArrow(false)
+        .ContentPadding(FMargin(9.f, 5.f))
+        .ToolTipText(LOCTEXT("RecentTT", "Current conversation and recent conversations"))
+        .ButtonContent()
         [
-            SNew(SButton)
-            .ButtonStyle(FAppStyle::Get(), "SimpleButton")
-            .ToolTipText(LOCTEXT("NewConvTT", "Start a new conversation"))
-            .ContentPadding(FMargin(4.f))
-            .OnClicked(this, &SHaybaMCPChatPanel::OnNewConversation)
-            [ SNew(SImage).Image(FAppStyle::GetBrush("Icons.Plus")) ]
-        ]
-        + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(4.f, 0.f, 0.f, 0.f)
-        [
-            SNew(SComboButton)
-            .ButtonStyle(FAppStyle::Get(), "SimpleButton")
-            .ContentPadding(FMargin(6.f, 2.f))
-            .ToolTipText(LOCTEXT("RecentTT", "Recent conversations"))
-            .ButtonContent()
+            SNew(SHorizontalBox)
+            + SHorizontalBox::Slot().FillWidth(1.f)
             [
-                // Conversation title. Auto-generated from first user message;
-                // falls back to "New conversation" when nothing has been sent.
                 SNew(STextBlock).Text_Lambda([this]()
                 {
-                    if (Session.Goal.IsEmpty())
-                        return LOCTEXT("ConvUntitled", "New conversation");
-                    return FText::FromString(Session.Goal.Len() > 40
-                        ? Session.Goal.Left(40) + TEXT("…")
-                        : Session.Goal);
+                    if (Session.Goal.IsEmpty()) return LOCTEXT("ConvUntitled", "New conversation");
+                    return FText::FromString(Session.Goal.Len() > 60
+                        ? Session.Goal.Left(60) + TEXT("…") : Session.Goal);
                 })
+                .Font(FHaybaMCPStyle::Font(13, true))
+                .ColorAndOpacity(FHaybaMCPStyle::Colour(TEXT("Hayba.Color.Text.Primary")))
+                .OverflowPolicy(ETextOverflowPolicy::Ellipsis)
             ]
-            .OnGetMenuContent(this, &SHaybaMCPChatPanel::BuildRecentSessionsMenu)
-        ];
+            + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(8.f, 0.f, 0.f, 0.f)
+            [ SNew(SImage)
+                .Image(FHaybaMCPStyle::GetBrush(TEXT("Hayba.Icon.Chevron.Down")))
+                .ColorAndOpacity(FSlateColor(FHaybaMCPStyle::Colour(TEXT("Hayba.Color.Text.Secondary")))) ]
+        ]
+        .OnGetMenuContent(this, &SHaybaMCPChatPanel::BuildRecentSessionsMenu);
 }
 
 TSharedRef<SWidget> SHaybaMCPChatPanel::BuildRecentSessionsMenu()
 {
-    FMenuBuilder Menu(true, nullptr);
-    Menu.AddMenuEntry(LOCTEXT("RefreshRecent", "Refresh conversations"), FText::GetEmpty(), FSlateIcon(),
-        FUIAction(FExecuteAction::CreateSP(this, &SHaybaMCPChatPanel::RefreshRecentSessions)));
+    TSharedRef<SVerticalBox> Items = SNew(SVerticalBox);
+    if (!RecentSessionsStatus.IsEmpty())
+    {
+        Items->AddSlot().AutoHeight().Padding(10.f, 6.f)
+        [
+            SNew(STextBlock)
+            .TextStyle(&FHaybaMCPStyle::Get().GetWidgetStyle<FTextBlockStyle>("Hayba.Text.Caption"))
+            .AutoWrapText(true)
+            .Text(FText::FromString(RecentSessionsStatus))
+        ];
+    }
     if (RecentSessions.IsEmpty())
-        Menu.AddMenuEntry(LOCTEXT("RecentEmpty", "No saved conversations"), FText::GetEmpty(), FSlateIcon(),
-            FUIAction(FExecuteAction(), FCanExecuteAction::CreateLambda([]() { return false; })));
+    {
+        Items->AddSlot().AutoHeight().Padding(10.f, 8.f)
+        [
+            SNew(STextBlock)
+            .TextStyle(&FHaybaMCPStyle::Get().GetWidgetStyle<FTextBlockStyle>("Hayba.Text.Caption"))
+            .Text(LOCTEXT("RecentEmpty", "No saved conversations"))
+        ];
+    }
     for (const FRecentSession& Recent : RecentSessions)
     {
         const FString Id = Recent.Id;
-        Menu.AddMenuEntry(FText::FromString(Recent.Title), FText::FromString(Recent.UpdatedAt), FSlateIcon(),
-            FUIAction(FExecuteAction::CreateLambda([this, Id]() { OpenSavedSession(Id); }),
-                FCanExecuteAction::CreateLambda([this]() { return !bIsStreaming && !bAwaitingPlanApproval && !bLoadingSession; })));
+        Items->AddSlot().AutoHeight()
+        [
+            FHaybaMCPStyle::PopupRow(FText::FromString(Recent.Title), FOnClicked::CreateLambda([this, Id]()
+            {
+                if (TaskSwitcherButton.IsValid()) TaskSwitcherButton->SetIsOpen(false);
+                OpenSavedSession(Id);
+                return FReply::Handled();
+            }), Id == Session.SessionId, FText::GetEmpty(),
+                !bIsStreaming && !bAwaitingPlanApproval && !bLoadingSession)
+        ];
     }
-    return Menu.MakeWidget();
+    Items->AddSlot().AutoHeight().Padding(0.f, 7.f, 0.f, 0.f)
+    [
+        FHaybaMCPStyle::PopupRow(LOCTEXT("RefreshRecent", "Refresh conversations"),
+            FOnClicked::CreateLambda([this]()
+            {
+                if (TaskSwitcherButton.IsValid()) TaskSwitcherButton->SetIsOpen(false);
+                RefreshRecentSessions();
+                return FReply::Handled();
+            }))
+    ];
+    return FHaybaMCPStyle::PopupSurface(Items, 230.f);
 }
 
 void SHaybaMCPChatPanel::RefreshRecentSessions()
 {
+    RecentSessionsStatus = TEXT("Refreshing conversations…");
     TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();
     Request->SetURL(FHaybaMCPSettings::Get().SidecarURL / TEXT("chat/sessions"));
     Request->SetVerb(TEXT("GET"));
@@ -242,11 +888,24 @@ void SHaybaMCPChatPanel::RefreshRecentSessions()
     Request->OnProcessRequestComplete().BindLambda([WeakSelf](FHttpRequestPtr, FHttpResponsePtr Response, bool bConnected)
     {
         TSharedPtr<SHaybaMCPChatPanel> Self = WeakSelf.Pin();
-        if (!Self.IsValid() || !bConnected || !Response.IsValid() || Response->GetResponseCode() != 200) return;
+        if (!Self.IsValid()) return;
+        if (!bConnected || !Response.IsValid() || Response->GetResponseCode() != 200)
+        {
+            Self->RecentSessionsStatus = TEXT("Could not refresh conversations.");
+            return;
+        }
         TSharedPtr<FJsonObject> Root;
-        if (!FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Response->GetContentAsString()), Root) || !Root.IsValid()) return;
+        if (!FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Response->GetContentAsString()), Root) || !Root.IsValid())
+        {
+            Self->RecentSessionsStatus = TEXT("Could not read conversations.");
+            return;
+        }
         const TArray<TSharedPtr<FJsonValue>>* Items = nullptr;
-        if (!Root->TryGetArrayField(TEXT("sessions"), Items)) return;
+        if (!Root->TryGetArrayField(TEXT("sessions"), Items))
+        {
+            Self->RecentSessionsStatus = TEXT("Could not read conversations.");
+            return;
+        }
         TArray<FRecentSession> Loaded;
         for (const TSharedPtr<FJsonValue>& Item : *Items)
         {
@@ -260,8 +919,9 @@ void SHaybaMCPChatPanel::RefreshRecentSessions()
             Loaded.Add(MoveTemp(Recent));
         }
         Self->RecentSessions = MoveTemp(Loaded);
+        Self->RecentSessionsStatus.Empty();
     });
-    Request->ProcessRequest();
+    if (!Request->ProcessRequest()) RecentSessionsStatus = TEXT("Could not start conversation refresh.");
 }
 
 void SHaybaMCPChatPanel::OpenSavedSession(const FString& SavedId)
@@ -293,6 +953,28 @@ void SHaybaMCPChatPanel::OpenSavedSession(const FString& SavedId)
         Self->OnNewConversation();
         Self->EnsureAgentClient();
         if (!Self->AgentClient->AdoptSavedSession(SavedId)) return;
+        const TSharedPtr<FJsonObject>* TurnSettings = nullptr;
+        if (Root->TryGetObjectField(TEXT("turnSettings"), TurnSettings) && TurnSettings && TurnSettings->IsValid())
+        {
+            FString Value;
+            if ((*TurnSettings)->TryGetStringField(TEXT("provider"), Value))
+                Self->RestoredProviderId = Value;
+            if ((*TurnSettings)->TryGetStringField(TEXT("loop"), Value) &&
+                (Value == TEXT("community") || Value == TEXT("pro")))
+                Self->RestoredLoop = Value;
+            if ((*TurnSettings)->TryGetStringField(TEXT("mode"), Value) &&
+                (Value == TEXT("explore") || Value == TEXT("draft") || Value == TEXT("production")))
+                Self->WorkMode = Value;
+            if ((*TurnSettings)->TryGetStringField(TEXT("model"), Value) && ValidModelId(Value))
+            {
+                Self->TaskModelId = Value;
+                Self->TaskModelProviderId = Self->RestoredProviderId.IsEmpty()
+                    ? FHaybaMCPSettings::Get().SelectedProviderId : Self->RestoredProviderId;
+            }
+            if ((*TurnSettings)->TryGetStringField(TEXT("reasoningEffort"), Value) &&
+                Value.Len() <= 32 && !Value.IsEmpty() && SupportsReasoningEffort(Self->RestoredProviderId, Value))
+                Self->ReasoningEffort = Value;
+        }
         for (const TSharedPtr<FJsonValue>& Value : *Messages)
         {
             const TSharedPtr<FJsonObject> Message = Value.IsValid() ? Value->AsObject() : nullptr;
@@ -309,6 +991,11 @@ void SHaybaMCPChatPanel::OpenSavedSession(const FString& SavedId)
         Self->Session.SessionId = SavedId;
         Self->RebuildChat();
         Self->ScrollToBottomIfPinned();
+        if (Self->Module)
+        {
+            if (TSharedPtr<SHaybaMCPMainPanel> Main = Self->Module->MainPanel.Pin())
+                Main->ShowPanel(EHaybaPanel::Chat);
+        }
     });
     Request->ProcessRequest();
 }
@@ -325,73 +1012,44 @@ TSharedRef<SWidget> SHaybaMCPChatPanel::BuildChatArea()
             // scrolled back to the bottom themselves.
             if (IsScrolledNearBottom()) UnseenWhileScrolledUp = 0;
         });
-    return SNew(SBorder)
-        .BorderImage(FAppStyle::GetBrush("Brushes.Recessed"))
-        .Padding(FMargin(8.f, 6.f))
+    return SNew(SOverlay)
+        + SOverlay::Slot().Padding(FMargin(16.f, 10.f, 16.f, 8.f))
+        [ ChatScrollBox.ToSharedRef() ]
+        + SOverlay::Slot().HAlign(HAlign_Center).VAlign(VAlign_Center)
         [
-            SNew(SVerticalBox)
-            + SVerticalBox::Slot().FillHeight(1.f)
-            [ ChatScrollBox.ToSharedRef() ]
+            SNew(SBox)
+            .Visibility_Lambda([this]() { return Session.Messages.IsEmpty() &&
+                (!Module || Module->PendingExternalPlan.IsEmpty())
+                ? EVisibility::Visible : EVisibility::Collapsed; })
+            [ BuildEmptyState() ]
         ];
 }
-
-// ── Footer (three clickable status segments) ──────────────────────────────
-
-TSharedRef<SWidget> SHaybaMCPChatPanel::BuildFooter()
-{
-    return SNew(SWrapBox).UseAllottedSize(true).InnerSlotPadding(FVector2D(10.f, 4.f))
-        + SWrapBox::Slot()
-        [
-            SNew(SButton).ButtonStyle(FAppStyle::Get(), "SimpleButton").ContentPadding(FMargin(0.f))
-            .OnClicked(this, &SHaybaMCPChatPanel::OnFooterConnectionClick)
-            [ SNew(STextBlock).Text_Lambda([this]() { return Module && Module->IsServerRunning()
-                ? LOCTEXT("FootConn", "Connected") : LOCTEXT("FootDisc", "Disconnected"); })
-                .ColorAndOpacity(FSlateColor(ColorMuted)) ]
-        ]
-        + SWrapBox::Slot()
-        [
-            SNew(SButton).ButtonStyle(FAppStyle::Get(), "SimpleButton").ContentPadding(FMargin(0.f))
-            .OnClicked(this, &SHaybaMCPChatPanel::OnFooterModelClick)
-            [ SNew(STextBlock).Text_Lambda([]() { const FString& Model = FHaybaMCPSettings::Get().Model;
-                return Model.IsEmpty() ? LOCTEXT("ChooseModel", "Choose a model") : FText::FromString(Model); })
-                .ColorAndOpacity(FSlateColor(ColorMuted)) ]
-        ]
-        + SWrapBox::Slot()
-        [
-            SNew(SButton).ButtonStyle(FAppStyle::Get(), "SimpleButton").ContentPadding(FMargin(0.f))
-            .Visibility_Lambda([]() { return FHaybaMCPSettings::Get().bPlanModeEnabled ? EVisibility::Collapsed : EVisibility::Visible; })
-            .OnClicked(this, &SHaybaMCPChatPanel::OnFooterConnectionClick)
-            .ToolTipText(LOCTEXT("ExternalGateOffTip", "External MCP clients can issue native writes without a reviewed plan. Built-in chat still asks for action approval. Change this in Settings."))
-            [ SNew(STextBlock).Text(LOCTEXT("ExternalGateOff", "External MCP review off"))
-                .ColorAndOpacity(FHaybaMCPStyle::Get().GetColor(TEXT("Hayba.Color.Pending"))) ]
-        ];
-}
-
-FReply SHaybaMCPChatPanel::OnFooterConnectionClick() { OpenSettings(MainPanel); return FReply::Handled(); }
-FReply SHaybaMCPChatPanel::OnFooterModelClick()      { OpenSettings(MainPanel); return FReply::Handled(); }
 
 // ── Input area (inline send / stop, Q7-a) ─────────────────────────────────
 
 TSharedRef<SWidget> SHaybaMCPChatPanel::BuildInput()
 {
     return SNew(SBorder)
-        .BorderImage(FHaybaMCPStyle::GetBrush(TEXT("Hayba.Composer")))
-        .Padding(FMargin(12.f))
+        .BorderImage(FHaybaMCPStyle::GetBrush(TEXT("Hayba.Brush.Composer")))
+        .Padding(FMargin(12.f, 10.f, 10.f, 8.f))
         [
             SNew(SVerticalBox)
             + SVerticalBox::Slot().AutoHeight()
             [
-                SNew(SBox).MinDesiredHeight(72.f).MaxDesiredHeight(220.f)
+                SNew(SBox).MinDesiredHeight(58.f).MaxDesiredHeight(220.f)
                 [
                     SAssignNew(InputBox, SMultiLineEditableTextBox)
+                    .Style(&FHaybaMCPStyle::Get().GetWidgetStyle<FEditableTextBoxStyle>("Hayba.Input.Composer"))
                     .AutoWrapText(true)
-                    .BackgroundColor(FLinearColor::Transparent)
-                    .Padding(FMargin(2.f))
-                    .Font(FCoreStyle::GetDefaultFontStyle("Regular", 11))
+                    .Padding(FMargin(2.f, 2.f))
+                    .Font(FHaybaMCPStyle::Font(13))
                     .HintText_Lambda([this]() { return bAwaitingPlanApproval
                         ? LOCTEXT("InputAwait", "Review the proposed action above to continue.")
-                        : LOCTEXT("InputPrompt", "Describe what you want to make…"); })
-                    .IsEnabled_Lambda([this]() { return CanSend(); })
+                        : bIsStreaming ? LOCTEXT("InputNext", "Draft your next message…")
+                        : LOCTEXT("InputPrompt", "Ask Hayba…"); })
+                    // Keep the draft editable while a turn runs or approval is
+                    // pending. OnSendCurrentInput owns the submission gate and
+                    // leaves a blocked draft intact.
                     .OnKeyDownHandler_Lambda([this](const FGeometry&, const FKeyEvent& Key) -> FReply
                     {
                         if (Key.GetKey() == EKeys::Enter && !Key.IsShiftDown())
@@ -403,39 +1061,373 @@ TSharedRef<SWidget> SHaybaMCPChatPanel::BuildInput()
                     })
                 ]
             ]
-            + SVerticalBox::Slot().AutoHeight().Padding(0.f, 10.f, 0.f, 0.f)
+            + SVerticalBox::Slot().AutoHeight().Padding(0.f, 5.f, 0.f, 0.f)
             [
                 SNew(SHorizontalBox)
                 + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
                 [
-                    SNew(SComboButton)
-                    .ButtonStyle(FAppStyle::Get(), "SimpleButton")
+                    SAssignNew(WorkModeButton, SComboButton)
+                    .ButtonStyle(&FHaybaMCPStyle::Get().GetWidgetStyle<FButtonStyle>("Hayba.Button.Task"))
+                    .HasDownArrow(false)
+                    .ContentPadding(FMargin(4.f, 4.f))
                     .IsEnabled_Lambda([this]() { return !bIsStreaming && !bAwaitingPlanApproval; })
-                    .ToolTipText(LOCTEXT("WorkModeTip", "Explore reads and plans. Draft and Production request approval for changes."))
+                    .ToolTipText(LOCTEXT("WorkModeTip", "Access for the next run. Inspect reads only; Draft and Production require approval for changes."))
                     .ButtonContent()
-                    [ SNew(STextBlock).Text_Lambda([this]() { return FText::FromString(WorkMode == TEXT("explore") ? TEXT("Explore") : WorkMode == TEXT("draft") ? TEXT("Draft") : TEXT("Production")); }) ]
-                    .OnGetMenuContent_Lambda([this]()
-                    {
-                        FMenuBuilder Menu(true, nullptr);
-                        Menu.AddMenuEntry(LOCTEXT("ExploreMode", "Explore"), LOCTEXT("ExploreModeTip", "Inspect, explain, and compare."), FSlateIcon(), FUIAction(FExecuteAction::CreateLambda([this]() { OnSetWorkMode(TEXT("explore")); })));
-                        Menu.AddMenuEntry(LOCTEXT("DraftMode", "Draft"), LOCTEXT("DraftModeTip", "Provisional work with reviewed changes."), FSlateIcon(), FUIAction(FExecuteAction::CreateLambda([this]() { OnSetWorkMode(TEXT("draft")); })));
-                        Menu.AddMenuEntry(LOCTEXT("ProductionMode", "Production"), LOCTEXT("ProductionModeTip", "Reviewed changes with explicit verification and limitations."), FSlateIcon(), FUIAction(FExecuteAction::CreateLambda([this]() { OnSetWorkMode(TEXT("production")); })));
-                        return Menu.MakeWidget();
-                    })
+                    [
+                        SNew(SHorizontalBox)
+                        + SHorizontalBox::Slot().AutoWidth()
+                        [
+                            SNew(STextBlock)
+                            .Text_Lambda([this]() { return FText::FromString(WorkMode == TEXT("explore")
+                                ? TEXT("Inspect") : WorkMode == TEXT("draft") ? TEXT("Draft") : TEXT("Production")); })
+                            .Font(FHaybaMCPStyle::Font(11, true))
+                            .ColorAndOpacity(FHaybaMCPStyle::Colour(TEXT("Hayba.Color.Text.Secondary")))
+                        ]
+                        + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(7.f, 0.f, 0.f, 0.f)
+                        [ SNew(SImage)
+                            .Image(FHaybaMCPStyle::GetBrush(TEXT("Hayba.Icon.Chevron.Down")))
+                            .ColorAndOpacity(FHaybaMCPStyle::Colour(TEXT("Hayba.Color.Text.Secondary"))) ]
+                    ]
+                    .OnGetMenuContent(this, &SHaybaMCPChatPanel::BuildWorkModeMenu)
                 ]
-                + SHorizontalBox::Slot().FillWidth(1.f).VAlign(VAlign_Center).Padding(10.f, 0.f)
-                [ SNew(STextBlock).Text(LOCTEXT("ComposerKeys", "Shift+Enter for a new line"))
-                    .OverflowPolicy(ETextOverflowPolicy::Ellipsis).ColorAndOpacity(FSlateColor(ColorMuted)) ]
+                + SHorizontalBox::Slot().FillWidth(1.f).VAlign(VAlign_Center).Padding(7.f, 0.f, 4.f, 0.f)
+                [ SNew(SBox).MaxDesiredWidth(230.f)
+                    [ SAssignNew(ModelButton, SComboButton)
+                        .ButtonStyle(&FHaybaMCPStyle::Get().GetWidgetStyle<FButtonStyle>("Hayba.Button.Task"))
+                        .HasDownArrow(false).ContentPadding(FMargin(4.f, 4.f))
+                        .IsEnabled_Lambda([this]() { return !bIsStreaming && !bAwaitingPlanApproval && !IsSubscriptionModel(); })
+                        .ToolTipText_Lambda([this]()
+                        {
+                            if (IsSubscriptionModel()) return LOCTEXT("SubscriptionModelTip", "Hayba Pro selects a subscription model for this run.");
+                            const FHaybaMCPSettings& Settings = FHaybaMCPSettings::Get();
+                            const FHaybaProviderInfo* Provider = FHaybaMCPSettings::FindProvider(Settings.SelectedProviderId);
+                            return FText::FromString(FString(Provider ? Provider->Label : *Settings.SelectedProviderId)
+                                + TEXT(" · ") + EffectiveModelId());
+                        })
+                        .ButtonContent()
+                        [ SNew(SHorizontalBox)
+                            + SHorizontalBox::Slot().FillWidth(1.f).VAlign(VAlign_Center)
+                            [ SNew(STextBlock)
+                                .Text_Lambda([this]() { return FText::FromString(IsSubscriptionModel()
+                                    ? TEXT("Hayba Pro") : EffectiveModelId().IsEmpty()
+                                        ? TEXT("Choose model") : EffectiveModelId()); })
+                                .Font(FHaybaMCPStyle::Font(11))
+                                .OverflowPolicy(ETextOverflowPolicy::Ellipsis)
+                                .ColorAndOpacity(FHaybaMCPStyle::Colour(TEXT("Hayba.Color.Text.Secondary"))) ]
+                            + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(4.f, 0.f, 0.f, 0.f)
+                            [ SNew(SImage).Image(FHaybaMCPStyle::GetBrush(TEXT("Hayba.Icon.Chevron.Down")))
+                                .ColorAndOpacity(FHaybaMCPStyle::Colour(TEXT("Hayba.Color.Text.Secondary"))) ] ]
+                        .OnGetMenuContent(this, &SHaybaMCPChatPanel::BuildModelMenu) ] ]
+                + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0.f, 0.f, 4.f, 0.f)
+                [ SAssignNew(EffortButton, SComboButton)
+                    .Visibility_Lambda([this]() { return HasEffortChoices() ? EVisibility::Visible : EVisibility::Collapsed; })
+                    .IsEnabled_Lambda([this]() { return !bIsStreaming && !bAwaitingPlanApproval; })
+                    .ButtonStyle(&FHaybaMCPStyle::Get().GetWidgetStyle<FButtonStyle>("Hayba.Button.Task"))
+                    .HasDownArrow(false).ContentPadding(FMargin(4.f, 4.f))
+                    .ToolTipText(LOCTEXT("ReasoningEffortTip", "Reasoning effort for the next run"))
+                    .ButtonContent()
+                    [ SNew(STextBlock)
+                        .Text_Lambda([this]()
+                        {
+                            const FHaybaMCPDiscoveredModel* Model = SelectedDiscoveredModel();
+                            return FText::FromString(ReasoningEffort.IsEmpty() ||
+                                (Model && !Model->ReasoningEfforts.Contains(ReasoningEffort))
+                                ? TEXT("Default") : ReasoningEffort);
+                        })
+                        .Font(FHaybaMCPStyle::Font(11))
+                        .ColorAndOpacity(FHaybaMCPStyle::Colour(TEXT("Hayba.Color.Text.Secondary"))) ]
+                    .OnGetMenuContent(this, &SHaybaMCPChatPanel::BuildEffortMenu) ]
                 + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
                 [
-                    SNew(SButton).ContentPadding(FMargin(14.f, 7.f))
+                    SNew(SButton)
+                    .ButtonStyle(&FHaybaMCPStyle::Get().GetWidgetStyle<FButtonStyle>("Hayba.Button.Send"))
+                    .ContentPadding(FMargin(11.f, 8.f))
                     .IsEnabled_Lambda([this]() { return bIsStreaming || (CanSend() && InputBox.IsValid() && !InputBox->GetText().IsEmpty()); })
                     .OnClicked(this, &SHaybaMCPChatPanel::OnSendOrStop)
                     .ToolTipText_Lambda([this]() { return bIsStreaming ? LOCTEXT("StopTT", "Stop generation") : LOCTEXT("SendTT", "Send message (Enter)"); })
-                    [ SNew(STextBlock).Text_Lambda([this]() { return bIsStreaming ? LOCTEXT("Stop", "Stop") : LOCTEXT("Send", "Send"); }) ]
+                    [ SNew(SImage).Image_Lambda([this]() { return FHaybaMCPStyle::GetBrush(
+                        bIsStreaming ? TEXT("Hayba.Icon.Stop") : TEXT("Hayba.Icon.Send")); }) ]
                 ]
             ]
+            + SVerticalBox::Slot().AutoHeight().Padding(2.f, 5.f, 0.f, 0.f)
+            [
+                SNew(SVerticalBox)
+                .Visibility_Lambda([this]() { return bCredentialSetupRequired && NeedsCredentialSetup()
+                    ? EVisibility::Visible : EVisibility::Collapsed; })
+                + SVerticalBox::Slot().AutoHeight()
+                [ SNew(STextBlock)
+                    .Text(LOCTEXT("ChatCredentialSetup", "Add an API key to send. Draft kept here."))
+                    .Font(FHaybaMCPStyle::Font(11))
+                    .ColorAndOpacity(FHaybaMCPStyle::Colour(TEXT("Hayba.Color.Text.Secondary")))
+                    .AutoWrapText(true) ]
+                + SVerticalBox::Slot().AutoHeight().Padding(0.f, 4.f, 0.f, 0.f)
+                [ SNew(SHorizontalBox)
+                    + SHorizontalBox::Slot().AutoWidth()
+                    [ SNew(SButton)
+                        .ButtonStyle(&FHaybaMCPStyle::Get().GetWidgetStyle<FButtonStyle>("Hayba.Button.Task"))
+                        .Text(LOCTEXT("ChatCredentialSettings", "Settings"))
+                        .OnClicked(this, &SHaybaMCPChatPanel::OnOpenCredentialSettings) ]
+                    + SHorizontalBox::Slot().AutoWidth().Padding(6.f, 0.f, 0.f, 0.f)
+                    [ SNew(SButton)
+                        .Visibility_Lambda([this]() { return !IsProLoopActive()
+                            ? EVisibility::Visible : EVisibility::Collapsed; })
+                        .ButtonStyle(&FHaybaMCPStyle::Get().GetWidgetStyle<FButtonStyle>("Hayba.Button.Task"))
+                        .Text(LOCTEXT("ChatCredentialTry", "Try anyway"))
+                        .ToolTipText(LOCTEXT("ChatCredentialTryTip", "Use a provider key configured in the running sidecar's environment."))
+                        .OnClicked(this, &SHaybaMCPChatPanel::OnTryUnverifiedCredential) ] ]
+            ]
         ];
+}
+
+TSharedRef<SWidget> SHaybaMCPChatPanel::BuildWorkModeMenu()
+{
+    TSharedRef<SVerticalBox> Items = SNew(SVerticalBox);
+    auto AddMode = [this, &Items](const FString& Id, const FText& Label, const FText& Detail)
+    {
+        Items->AddSlot().AutoHeight()
+        [
+            FHaybaMCPStyle::PopupRow(Label, FOnClicked::CreateLambda([this, Id]()
+            {
+                if (WorkModeButton.IsValid()) WorkModeButton->SetIsOpen(false);
+                return OnSetWorkMode(Id);
+            }), WorkMode == Id, Detail)
+        ];
+    };
+    AddMode(TEXT("explore"), LOCTEXT("InspectMode", "Inspect"),
+        LOCTEXT("InspectModeTip", "Read and explain. No project changes."));
+    AddMode(TEXT("draft"), LOCTEXT("DraftMode", "Draft"),
+        LOCTEXT("DraftModeTip", "Propose changes for review."));
+    AddMode(TEXT("production"), LOCTEXT("ProductionMode", "Production"),
+        LOCTEXT("ProductionModeTip", "Propose and verify reviewed changes."));
+    return FHaybaMCPStyle::PopupSurface(Items, 230.f);
+}
+
+FString SHaybaMCPChatPanel::EffectiveModelId() const
+{
+    const FHaybaMCPSettings& Settings = FHaybaMCPSettings::Get();
+    if (!TaskModelId.IsEmpty() && (TaskModelProviderId.IsEmpty() ||
+        TaskModelProviderId == Settings.SelectedProviderId)) return TaskModelId;
+    if (!Settings.Model.IsEmpty()) return Settings.Model;
+    const FHaybaProviderInfo* Provider = FHaybaMCPSettings::FindProvider(Settings.SelectedProviderId);
+    return Provider && Provider->DefaultModel ? FString(Provider->DefaultModel) : FString();
+}
+
+FString SHaybaMCPChatPanel::EffectiveReasoningEffort() const
+{
+    if (ReasoningEffort.IsEmpty() || IsProLoopActive() ||
+        !SupportsReasoningEffort(FHaybaMCPSettings::Get().SelectedProviderId, ReasoningEffort)) return FString();
+    const FHaybaMCPDiscoveredModel* Model = SelectedDiscoveredModel();
+    return !Model || Model->ReasoningEfforts.Contains(ReasoningEffort) ? ReasoningEffort : FString();
+}
+
+const FHaybaMCPDiscoveredModel* SHaybaMCPChatPanel::SelectedDiscoveredModel() const
+{
+    if (!DiscoveredModels.IsSet() ||
+        DiscoveredModels->Provider != FHaybaMCPSettings::Get().SelectedProviderId) return nullptr;
+    const FString Id = EffectiveModelId();
+    return DiscoveredModels->Models.FindByPredicate([&Id](const FHaybaMCPDiscoveredModel& Model)
+    {
+        return Model.Id == Id;
+    });
+}
+
+bool SHaybaMCPChatPanel::IsSubscriptionModel() const
+{
+    return IsProLoopActive() && FHaybaMCPSettings::Get().BrainLlmMode == TEXT("subscription");
+}
+
+bool SHaybaMCPChatPanel::HasEffortChoices() const
+{
+    // Hayba Pro's current session protocol does not carry per-turn effort.
+    if (IsProLoopActive()) return false;
+    const FHaybaMCPDiscoveredModel* Model = SelectedDiscoveredModel();
+    if (!Model) return !ReasoningEffort.IsEmpty() &&
+        SupportsReasoningEffort(FHaybaMCPSettings::Get().SelectedProviderId, ReasoningEffort);
+    const FString& Provider = FHaybaMCPSettings::Get().SelectedProviderId;
+    return Model->ReasoningEfforts.ContainsByPredicate([&Provider](const FString& Effort)
+    {
+        return SupportsReasoningEffort(Provider, Effort);
+    });
+}
+
+TSharedRef<SWidget> SHaybaMCPChatPanel::BuildModelMenu()
+{
+    ModelSearch.Empty();
+    PendingUnverifiedModelId.Empty();
+    DiscoveredModels.Reset();
+    ModelMenuMessage = TEXT("Checking available models…");
+    bModelDiscoveryLoading = true;
+    SAssignNew(ModelMenuItems, SVerticalBox);
+    RefreshModelMenuItems();
+
+    if (ModelDiscoveryClient.IsValid())
+    {
+        TWeakPtr<SHaybaMCPChatPanel> WeakSelf = SharedThis(this);
+        ModelDiscoveryClient->DiscoverSavedSettings(/*bRefresh=*/true,
+            [WeakSelf](FHaybaMCPModelDiscoveryResult Result)
+            {
+                if (const TSharedPtr<SHaybaMCPChatPanel> Self = WeakSelf.Pin())
+                {
+                    Self->bModelDiscoveryLoading = false;
+                    Self->DiscoveredModels = MoveTemp(Result);
+                    Self->ModelMenuMessage.Empty();
+                    Self->RefreshModelMenuItems();
+                }
+            });
+    }
+
+    return FHaybaMCPStyle::PopupSurface(
+        SNew(SVerticalBox)
+        + SVerticalBox::Slot().AutoHeight().Padding(4.f, 4.f, 4.f, 7.f)
+        [ SNew(SEditableTextBox)
+            .Style(&FHaybaMCPStyle::Get().GetWidgetStyle<FEditableTextBoxStyle>("Hayba.Input.Settings"))
+            .HintText(LOCTEXT("ChatModelSearch", "Search models"))
+            .OnTextChanged_Lambda([this](const FText& Text)
+            {
+                ModelSearch = Text.ToString();
+                RefreshModelMenuItems();
+            }) ]
+        + SVerticalBox::Slot().AutoHeight()
+        [ SNew(SBox).MaxDesiredHeight(310.f)
+            [ SNew(SScrollBox) + SScrollBox::Slot() [ ModelMenuItems.ToSharedRef() ] ] ]
+        + SVerticalBox::Slot().AutoHeight().Padding(4.f, 7.f, 4.f, 2.f)
+        [ SNew(SEditableTextBox)
+            .Style(&FHaybaMCPStyle::Get().GetWidgetStyle<FEditableTextBoxStyle>("Hayba.Input.Settings"))
+            .HintText(LOCTEXT("ChatExactModel", "Enter exact model ID, then press Enter"))
+            .IsEnabled_Lambda([this]() { return !DiscoveredModels.IsSet() || DiscoveredModels->bManualEntryAllowed; })
+            .OnTextCommitted(this, &SHaybaMCPChatPanel::OnManualModelCommitted) ], 300.f);
+}
+
+void SHaybaMCPChatPanel::RefreshModelMenuItems()
+{
+    if (!ModelMenuItems.IsValid()) return;
+    ModelMenuItems->ClearChildren();
+    auto AddNote = [this](const FText& Note)
+    {
+        ModelMenuItems->AddSlot().AutoHeight().Padding(8.f, 4.f, 8.f, 8.f)
+        [ SNew(STextBlock)
+            .TextStyle(&FHaybaMCPStyle::Get().GetWidgetStyle<FTextBlockStyle>("Hayba.Text.Caption"))
+            .AutoWrapText(true).Text(Note) ];
+    };
+    if (!ModelMenuMessage.IsEmpty()) AddNote(FText::FromString(ModelMenuMessage));
+    if (bModelDiscoveryLoading || !DiscoveredModels.IsSet()) return;
+
+    const FHaybaMCPModelDiscoveryResult& Result = DiscoveredModels.GetValue();
+    if (!Result.Error.IsEmpty()) { AddNote(FText::FromString(Result.Error)); return; }
+    if (Result.Status == EHaybaMCPModelDiscoveryStatus::NoKey)
+    {
+        AddNote(LOCTEXT("ChatModelsNoKey", "Add an API key in Settings to list available models."));
+        return;
+    }
+    if (Result.Status == EHaybaMCPModelDiscoveryStatus::Manual)
+    {
+        AddNote(LOCTEXT("ChatModelsManual", "Enter the exact model ID for this endpoint."));
+        return;
+    }
+    if (Result.bStale || Result.Status == EHaybaMCPModelDiscoveryStatus::Unavailable)
+        AddNote(LOCTEXT("ChatModelsStale", "Availability could not be verified. This list may be stale."));
+    else if (Result.bPartial)
+        AddNote(LOCTEXT("ChatModelsPartial", "Only part of this provider's model list was verified."));
+
+    int32 Matches = 0;
+    for (const FHaybaMCPDiscoveredModel& Model : Result.Models)
+    {
+        if (!ModelSearch.IsEmpty() && !Model.Id.Contains(ModelSearch, ESearchCase::IgnoreCase) &&
+            !Model.Name.Contains(ModelSearch, ESearchCase::IgnoreCase)) continue;
+        if (++Matches > 40) continue;
+        const bool bImpossible = Model.ChatCapability == EHaybaMCPModelChatCapability::No ||
+            Model.ToolUse == EHaybaMCPModelToolUse::No;
+        const bool bVerified = Model.ChatCapability == EHaybaMCPModelChatCapability::Yes &&
+            (Model.ToolUse == EHaybaMCPModelToolUse::Yes || Model.ToolUse == EHaybaMCPModelToolUse::Trained);
+        FText Detail = Model.Name == Model.Id ? FText::GetEmpty() : FText::FromString(Model.Name);
+        if (bImpossible) Detail = LOCTEXT("ChatModelNoTools", "Not suitable for Hayba chat tools");
+        else if (!bVerified) Detail = PendingUnverifiedModelId == Model.Id
+            ? LOCTEXT("ChatModelConfirm", "Tool support unverified. Select again to use this model.")
+            : LOCTEXT("ChatModelUnknown", "Tool support unverified. Confirmation required.");
+        ModelMenuItems->AddSlot().AutoHeight()
+        [ FHaybaMCPStyle::PopupRow(FText::FromString(Model.Id), FOnClicked::CreateLambda([this, Id = Model.Id, bVerified]()
+            {
+                if (!bVerified && PendingUnverifiedModelId != Id)
+                {
+                    PendingUnverifiedModelId = Id;
+                    RefreshModelMenuItems();
+                    return FReply::Handled();
+                }
+                return OnSetModel(Id);
+            }), EffectiveModelId() == Model.Id, Detail, !bImpossible) ];
+    }
+    if (Matches == 0) AddNote(LOCTEXT("ChatNoMatchingModels", "No matching models. Enter an exact ID below."));
+    else if (Matches > 40) AddNote(LOCTEXT("ChatMoreModels", "More models match. Narrow your search."));
+}
+
+FReply SHaybaMCPChatPanel::OnSetModel(const FString& ModelId)
+{
+    if (bIsStreaming || bAwaitingPlanApproval || !ValidModelId(ModelId)) return FReply::Handled();
+    ReasoningEffort.Empty();
+    PendingUnverifiedModelId.Empty();
+    FHaybaMCPSettings& Settings = FHaybaMCPSettings::Get();
+    TaskModelId = ModelId;
+    TaskModelProviderId = Settings.SelectedProviderId;
+    RestoredProviderId.Empty();
+    Settings.Model = ModelId;
+    Settings.Save();
+    if (ModelButton.IsValid()) ModelButton->SetIsOpen(false);
+    return FReply::Handled();
+}
+
+void SHaybaMCPChatPanel::OnManualModelCommitted(const FText& Text, ETextCommit::Type CommitType)
+{
+    if (CommitType != ETextCommit::OnEnter) return;
+    const FString Id = Text.ToString();
+    if (!ValidModelId(Id))
+    {
+        ModelMenuMessage = TEXT("Enter a valid exact model ID.");
+        RefreshModelMenuItems();
+        return;
+    }
+    if (PendingUnverifiedModelId != Id)
+    {
+        PendingUnverifiedModelId = Id;
+        ModelMenuMessage = TEXT("Model support is unverified. Press Enter again to use this exact ID.");
+        RefreshModelMenuItems();
+        return;
+    }
+    OnSetModel(Id);
+}
+
+TSharedRef<SWidget> SHaybaMCPChatPanel::BuildEffortMenu()
+{
+    TSharedRef<SVerticalBox> Items = SNew(SVerticalBox);
+    const FHaybaMCPDiscoveredModel* Model = SelectedDiscoveredModel();
+    auto AddEffort = [this, &Items](const FString& Effort, const FText& Label)
+    {
+        Items->AddSlot().AutoHeight()
+        [ FHaybaMCPStyle::PopupRow(Label, FOnClicked::CreateLambda([this, Effort]()
+            {
+                return OnSetEffort(Effort);
+            }), ReasoningEffort == Effort) ];
+    };
+    AddEffort(FString(), LOCTEXT("ChatEffortDefault", "Model default"));
+    if (!Model)
+    {
+        if (!ReasoningEffort.IsEmpty()) AddEffort(ReasoningEffort, FText::FromString(ReasoningEffort));
+        return FHaybaMCPStyle::PopupSurface(Items, 160.f);
+    }
+    for (const FString& Effort : Model->ReasoningEfforts)
+        if (SupportsReasoningEffort(FHaybaMCPSettings::Get().SelectedProviderId, Effort))
+            AddEffort(Effort, FText::FromString(Effort));
+    return FHaybaMCPStyle::PopupSurface(Items, 160.f);
+}
+
+FReply SHaybaMCPChatPanel::OnSetEffort(const FString& Effort)
+{
+    if (bIsStreaming || bAwaitingPlanApproval || !HasEffortChoices()) return FReply::Handled();
+    const FHaybaMCPDiscoveredModel* Model = SelectedDiscoveredModel();
+    if (Effort.IsEmpty() || (Model && Model->ReasoningEfforts.Contains(Effort) &&
+        SupportsReasoningEffort(FHaybaMCPSettings::Get().SelectedProviderId, Effort)))
+        ReasoningEffort = Effort;
+    if (EffortButton.IsValid()) EffortButton->SetIsOpen(false);
+    return FReply::Handled();
 }
 
 // ── Empty state (Q11) ─────────────────────────────────────────────────────
@@ -443,32 +1435,20 @@ TSharedRef<SWidget> SHaybaMCPChatPanel::BuildInput()
 TSharedRef<SWidget> SHaybaMCPChatPanel::BuildEmptyState()
 {
     return SNew(SVerticalBox)
-        + SVerticalBox::Slot().FillHeight(1.f) [ SNew(SBox) ]
-        + SVerticalBox::Slot().AutoHeight().Padding(22.f, 10.f, 22.f, 7.f)
+        + SVerticalBox::Slot().AutoHeight().HAlign(HAlign_Center)
         [
             SNew(STextBlock)
-            .Text(LOCTEXT("EmptyTitle", "What are we making?"))
-            .Font(FCoreStyle::GetDefaultFontStyle("Bold", 21))
+            .Text(LOCTEXT("EmptyTitle", "Start with your world"))
+            .Font(FHaybaMCPStyle::Font(19, true))
+            .ColorAndOpacity(FHaybaMCPStyle::Colour(TEXT("Hayba.Color.Text.Primary")))
         ]
-        + SVerticalBox::Slot().AutoHeight().Padding(22.f, 0.f, 22.f, 14.f)
+        + SVerticalBox::Slot().AutoHeight().HAlign(HAlign_Center).Padding(0.f, 13.f, 0.f, 0.f)
         [
-            SNew(STextBlock)
-            .Text(LOCTEXT("EmptyDescription", "Ask Hayba to plan or work on selected content. Inspect reads the loaded world without using the model."))
-            .ColorAndOpacity(FSlateColor(ColorMuted))
-            .AutoWrapText(true)
-        ]
-        + SVerticalBox::Slot().AutoHeight().Padding(18.f, 0.f, 18.f, 20.f)
-        [
-            SNew(SVerticalBox)
-            + SVerticalBox::Slot().AutoHeight()
-              [ SNew(SButton).ButtonStyle(FAppStyle::Get(), "SimpleButton").Text(LOCTEXT("PromptScenePlan", "Plan a scene layout"))
-                .OnClicked_Lambda([this]() { return OnPromptCardClicked(TEXT("Plan a scene layout for the selected area. Start by inspecting the world and propose an editable blockout.")); }) ]
-            + SVerticalBox::Slot().AutoHeight()
-              [ SNew(SButton).ButtonStyle(FAppStyle::Get(), "SimpleButton").Text(LOCTEXT("PromptInspectWorld", "Inspect the current world"))
-                .OnClicked(this, &SHaybaMCPChatPanel::OnInspectWorld) ]
-            + SVerticalBox::Slot().AutoHeight()
-              [ SNew(SButton).ButtonStyle(FAppStyle::Get(), "SimpleButton").Text(LOCTEXT("PromptAsset", "Prepare selected assets"))
-                .OnClicked_Lambda([this]() { return OnPromptCardClicked(TEXT("Inspect the selected assets and propose production preparation for Nanite, LODs, collision, and materials.")); }) ]
+            SNew(SButton)
+            .ButtonStyle(&FHaybaMCPStyle::Get().GetWidgetStyle<FButtonStyle>("Hayba.Button.Switcher"))
+            .ContentPadding(FMargin(12.f, 7.f))
+            .Text(LOCTEXT("EmptyInspect", "Inspect loaded world"))
+            .OnClicked(this, &SHaybaMCPChatPanel::OnInspectWorld)
         ];
 }
 
@@ -476,16 +1456,6 @@ void SHaybaMCPChatPanel::DraftPrompt(const FString& Prompt)
 {
     AppendToInput(Prompt);
     Toast(LOCTEXT("DraftReady", "Request added to the composer. Review it, choose a work mode, then send."));
-}
-
-FReply SHaybaMCPChatPanel::OnPromptCardClicked(FString Prompt)
-{
-    if (InputBox.IsValid()) InputBox->SetText(FText::FromString(Prompt));
-    if (FSlateApplication::IsInitialized() && InputBox.IsValid())
-    {
-        FSlateApplication::Get().SetKeyboardFocus(InputBox);
-    }
-    return FReply::Handled();
 }
 
 // ── Drag-and-drop into the input (assets + external files) ────────────────
@@ -564,59 +1534,66 @@ FReply SHaybaMCPChatPanel::OnDrop(const FGeometry& /*MyGeometry*/, const FDragDr
 
 TSharedRef<SWidget> SHaybaMCPChatPanel::BuildMessageRow(const FHaybaMCPChatMessage& Msg, int32 MessageIndex)
 {
+    FMessageWidgets& Widgets = MessageWidgets[MessageIndex];
     const FText RoleLabel = Msg.bFromUser ? LOCTEXT("RoleYou", "You")
         : Msg.bToolResult ? LOCTEXT("RoleWorldInspect", "World inspect")
         : LOCTEXT("RoleAI", "Hayba");
-    const FLinearColor RoleColor = Msg.bFromUser ? ColorMuted : ColorRoleAI;
-
     TSharedRef<SVerticalBox> Stack = SNew(SVerticalBox)
         + SVerticalBox::Slot().AutoHeight()
         [
             SNew(SHorizontalBox)
-            + SHorizontalBox::Slot().AutoWidth().Padding(0.f, 0.f, 8.f, 0.f)
-            [
-                SNew(STextBlock)
-                .Text(RoleLabel)
-                .ColorAndOpacity(FSlateColor(ColorMuted))
-            ]
             + SHorizontalBox::Slot().FillWidth(1.f)
             [
                 SNew(STextBlock)
-                .Text(FText::FromString(Msg.Text))
-                .ColorAndOpacity(FSlateColor(RoleColor))
-                .AutoWrapText(true)
-                .Visibility(Msg.Text.IsEmpty() ? EVisibility::Collapsed : EVisibility::Visible)
+                .Text(RoleLabel)
+                .Font(FHaybaMCPStyle::Font(11, true))
+                .ColorAndOpacity(FHaybaMCPStyle::Colour(TEXT("Hayba.Color.Text.Secondary")))
             ]
             // Hover copy icon (Q12-c).
-            + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Top).Padding(6.f, 0.f, 0.f, 0.f)
+            + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(6.f, 0.f, 0.f, 0.f)
             [
                 SNew(SButton)
-                .ButtonStyle(FAppStyle::Get(), "SimpleButton")
+                .ButtonStyle(&FHaybaMCPStyle::Get().GetWidgetStyle<FButtonStyle>("Hayba.Button.Icon"))
                 .ToolTipText(LOCTEXT("CopyMsgTT", "Copy message"))
-                .ContentPadding(FMargin(2.f))
+                .ContentPadding(FMargin(3.f))
                 .OnClicked_Lambda([this, MessageIndex]() { return OnCopyMessage(MessageIndex); })
-                [ SNew(SImage).Image(FAppStyle::GetBrush("Icons.Duplicate")) ]
+                [ SNew(SImage).Image(FHaybaMCPStyle::GetBrush(TEXT("Hayba.Icon.Copy"))) ]
             ]
+        ]
+        + SVerticalBox::Slot().AutoHeight().Padding(0.f, 5.f, 0.f, 0.f)
+        [
+            SAssignNew(Widgets.Body, SHaybaChatMessageBody).PlainText(Msg.bFromUser)
         ];
-
-    if (!Msg.ActivityId.IsEmpty())
-        Stack->AddSlot().AutoHeight().Padding(28.f, 4.f, 0.f, 1.f)
-        [ BuildActivityCard(Msg.ActivityId) ];
+    Widgets.Body->SetMessageText(Msg.Text);
+    Stack->AddSlot().AutoHeight()
+        [ SAssignNew(Widgets.Activity, SBox) ];
 
     // Hayba Pro unavailable: offer to finish this chat on the local Community loop.
-    if (MessageIndex == CommunityFallbackMessageIndex)
-        Stack->AddSlot().AutoHeight().HAlign(HAlign_Left).Padding(28.f, 6.f, 0.f, 1.f)
+        Stack->AddSlot().AutoHeight().HAlign(HAlign_Left)
         [
             SNew(SButton)
+            .Visibility_Lambda([this, MessageIndex]() { return MessageIndex == CommunityFallbackMessageIndex ? EVisibility::Visible : EVisibility::Collapsed; })
+            .ButtonStyle(&FHaybaMCPStyle::Get().GetWidgetStyle<FButtonStyle>("Hayba.Button.Switcher"))
             .Text(LOCTEXT("UseCommunity", "Use Community for this chat"))
             .ToolTipText(LOCTEXT("UseCommunityTip", "Continue this conversation on the local Community loop. Other chats keep using Hayba Pro."))
             .IsEnabled_Lambda([this]() { return CanSend() && AgentClient.IsValid() && !AgentClient->IsTurnActive(); })
             .OnClicked(this, &SHaybaMCPChatPanel::OnUseCommunityForThisChat)
         ];
 
+        Stack->AddSlot().AutoHeight().HAlign(HAlign_Left)
+        [
+            SNew(SButton)
+            .Visibility_Lambda([this, MessageIndex]() { return MessageIndex == RetryMessageIndex && !RetryPromptText.IsEmpty() ? EVisibility::Visible : EVisibility::Collapsed; })
+            .ButtonStyle(&FHaybaMCPStyle::Get().GetWidgetStyle<FButtonStyle>("Hayba.Button.Switcher"))
+            .Text(LOCTEXT("RestorePrompt", "Edit and resend"))
+            .ToolTipText(LOCTEXT("RestorePromptTip", "Restore this prompt to the composer so you can review it before sending again."))
+            .IsEnabled_Lambda([this]() { return CanSend() && InputBox.IsValid(); })
+            .OnClicked(this, &SHaybaMCPChatPanel::RestoreRetryPrompt)
+        ];
+
     return SNew(SBorder)
-        .BorderImage(FAppStyle::GetBrush("NoBrush"))
-        .Padding(FMargin(8.f, 4.f))
+        .BorderImage(Msg.bToolResult ? FHaybaMCPStyle::GetBrush(TEXT("Hayba.Brush.Settings.Section")) : FAppStyle::GetBrush("NoBrush"))
+        .Padding(Msg.bToolResult ? FMargin(12.f) : FMargin(4.f, 11.f, 4.f, 12.f))
         [ Stack ];
 }
 
@@ -666,28 +1643,59 @@ void SHaybaMCPChatPanel::AddSystemError(const FString& Reason, const FString& Re
     Msg.Text         = FString::Printf(TEXT("⚠ %s"), *Reason);
     Msg.bShowActions = false;
     Session.Messages.Add(Msg);
+    RetryPromptText = RetryPrompt;
+    RetryMessageIndex = RetryPromptText.IsEmpty() ? INDEX_NONE : Session.Messages.Num() - 1;
     RebuildChat();
-    // Retry button surfacing happens by re-rendering with a `[Retry]` chip
-    // attached when the next prompt is the same. Minimum-viable for now:
-    // user can re-send via the copy-as-prompt right-click menu.
-    Toast(FText::FromString(FString::Printf(TEXT("Send failed: %s — use right-click → Copy as prompt to retry"), *Reason)));
-    (void)RetryPrompt;
+    ScrollToBottomIfPinned();
+    Toast(FText::FromString(FString::Printf(TEXT("Chat: %s"), *Reason)));
+}
+
+FReply SHaybaMCPChatPanel::RestoreRetryPrompt()
+{
+    if (!CanSend() || !InputBox.IsValid() || RetryPromptText.IsEmpty()) return FReply::Handled();
+    if (!InputBox->GetText().IsEmpty())
+    {
+        Toast(LOCTEXT("RetryHasDraft", "Finish or clear your draft before restoring the prompt."));
+        return FReply::Handled();
+    }
+    InputBox->SetText(FText::FromString(RetryPromptText));
+    if (FSlateApplication::IsInitialized()) FSlateApplication::Get().SetKeyboardFocus(InputBox);
+    RetryPromptText.Empty();
+    RetryMessageIndex = INDEX_NONE;
+    RebuildChat();
+    return FReply::Handled();
 }
 
 void SHaybaMCPChatPanel::RebuildChat()
 {
     if (!ChatScrollBox.IsValid()) return;
-    ChatScrollBox->ClearChildren();
-
-    if (Session.Messages.IsEmpty())
+    // Messages append within a session. Only an empty placeholder is removed;
+    // a new/restored session clears this cache through OnNewConversation.
+    while (MessageWidgets.Num() > Session.Messages.Num())
     {
-        ChatScrollBox->AddSlot() [ BuildEmptyState() ];
-        return;
+        ChatScrollBox->RemoveSlot(MessageWidgets.Last().Row.ToSharedRef());
+        MessageWidgets.Pop();
     }
-
     for (int32 i = 0; i < Session.Messages.Num(); ++i)
     {
-        ChatScrollBox->AddSlot() [ BuildMessageRow(Session.Messages[i], i) ];
+        if (!MessageWidgets.IsValidIndex(i))
+        {
+            MessageWidgets.AddDefaulted();
+            MessageWidgets[i].Row = BuildMessageRow(Session.Messages[i], i);
+            ChatScrollBox->AddSlot().Padding(0.f, 0.f, 0.f, 4.f) [ MessageWidgets[i].Row.ToSharedRef() ];
+        }
+        FMessageWidgets& Widgets = MessageWidgets[i];
+        const FHaybaMCPChatMessage& Msg = Session.Messages[i];
+        Widgets.Body->SetMessageText(Msg.Text);
+        const uint64 Serial = ActivitySerialById.FindRef(Msg.ActivityId);
+        if (Widgets.ActivityId != Msg.ActivityId || Widgets.ActivitySerial != Serial)
+        {
+            HaybaChatFocus::ReplaceActivityContent(Widgets.Activity.ToSharedRef(),
+                Msg.ActivityId.IsEmpty() ? SNullWidget::NullWidget : BuildActivityCard(Msg.ActivityId));
+            Widgets.Activity->SetPadding(Msg.ActivityId.IsEmpty() ? FMargin(0.f) : FMargin(0.f, 10.f, 0.f, 1.f));
+            Widgets.ActivityId = Msg.ActivityId;
+            Widgets.ActivitySerial = Serial;
+        }
     }
 }
 
@@ -750,9 +1758,19 @@ FReply SHaybaMCPChatPanel::OnSendOrStop()
 FReply SHaybaMCPChatPanel::OnSendCurrentInput()
 {
     if (!CanSend() || !InputBox.IsValid()) return FReply::Handled();
+    const bool bBypass = bAllowUnverifiedCredentialSendOnce;
+    bAllowUnverifiedCredentialSendOnce = false;
     FString Text = InputBox->GetText().ToString().TrimStartAndEnd();
     if (Text.IsEmpty()) return FReply::Handled();
+    if (NeedsCredentialSetup() && !bBypass)
+    {
+        bCredentialSetupRequired = true;
+        return FReply::Handled();
+    }
+    bCredentialSetupRequired = false;
 
+    RetryPromptText.Empty();
+    RetryMessageIndex = INDEX_NONE;
     InputBox->SetText(FText::GetEmpty());
     AddUserMessage(Text);
     // User intent: always scroll to bottom on their own send.
@@ -770,6 +1788,7 @@ FReply SHaybaMCPChatPanel::OnSendCurrentInput()
 
 void SHaybaMCPChatPanel::StopGeneration()
 {
+    InvalidateCurrentChatNativeApproval();
     // Cancel the in-flight stream: aborts the server-side loop, cancels the local
     // HTTP request, and fires OnDone{cancelled} which finalizes the bubble.
     if (AgentClient.IsValid()) AgentClient->Cancel();
@@ -802,6 +1821,7 @@ bool SHaybaMCPChatPanel::CanSend() const
 
 FReply SHaybaMCPChatPanel::OnNewConversation()
 {
+    InvalidateCurrentChatNativeApproval();
     InspectGeneration.Invalidate();
     bInspectInFlight = false;
     PendingSessionId.Empty();
@@ -823,10 +1843,20 @@ FReply SHaybaMCPChatPanel::OnNewConversation()
     InProgressMessageIndex = INDEX_NONE;
     InProgressAssistantText.Reset();
     LastPrompt.Reset();
+    RetryPromptText.Reset();
+    RetryMessageIndex = INDEX_NONE;
+    bTurnErrorShown = false;
     CommunityFallbackMessageIndex = INDEX_NONE;
+    TaskModelId.Empty();
+    TaskModelProviderId.Empty();
+    RestoredProviderId.Empty();
+    RestoredLoop.Empty();
+    ReasoningEffort.Empty();
+    WorkMode = TEXT("explore");
 
     Session = FHaybaMCPWizardSession{};
     ExpandedActivityIds.Reset();
+    ActivitySerialById.Reset();
     if (Module) Module->GetActivityModel().Clear();
     UnseenWhileScrolledUp = 0;
     RebuildChat();
@@ -900,20 +1930,72 @@ bool SHaybaMCPChatPanel::IsProLoopActive() const
     return AgentClient.IsValid() ? AgentClient->IsProLoopActive() : FHaybaMCPSettings::Get().bUseHaybaPro;
 }
 
+bool SHaybaMCPChatPanel::NeedsCredentialSetup() const
+{
+    if (IsSubscriptionModel()) return false;
+    const FHaybaMCPSettings& Settings = FHaybaMCPSettings::Get();
+    const FHaybaProviderInfo* Provider = FHaybaMCPSettings::FindProvider(Settings.SelectedProviderId);
+    if (!IsProLoopActive() && (!Provider || !Provider->bNeedsKey)) return false;
+    if (!FHaybaMCPSettings::GetProviderKey(Settings.SelectedProviderId).IsEmpty()) return false;
+    // Pro BYOK sends only the vault key. Community also supports these provider
+    // environment keys. An external sidecar may have a different environment,
+    // so the conditional prompt offers a one-turn override.
+    if (!IsProLoopActive())
+    {
+        const TCHAR* EnvKey = nullptr;
+        if (Settings.SelectedProviderId == TEXT("anthropic")) EnvKey = TEXT("ANTHROPIC_API_KEY");
+        else if (Settings.SelectedProviderId == TEXT("openai")) EnvKey = TEXT("OPENAI_API_KEY");
+        else if (Settings.SelectedProviderId == TEXT("deepseek")) EnvKey = TEXT("DEEPSEEK_API_KEY");
+        else if (Settings.SelectedProviderId == TEXT("groq")) EnvKey = TEXT("GROQ_API_KEY");
+        else if (Settings.SelectedProviderId == TEXT("openrouter")) EnvKey = TEXT("OPENROUTER_API_KEY");
+        if (EnvKey && !FPlatformMisc::GetEnvironmentVariable(EnvKey).IsEmpty()) return false;
+    }
+    return true;
+}
+
+FReply SHaybaMCPChatPanel::OnOpenCredentialSettings()
+{
+    if (Module)
+        if (TSharedPtr<SHaybaMCPMainPanel> Main = Module->MainPanel.Pin())
+            Main->ShowPanel(EHaybaPanel::Settings);
+    return FReply::Handled();
+}
+
+FReply SHaybaMCPChatPanel::OnTryUnverifiedCredential()
+{
+    if (IsProLoopActive()) return FReply::Handled();
+    bAllowUnverifiedCredentialSendOnce = true;
+    return OnSendCurrentInput();
+}
+
 void SHaybaMCPChatPanel::StartAgentTurn(const FString& Prompt)
 {
-    // Hayba Pro on subscription models needs no local provider key.
-    const bool bNeedsProviderKey =
-        !(IsProLoopActive() && FHaybaMCPSettings::Get().BrainLlmMode == TEXT("subscription"));
-    if (bNeedsProviderKey && !FHaybaMCPSettings::Get().HasApiKey())
+    LastPrompt = Prompt;
+    bTurnErrorShown = false;
+    const FHaybaMCPSettings& Settings = FHaybaMCPSettings::Get();
+    if (!RestoredProviderId.IsEmpty() && RestoredProviderId != Settings.SelectedProviderId &&
+        !IsSubscriptionModel())
     {
-        AddSystemError(TEXT("No API key configured — add one in Settings to chat"), TEXT(""));
+        AddSystemError(FString::Printf(TEXT("This conversation used %s. Select that provider in Settings or choose a new model for this task."),
+            *RestoredProviderId), Prompt);
+        return;
+    }
+    const FString CurrentLoop = IsProLoopActive() ? TEXT("pro") : TEXT("community");
+    if (!RestoredLoop.IsEmpty() && RestoredLoop != CurrentLoop)
+    {
+        AddSystemError(FString::Printf(TEXT("This conversation used %s. Switch Chat mode in Settings before continuing."),
+            *RestoredLoop), Prompt);
+        return;
+    }
+    // Hayba Pro on subscription models needs no local provider key.
+    if (!IsSubscriptionModel() && EffectiveModelId().IsEmpty())
+    {
+        AddSystemError(TEXT("Choose a model in Chat or Settings before sending."), Prompt);
         return;
     }
 
     EnsureAgentClient();
 
-    LastPrompt = Prompt;
     CommunityFallbackMessageIndex = INDEX_NONE;
     Session.bWaitingForAI = true;
     bIsStreaming = true;
@@ -922,7 +2004,9 @@ void SHaybaMCPChatPanel::StartAgentTurn(const FString& Prompt)
     // Server owns the system prompt (see HaybaMCPWizardPrompt.h) — send only the
     // user turn. Provider/model/key are resolved by the client from the vault
     // and pushed to the sidecar via /chat/config on the first turn.
-    AgentClient->SendPrompt(Prompt, WorkMode);
+    RestoredProviderId.Empty();
+    RestoredLoop.Empty();
+    AgentClient->SendPrompt(Prompt, WorkMode, EffectiveModelId(), EffectiveReasoningEffort());
 }
 
 void SHaybaMCPChatPanel::BeginInProgressBubble()
@@ -931,7 +2015,7 @@ void SHaybaMCPChatPanel::BeginInProgressBubble()
 
     FHaybaMCPChatMessage Placeholder{};
     Placeholder.bFromUser = false;
-    Placeholder.Text      = TEXT("…");
+    Placeholder.Text      = TEXT("Responding…");
     Session.Messages.Add(Placeholder);
     InProgressMessageIndex = Session.Messages.Num() - 1;
 
@@ -944,11 +2028,13 @@ void SHaybaMCPChatPanel::RefreshInProgressBubble()
     if (!Session.Messages.IsValidIndex(InProgressMessageIndex)) return;
 
     FString Composed = InProgressAssistantText;
-    if (Composed.IsEmpty()) Composed = TEXT("…");
+    if (Composed.IsEmpty()) Composed = TEXT("Responding…");
 
     Session.Messages[InProgressMessageIndex].Text = Composed;
     const bool bPinned = IsScrolledNearBottom();
-    RebuildChat();
+    if (MessageWidgets.IsValidIndex(InProgressMessageIndex))
+        MessageWidgets[InProgressMessageIndex].Body->SetMessageText(Composed);
+    else RebuildChat();
     if (bPinned) ScrollToBottomIfPinned();
 }
 
@@ -1001,6 +2087,7 @@ void SHaybaMCPChatPanel::HandleActivityEvent(const FJsonObject& Event)
     Event.TryGetStringField(TEXT("type"), Type);
     FString ActivityId;
     Event.TryGetStringField(TEXT("activityId"), ActivityId);
+    if (!ActivityId.IsEmpty()) ++ActivitySerialById.FindOrAdd(ActivityId);
     if (Type == TEXT("activity_started") && !ActivityId.IsEmpty())
     {
         if (InProgressMessageIndex == INDEX_NONE) BeginInProgressBubble();
@@ -1009,6 +2096,9 @@ void SHaybaMCPChatPanel::HandleActivityEvent(const FJsonObject& Event)
     }
     if (Type == TEXT("approval_requested"))
     {
+        // A later approval belongs to a new operation. Retire any unused
+        // token from the previous Chat action before adopting its identity.
+        InvalidateCurrentChatNativeApproval();
         bAwaitingPlanApproval = true;
         PendingActivityId = ActivityId;
         Toast(LOCTEXT("AgentApproval", "Review the proposed action in this conversation."));
@@ -1026,23 +2116,89 @@ FReply SHaybaMCPChatPanel::OnSetWorkMode(FString NewMode)
     return FReply::Handled();
 }
 
+bool SHaybaMCPChatPanel::IsNativeApprovalForCurrentActivity(const FString& ProposalId) const
+{
+    if (!Module || !AgentClient.IsValid() || !bAwaitingPlanApproval || PendingActivityId.IsEmpty() ||
+        !Module->PendingExternalPlanIsExact || !Module->PendingExternalOperation.IsValid() ||
+        ProposalId.IsEmpty() || ProposalId != Module->PendingExternalOperation.ProposalId)
+        return false;
+    const FHaybaActivity* Activity = Module->GetActivityModel().FindActivity(PendingActivityId);
+    if (!Activity || !Activity->Approval.IsSet() ||
+        !Module->GetActivityModel().CanResolveApproval(PendingActivityId, Activity->Approval->ApprovalId)) return false;
+    const FHaybaActivityApproval& Approval = Activity->Approval.GetValue();
+    const FHaybaExactExternalApproval& Native = Module->PendingExternalOperation;
+    return Approval.Source == TEXT("ue") &&
+        Approval.Call.Name == Native.Command &&
+        Approval.NativeProposalId == Native.ProposalId &&
+        Approval.NativeOperationDigest == Native.OperationDigest &&
+        Approval.NativeTargetRef == Native.TargetRef &&
+        Approval.NativeTargetFingerprint == Native.TargetFingerprint;
+}
+
+void SHaybaMCPChatPanel::InvalidateCurrentChatNativeApproval()
+{
+    if (!Module) return;
+    FString PendingProposalId;
+    FString PendingDigest;
+    if (!PendingActivityId.IsEmpty())
+    {
+        const FHaybaActivity* Activity = Module->GetActivityModel().FindActivity(PendingActivityId);
+        if (Activity && Activity->Approval.IsSet() && Activity->Approval->Source == TEXT("ue"))
+        {
+            PendingProposalId = Activity->Approval->NativeProposalId;
+            PendingDigest = Activity->Approval->NativeOperationDigest;
+        }
+    }
+    auto MatchesCurrentToken = [this](const FString& Id, const FString& Digest)
+    {
+        return !Id.IsEmpty() && !Digest.IsEmpty() &&
+            ((Module->PendingExternalOperation.ProposalId == Id &&
+                Module->PendingExternalOperation.OperationDigest == Digest) ||
+             (Module->ApprovedExternalOperation.ProposalId == Id &&
+                Module->ApprovedExternalOperation.OperationDigest == Digest));
+    };
+    if (MatchesCurrentToken(ActiveNativeProposalId, ActiveNativeOperationDigest) ||
+        MatchesCurrentToken(PendingProposalId, PendingDigest))
+        Module->InvalidateExternalApproval();
+    ActiveNativeProposalId.Empty();
+    ActiveNativeOperationDigest.Empty();
+}
+
 void SHaybaMCPChatPanel::ApproveActivity(const FString& ActivityId)
 {
-    if (!Module || !AgentClient.IsValid() || !bAwaitingPlanApproval) return;
+    if (!Module || !AgentClient.IsValid() || !bAwaitingPlanApproval || ActivityId != PendingActivityId) return;
+    if (AgentClient->IsStreaming())
+    {
+        Toast(LOCTEXT("ApprovalStreamClosing", "Wait for the review to finish, then approve."));
+        return;
+    }
     const FHaybaActivity* Activity = Module->GetActivityModel().FindActivity(ActivityId);
     if (!Activity || !Activity->Approval.IsSet() ||
         !Module->GetActivityModel().CanResolveApproval(ActivityId, Activity->Approval->ApprovalId)) return;
+    if (Activity->Approval->Source == TEXT("ue"))
+    {
+        const FString ProposalId = Activity->Approval->NativeProposalId;
+        if (!IsNativeApprovalForCurrentActivity(ProposalId) || !Module->ResolveExternalPlan(ProposalId, true))
+        {
+            Toast(LOCTEXT("NativeApprovalChanged", "Operation changed or expired. Review the latest request."));
+            return;
+        }
+    }
     HandlePlanApproved();
 }
 
 void SHaybaMCPChatPanel::RejectActivity(const FString& ActivityId)
 {
-    if (!Module || !bAwaitingPlanApproval) return;
+    if (!Module || !bAwaitingPlanApproval || ActivityId != PendingActivityId) return;
     const FHaybaActivity* Activity = Module->GetActivityModel().FindActivity(ActivityId);
     if (!Activity || !Activity->Approval.IsSet() ||
         !Module->GetActivityModel().CanResolveApproval(ActivityId, Activity->Approval->ApprovalId)) return;
+    if (Activity->Approval->Source == TEXT("ue") &&
+        IsNativeApprovalForCurrentActivity(Activity->Approval->NativeProposalId))
+        Module->ResolveExternalPlan(Activity->Approval->NativeProposalId, false);
     Module->GetActivityModel().MarkDisconnected(ActivityId);
     HandlePlanRejected();
+    ++ActivitySerialById.FindOrAdd(ActivityId);
     RebuildChat();
 }
 
@@ -1050,22 +2206,36 @@ void SHaybaMCPChatPanel::HandlePlanApproved()
 {
     // Only act if WE are the panel waiting on a plan (avoids resuming on stray
     // approvals). One-shot: clear the flag before resuming.
-    if (!bAwaitingPlanApproval) return;
+    if (!bAwaitingPlanApproval || !AgentClient.IsValid() || AgentClient->IsStreaming()) return;
     bAwaitingPlanApproval = false;
 
-    if (!AgentClient.IsValid()) return;
+    FString NativeProposalId;
+    FString NativeOperationDigest;
+    if (Module)
+    {
+        const FHaybaActivity* Activity = Module->GetActivityModel().FindActivity(PendingActivityId);
+        if (Activity && Activity->Approval.IsSet() && Activity->Approval->Source == TEXT("ue"))
+        {
+            NativeProposalId = Activity->Approval->NativeProposalId;
+            NativeOperationDigest = Activity->Approval->NativeOperationDigest;
+        }
+    }
+    ActiveNativeProposalId = NativeProposalId;
+    ActiveNativeOperationDigest = NativeOperationDigest;
 
     // Continue in the same transcript row so the activity does not jump to the
     // end or duplicate its approval card after the resume.
     Session.bWaitingForAI = true;
     bIsStreaming = true;
-    InProgressMessageIndex = Session.Messages.IndexOfByPredicate([this](const FHaybaMCPChatMessage& Message)
+    const FString ApprovedActivityId = MoveTemp(PendingActivityId);
+    PendingActivityId.Empty();
+    InProgressMessageIndex = Session.Messages.IndexOfByPredicate([&ApprovedActivityId](const FHaybaMCPChatMessage& Message)
     {
-        return Message.ActivityId == PendingActivityId;
+        return Message.ActivityId == ApprovedActivityId;
     });
     if (InProgressMessageIndex == INDEX_NONE) BeginInProgressBubble();
     else InProgressAssistantText = Session.Messages[InProgressMessageIndex].Text;
-    AgentClient->ApproveAndResume();
+    AgentClient->ApproveAndResume(NativeProposalId, NativeOperationDigest);
 
 }
 
@@ -1074,7 +2244,9 @@ void SHaybaMCPChatPanel::HandlePlanRejected()
     // Only act if WE are the panel waiting on a plan (avoids cancelling on stray
     // rejections from an unrelated Plan-tab action). Disarm before cancelling.
     if (!bAwaitingPlanApproval) return;
+    InvalidateCurrentChatNativeApproval();
     bAwaitingPlanApproval = false;
+    PendingActivityId.Empty();
 
     // Cancel the paused server-side turn so it can never be resumed, and mark the
     // in-progress bubble as aborted. Re-enables the input (CanSend clears once
@@ -1092,6 +2264,10 @@ void SHaybaMCPChatPanel::HandlePlanRejected()
 
 void SHaybaMCPChatPanel::HandleStreamDone(const FHaybaChatDone& Done)
 {
+    // A plan_request done leaves its exact native card available for review.
+    // Every other terminal outcome retires any still-unused native token.
+    if (!(bAwaitingPlanApproval && Done.Reason == TEXT("plan_request")))
+        InvalidateCurrentChatNativeApproval();
     Session.bWaitingForAI = false;
     bIsStreaming = false;
 
@@ -1101,18 +2277,118 @@ void SHaybaMCPChatPanel::HandleStreamDone(const FHaybaChatDone& Done)
     {
         InProgressAssistantText = Done.AssistantText;
     }
+    const bool bHasActivity = Session.Messages.IsValidIndex(InProgressMessageIndex) &&
+        !Session.Messages[InProgressMessageIndex].ActivityId.IsEmpty();
+    const bool bHadPartialText = !InProgressAssistantText.TrimStartAndEnd().IsEmpty();
+    const bool bFailedTerminal = Done.Reason == TEXT("error") || Done.Reason == TEXT("brain_unavailable");
+    // Activity records can be emitted before the provider produces any text.
+    // They must never make a text-empty turn look like a successful reply.
+    const bool bNoReply = !Done.bCancelled && !bFailedTerminal && !bAwaitingPlanApproval && !bTurnErrorShown &&
+        InProgressAssistantText.TrimStartAndEnd().IsEmpty() && Done.AssistantText.TrimStartAndEnd().IsEmpty();
     const FString DoneTag = Done.bCancelled ? TEXT("[stopped]") : TEXT("");
     FinalizeInProgressBubble(DoneTag);
-    RefreshRecentSessions();
+    if (bFailedTerminal && !bTurnErrorShown)
+    {
+        const FString Failure = Done.Error == TEXT("Unable to save session history")
+            ? Done.Error
+            : TEXT("The agent stopped before completing. Review any partial work before sending again.");
+        AddSystemError(Failure, !bHasActivity && !bHadPartialText ? LastPrompt : FString());
+        bTurnErrorShown = true;
+    }
+    if (bNoReply)
+    {
+        if (bHasActivity)
+            AddSystemError(TEXT("No reply received. Review Activity for possible changes before sending another request."), FString());
+        else
+            AddSystemError(TEXT("No reply received. Check the connection, then edit and resend your message."), LastPrompt);
+    }
+    bTurnErrorShown = false;
+
+    // A recorded warning review does not prove that the finding was fixed.
+    // Keep the terminal ledger state visible in Chat until revalidation.
+    const bool bHasPending = Done.Reason == TEXT("warnings_unreviewed") ||
+        !Done.PendingWarningIds.IsEmpty() || Done.PendingWarningReviewCount > 0 || Done.bWarningOverflow;
+    const bool bHasDeferred = Done.Reason == TEXT("reviewed_with_deferred") ||
+        Done.DeferredWarningReviewCount > 0;
+    const bool bHasAcknowledged = Done.AcknowledgedWarningReviewCount > 0;
+    if (!Done.bCancelled && (bHasPending || bHasDeferred || bHasAcknowledged))
+    {
+        FString Notice;
+        if (bHasPending)
+        {
+            Notice = TEXT("Warning review is still required. Inspect each pending finding, record an acknowledged or deferred review with a reason, then revalidate any fix. Review alone does not resolve a finding.");
+        }
+        else if (bHasDeferred)
+        {
+            Notice = TEXT("Warnings were deferred with reasons. Their review is recorded, but the findings remain unresolved. Revisit them and revalidate after any fix.");
+        }
+        else
+        {
+            Notice = TEXT("Warning reviews were acknowledged, but no fix has been verified. Revalidate the findings before treating them as resolved.");
+        }
+        TArray<FString> VisibleIds;
+        for (int32 Index = 0; Index < FMath::Min(Done.PendingWarningIds.Num(), 6); ++Index)
+        {
+            VisibleIds.Add(Done.PendingWarningIds[Index]);
+        }
+        if (!VisibleIds.IsEmpty())
+        {
+            Notice += FString::Printf(TEXT(" Warning IDs: %s."), *FString::Join(VisibleIds, TEXT(", ")));
+        }
+        const int32 Remaining = Done.PendingWarningIds.Num() - VisibleIds.Num();
+        if (Remaining > 0)
+        {
+            Notice += FString::Printf(TEXT(" %d more warning IDs are not shown here."), Remaining);
+        }
+        if (Done.bPendingWarningIdsTruncated)
+        {
+            Notice += TEXT(" Additional IDs were omitted by the chat client.");
+        }
+        if (Done.bWarningOverflow)
+        {
+            Notice += TEXT(" The warning ledger reached its cap; additional findings may exist.");
+        }
+        if (Done.bWarningReviewsTruncated)
+        {
+            Notice += TEXT(" Some review records were omitted by the chat client.");
+        }
+        if (bHasPending && bHasDeferred)
+        {
+            Notice += TEXT(" Deferred findings also remain unresolved.");
+        }
+        AddAIMessage(FString::Printf(TEXT("⚠ Warning review: %s"), *Notice));
+    }
+    // A done frame can arrive from an HTTP progress/completion delegate. Starting
+    // the recents GET there mutates FHttpManager's request array during iteration.
+    TWeakPtr<SHaybaMCPChatPanel> WeakSelf = SharedThis(this);
+    if (GEditor) GEditor->GetTimerManager()->SetTimerForNextTick([WeakSelf]()
+    {
+        if (TSharedPtr<SHaybaMCPChatPanel> Self = WeakSelf.Pin())
+            Self->RefreshRecentSessions();
+    });
 }
 
 void SHaybaMCPChatPanel::HandleStreamError(const FHaybaChatError& Error)
 {
+    InvalidateCurrentChatNativeApproval();
+    if (bAwaitingPlanApproval)
+    {
+        if (Module && !PendingActivityId.IsEmpty())
+            Module->GetActivityModel().MarkDisconnected(PendingActivityId);
+        bAwaitingPlanApproval = false;
+        PendingActivityId.Empty();
+    }
+    bTurnErrorShown = true;
     Session.bWaitingForAI = false;
     bIsStreaming = false;
     // Keep any partial content, then surface the error inline.
+    const bool bCanRestorePrompt = InProgressAssistantText.IsEmpty() &&
+        (!Session.Messages.IsValidIndex(InProgressMessageIndex) ||
+         Session.Messages[InProgressMessageIndex].ActivityId.IsEmpty()) &&
+        Error.Kind != TEXT("brain_unavailable");
     FinalizeInProgressBubble(TEXT(""));
-    AddSystemError(Error.Error.IsEmpty() ? TEXT("Chat error") : Error.Error, TEXT(""));
+    AddSystemError(Error.Error.IsEmpty() ? TEXT("Chat error") : Error.Error,
+        bCanRestorePrompt ? LastPrompt : FString());
     if (Error.Kind == TEXT("brain_unavailable"))
     {
         // Attach "Use Community for this chat" to the error row just added.
@@ -1125,11 +2401,6 @@ FReply SHaybaMCPChatPanel::OnUseCommunityForThisChat()
 {
     if (!CanSend() || !AgentClient.IsValid() || AgentClient->IsTurnActive()) return FReply::Handled();
     // Community runs on the local provider key.
-    if (!FHaybaMCPSettings::Get().HasApiKey())
-    {
-        AddSystemError(TEXT("No API key configured — add one in Settings to chat"), TEXT(""));
-        return FReply::Handled();
-    }
     AgentClient->ForceCommunityThisChat();
     CommunityFallbackMessageIndex = INDEX_NONE;
 
@@ -1141,7 +2412,8 @@ FReply SHaybaMCPChatPanel::OnUseCommunityForThisChat()
     Session.bWaitingForAI = true;
     bIsStreaming = true;
     BeginInProgressBubble();
-    AgentClient->SendPrompt(FString(), WorkMode);
+    RestoredLoop.Empty();
+    AgentClient->SendPrompt(FString(), WorkMode, EffectiveModelId(), EffectiveReasoningEffort());
     return FReply::Handled();
 }
 

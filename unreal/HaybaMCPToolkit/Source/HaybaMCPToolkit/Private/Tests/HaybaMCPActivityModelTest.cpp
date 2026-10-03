@@ -220,6 +220,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FHaybaActivityDecodingTest, "Hayba.MCP.Activity
 bool FHaybaActivityDecodingTest::RunTest(const FString&)
 {
     for (const TCHAR* Valid : { Start, Running, Finished, Approval, Resume, Complete,
+        TEXT(R"({"type":"approval_requested","activityId":"a1","approvalId":"p2","call":{"id":"c2","name":"actor_transform","input":{}},"argsHash":"hash2","source":"ue","nativeProposalId":"native-p2","nativeOperationDigest":"digest","nativeTargetRef":"/Game/Test#actor","nativeTargetFingerprint":"fingerprint"})"),
         TEXT(R"({"type":"message_delta","activityId":"a1","text":""})"),
         TEXT(R"({"type":"artifact_proposed","activityId":"a1","artifact":{"kind":"plan","id":"p"}})"),
         TEXT(R"({"type":"verdict_emitted","activityId":"a1","verdict":{"code":"ok","message":"Ready","severity":"info","direction":"proceed"}})"),
@@ -241,6 +242,9 @@ bool FHaybaActivityDecodingTest::RunTest(const FString&)
         TEXT(R"({"type":"activity_step","activityId":"a1","step":{"status":"succeeded","id":"c","name":"n"}})"),
         TEXT(R"({"type":"activity_step","activityId":"a1","step":{"status":"failed","id":"c","name":"n","result":null,"extra":1}})"),
         TEXT(R"({"type":"approval_requested","activityId":"a1","approvalId":"p","call":{"id":"c","name":"n","input":{},"extra":1},"argsHash":"h","source":"ts"})"),
+        TEXT(R"({"type":"approval_requested","activityId":"a1","approvalId":"p","call":{"id":"c","name":"actor_transform","input":{}},"argsHash":"h","source":"ue"})"),
+        TEXT(R"({"type":"approval_requested","activityId":"a1","approvalId":"p","call":{"id":"c","name":"actor_transform","input":{}},"argsHash":"h","source":"ue","nativeProposalId":"native-p","nativeOperationDigest":"digest"})"),
+        TEXT(R"({"type":"approval_requested","activityId":"a1","approvalId":"p","call":{"id":"c","name":"n","input":{}},"argsHash":"h","source":"ts","nativeProposalId":"native-p"})"),
         TEXT(R"({"type":"artifact_proposed","activityId":"a1","artifact":{"kind":"plan","id":"p","extra":1}})"),
         TEXT(R"({"type":"verdict_emitted","activityId":"a1","verdict":{"code":"ok","message":"Ready","severity":"fatal","direction":"proceed"}})"),
         TEXT(R"({"type":"activity_completed","activityId":"a1","outcome":"unknown","reason":"end_turn"})"),
@@ -256,6 +260,16 @@ bool FHaybaActivityDecodingTest::RunTest(const FString&)
     TSharedPtr<FJsonObject> Decoded;
     TestFalse(TEXT("invalid JSON"), FHaybaMCPAgentClient::DecodeActivityEvent(TEXT("activity_started"), TEXT("{"), Decoded));
     TestFalse(TEXT("legacy payload isn't semantic"), FHaybaMCPAgentClient::DecodeActivityEvent(TEXT("error"), TEXT(R"({"error":"offline","kind":"transport"})"), Decoded));
+    {
+        FHaybaActivityModel Model;
+        TestTrue(TEXT("native activity starts"), Model.ApplyEvent(*Json(Start)));
+        const TCHAR* NativeApproval = TEXT(R"({"type":"approval_requested","activityId":"a1","approvalId":"native-p","call":{"id":"c","name":"actor_transform","input":{}},"argsHash":"hash","source":"ue","nativeProposalId":"native-p","nativeOperationDigest":"digest","nativeTargetRef":"/Game/Test#actor","nativeTargetFingerprint":"fingerprint"})");
+        TestTrue(TEXT("complete native identity is accepted"), Model.ApplyEvent(*Json(NativeApproval)));
+        const FHaybaActivity* Activity = Model.FindActivity(TEXT("a1"));
+        TestTrue(TEXT("native activity can be reviewed"), Activity && Activity->Approval.IsSet());
+        if (Activity && Activity->Approval.IsSet())
+            TestEqual(TEXT("native proposal identity remains bound"), Activity->Approval->NativeProposalId, FString(TEXT("native-p")));
+    }
     return true;
 }
 

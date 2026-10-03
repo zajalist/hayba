@@ -14,6 +14,8 @@ Read [`../../CONTEXT.md`](../../CONTEXT.md) first for the domain language.
 | [UE-Plugin](UE-Plugin.md) | The UE5 C++ plugin + handler-domain table |
 | [Troubleshooting](Troubleshooting.md) | Ports, Node version, the local gate |
 | [Glossary](Glossary.md) | One-line definitions of the core terms |
+| [Safety model](../safety-model.md) | Shared-editor guards, refusals, and current release status |
+| [World intelligence](../world-intelligence.md) | Planned scene-composition and production reasoning layer |
 
 ## Authoritative sources
 

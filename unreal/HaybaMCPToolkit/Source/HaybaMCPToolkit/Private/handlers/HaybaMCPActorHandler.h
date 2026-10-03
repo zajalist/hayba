@@ -13,6 +13,7 @@ private:
     FHaybaHandlerResult Delete(const TSharedPtr<FJsonObject>& P);
     FHaybaHandlerResult Transform(const TSharedPtr<FJsonObject>& P);
     FHaybaHandlerResult List(const TSharedPtr<FJsonObject>& P);
+    FHaybaHandlerResult WorldBudgetSnapshot(const TSharedPtr<FJsonObject>& P);
     FHaybaHandlerResult GetProps(const TSharedPtr<FJsonObject>& P);
     FHaybaHandlerResult SetProps(const TSharedPtr<FJsonObject>& P);
     FHaybaHandlerResult Tag(const TSharedPtr<FJsonObject>& P);

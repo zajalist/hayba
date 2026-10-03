@@ -92,8 +92,17 @@ describe('registerTools capture', () => {
 
     expect(Object.keys(sig.schema)).toEqual(['command']);
     expect(Object.keys(sig.wireSchema ?? {})).toEqual(['command', 'name']);
-    expect(Object.keys(python.schema)).toEqual(['script', 'allow_unsafe']);
-    expect(Object.keys(python.wireSchema ?? {})).toEqual(['script', 'code', 'allow_unsafe']);
+    expect(Object.keys(python.schema)).toEqual(['script', 'allow_unsafe', 'deadline_s', 'world_partition', 'transaction', 'read_only', 'resources']);
+    expect(Object.keys(python.wireSchema ?? {})).toEqual([
+      'script',
+      'code',
+      'allow_unsafe',
+      'deadline_s',
+      'world_partition',
+      'transaction',
+      'read_only',
+      'resources',
+    ]);
   });
 
   it('makes deferred stream wrapping idempotent before a captured tool is pack-loaded', () => {
@@ -158,6 +167,7 @@ describe('registerTools capture', () => {
     // point is the ratio — a capture that silently produced nothing would
     // leave the index empty while these registrations still happened.
     const names = [...registered.keys()];
+    expect(names).not.toContain('hayba_suggest_route');
     expect(names).toContain('hayba_invoke');
     expect(names).toContain('hayba_search_tools');
     expect(names.length).toBeLessThan(20);
@@ -177,6 +187,18 @@ describe('registerTools capture', () => {
         'could produce while every other test stayed green',
     ).toBeGreaterThan(0);
     expect(names, 'a searchable tool need not be registered').not.toContain(hits[0]!.name);
+  });
+
+  it('registers the read-only route advisor for external MCP hosts only when opted in', async () => {
+    writeFileSync(process.env.HAYBA_SETTINGS_PATH!, JSON.stringify({
+      toolRouting: 'deferred', alwaysLoadPacks: [], externalRouteAdvice: 'brain',
+    }));
+    __resetSettingsCache();
+    const { server, registered } = fakeServer();
+    await registerTools(server as never, {} as never, NO_EMBEDDINGS);
+    const entry = registered.get('hayba_suggest_route');
+    expect(entry).toBeDefined();
+    expect((entry?.[0] as { annotations: { readOnlyHint: boolean } }).annotations.readOnlyHint).toBe(true);
   });
 
   it('preserves full eager registration without the deferred status replacement', async () => {

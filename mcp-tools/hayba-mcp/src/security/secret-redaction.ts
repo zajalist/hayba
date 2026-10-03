@@ -12,7 +12,7 @@ export type SecretCategory =
   | 'url_query';
 
 export type TruncationReason =
-  'accessor' | 'array_items' | 'cycle' | 'depth' | 'nodes' | 'object_keys' | 'string_chars' | 'total_string_chars';
+  'accessor' | 'array_items' | 'cycle' | 'depth' | 'nodes' | 'object_keys' | 'opaque_object' | 'serializer' | 'string_chars' | 'symbol_keys' | 'total_string_chars';
 
 const SECRET_CATEGORIES: readonly SecretCategory[] = [
   'api_key',
@@ -33,7 +33,10 @@ const TRUNCATION_REASONS: readonly TruncationReason[] = [
   'depth',
   'nodes',
   'object_keys',
+  'opaque_object',
+  'serializer',
   'string_chars',
+  'symbol_keys',
   'total_string_chars',
 ];
 
@@ -74,6 +77,7 @@ const REDACTED_PREFIX = '[REDACTED:';
 const TRUNCATED_PREFIX = '[TRUNCATED:';
 const SECURITY_META_KEY = 'hayba/security_redaction';
 const CONSOLE_INSTALLED = Symbol.for('hayba.consoleSecretRedactionInstalled');
+const CUSTOM_INSPECT = Symbol.for('nodejs.util.inspect.custom');
 const JSON_WRAPPED_RESPONSES = new WeakSet<object>();
 
 const MEASUREMENT_HEADS = new Set([
@@ -162,7 +166,7 @@ const URL_SECRET =
   /([?&](?:api[_-]?key|access[_-]?token|refresh[_-]?token|auth[_-]?token|token|client[_-]?secret|signature|sig|x-amz-signature|x-amz-credential)=)([^&#\s]+)/gi;
 const URL_USERINFO = /(\bhttps?:\/\/[^\s\/@:]+:)([^\s\/@]+)(@)/gi;
 const ASSIGNMENT =
-  /((?:api[_ -]?key|access[_ -]?token|refresh[_ -]?token|auth[_ -]?token|client[_ -]?secret|private[_ -]?key|password|passwd|pwd|token|secret|authorization|credential|x-api-key|cookie|set-cookie)["']?\s*[:=]\s*["']?)([^"'&,;\s}\]]+)/gi;
+  /((?:api[_ -]?key|access[_ -]?token|refresh[_ -]?token|auth[_ -]?token|client[_ -]?secret|private[_ -]?key|password|passwd|pwd|token|secret|authorization|credential|x-api-key|cookie|set-cookie)["']?\s*[:=]\s*)(?:"((?:\\.|[^"\\\r\n])*)"?|'((?:\\.|[^'\\\r\n])*)'?|([^"'&,;\s}\]]+))/gi;
 
 interface WalkState {
   options: Required<SecretRedactionOptions>;
@@ -221,57 +225,10 @@ export function redactMcpResult<T>(value: T): T {
 /** Preserve Error type while ensuring SDK error serialization and stacks are safe. */
 export function redactThrown(error: unknown): unknown {
   try {
-    return redactThrownInner(error, new WeakSet());
+    return redactBoundaryValue(error);
   } catch {
     return new Error(`${TRUNCATED_PREFIX}accessor]`);
   }
-}
-
-function redactThrownInner(error: unknown, active: WeakSet<object>): unknown {
-  if (!(error instanceof Error)) return redactBoundaryValue(error);
-  if (active.has(error)) return `${TRUNCATED_PREFIX}cycle]`;
-  active.add(error);
-  const message = redactSecrets(error.message).value;
-  const stack = typeof error.stack === 'string' ? redactSecrets(error.stack).value : undefined;
-  const causeDescriptor = Object.getOwnPropertyDescriptor(error, 'cause');
-  const causeWasAccessor = !!causeDescriptor && !('value' in causeDescriptor);
-  const rawCause = causeDescriptor && 'value' in causeDescriptor ? causeDescriptor.value : undefined;
-  const cause = causeWasAccessor
-    ? `${TRUNCATED_PREFIX}accessor]`
-    : rawCause === undefined
-      ? undefined
-      : redactThrownInner(rawCause, active);
-  const details = Object.keys(error).map((key) => {
-    const descriptor = Object.getOwnPropertyDescriptor(error, key);
-    const hasValue = !!descriptor && 'value' in descriptor;
-    const wasAccessor = !hasValue;
-    const raw = hasValue ? descriptor.value : `${TRUNCATED_PREFIX}accessor]`;
-    return [key, raw, redactBoundaryValue(raw), wasAccessor] as const;
-  });
-  const detailsChanged = details.some(([, raw, safe, wasAccessor]) => wasAccessor || safe !== raw);
-  if (
-    message === error.message &&
-    stack === error.stack &&
-    !causeWasAccessor &&
-    cause === rawCause &&
-    !detailsChanged
-  ) {
-    active.delete(error);
-    return error;
-  }
-  const safe = new Error(message, cause === undefined ? undefined : { cause });
-  safe.name = error.name;
-  if (stack) safe.stack = stack;
-  for (const [key, , detail] of details) {
-    Object.defineProperty(safe, key, {
-      enumerable: true,
-      configurable: true,
-      writable: true,
-      value: detail,
-    });
-  }
-  active.delete(error);
-  return safe;
 }
 
 /** Install once at process startup so dynamic stderr arguments cannot bypass policy. */
@@ -315,12 +272,23 @@ function walk<T>(value: T, state: WalkState, depth: number, opaque: boolean): Wa
   if (Buffer.isBuffer(value) || ArrayBuffer.isView(value) || value instanceof ArrayBuffer) {
     return { value, changed: false };
   }
+  if (value instanceof Date) {
+    try {
+      // Use Date's built-in methods, never an instance/prototype toJSON hook.
+      const timestamp = Date.prototype.getTime.call(value);
+      const iso = Number.isFinite(timestamp) ? Date.prototype.toISOString.call(value) : null;
+      return iso === null ? { value: null as T, changed: true } : { ...walkString(iso, state, false), changed: true } as WalkResult<T>;
+    } catch {
+      return truncated(state, 'opaque_object') as WalkResult<T>;
+    }
+  }
   if (state.active.has(value)) return truncated(state, 'cycle') as WalkResult<T>;
 
   state.active.add(value);
   try {
-    if (Array.isArray(value)) return walkArray(value, state, depth) as WalkResult<T>;
     try {
+      if (Array.isArray(value)) return walkArray(value, state, depth) as WalkResult<T>;
+      if (value instanceof Error) return walkError(value, state, depth) as WalkResult<T>;
       return walkObject(value as Record<string, unknown>, state, depth) as WalkResult<T>;
     } catch {
       // Proxies can throw from ownKeys/getOwnPropertyDescriptor. Returning the
@@ -335,15 +303,71 @@ function walk<T>(value: T, state: WalkState, depth: number, opaque: boolean): Wa
 
 function walkArray(value: unknown[], state: WalkState, depth: number): WalkResult<unknown[]> {
   const limit = Math.min(value.length, state.options.maxArrayItems);
-  let changed = value.length > limit;
-  if (changed) state.truncationReasons.add('array_items');
+  const serializer = hasActiveHook(value, 'toJSON') || hasActiveHook(value, CUSTOM_INSPECT);
+  const symbols = Object.getOwnPropertySymbols(value).length > 0;
+  let changed = value.length > limit || serializer || symbols;
+  if (value.length > limit) state.truncationReasons.add('array_items');
+  if (serializer) state.truncationReasons.add('serializer');
+  if (symbols) state.truncationReasons.add('symbol_keys');
   const output: unknown[] = [];
+  if (serializer) {
+    Object.defineProperty(output, 'toJSON', { value: undefined, configurable: true });
+    Object.defineProperty(output, CUSTOM_INSPECT, { value: undefined, configurable: true });
+  }
   for (let i = 0; i < limit; i += 1) {
-    const next = walk(value[i], state, depth + 1, false);
-    output.push(next.value);
-    changed ||= next.changed;
+    const descriptor = Object.getOwnPropertyDescriptor(value, String(i));
+    if (!descriptor || !('value' in descriptor)) {
+      // Array indexing can invoke own or inherited getters, including through
+      // a proxy. A hole serializes as null; an accessor is omitted safely.
+      output.push(descriptor ? `${TRUNCATED_PREFIX}accessor]` : null);
+      if (descriptor) state.truncationReasons.add('accessor');
+      changed = true;
+    } else {
+      const next = walk(descriptor.value, state, depth + 1, false);
+      output.push(next.value);
+      changed ||= next.changed;
+    }
   }
   return changed ? { value: output, changed: true } : { value, changed: false };
+}
+
+function walkError(value: Error, state: WalkState, depth: number): WalkResult<Error> {
+  if (Object.getOwnPropertySymbols(value).length > 0) state.truncationReasons.add('symbol_keys');
+  const readField = (key: 'message' | 'name' | 'stack' | 'cause'): unknown => {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (!descriptor) return undefined;
+    if ('value' in descriptor) return descriptor.value;
+    state.truncationReasons.add('accessor');
+    return `${TRUNCATED_PREFIX}accessor]`;
+  };
+  const rawMessage = readField('message');
+  const rawName = readField('name');
+  const rawStack = readField('stack');
+  const rawCause = readField('cause');
+  const message = walk(typeof rawMessage === 'string' ? rawMessage : '', state, depth + 1, false).value;
+  const name = walk(typeof rawName === 'string' ? rawName : 'Error', state, depth + 1, false).value;
+  const stack = walk(typeof rawStack === 'string' ? rawStack : '', state, depth + 1, false).value;
+  const cause = rawCause === undefined ? undefined : walk(rawCause, state, depth + 1, false).value;
+
+  const details: Record<string, unknown> = {};
+  for (const key of Object.keys(value)) {
+    if (key === 'message' || key === 'name' || key === 'stack' || key === 'cause') continue;
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (descriptor && 'value' in descriptor) defineSafe(details, key, descriptor.value);
+    else {
+      defineSafe(details, key, `${TRUNCATED_PREFIX}accessor]`);
+      state.truncationReasons.add('accessor');
+    }
+  }
+  const safeDetails = walkObject(details, state, depth + 1).value;
+  const safe = new Error(message, cause === undefined ? undefined : { cause });
+  safe.name = name;
+  if (rawStack !== undefined) safe.stack = stack;
+  // A newly created Error can still inherit a process-level toJSON override.
+  Object.defineProperty(safe, 'toJSON', { value: undefined, configurable: true });
+  Object.defineProperty(safe, CUSTOM_INSPECT, { value: undefined, configurable: true });
+  for (const [key, detail] of Object.entries(safeDetails)) defineSafe(safe as unknown as Record<string, unknown>, key, detail);
+  return { value: safe, changed: true };
 }
 
 function walkObject(
@@ -351,8 +375,21 @@ function walkObject(
   state: WalkState,
   depth: number,
 ): WalkResult<Record<string, unknown>> {
+  // Plain data can be returned by reference when unchanged. Class instances
+  // can hide state in native slots that console inspection would print but a
+  // property walk cannot examine, so project their own data into a plain value.
+  const prototype = Object.getPrototypeOf(value);
+  const opaqueObject = prototype !== Object.prototype && prototype !== null;
+  if (opaqueObject) state.truncationReasons.add('opaque_object');
+  const serializer = hasActiveHook(value, 'toJSON') || hasActiveHook(value, CUSTOM_INSPECT);
+  if (serializer) state.truncationReasons.add('serializer');
+  const symbols = Object.getOwnPropertySymbols(value).length > 0;
+  if (symbols) state.truncationReasons.add('symbol_keys');
   const entries: Array<[string, unknown]> = [];
   for (const key of Object.keys(value)) {
+    // JSON.stringify invokes toJSON before visiting any walked properties.
+    // Never copy a callable serializer into the safe output.
+    if (key === 'toJSON' && serializer) continue;
     const descriptor = Object.getOwnPropertyDescriptor(value, key);
     if (descriptor && 'value' in descriptor) entries.push([key, descriptor.value]);
     else {
@@ -361,9 +398,9 @@ function walkObject(
     }
   }
   const limit = Math.min(entries.length, state.options.maxObjectKeys);
-  let changed = entries.length > limit;
-  if (changed) state.truncationReasons.add('object_keys');
-  const output: Record<string, unknown> = {};
+  let changed = entries.length > limit || serializer || opaqueObject || symbols;
+  if (entries.length > limit) state.truncationReasons.add('object_keys');
+  const output: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
   const selected = selectObjectEntries(entries, limit);
   const reservedKeys = new Set(entries.map(([key]) => key));
   const emittedKeys = new Set<string>();
@@ -395,6 +432,18 @@ function walkObject(
     changed ||= next.changed || key !== rawKey;
   }
   return changed ? { value: output, changed: true } : { value, changed: false };
+}
+
+function hasActiveHook(value: object, key: string | symbol): boolean {
+  let owner: object | null = value;
+  for (let depth = 0; depth < 32 && owner !== null; depth += 1) {
+    const descriptor = Object.getOwnPropertyDescriptor(owner, key);
+    if (descriptor) return !('value' in descriptor) || typeof descriptor.value === 'function';
+    owner = Object.getPrototypeOf(owner) as object | null;
+  }
+  // A hostile prototype chain that cannot be checked in a bounded walk must
+  // never be trusted to serialize the original object.
+  return owner !== null;
 }
 
 function selectObjectEntries(entries: Array<[string, unknown]>, limit: number): Array<[string, unknown]> {
@@ -448,7 +497,7 @@ function walkString(value: string, state: WalkState, opaque: boolean): WalkResul
   ({ text, changed } = replaceSecrets(text, PROVIDER_KEY, 'provider_key', changed, state));
   ({ text, changed } = replaceMiddleGroup(text, URL_USERINFO, 'password', changed, state));
   ({ text, changed } = replaceValueGroup(text, URL_SECRET, 'url_query', changed, state));
-  ({ text, changed } = replaceValueGroup(text, ASSIGNMENT, 'credential', changed, state));
+  ({ text, changed } = replaceAssignment(text, changed, state));
   return changed ? { value: text, changed: true } : { value, changed: false };
 }
 
@@ -534,6 +583,20 @@ function replaceValueGroup(
     state.categories.add(category);
     state.redactedValues += 1;
     return `${prefix}${marker(category)}`;
+  });
+  return { text, changed: changed || text !== input };
+}
+
+function replaceAssignment(input: string, changed: boolean, state: WalkState): { text: string; changed: boolean } {
+  const text = input.replace(ASSIGNMENT, (match, prefix: string, doubleQuoted: string | undefined,
+    singleQuoted: string | undefined, bare: string | undefined) => {
+    const raw = doubleQuoted ?? singleQuoted ?? bare ?? '';
+    // The bare value regex stops before `]`, whereas quoted values include it.
+    if (isRedactedMarker(raw) || (bare !== undefined && isRedactedMarker(`${raw}]`))) return match;
+    state.categories.add('credential');
+    state.redactedValues += 1;
+    const quote = doubleQuoted !== undefined ? '"' : singleQuoted !== undefined ? "'" : '';
+    return `${prefix}${quote}${marker('credential')}${quote}`;
   });
   return { text, changed: changed || text !== input };
 }
@@ -676,7 +739,7 @@ function defineSafe(target: Record<string, unknown>, key: string, value: unknown
 }
 
 function cloneWithProperty(source: Record<string, unknown>, key: string, value: unknown): Record<string, unknown> {
-  const output: Record<string, unknown> = {};
+  const output: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
   for (const [existingKey, existingValue] of Object.entries(source)) defineSafe(output, existingKey, existingValue);
   defineSafe(output, key, value);
   return output;
@@ -689,5 +752,11 @@ function attachObjectFact<T>(value: T, key: string, summary: SecretRedactionSumm
     return output as T;
   }
   if (!isRecord(value) || Buffer.isBuffer(value) || ArrayBuffer.isView(value)) return value;
+  if (value instanceof Error) {
+    // walkError always creates a fresh Error, so annotating it cannot mutate
+    // the handler-owned exception or discard its non-enumerable diagnostics.
+    defineSafe(value as Record<string, unknown>, key, summary);
+    return value;
+  }
   return cloneWithProperty(value, key, summary) as T;
 }

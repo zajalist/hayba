@@ -312,13 +312,14 @@ describe('python_run native/TS crash policy contract', () => {
     );
     expect(runtimeSettings).not.toContain('bAllowUnsafePython');
     expect(runtimeSettingsHeader).not.toContain('bAllowUnsafePython');
-    expect(settingsPanel).toContain(
-      'legacy allow_unsafe request field and old saved setting are accepted for compatibility but are ineffective',
+    expect(cpp).toContain('P->TryGetBoolField(TEXT("allow_unsafe"), bAllowUnsafeRequested);');
+    expect(cppTest).toContain('DeveloperSettings->bAllowUnsafePython = true;');
+    expect(cppTest).toMatch(
+      /TestTrue\(TEXT\("legacy persisted Tier-3 grant remains ineffective"\),\s*Handler\.IsTier3PolicyBlockedForTests\(Tier3Scripts\[0\],\s*DeveloperSettings->bAllowUnsafePython, true\)\)/,
     );
     expect(settingsPanel).not.toContain(
       'BuildToggle(\n                                NSLOCTEXT("Hayba", "S.UnsafePython"',
     );
-    expect(settingsPanel).toContain('does not claim arbitrary in-process Python safety (#392/#414)');
     expect(capabilitiesPanel).toContain(
       'Constrained embedded Unreal Python; Tier-3 host I/O is always refused. This is not process isolation (#392/#414).',
     );
@@ -366,7 +367,12 @@ describe('python_run native/TS crash policy contract', () => {
   });
 
   it('bounds bytecode cooperatively and always restores the trace hook', () => {
-    expect(cpp).toContain('MaxPythonExecutionSeconds = 5.0');
+    // The deadline is 5 s unless deadline_s is granted (max 60 s, exclusive
+    // lease or server setting); the numbers live in the pure access policy.
+    const accessPolicy = readFileSync(join(privateDir, 'HaybaMCPAccessPolicy.h'), 'utf8');
+    expect(accessPolicy).toContain('DefaultPythonDeadlineSeconds = 5.0');
+    expect(accessPolicy).toContain('MaxPythonDeadlineSeconds = 60.0');
+    expect(cpp).toContain('const double MaxPythonExecutionSeconds = Deadline.Seconds');
     expect(cpp).toContain('_hb_trusted_settrace = _hb_sys.settrace');
     expect(cpp).toContain('_hb_trusted_gettrace = _hb_sys.gettrace');
     expect(cpp).toContain('def _hb_execute_user(');

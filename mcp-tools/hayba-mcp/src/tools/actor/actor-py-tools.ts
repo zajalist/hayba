@@ -134,6 +134,7 @@ export const actorInspectDescriptor: PyToolDescriptor<typeof actorInspectSchema.
     '{ok, actor_id, path, class, transform:{location,rotation,scale}, bounds:{origin,extent}, components:[{class,name}], material_slots:[{component,slot,material}], tags[], folder, attach_parent}',
   schema: actorInspectSchema.shape,
   meta: readMeta,
+  readOnly: true,
   buildScript: inspectScript,
   timeoutMs: 30_000,
 };
@@ -192,6 +193,7 @@ export const actorFindDescriptor: PyToolDescriptor<typeof actorFindSchema.shape>
   returns: '{ok, actors:[{actor_id,path,class,location}], total, has_more}',
   schema: actorFindSchema.shape,
   meta: readMeta,
+  readOnly: true,
   buildScript: findScript,
   timeoutMs: 30_000,
 };
@@ -219,6 +221,7 @@ export const actorGetSelectionDescriptor: PyToolDescriptor<typeof actorGetSelect
   returns: '{ok, actors:[{actor_id,path,class}], count}',
   schema: actorGetSelectionSchema.shape,
   meta: readMeta,
+  readOnly: true,
   buildScript: getSelectionScript,
   timeoutMs: 30_000,
 };

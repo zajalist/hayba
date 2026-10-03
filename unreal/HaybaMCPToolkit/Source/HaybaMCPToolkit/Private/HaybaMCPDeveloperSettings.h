@@ -13,6 +13,22 @@ enum class EHaybaModelPreset : uint8
     Full
 };
 
+/** How the lease table treats a command that collides with another owner's lease. */
+UENUM()
+enum class EHaybaMCPLeaseEnforcement : uint8
+{
+    /** No check at all. */
+    Off,
+    /** Run the command, but attach a lease_warning to its response and log it. */
+    Advisory,
+    /** Reads run (a dead lease handle only warns). A write is refused with lease_conflict when another
+     *  owner's lease conflicts or it names a dead lease, and with owner_required when it names no owner
+     *  while other agents are connected. */
+    EnforcedForWrites,
+    /** As EnforcedForWrites, and a read that names a dead lease is refused too. */
+    Enforced
+};
+
 UCLASS(Config=HaybaMCP, DefaultConfig, meta=(DisplayName="Hayba MCP Toolkit"))
 class UHaybaMCPDeveloperSettings : public UDeveloperSettings
 {
@@ -73,6 +89,14 @@ public:
         meta=(ClampMin=100, ClampMax=30000,
             ToolTip="Maximum total milliseconds allowed to send one response before disconnecting a client that is not reading. Applied when the TCP server next starts."))
     int32 TcpSendTimeoutMs = 1000;
+
+    UPROPERTY(EditAnywhere, Config, Category="Multi-Agent",
+        meta=(ToolTip="Let python_run accept deadline_s above 5 seconds (up to 60) from a caller that holds no exclusive lease. Off by default: a long script holds the game thread and every other agent waits behind it."))
+    bool bAllowLongPythonDeadlineWithoutLease = false;
+
+    UPROPERTY(EditAnywhere, Config, Category="Multi-Agent",
+        meta=(ToolTip="What happens when a command collides with another agent's lease (lease_acquire). EnforcedForWrites (default): reads run; a conflicting write is refused with lease_conflict, and a write that names no owner while other agents are connected with owner_required. Advisory runs everything and attaches lease_warning. Enforced also refuses a read that names a dead lease. Takes effect immediately."))
+    EHaybaMCPLeaseEnforcement LeaseEnforcement = EHaybaMCPLeaseEnforcement::EnforcedForWrites;
 
     UPROPERTY(EditAnywhere, Config, Category="Performance")
     bool bCodeModeEnabled = true;

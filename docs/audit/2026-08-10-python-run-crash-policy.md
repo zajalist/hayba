@@ -44,14 +44,13 @@ Every fatal refusal contains:
 
 ## Historical crash evidence
 
-The crash archive under `Aphrosia/Saved/Crashes` contains five unique sessions
+The local host crash archive contained five unique sessions
 where `python_run` is the final logged MCP command and an engine failure begins
 on the next tick. Four immediately browse/load a map while PIE is active, then
 fail because the old world was retained or the replacement PIE world was
 already initialized. Those incidents ground `HCR-WORLD-001`.
 
-The fifth (`UECC-Windows-2229ECCF40FF3C5ECDFD9D82FFF69972_0000`) immediately
-shows six `CourtierCardItem` object identities twice in
+The fifth crash session immediately shows six UI item object identities twice in
 `ItemsWithGeneratedWidgets`, then terminates at `SListView.h:1154`. Raw
 `ListView` item setters/additions and direct `list_items` property writes are
 therefore `HCR-UI-001`; the recovery is a typed handler that validates UObject

@@ -15,7 +15,7 @@ export const schema = z.object({
   path: z
     .string()
     .min(1)
-    .describe('Full path of the Widget Blueprint to inspect, e.g. "/Game/Aphrosia/UI/WBP_StartScreen"'),
+    .describe('Full path of the Widget Blueprint to inspect, e.g. "/Game/LanternPuzzle/UI/WBP_PuzzlePanel"'),
   include_properties: z.boolean().optional().default(false).describe('Include widget properties in the response'),
   include_guid: z.boolean().optional().default(false).describe('Include GUIDs in the response'),
   include_slot: z.boolean().optional().default(true).describe('Include slot layout info in the response'),

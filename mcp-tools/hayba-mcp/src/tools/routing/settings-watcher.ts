@@ -5,9 +5,11 @@ export type ToolRoutingMode = 'deferred' | 'full';
 export interface HaybaSettings {
   toolRouting: ToolRoutingMode;
   alwaysLoadPacks: string[];
+  /** External MCP route advisor. Off by default; brain requires signed-in Pro. */
+  externalRouteAdvice: 'off' | 'local' | 'brain';
 }
 
-const DEFAULT: HaybaSettings = { toolRouting: 'deferred', alwaysLoadPacks: [] };
+const DEFAULT: HaybaSettings = { toolRouting: 'deferred', alwaysLoadPacks: [], externalRouteAdvice: 'off' };
 
 function settingsPath(): string {
   return process.env.HAYBA_SETTINGS_PATH
@@ -24,6 +26,8 @@ export function readSettings(): HaybaSettings {
     cached = {
       toolRouting: parsed.toolRouting === 'full' ? 'full' : 'deferred',
       alwaysLoadPacks: Array.isArray(parsed.alwaysLoadPacks) ? parsed.alwaysLoadPacks : [],
+      externalRouteAdvice: parsed.externalRouteAdvice === 'local' || parsed.externalRouteAdvice === 'brain'
+        ? parsed.externalRouteAdvice : 'off',
     };
   } catch {
     cached = DEFAULT;

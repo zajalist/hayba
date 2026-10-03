@@ -5,7 +5,7 @@
 ## Context
 
 The UE5 C++ plugin (the TCP-server **adapter** on the protocol seam)
-lived only in an external geoforge project tree, with its own
+lived only in an external host project tree, with its own
 non-authoritative local git history. It must be in the monorepo so both
 adapters of the TCP seam are versioned together. Options considered:
 nest under `mcp-tools/hayba-mcp/` (physical adapter co-location), or a
@@ -14,7 +14,7 @@ conventional top-level directory.
 ## Decision
 
 Import to **top-level `unreal/HaybaMCPToolkit/`** as a snapshot (Source/
-+ Resources/ + `.uplugin` only; build artifacts gitignored). Geoforge
++ Resources/ + `.uplugin` only; build artifacts gitignored). The external host's
 history is discarded (single snapshot commit) — the monorepo copy is
 canonical. Adapter co-location with `mcp-tools/hayba-mcp` is expressed
 via **cross-linked READMEs + CONTEXT.md**, not physical nesting (a C++ UE

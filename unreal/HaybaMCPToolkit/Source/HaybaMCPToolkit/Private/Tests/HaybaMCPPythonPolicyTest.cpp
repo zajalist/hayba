@@ -3,7 +3,10 @@
 #include "Misc/AutomationTest.h"
 #include "handlers/HaybaMCPPythonHandler.h"
 #include "HaybaMCPDeveloperSettings.h"
+#include "HaybaMCPAccessPolicy.h"
+#include "HaybaMCPCommandHandler.h"
 #include "Dom/JsonObject.h"
+#include <limits>
 
 namespace
 {
@@ -53,6 +56,25 @@ bool FHaybaMCPPythonFatalPolicyTest::RunTest(const FString& Parameters)
     // merely feeding the raw table fragments back to the matcher.
     const TArray<TPair<FString, FString>> AliasCases = {
         { TEXT("unreal.EditorLoadingAndSavingUtils . LOAD_MAP ('/Game/X')"), TEXT("HCR-WORLD-001") },
+        { TEXT("import unreal as ue\nue.AnimationDataController.set_number_of_frames(48)"), TEXT("HCR-ANIM-001") },
+        { TEXT("controller = anim_sequence.get_controller()\ncontroller.set_frame_rate(rate)"), TEXT("HCR-ANIM-001") },
+        { TEXT("controller = asset.get_controller()\ncontroller.set_frame_rate(rate)"), TEXT("HCR-ANIM-001") },
+        { TEXT("controller = asset.get_animation_data_controller()\ncontroller.set_frame_rate(rate)"), TEXT("HCR-ANIM-001") },
+        { TEXT("controller = widget.get_animation_data_controller()\ncontroller.resize(2.0, 0.0, 1.0)"), TEXT("HCR-ANIM-001") },
+        { TEXT("widget.get_animation_data_controller().resize(2.0, 0.0, 1.0)"), TEXT("HCR-ANIM-001") },
+        { TEXT("controller = asset.get_controller()\ncontroller.set_number_of_frames(48)"), TEXT("HCR-ANIM-001") },
+        { TEXT("controller = asset.get_controller(\n)\ncontroller.set_number_of_frames(48)"), TEXT("HCR-ANIM-001") },
+        { TEXT("controller = (asset.get_controller())\ncontroller.set_number_of_frames(48)"), TEXT("HCR-ANIM-001") },
+        { TEXT("controller = ((asset.get_controller(\n)))\ncontroller.set_number_of_frames(48)"), TEXT("HCR-ANIM-001") },
+        { TEXT("controller = asset.get_controller()\ncopy = controller\ncopy.resize_in_frames(48, 0, 24)"), TEXT("HCR-ANIM-001") },
+        { TEXT("asset.get_controller().resize_number_of_frames(48, 0, 24)"), TEXT("HCR-ANIM-001") },
+        { TEXT("asset.get_controller(\n).set_number_of_frames(48)"), TEXT("HCR-ANIM-001") },
+        { TEXT("controller = asset.get_controller()\ncontroller.resize_play_length(2.0, 0.0, 1.0)"), TEXT("HCR-ANIM-001") },
+        { TEXT("controller = anim_sequence.get_controller()\ncontroller.resize(2.0, 0.0, 1.0)"), TEXT("HCR-ANIM-001") },
+        { TEXT("controller = asset.get_controller()\ncontroller.resize(2.0, 0.0, 1.0)"), TEXT("HCR-ANIM-001") },
+        { TEXT("asset.get_controller().resize(2.0, 0.0, 1.0)"), TEXT("HCR-ANIM-001") },
+        { TEXT("controller = asset.get_controller()\ncontroller.set_play_length(2.0)"), TEXT("HCR-ANIM-001") },
+        { TEXT("controller = asset.get_controller()\nf'{controller.set_number_of_frames(48)}'"), TEXT("HCR-ANIM-001") },
         { TEXT("list_view.set_list_items(items + items)"), TEXT("HCR-UI-001") },
         { TEXT("list_view.set_editor_property('list_items', items)"), TEXT("HCR-UI-001") },
         { TEXT("from THREADING import Thread as Worker\nWorker(target=cb).start()"), TEXT("HCR-LIFE-001") },
@@ -200,6 +222,17 @@ bool FHaybaMCPPythonPolicyBoundaryTest::RunTest(const FString& Parameters)
         TEXT("print('sys.settrace(None) is rejected when executable')"),
         TEXT("# sys.settrace(None) is disabled here\nvalue = 1"),
         TEXT("module.settrace_policy('keep')"),
+        TEXT("sequence.set_frame_rate(rate)"),
+        TEXT("sequence.resize(100)"),
+        TEXT("controller.set_frame_rate(rate)"),
+        TEXT("controller = image.get_controller()\ncontroller.resize(100)"),
+        TEXT("controller = image.get_controller()\ncontroller.set_frame_rate(rate)"),
+        TEXT("widget.get_controller().resize(100)"),
+        TEXT("widget.get_controller().set_frame_rate(rate)"),
+        TEXT("print('AnimationDataController.SetNumberOfFrames(48)')"),
+        TEXT("# controller = asset.get_controller()\n# controller.set_number_of_frames(48)\nvalue = 1"),
+        TEXT("controller = asset.get_controller()\nprint('controller.resize_in_frames(48, 0, 24)')"),
+        TEXT("controller = asset.get_controller()\ncontroller = sequence\ncontroller.set_frame_rate(rate)"),
         TEXT("status = {'modules': 1, 'f_back': 0}"),
         TEXT("print('__builtins__ is reserved only when executable')"),
         TEXT("# __builtins__['__import__']('sys').settrace(None)\nvalue = 1"),
@@ -492,6 +525,76 @@ bool FHaybaMCPPythonOutputBoundaryTest::RunTest(const FString& Parameters)
                 .Contains(TEXT("exception arguments omitted by bounded capture")));
         TestTrue(TEXT("large exception stderr stays bounded"),
             LargeException.Data->GetStringField(TEXT("stderr")).Len() <= 64 * 1024);
+    }
+
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FHaybaMCPPythonDeadlineTransactionPolicyTest,
+    "Hayba.MCP.Python.DeadlineAndTransactionPolicy",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FHaybaMCPPythonDeadlineTransactionPolicyTest::RunTest(const FString& Parameters)
+{
+    using namespace HaybaMCPAccess;
+
+    // Pure decisions only: nothing here executes Python or opens a transaction.
+    {
+        const FPythonDeadline Absent = ResolvePythonDeadline(false, 0.0, false, false);
+        TestTrue(TEXT("absent deadline_s is allowed"), Absent.bAllowed);
+        TestEqual(TEXT("absent deadline_s keeps the 5 s default"), Absent.Seconds, 5.0);
+
+        const FPythonDeadline Short = ResolvePythonDeadline(true, 1.0, false, false);
+        TestTrue(TEXT("a request below 5 s is allowed"), Short.bAllowed);
+        TestEqual(TEXT("a request below 5 s clamps up to the floor"), Short.Seconds, 5.0);
+
+        const FPythonDeadline NoLease = ResolvePythonDeadline(true, 30.0, false, false);
+        TestFalse(TEXT("30 s without a lease or setting is refused"), NoLease.bAllowed);
+        TestTrue(TEXT("refusal names the lease requirement"), NoLease.Error.Contains(TEXT("exclusive lease")));
+
+        const FPythonDeadline WithLease = ResolvePythonDeadline(true, 30.0, true, false);
+        TestTrue(TEXT("30 s with an exclusive lease is allowed"), WithLease.bAllowed);
+        TestEqual(TEXT("30 s with a lease is honoured"), WithLease.Seconds, 30.0);
+
+        const FPythonDeadline WithSetting = ResolvePythonDeadline(true, 30.0, false, true);
+        TestTrue(TEXT("the server setting allows a long deadline without a lease"), WithSetting.bAllowed);
+
+        const FPythonDeadline Huge = ResolvePythonDeadline(true, 600.0, true, false);
+        TestEqual(TEXT("a lease holder is still clamped to 60 s"), Huge.Seconds, 60.0);
+
+        const FPythonDeadline NotFinite = ResolvePythonDeadline(
+            true, std::numeric_limits<double>::infinity(), true, true);
+        TestFalse(TEXT("a non-finite deadline is refused"), NotFinite.bAllowed);
+    }
+
+    {
+        TSharedPtr<FJsonObject> Params = MakeShared<FJsonObject>();
+        Params->SetStringField(TEXT("script"), TEXT("print(1)"));
+        TestTrue(TEXT("plain python_run keeps its transaction"),
+            FHaybaMCPCommandHandler::ShouldCreateEditorTransaction(TEXT("python_run"), Params));
+
+        Params->SetBoolField(TEXT("world_partition"), true);
+        TestFalse(TEXT("world_partition:true opts python_run out"),
+            FHaybaMCPCommandHandler::ShouldCreateEditorTransaction(TEXT("python_run"), Params));
+
+        TSharedPtr<FJsonObject> Detected = MakeShared<FJsonObject>();
+        Detected->SetStringField(TEXT("script"),
+            TEXT("adapter = unreal.WorldPartitionEditorLoaderAdapter()\nlib.unload_actors(guids)"));
+        TestFalse(TEXT("a visible WP unload script is opted out without the flag"),
+            FHaybaMCPCommandHandler::ShouldCreateEditorTransaction(TEXT("python_run"), Detected));
+
+        TSharedPtr<FJsonObject> OptOut = MakeShared<FJsonObject>();
+        OptOut->SetBoolField(TEXT("transaction"), false);
+        TestFalse(TEXT("transaction:false opts any destructive command out"),
+            FHaybaMCPCommandHandler::ShouldCreateEditorTransaction(TEXT("actor_spawn"), OptOut));
+
+        TSharedPtr<FJsonObject> OptIn = MakeShared<FJsonObject>();
+        OptIn->SetBoolField(TEXT("transaction"), true);
+        TestFalse(TEXT("transaction:true cannot add a transaction to an unwrapped command"),
+            FHaybaMCPCommandHandler::ShouldCreateEditorTransaction(TEXT("ui_compile_widget"), OptIn));
+        TestFalse(TEXT("a read command never gets a transaction"),
+            FHaybaMCPCommandHandler::ShouldCreateEditorTransaction(TEXT("actor_list"), OptIn));
     }
 
     return true;

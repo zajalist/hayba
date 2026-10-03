@@ -23,6 +23,8 @@ namespace HaybaPIERuntimeOps
     // Centimetres. Large enough for large-world maps, small enough that view
     // projection and JSON serialization remain finite and standards-compliant.
     constexpr double MaxWorldCoordinateAbs = 1000000000.0;
+    constexpr int32 MaxSightlineEyes = 32;
+    constexpr double MaxSightlineLengthCm = 10000.0;
 
     struct FWorldSelector
     {
@@ -77,6 +79,13 @@ namespace HaybaPIERuntimeOps
         FString Action = TEXT("click");
     };
 
+    struct FSightlinesRequest
+    {
+        FWorldSelector World;
+        TArray<FVector> EyePositions;
+        FVector TargetLocation = FVector::ZeroVector;
+    };
+
     struct FWorldCandidate
     {
         int32 PIEInstance = INDEX_NONE;
@@ -107,6 +116,7 @@ namespace HaybaPIERuntimeOps
     FInspectRequest ParseInspect(FHaybaParamReader& R);
     FProjectRequest ParseProject(FHaybaParamReader& R);
     FActorInteractionRequest ParseActorInteraction(FHaybaParamReader& R);
+    FSightlinesRequest ParseSightlines(FHaybaParamReader& R);
 
     /**
      * Stable selection for 0/1/multi-client PIE.

@@ -21,6 +21,11 @@
 #include "Widgets/Notifications/SNotificationList.h"
 #include "HaybaMCPTcpServer.h"
 #include "HaybaMCPCommandHandler.h"
+#include "HaybaMCPSecurityManager.h"
+#include "HaybaMCPLeaseManager.h"
+#include "HaybaMCPSettings.h"
+#include "Serialization/JsonSerializer.h"
+#include "HaybaMCPEditorHealth.h"
 #include "IHaybaMCPHandler.h"
 #include "handlers/HaybaMCPLegacyHandler.h"
 #include "handlers/HaybaMCPActorHandler.h"
@@ -55,7 +60,11 @@
 #include "handlers/HaybaMCPPerfHandler.h"
 #include "handlers/HaybaMCPIdleHandler.h"
 #include "handlers/HaybaMCPRenderHandler.h"
+#include "handlers/HaybaMCPLeaseHandler.h"
+#include "handlers/HaybaMCPBatchHandler.h"
+#include "HaybaMCPEditorState.h"
 #include "HaybaMCPCaptureActor.h"
+#include "HaybaMCPWorldTileCapture.h"
 #include "HaybaMCPSettings.h"
 #include "HaybaMCPRenderSafety.h"
 #include "Json.h"
@@ -77,6 +86,11 @@
 #include "WorkspaceMenuStructureModule.h"
 #include "Widgets/Docking/SDockTab.h"
 #include "Interfaces/IPluginManager.h"
+
+namespace HaybaMCPExactApproval
+{
+    FString HashOperation(const TSharedPtr<FJsonObject>& Operation);
+}
 
 DEFINE_LOG_CATEGORY_STATIC(LogHaybaMCP, Log, All);
 
@@ -156,6 +170,7 @@ void FHaybaMCPModule::StartupModule()
 
     FHaybaMCPStyle::Initialize();
     FHaybaMCPSettings::Get().Load();
+    HaybaWorldTileCapture::Initialize();
 
     CommandHandler = MakeShared<FHaybaMCPCommandHandler>();
     CommandHandler->RegisterHandler(MakeShared<FHaybaMCPLegacyHandler>());
@@ -205,6 +220,17 @@ void FHaybaMCPModule::StartupModule()
     CommandHandler->RegisterHandler(MakeShared<FHaybaMCPPerfHandler>());
     CommandHandler->RegisterHandler(MakeShared<FHaybaMCPIdleHandler>());
     CommandHandler->RegisterHandler(MakeShared<FHaybaMCPRenderHandler>());
+    CommandHandler->RegisterHandler(MakeShared<FHaybaMCPLeaseHandler>());
+    CommandHandler->RegisterHandler(MakeShared<FHaybaMCPBatchHandler>());
+
+    // PIE hooks and the Play authorizer exist before any request can arrive
+    // (the TCP server starts below) and in owned automation children, which
+    // never start a server. Editor state must depend on neither (docs/adr/0012).
+    FHaybaMCPEditorState::Get().Startup();
+
+    // Lease-warning drain (T6, R-18): a closed 30 s window's "repeated N more
+    // times" line is logged even when no further warning arrives.
+    FHaybaMCPLeaseManager::Get().StartWarningDrain();
 
     // Optional-capability check: warn (log + editor notification) for any
     // satellite plugin that is disabled, so the user understands why a command
@@ -361,11 +387,14 @@ void FHaybaMCPModule::ShutdownModule()
     // Every engine-owned callback below executes code from this DLL. Revoke
     // them before any UI/server teardown so a hot unload cannot leave a timer,
     // console command, or ToolMenus startup callback pointing at plugin code.
+    FHaybaMCPEditorState::Get().Shutdown();
     if (GEditor && AutoOpenTimerHandle.IsValid())
     {
         GEditor->GetTimerManager()->ClearTimer(AutoOpenTimerHandle);
     }
     AutoOpenTimerHandle.Invalidate();
+
+    FHaybaMCPLeaseManager::Get().StopWarningDrain();
     if (OpenToolkitConsoleCommand)
     {
         IConsoleManager::Get().UnregisterConsoleObject(OpenToolkitConsoleCommand, false);
@@ -382,8 +411,12 @@ void FHaybaMCPModule::ShutdownModule()
         StudioMenuStartupHandle.Reset();
     }
 
+    // A pending editor_unsafe notification is a core-ticker delegate into this DLL.
+    FHaybaEditorHealth::RevokeCallbacks();
+
     // Ticker lambdas execute plugin code. Remove/fail an in-flight test job
     // before module unload so no callback can jump into an unloaded DLL.
+    HaybaWorldTileCapture::Shutdown();
     FHaybaMCPTestHandler::ShutdownActiveRun();
     auto& TM = FGlobalTabmanager::Get();
     if (PlanOverlay) { PlanOverlay->Unregister(); PlanOverlay.Reset(); }
@@ -409,6 +442,116 @@ FHaybaActivityModel& FHaybaMCPModule::GetActivityModel()
     return *ActivityModel;
 }
 
+void FHaybaMCPModule::ProposeExactExternalOperation(FHaybaExactExternalApproval Operation)
+{
+    check(IsInGameThread());
+    // A changed operation invalidates every earlier click, including an
+    // already approved but not yet dispatched call.
+    if (PendingExternalOperation.IsValid() &&
+        PendingExternalOperation.Matches(Operation.Owner, Operation.Command,
+            Operation.OperationDigest, Operation.TargetFingerprint, Operation.LeaseBinding, Operation.SourceBinding,
+            Operation.PolicyVersion, FDateTime::UtcNow()))
+    {
+        return; // Retries of the same refused call keep one review token.
+    }
+    ApprovedExternalOperation = {};
+    Operation.ProposalId = FGuid::NewGuid().ToString(EGuidFormats::Digits);
+    PendingExternalOperation = MoveTemp(Operation);
+    PendingExternalPlanId = PendingExternalOperation.ProposalId;
+    PendingExternalPlanIsExact = true;
+    PendingExternalPlan = FString::Printf(TEXT("%s on %s"),
+        *PendingExternalOperation.Command, *PendingExternalOperation.TargetRef);
+    PendingExternalSteps.Reset();
+    bPlanApproved = false;
+}
+
+void FHaybaMCPModule::InvalidateExternalApproval()
+{
+    check(IsInGameThread());
+    PendingExternalOperation = {};
+    ApprovedExternalOperation = {};
+    PendingExternalPlan.Empty();
+    PendingExternalPlanId.Empty();
+    PendingExternalSteps.Reset();
+    PendingExternalPlanIsExact = false;
+    bPlanApproved = false;
+}
+
+bool FHaybaMCPModule::ResolveExternalPlan(const FString& ExpectedProposalId, bool bApprove)
+{
+    check(IsInGameThread());
+    if (!PendingExternalPlanIsExact && !bApprove && !ExpectedProposalId.IsEmpty() &&
+        ExpectedProposalId == PendingExternalPlanId)
+    {
+        PendingExternalPlan.Empty();
+        PendingExternalPlanId.Empty();
+        PendingExternalSteps.Reset();
+        return true;
+    }
+    if (!PendingExternalPlanIsExact || !PendingExternalOperation.IsValid() ||
+        ExpectedProposalId.IsEmpty() || ExpectedProposalId != PendingExternalOperation.ProposalId)
+        return false;
+
+    if (!bApprove)
+    {
+        PendingExternalOperation = {};
+        PendingExternalPlan.Empty();
+        PendingExternalPlanId.Empty();
+        PendingExternalSteps.Reset();
+        PendingExternalPlanIsExact = false;
+        ApprovedExternalOperation = {};
+        return true;
+    }
+
+    FHaybaExactExternalApproval Candidate = PendingExternalOperation;
+    TSharedPtr<FJsonObject> Params;
+    const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(Candidate.ReviewParamsJson);
+    FString CurrentRef;
+    FString CurrentFingerprint;
+    const bool bParamsParsed = FJsonSerializer::Deserialize(Reader, Params) && Params.IsValid();
+    TSharedPtr<FJsonObject> FrozenCall = MakeShared<FJsonObject>();
+    FrozenCall->SetStringField(TEXT("cmd"), Candidate.Command);
+    if (bParamsParsed) FrozenCall->SetObjectField(TEXT("params"), Params);
+    const HaybaMCPLease::FLease* LiveLease = Candidate.LeaseId.IsEmpty() ? nullptr :
+        FHaybaMCPLeaseManager::Get().Table().FindLease(Candidate.LeaseId);
+    const bool bLeaseStillValid = Candidate.LeaseId.IsEmpty() || (LiveLease &&
+        LiveLease->Owner == Candidate.Owner && !LiveLease->IsOrphaned() &&
+        (!LiveLease->bBindConnection || LiveLease->ConnId == Candidate.ConnectionId));
+    const bool bStillCurrent = bParamsParsed &&
+        bLeaseStillValid &&
+        HaybaMCPExactApproval::HashOperation(FrozenCall) == Candidate.OperationDigest &&
+        FHaybaMCPCommandHandler::CaptureExactApprovalTarget(Candidate.Command, Params, CurrentRef, CurrentFingerprint) &&
+        CurrentRef == Candidate.TargetRef && CurrentFingerprint == Candidate.TargetFingerprint &&
+        (Candidate.PolicyVersion == TEXT("native-exact-v2-request-required") ||
+         (Candidate.PolicyVersion == TEXT("native-exact-v2") && FHaybaMCPSettings::Get().bPlanModeEnabled)) &&
+        FDateTime::UtcNow() <= Candidate.ExpiresAt;
+
+    // Reject and stale proposals both clear the pending review. A second
+    // Approve cannot resurrect it, and a fresh command must propose again.
+    PendingExternalOperation = {};
+    PendingExternalPlan.Empty();
+    PendingExternalPlanId.Empty();
+    PendingExternalSteps.Reset();
+    PendingExternalPlanIsExact = false;
+    ApprovedExternalOperation = {};
+    if (!bStillCurrent) return false;
+    ApprovedExternalOperation = MoveTemp(Candidate);
+    return true;
+}
+
+bool FHaybaMCPModule::ConsumeExactExternalApproval(const FString& Owner, const FString& Command,
+    const FString& OperationDigest, const FString& TargetFingerprint, const FString& LeaseBinding,
+    const FString& SourceBinding, const FString& PolicyVersion)
+{
+    check(IsInGameThread());
+    const bool bMatches = ApprovedExternalOperation.Matches(Owner, Command, OperationDigest,
+        TargetFingerprint, LeaseBinding, SourceBinding, PolicyVersion, FDateTime::UtcNow());
+    // Even a changed target or command spends the token. A rejected attempt
+    // cannot later replay after the editor happens to return to an old state.
+    if (ApprovedExternalOperation.IsValid()) ApprovedExternalOperation = {};
+    return bMatches;
+}
+
 TSharedPtr<FJsonObject> FHaybaMCPModule::GetTcpTransportLimits() const
 {
     if (TcpServer.IsValid() && TcpServer->IsRunning())
@@ -425,6 +568,16 @@ bool FHaybaMCPModule::StartTcpServer()
         UE_LOG(LogHaybaMCP, Warning, TEXT("TCP server already running on port %d"), TcpPort);
         return false;
     }
+    // T7: a new server hands out new connection ids, so every lease bound to
+    // the previous server's connections is orphaned (60 s grace) instead of
+    // living on to its TTL.
+    const int32 Orphaned = FHaybaMCPLeaseManager::Get().Table().OrphanAllBound();
+    FHaybaMCPLeaseManager::Get().ForgetAllAdoptions();
+    if (Orphaned > 0)
+    {
+        UE_LOG(LogHaybaMCP, Log, TEXT("TCP server starting: orphaned %d lease(s) bound to the previous server's connections"), Orphaned);
+    }
+
     // Initiative #3: scan a small port range so multiple UE editor instances
     // can run side-by-side without EADDRINUSE collisions. The first instance
     // claims 52342; subsequent ones walk forward. Heartbeat written to disk

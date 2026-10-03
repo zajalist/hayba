@@ -1,5 +1,12 @@
 # P3a — the visual layer (execution plan)
 
+**Implementation update (2026-10-02):** The six editor-rail icons now use
+hand-authored SVG sources in `Resources/Icons/` with reproducible transparent
+2× PNG derivatives for Slate. This supersedes Step 1's choice of the older
+generated `icons-final/` masters for the rail. The logo remains unchanged.
+Other icon tiers and token-sweep steps below are still historical plan items,
+not claims that they shipped.
+
 **Why this first:** it is the only part of the redesign with *zero* collision
 against the in-flight crash work. No crash issue (#406/#407/#411/#415/#387)
 touches `HaybaMCPStyle.cpp` or `Resources/`. Landing it puts the new design

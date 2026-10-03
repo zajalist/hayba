@@ -31,6 +31,10 @@ struct FHaybaMCPChatMessage
     FString ActivityId;     // semantic activity shown inline with this turn
 	TSharedPtr<FJsonObject> AttachedGraph; // Non-null if AI produced a graph
 	bool bShowActions;      // Show Preview/Create/Test buttons
+	// Live tool reports attached to this assistant turn. The Changes and Verdicts
+	// panels show current editor state, so these links are not restored from disk.
+	int32 ReportedToolCompletions = 0;
+	int32 ReportedToolErrors = 0;
 	FDateTime Timestamp = FDateTime::Now();
 };
 

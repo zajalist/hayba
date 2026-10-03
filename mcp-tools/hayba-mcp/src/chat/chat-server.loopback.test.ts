@@ -13,7 +13,7 @@ function raw(port: number, method: string, path: string, headers: Record<string,
       res.resume(); resolve(res.statusCode ?? 0);
     });
     req.on('error', reject);
-    req.end(method === 'GET' ? undefined : '{}');
+    req.end(method === 'GET' || method === 'DELETE' ? undefined : '{}');
   });
 }
 
@@ -32,7 +32,7 @@ describe('chat routes DNS-rebinding guard (R7)', () => {
 
   it('refuses a rebound Host or a foreign Origin on every /chat route', async () => {
     const port = await start();
-    for (const [method, path] of [['GET', '/chat/sessions'], ['GET', '/chat/config'], ['POST', '/chat/config'], ['POST', '/chat/stream'], ['POST', '/chat/cancel'], ['POST', '/chat/approve']] as const) {
+    for (const [method, path] of [['GET', '/chat/sessions'], ['GET', '/chat/config'], ['GET', '/chat/models?provider=mock'], ['POST', '/chat/config'], ['DELETE', '/chat/config?session_id=ue_settings_0123456789abcdef0123456789abcdef'], ['POST', '/chat/stream'], ['POST', '/chat/cancel'], ['POST', '/chat/approve']] as const) {
       expect(await raw(port, method, path, { host: `evil.example:${port}` }), `${method} ${path} host`).toBe(403);
       expect(await raw(port, method, path, { host: `127.0.0.1:${port}`, origin: 'https://evil.example' }), `${method} ${path} origin`).toBe(403);
     }

@@ -10,9 +10,8 @@ SEH seam logged that the editor was kept alive, then normal command post-process
 
 The very next post-processing step called `FHaybaMCPSecurityManager::HashParams`. UE terminated
 with `EXCEPTION_ACCESS_VIOLATION` in `TJsonWriterFactory::Create`; the call stack ended at
-`FHaybaMCPCommandHandler::ProcessCommand` line 1000. Crash evidence is preserved in the Aphrosia
-host under `Saved/Crashes/UECC-Windows-E9C277DF4F34C1310A027CB36210F06F_0000` and the 03:38:32–38
-UTC portion of `Saved/Logs/Aphrosia.log`.
+`FHaybaMCPCommandHandler::ProcessCommand` line 1000. The observed host
+recorded a crash artifact and an editor-log tail at the time of failure.
 
 ## Product conclusion
 
@@ -57,7 +56,7 @@ Live UE 5.8 evidence after the patch:
   `passed_count:1`, `failed_count:0`, `skipped_count:0`, and `all_passed:true` visible directly in
   `build_status`.
 - Empty and unknown `build_status` job ids returned handler errors, not successful envelopes.
-- The earlier full `category:"Aphrosia"` run completed with registry exit code `0` and 331 detailed
+- An earlier host integration category run completed with registry exit code `0` and 331 detailed
   log entries, but it predates the untruncated scalar response and therefore is not the final clean
   release proof.
 
@@ -66,7 +65,7 @@ before a subsequent full-category request reached the editor log. The cause is u
 attribute it to `test_run`, and do not waive the clean-build/relaunch full-category rerun.
 
 Final clean-process evidence after rebuilding the base UE 5.8 DLL (not a Live Coding-only patch):
-`category:"Aphrosia"` selected 331 tests and completed with `passed_count:331`,
+The host integration category selected 331 tests and completed with `passed_count:331`,
 `failed_count:0`, `skipped_count:0`, `all_passed:true`, and 109.08 seconds elapsed. A prior clean
 run of the same suite also returned 331/0/0 in 101.18 seconds. The runner now resolves registered
 names once from its discovery snapshot rather than rediscovering the entire engine catalogue for

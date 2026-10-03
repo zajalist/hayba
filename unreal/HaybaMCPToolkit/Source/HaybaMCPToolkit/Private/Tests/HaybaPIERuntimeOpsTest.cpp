@@ -40,6 +40,25 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FHaybaPIERuntimeParseTest::RunTest(const FString&)
 {
     {
+        FHaybaParamReader Reader(RuntimeJson(TEXT(R"({"pie_instance":2,"eye_positions":[[0,0,100],[100,0,100]],"target_location":[0,0,0]})")), TEXT("editor_pie_sightlines"));
+        const HaybaPIERuntimeOps::FSightlinesRequest Request = HaybaPIERuntimeOps::ParseSightlines(Reader);
+        TestFalse(TEXT("bounded sightlines parse"), Reader.HasErrors());
+        TestEqual(TEXT("two explicit eyes"), Request.EyePositions.Num(), 2);
+        TestTrue(TEXT("explicit PIE world retained"), Request.World.PIEInstance.IsSet() && *Request.World.PIEInstance == 2);
+    }
+    for (const TCHAR* Bad : {
+        TEXT(R"({"eye_positions":[],"target_location":[0,0,0]})"),
+        TEXT(R"({"eye_positions":[[0,0,0]],"target_location":[0,0,0]})"),
+        TEXT(R"({"eye_positions":[[10001,0,0]],"target_location":[0,0,0]})"),
+        TEXT(R"({"eye_positions":[[true,0,0]],"target_location":[0,0,0]})"),
+        TEXT(R"({"eye_positions":[[0,0,1]],"target_location":[0,0,0],"stream":true})")
+    })
+    {
+        FHaybaParamReader Reader(RuntimeJson(Bad), TEXT("editor_pie_sightlines"));
+        HaybaPIERuntimeOps::ParseSightlines(Reader);
+        TestTrue(TEXT("unsafe sightline request rejected"), Reader.HasErrors());
+    }
+    {
         FHaybaParamReader Reader(RuntimeJson(TEXT(R"({"name_filter":"Road"})")), TEXT("editor_pie_actor_list"));
         const HaybaPIERuntimeOps::FListRequest Request = HaybaPIERuntimeOps::ParseList(Reader);
         TestFalse(TEXT("ordinary list request parses"), Reader.HasErrors());

@@ -26,6 +26,11 @@ struct FHaybaActivityApproval
     FString ArgsHash;
     FString Source;
     FString Hint;
+    /** Exact native proposal identity, required when Source is ue. */
+    FString NativeProposalId;
+    FString NativeOperationDigest;
+    FString NativeTargetRef;
+    FString NativeTargetFingerprint;
 };
 
 struct FHaybaActivityArtifact

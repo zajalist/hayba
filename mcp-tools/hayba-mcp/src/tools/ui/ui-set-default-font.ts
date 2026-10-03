@@ -27,7 +27,7 @@ export const schema = z.object({
   font_asset: z
     .string()
     .min(1)
-    .describe('Composite UFont asset to apply, e.g. "/Game/UI/Fonts/F_AphrosiaBody". Must NOT be a UFontFace.'),
+    .describe('Composite UFont asset to apply, e.g. "/Game/UI/Fonts/F_LanternBody". Must NOT be a UFontFace.'),
   typeface: z
     .string()
     .optional()

@@ -16,6 +16,7 @@ namespace
     constexpr int32 MaxCommandsPerTick = 4;
     constexpr double MaxDrainSeconds = 0.008;
 	FThreadSafeCounter ClientWorkerSerial;
+	FThreadSafeCounter ConnectionSerial;
 
     // FUTF8ToTCHAR deliberately replaces malformed sequences with the Unicode
     // replacement character. That is friendly for display text and unsafe for
@@ -331,6 +332,12 @@ void FHaybaMCPTcpServer::Shutdown()
 		Discarded.PendingReservation.Reset();
 		Discarded.ResponseReservation.Reset();
     }
+    // Bound leases are not touched here (the router may already be gone during
+    // shutdown); FHaybaMCPModule::StartTcpServer orphans them on the next start.
+    int32 IgnoredClosedConnId = 0;
+    while (ClosedConnections.Dequeue(IgnoredClosedConnId))
+    {
+    }
 
     UE_LOG(LogHaybaMCPTCP, Log, TEXT("TCP server stopped"));
 }
@@ -373,6 +380,7 @@ uint32 FHaybaMCPTcpServer::Run()
 				FHaybaMCPClientConnectionPtr Conn =
 					MakeShared<FHaybaMCPClientConnection, ESPMode::ThreadSafe>(
 						ClientSocket, MoveTemp(ClientReservation), MaxOutboundMemoryBytesPerClient);
+				Conn->ConnId = ConnectionSerial.Increment();
 				TSharedRef<FHaybaMCPTcpServer, ESPMode::ThreadSafe> Self = AsShared();
 				// Dedicated owned threads are intentionally not Async(Thread): in UE
 				// 5.8 a future can be ready before TAsyncRunnable/capture deletion.
@@ -406,22 +414,30 @@ uint32 FHaybaMCPTcpServer::Run()
 					});
 				const FString WriterName = FString::Printf(
 					TEXT("HaybaMCPClientWriter_%d"), ClientWorkerSerial.Increment());
-				if (!Writer->Start(*WriterName))
+				if (!StartClientWriter(Conn, MoveTemp(Writer), *WriterName))
 				{
-					Conn->bAlive = false;
-					if (Conn->Socket)
-					{
-						Conn->Socket->Shutdown(ESocketShutdownMode::ReadWrite);
-					}
-					CompleteClientWorker(Conn, TEXT("writer-start-failed"));
-					UE_LOG(LogHaybaMCPTCP, Error, TEXT("Could not create client writer thread"));
 					continue;
 				}
-				RetainWorker(MoveTemp(Writer));
             }
         }
     }
     return 0;
+}
+
+bool FHaybaMCPTcpServer::StartClientWriter(const FHaybaMCPClientConnectionPtr& Conn,
+	TUniquePtr<FHaybaMCPJoinableWorker>&& Writer, const TCHAR* WorkerName)
+{
+	if (!Writer->Start(WorkerName))
+	{
+		// The reader may already have retired on boundary FIN, leaving no
+		// worker to notify closure when writer startup fails.
+		CloseClientConnection(Conn);
+		CompleteClientWorker(Conn, TEXT("writer-start-failed"));
+		UE_LOG(LogHaybaMCPTCP, Error, TEXT("Could not create client writer thread"));
+		return false;
+	}
+	RetainWorker(MoveTemp(Writer));
+	return true;
 }
 
 void FHaybaMCPTcpServer::HandleClientConnection(FHaybaMCPClientConnectionPtr Conn)
@@ -431,10 +447,14 @@ void FHaybaMCPTcpServer::HandleClientConnection(FHaybaMCPClientConnectionPtr Con
         FString Message;
         if (!ReadMessage(Conn, Message))
         {
-            // Client disconnected. Mark dead so any in-flight response task
-            // skips its send; the socket is destroyed once the last shared
-            // reference (this loop + any queued game-thread task) drops.
-            Conn->bAlive = false;
+			if (Conn->bInputEnded && bIsRunning && Conn->bAlive)
+			{
+				// No producer remains after a boundary terminal receive. Keep
+				// dispatch and the writer alive for every accepted reservation,
+				// even if no response has reached the outbound queue yet.
+				if (Conn->OutboundEvent) Conn->OutboundEvent->Trigger();
+				return;
+			}
 			break;
         }
 		Conn->RequestsReceived.Increment();
@@ -466,10 +486,21 @@ void FHaybaMCPTcpServer::HandleClientConnection(FHaybaMCPClientConnectionPtr Con
 		FHaybaMCPCountReservationPtr ResponseReservation =
 			MakeShared<FHaybaMCPCountReservation, ESPMode::ThreadSafe>(Conn->ResponsesPending);
 		PendingCommands.Enqueue(FHaybaMCPPendingCommand{
-			MoveTemp(Message), Conn, MoveTemp(PendingReservation), MoveTemp(ResponseReservation) });
+			MoveTemp(Message), Conn, MoveTemp(PendingReservation), MoveTemp(ResponseReservation), Conn->ConnId });
     }
 
-    Conn->bAlive = false;
+	CloseClientConnection(Conn);
+}
+
+void FHaybaMCPTcpServer::CloseClientConnection(const FHaybaMCPClientConnectionPtr& Conn)
+{
+	Conn->bAlive = false;
+	// Reader failures and writer completion can race. Notify bound-lease closure
+	// once, only after accepted responses drain or a cancellation/failure wins.
+	if (Conn->CloseNotificationRequested.Increment() == 1)
+	{
+		ClosedConnections.Enqueue(Conn->ConnId);
+	}
 	if (Conn->Socket)
 	{
 		Conn->Socket->Shutdown(ESocketShutdownMode::ReadWrite);
@@ -483,6 +514,10 @@ void FHaybaMCPTcpServer::HandleClientWrites(FHaybaMCPClientConnectionPtr Conn)
 		FHaybaMCPOutboundResponse Response;
 		if (!Conn->OutboundResponses.Dequeue(Response))
 		{
+			if (Conn->bInputEnded && Conn->ResponsesPending.GetValue() == 0)
+			{
+				break;
+			}
 			if (Conn->OutboundEvent)
 			{
 				Conn->OutboundEvent->Wait(SocketPollMs);
@@ -497,6 +532,7 @@ void FHaybaMCPTcpServer::HandleClientWrites(FHaybaMCPClientConnectionPtr Conn)
 		// conversion, not merely while the item waits in OutboundResponses.
 		Response.MemoryReservation.Reset();
 	}
+	CloseClientConnection(Conn);
 }
 
 void FHaybaMCPTcpServer::CompleteClientWorker(
@@ -549,6 +585,15 @@ bool FHaybaMCPTcpServer::DrainPendingCommands(float /*DeltaTime*/)
     // execution), so a handler may safely pump the task graph (asset import etc).
     // Drain all pending commands this tick — each command is one game-thread
     // command, matching the historical one-task-per-command behaviour.
+    int32 ClosedConnId = 0;
+    while (ClosedConnections.Dequeue(ClosedConnId))
+    {
+        if (CommandHandler.IsValid())
+        {
+            CommandHandler->NotifyConnectionClosed(ClosedConnId);
+        }
+    }
+
     FHaybaMCPPendingCommand Cmd;
     const double Deadline = FPlatformTime::Seconds() + MaxDrainSeconds;
     int32 Processed = 0;
@@ -566,7 +611,7 @@ bool FHaybaMCPTcpServer::DrainPendingCommands(float /*DeltaTime*/)
 			Cmd.ResponseReservation.Reset();
             continue;
         }
-        FString ResponseString = CommandHandler->ProcessCommand(Cmd.Message);
+        FString ResponseString = CommandHandler->ProcessCommand(Cmd.Message, Cmd.ConnId);
 		int32 ResponseUtf8Bytes = 0;
 		if (ClassifyResponseUtf8(ResponseString, MaxResponseBytes, ResponseUtf8Bytes)
 			!= EHaybaMCPResponseAdmission::Accepted)
@@ -619,6 +664,18 @@ bool FHaybaMCPTcpServer::DrainPendingCommands(float /*DeltaTime*/)
     return true; // keep ticking
 }
 
+FHaybaMCPTcpServer::EReceiveResult FHaybaMCPTcpServer::ReceiveAvailable(
+	FSocket& Socket, uint8* Destination, int32 NumBytes, int32& BytesRead)
+{
+	// UE streaming Recv returns false/zero for BOTH EOF and fatal errors, and
+	// true/zero for would-block. Connection readiness and stale last-error state
+	// cannot separate the terminal outcomes. Stop input for either; only a clean
+	// frame boundary may drain owed replies through the existing bounded writer.
+	if (!Socket.Recv(Destination, NumBytes, BytesRead)) return EReceiveResult::InputEnded;
+	if (BytesRead <= 0) return EReceiveResult::WouldBlock;
+	return EReceiveResult::Progress;
+}
+
 bool FHaybaMCPTcpServer::ReadMessage(const FHaybaMCPClientConnectionPtr& Conn, FString& OutMessage)
 {
 	if (!Conn.IsValid() || !Conn->Socket)
@@ -667,17 +724,18 @@ bool FHaybaMCPTcpServer::ReadMessage(const FHaybaMCPClientConnectionPtr& Conn, F
 			}
 
 			int32 BytesRead = 0;
-			if (!Socket->Recv(Destination + TotalRead, NumBytes - TotalRead, BytesRead))
+			const EReceiveResult Receive = ReceiveAvailable(
+				*Socket, Destination + TotalRead, NumBytes - TotalRead, BytesRead);
+			if (Receive == EReceiveResult::InputEnded)
 			{
-				if (Socket->GetConnectionState() != SCS_Connected)
-				{
-					return false;
-				}
-				continue;
-			}
-			if (BytesRead <= 0)
-			{
+				// Any byte of an incomplete next frame retains the failure path:
+				// partial input must never become a response-protected idle wait.
+				if (!ReadPolicy.HasStartedFrame()) Conn->bInputEnded = true;
 				return false;
+			}
+			if (Receive == EReceiveResult::WouldBlock)
+			{
+				continue;
 			}
 			const double ReceivedAt = FPlatformTime::Seconds();
 			// Once a frame started, bytes observed at/after its deadline are late

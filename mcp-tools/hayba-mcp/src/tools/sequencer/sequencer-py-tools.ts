@@ -281,6 +281,7 @@ export const seqInspectDescriptor: PyToolDescriptor<typeof seqInspectSchema.shap
   returns: '{ok, asset_path, frame_rate, tick_resolution, duration_seconds, binding_count, bindings:[{binding_guid,display_name,track_count}], master_tracks, has_more, next_offset}',
   schema: seqInspectSchema.shape,
   meta: readMeta,
+  readOnly: true,
   buildScript: seqInspectScript,
   timeoutMs: 30_000,
 };
@@ -729,6 +730,7 @@ export const seqValidateDescriptor: PyToolDescriptor<typeof seqValidateSchema.sh
   returns: '{ok, asset_path, issues:[{code,severity,detail,binding_guid?}], fixed, error_count, warning_count}',
   schema: seqValidateSchema.shape,
   meta: readMeta,
+  readOnly: true,
   buildScript: seqValidateScript,
   timeoutMs: 30_000,
 };
@@ -787,6 +789,7 @@ export const seqListDescriptor: PyToolDescriptor<typeof seqListSchema.shape> = {
   returns: '{ok, sequences:[{asset_path,track_count,binding_count}], count, has_more, next_offset}',
   schema: seqListSchema.shape,
   meta: readMeta,
+  readOnly: true,
   buildScript: seqListScript,
   timeoutMs: 30_000,
 };
@@ -839,6 +842,7 @@ export const seqListBindingsDescriptor: PyToolDescriptor<typeof seqListBindingsS
   returns: '{ok, asset_path, bindings:[{guid,name,kind,object_class}], count, has_more, next_offset}',
   schema: seqListBindingsSchema.shape,
   meta: readMeta,
+  readOnly: true,
   buildScript: seqListBindingsScript,
   timeoutMs: 30_000,
 };

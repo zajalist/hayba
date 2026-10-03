@@ -6,6 +6,7 @@ import {
   buildAnthropicRequest,
   LLMError,
   type AnthropicClientLike,
+  type OpenAIClientLike,
   type LLMCompleteParams,
   type LLMStreamEvent,
   type LLMTool,
@@ -34,6 +35,28 @@ const RESOLVED_CFG = {
   baseURL: '',
   apiKey: 'k',
 };
+
+describe('per-turn reasoning effort', () => {
+  it('sends Anthropic effort in output_config with the exact selected model', async () => {
+    const create = vi.fn().mockResolvedValue({ content: [{ type: 'text', text: 'ok' }], stop_reason: 'end_turn' });
+    const client = createLLMClient({ provider: 'anthropic', model: 'claude-selected',
+      apiKey: 'fixture', reasoningEffort: 'high' }, { anthropic: anthropicFake({ create }) });
+    await client.complete(baseParams());
+    expect(create.mock.calls[0][0]).toMatchObject({ model: 'claude-selected',
+      output_config: { effort: 'high' } });
+  });
+
+  it('sends OpenAI-compatible effort and rejects unsupported provider combinations', async () => {
+    const create = vi.fn().mockResolvedValue({ choices: [{ message: { content: 'ok' }, finish_reason: 'stop' }] });
+    const openai: OpenAIClientLike = { chat: { completions: { create } } };
+    const client = createLLMClient({ provider: 'deepseek', model: 'deepseek-selected',
+      apiKey: 'fixture', reasoningEffort: 'max' }, { openai });
+    await client.complete(baseParams());
+    expect(create.mock.calls[0][0]).toMatchObject({ model: 'deepseek-selected', reasoning_effort: 'max' });
+    expect(() => createLLMClient({ provider: 'groq', reasoningEffort: 'high', apiKey: 'fixture' }, { openai }))
+      .toThrow('does not support the selected reasoning effort');
+  });
+});
 
 function anthropicFake(over: Partial<AnthropicClientLike['messages']> = {}): AnthropicClientLike {
   return {
@@ -501,6 +524,7 @@ describe('Anthropic request/error invariants', () => {
     expect((error as LLMError).message).not.toContain(secret);
   });
 
+  // The first real SDK import can take longer during concurrent UE test runs.
   it('constructs the real 0.115 module lazily against localhost with no external API key', async () => {
     let requests = 0;
     const server = createServer((_request, response) => {
@@ -542,5 +566,5 @@ describe('Anthropic request/error invariants', () => {
       server.close();
       await once(server, 'close');
     }
-  });
+  }, 30_000);
 });

@@ -8,7 +8,7 @@ Four optional plugins sat in `unreal/` — `HaybaMCPGAS`, `HaybaMCPMetaSound`,
 `HaybaMCPNiagara`, `HaybaMCPSequencer` — each a complete UE module with a
 handler, each declaring `EnabledByDefault: true` and its engine dependency.
 
-**None of them were installed anywhere.** `Aphrosia/Plugins/` contained only
+**None of them were installed in the observed host.** Its `Plugins/` directory contained only
 `HaybaMCPToolkit` and `PCGExtendedToolkit`, so all 21 of their commands answered
 `Unknown command`, while `list_tool_categories` listed every one as a capability
 the plugin has but no wrapper reaches. Two issues (#18, #19) read as

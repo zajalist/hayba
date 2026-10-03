@@ -1,10 +1,34 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createBrainConnector } from './brain-connector.js';
 import { FakeSocket } from './fake-socket.test-helpers.js';
 
 const permissions = { 'tools.execute': true, 'facts.vision': false, 'facts.scene': false, python_run: false };
 
 describe('createBrainConnector', () => {
+  it('leaves external route advice local until this process receives a sign-in token', async () => {
+    const fetchImpl = vi.fn(async () => { throw new Error('should not fetch'); }) as typeof fetch;
+    const c = createBrainConnector({ brainUrl: 'wss://brain.test', clientVersion: 't', fetchImpl });
+    expect(await c.rankRoute?.('inspect_scene', 'draft', ['actor_list', 'editor_get_state'])).toBeNull();
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('sends only typed route fields with a Bearer access token', async () => {
+    const calls: Array<{ url: string; init: RequestInit }> = [];
+    const fetchImpl = (async (url: string, init: RequestInit) => {
+      calls.push({ url, init });
+      if (url.endsWith('/auth/refresh')) return new Response(JSON.stringify({ access_token: 'jwt', refresh_token: 'rt2', expires_in: 3600 }));
+      return new Response(JSON.stringify({ preferred_id: 'actor_list' }));
+    }) as typeof fetch;
+    const c = createBrainConnector({ brainUrl: 'wss://brain.test', clientVersion: 't', fetchImpl });
+    c.setRefreshToken('rt1');
+    expect(await c.rankRoute?.('inspect_scene', 'draft', ['actor_list', 'editor_get_state'])).toBe('actor_list');
+    expect(calls[1]?.url).toBe('https://brain.test/v1/route/advice');
+    expect(calls[1]?.init.headers).toEqual({ 'content-type': 'application/json', authorization: 'Bearer jwt' });
+    expect(JSON.parse(String(calls[1]?.init.body))).toEqual({
+      intent: 'inspect_scene', mode: 'draft', candidate_ids: ['actor_list', 'editor_get_state'],
+    });
+  });
+
   it('reports not_configured without a brain URL and auth before sign-in', async () => {
     const off = createBrainConnector({ brainUrl: '', clientVersion: 't' });
     expect(off.configured()).toBe(false);

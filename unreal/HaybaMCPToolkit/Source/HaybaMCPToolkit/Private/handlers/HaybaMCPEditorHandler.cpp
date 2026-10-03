@@ -1,7 +1,12 @@
 #include "HaybaMCPEditorHandler.h"
+#include "HaybaMCPSaveVerify.h"
+#include "CoreGlobals.h"
+#include "HaybaMCPUnattendedProbe.h"
 #include "HaybaEditorOps.h"
 #include "HaybaMCPCaptureActor.h"
 #include "HaybaMCPRenderSafety.h"
+#include "HaybaMCPEditorHealth.h"
+#include "HaybaMCPHealthPolicy.h"
 #include "Editor.h"
 #include "EngineUtils.h"
 #include "Engine/Engine.h"
@@ -19,6 +24,16 @@
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
 #include "Internationalization/Regex.h"
+#include "Engine/Blueprint.h"
+#include "HaybaMCPEditorState.h"
+#include "HaybaMCPEditorStatePolicy.h"
+#include "HaybaMCPLeaseManager.h"
+#include "Kismet2/BlueprintEditorUtils.h"
+#include "ShaderCompiler.h"
+#include "Modules/ModuleManager.h"
+#if WITH_LIVE_CODING
+#include "ILiveCodingModule.h"
+#endif
 // IHotReloadModule removed in UE 5.4+; LiveCoding replaces it
 
 DEFINE_LOG_CATEGORY_STATIC(LogHaybaMCPEditor, Log, All);
@@ -41,6 +56,41 @@ static TArray<FString> CollectSaveableDirtyPackageNames()
     }
     Names.Sort();
     return Names;
+}
+
+struct FHaybaPlayModalRisk
+{
+    FString Asset;
+    HaybaMCPState::EPlayModal Modal = HaybaMCPState::EPlayModal::None;
+};
+
+// Loaded Blueprints that would open a modal on the tick after a PIE request.
+// Slate's modal loop does not tick FTSTicker, so the command drain and every
+// batch pump would hang until a human answered (docs/adr/0012).
+static TArray<FHaybaPlayModalRisk> FindPlayModalRisks()
+{
+    TArray<FHaybaPlayModalRisk> Risks;
+    for (TObjectIterator<UBlueprint> It; It; ++It)
+    {
+        UBlueprint* Blueprint = *It;
+        if (!IsValid(Blueprint)) continue;
+        HaybaMCPState::FBlueprintPlayFacts Facts;
+        Facts.bUpToDate = Blueprint->IsUpToDate();
+        const UPackage* Package = Blueprint->GetPackage();
+        Facts.bForDiffing = Package && Package->HasAnyPackageFlags(PKG_ForDiffing);
+        Facts.bDirty = Blueprint->Status == BS_Dirty;
+        Facts.bError = Blueprint->Status == BS_Error;
+        Facts.bDisplayCompilePIEWarning = Blueprint->bDisplayCompilePIEWarning;
+        // Only a dirty Blueprint needs the data-only test (the engine's order).
+        Facts.bDataOnly = Facts.bDirty && !Facts.bUpToDate && FBlueprintEditorUtils::IsDataOnlyBlueprint(Blueprint);
+        const HaybaMCPState::EPlayModal Modal = HaybaMCPState::PlayModalFor(Facts);
+        if (Modal != HaybaMCPState::EPlayModal::None)
+        {
+            Risks.Add({ Blueprint->GetPathName(), Modal });
+        }
+    }
+    Risks.Sort([](const FHaybaPlayModalRisk& A, const FHaybaPlayModalRisk& B) { return A.Asset < B.Asset; });
+    return Risks;
 }
 
 // Safely resolve a viewport's client to an FEditorViewportClient. FViewportClient
@@ -174,11 +224,44 @@ FHaybaHandlerResult FHaybaMCPEditorHandler::StartPIE(const TSharedPtr<FJsonObjec
     if (!GEditor)
         return FHaybaHandlerResult::Err(TEXT("GEditor is null"));
 
+    // Never queue a session that would open a modal on the next tick.
+    const TArray<FHaybaPlayModalRisk> Risks = FindPlayModalRisks();
+    if (Risks.Num() > 0)
+    {
+        TSharedPtr<FJsonObject> Refusal = MakeShared<FJsonObject>();
+        Refusal->SetBoolField(TEXT("ok"), false);
+        Refusal->SetStringField(TEXT("code"), TEXT("pie_blocked"));
+        Refusal->SetStringField(TEXT("error"), HaybaMCPState::FormatPieBlockedMessage(Risks.Num(), Risks[0].Asset, Risks[0].Modal));
+        Refusal->SetStringField(TEXT("phase"), TEXT("preflight"));
+        Refusal->SetStringField(TEXT("mutation_status"), TEXT("not_started"));
+        Refusal->SetStringField(TEXT("failure_kind"), TEXT("retryable"));
+        Refusal->SetStringField(TEXT("hint"), HaybaMCPState::PieBlockedHint());
+        TArray<TSharedPtr<FJsonValue>> Blocked;
+        for (int32 I = 0; I < Risks.Num() && I < HaybaMCPState::MaxBlockedAssetsListed; ++I)
+        {
+            TSharedPtr<FJsonObject> Item = MakeShared<FJsonObject>();
+            Item->SetStringField(TEXT("asset"), Risks[I].Asset);
+            Item->SetStringField(TEXT("status"), HaybaMCPState::LexPlayModal(Risks[I].Modal));
+            Blocked.Add(MakeShared<FJsonValueObject>(Item));
+        }
+        Refusal->SetArrayField(TEXT("blocked_assets"), Blocked);
+        Refusal->SetNumberField(TEXT("blocked_count"), Risks.Num());
+        return FHaybaHandlerResult::Ok(Refusal);
+    }
+
+    const FString Owner = FHaybaMCPLeaseManager::Get().EffectiveOwner();
+    FHaybaMCPEditorState::Get().NoteAgentPieRequest(Owner);
     FRequestPlaySessionParams PlayParams;
     GEditor->RequestPlaySession(PlayParams);
 
-    TSharedPtr<FJsonObject> Result = MakeShareable(new FJsonObject());
+    TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+    // Kept for older clients: the session is only requested; it starts on the next editor tick.
     Result->SetBoolField(TEXT("pie_started"), true);
+    Result->SetBoolField(TEXT("pie_requested"), true);
+    Result->SetStringField(TEXT("pie_owner"), FString::Printf(TEXT("agent:%s"), *Owner));
+    Result->SetStringField(TEXT("hint"), TEXT(
+        "PIE is queued and starts on the next editor tick; poll editor_get_state until pie_phase is \"running\". "
+        "Until editor_get_state.pie is \"none\" again, edits answer pie_active; your editor_pie_* drive commands and editor_stop_pie still run."));
     return FHaybaHandlerResult::Ok(Result);
 }
 
@@ -187,9 +270,18 @@ FHaybaHandlerResult FHaybaMCPEditorHandler::StopPIE(const TSharedPtr<FJsonObject
     if (!GEditor)
         return FHaybaHandlerResult::Err(TEXT("GEditor is null"));
 
-    GEditor->RequestEndPlayMap();
-
-    TSharedPtr<FJsonObject> Result = MakeShareable(new FJsonObject());
+    TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+    if (!GEditor->PlayWorld && GEditor->IsPlaySessionRequestQueued())
+    {
+        // RequestEndPlayMap acts only on a running session (PlayLevel.cpp:1400-1404);
+        // a queued one would still start on the next tick. Cancelling broadcasts CancelPIE once.
+        GEditor->CancelRequestPlaySession();
+        Result->SetBoolField(TEXT("cancelled_queued_request"), true);
+    }
+    else
+    {
+        GEditor->RequestEndPlayMap();
+    }
     Result->SetBoolField(TEXT("pie_stopped"), true);
     return FHaybaHandlerResult::Ok(Result);
 }
@@ -199,20 +291,57 @@ FHaybaHandlerResult FHaybaMCPEditorHandler::GetState(const TSharedPtr<FJsonObjec
     if (!GEditor)
         return FHaybaHandlerResult::Err(TEXT("editor_get_state: GEditor is not available"));
 
-    UWorld* World = GEditor->GetEditorWorldContext().World();
-    const TArray<FString> DirtyPackages = CollectSaveableDirtyPackageNames();
+    bool bIncludeDirty = true;
+    if (P.IsValid()) P->TryGetBoolField(TEXT("include_dirty"), bIncludeDirty);
 
-    TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
+    TSharedRef<FJsonObject> Out = MakeShared<FJsonObject>();
     Out->SetBoolField(TEXT("ok"), true);
+    // T1: health first: editor_unsafe, python_unhealthy, health{}.
+    FHaybaEditorHealth::WriteJson(Out);
+
+    UWorld* World = GEditor->GetEditorWorldContext().World();
     Out->SetStringField(TEXT("map"), World ? World->GetPathName() : FString());
-    Out->SetBoolField(TEXT("pie_running"), GEditor->IsPlaySessionInProgress());
     Out->SetNumberField(TEXT("selection_count"), GEditor->GetSelectedActorCount());
-    TArray<TSharedPtr<FJsonValue>> DirtyValues;
-    DirtyValues.Reserve(DirtyPackages.Num());
-    for (const FString& PackageName : DirtyPackages)
-        DirtyValues.Add(MakeShared<FJsonValueString>(PackageName));
-    Out->SetArrayField(TEXT("dirty_packages"), MoveTemp(DirtyValues));
-    Out->SetNumberField(TEXT("dirty_count"), DirtyPackages.Num());
+    Out->SetStringField(TEXT("caller_owner"), FHaybaMCPLeaseManager::Get().EffectiveOwner());
+
+    // pie, pie_running, pie_phase, pie_since_s, pie_simulating, all from the resolved PIE state.
+    FHaybaMCPEditorState::Get().WritePieJson(Out);
+
+    bool bLiveCompiling = false;
+#if WITH_LIVE_CODING
+    if (ILiveCodingModule* LiveCoding = FModuleManager::GetModulePtr<ILiveCodingModule>(LIVE_CODING_MODULE_NAME))
+    {
+        bLiveCompiling = LiveCoding->IsCompiling();
+    }
+#endif
+    Out->SetBoolField(TEXT("compiling"), bLiveCompiling);
+    Out->SetNumberField(TEXT("shader_jobs"), GShaderCompilingManager ? GShaderCompilingManager->GetNumRemainingJobs() : 0);
+    // Normally false at a request boundary; true means a save scope was stranded.
+    Out->SetBoolField(TEXT("saving"), UE::IsSavingPackage(nullptr));
+    // Every asset build (P0 T3). Lease-table data only, so it is safe even
+    // after an HCR-NATIVE-004 fault, where the dirty walk is skipped.
+    FHaybaMCPEditorState::Get().WriteBuildingJson(Out);
+
+    // After a stranded save or a swallowed engine fatal, object lookups are
+    // themselves fatal, so the package walk is skipped (ADR-0011).
+    if (FHaybaEditorHealth::IsUnsafe() && HaybaMCPHealth::IsStatusOnlyCause(FHaybaEditorHealth::GateCause()))
+    {
+        Out->SetStringField(TEXT("dirty_packages_skipped"), TEXT("editor_unsafe"));
+    }
+    else if (!bIncludeDirty)
+    {
+        Out->SetStringField(TEXT("dirty_packages_skipped"), TEXT("include_dirty"));
+    }
+    else
+    {
+        const TArray<FString> DirtyPackages = CollectSaveableDirtyPackageNames();
+        TArray<TSharedPtr<FJsonValue>> DirtyValues;
+        DirtyValues.Reserve(DirtyPackages.Num());
+        for (const FString& PackageName : DirtyPackages)
+            DirtyValues.Add(MakeShared<FJsonValueString>(PackageName));
+        Out->SetArrayField(TEXT("dirty_packages"), MoveTemp(DirtyValues));
+        Out->SetNumberField(TEXT("dirty_count"), DirtyPackages.Num());
+    }
     return FHaybaHandlerResult::Ok(Out);
 }
 
@@ -228,9 +357,26 @@ FHaybaHandlerResult FHaybaMCPEditorHandler::SaveAllAndQuit(const TSharedPtr<FJso
     if (P.IsValid()) P->TryGetBoolField(TEXT("quit"), bQuit);
 
     const TArray<FString> DirtyBefore = CollectSaveableDirtyPackageNames();
-    const bool bSaved = UEditorLoadingAndSavingUtils::SaveDirtyPackages(
-        /*bSaveMapPackages=*/true,
-        /*bSaveContentPackages=*/true);
+
+    // Any read-only file among the packages about to be saved: save nothing,
+    // keep the editor open, schedule no exit.
+    for (const FString& PackageName : DirtyBefore)
+    {
+        FHaybaHandlerResult ReadOnly;
+        if (HaybaSaveVerify::RefuseIfReadOnly(TEXT("editor_save_all_and_quit"), PackageName, ReadOnly,
+                TEXT("Nothing was saved and the editor stays open.")))
+        {
+            return ReadOnly;
+        }
+    }
+    bool bSaved = false;
+    {
+        TGuardValue<bool> UnattendedSave(GIsRunningUnattendedScript, true);
+        HAYBA_UNATTENDED_PROBE("editor_save_all_and_quit", GIsRunningUnattendedScript);
+        bSaved = UEditorLoadingAndSavingUtils::SaveDirtyPackages(
+            /*bSaveMapPackages=*/true,
+            /*bSaveContentPackages=*/true);
+    }
     const TArray<FString> DirtyAfter = CollectSaveableDirtyPackageNames();
 
     if (!bSaved || !DirtyAfter.IsEmpty())

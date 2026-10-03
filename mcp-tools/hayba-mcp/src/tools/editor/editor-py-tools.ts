@@ -148,6 +148,7 @@ export const editorGetCameraDescriptor: PyToolDescriptor<typeof editorGetCameraS
   returns: '{ok, location:[x,y,z], rotation:[roll,pitch,yaw]}',
   schema: editorGetCameraSchema.shape,
   meta: readMeta,
+  readOnly: true,
   buildScript: editorGetCameraScript,
   timeoutMs: 30_000,
 };
@@ -217,6 +218,7 @@ export const editorCvarGetDescriptor: PyToolDescriptor<typeof editorCvarGetSchem
   returns: '{ok, name, type, type_assumed, value, verified, string_value, note}',
   schema: editorCvarGetSchema.shape,
   meta: readMeta,
+  readOnly: true,
   buildScript: editorCvarGetScript,
   timeoutMs: 30_000,
 };
@@ -314,6 +316,7 @@ export const selectionGetDescriptor: PyToolDescriptor<typeof selectionGetSchema.
   returns: '{ok, actors:[{actor_id,path,class}], assets[], components:[{class,name}], actor_count, asset_count}',
   schema: selectionGetSchema.shape,
   meta: readMeta,
+  readOnly: true,
   buildScript: selectionGetScript,
   timeoutMs: 30_000,
 };
@@ -371,13 +374,14 @@ export const assetInspectDescriptor: PyToolDescriptor<typeof assetInspectSchema.
   returns: '{ok, asset_path, class, dirty, dep_count, ref_count, disk_size}',
   schema: assetInspectSchema.shape,
   meta: readMeta,
+  readOnly: true,
   buildScript: assetInspectScript,
   timeoutMs: 30_000,
 };
 
 // ── outliner_tree ─────────────────────────────────────────────────────────────
 export const outlinerTreeSchema = z.object({
-  folder: z.string().optional().describe('Only actors under this outliner folder path, e.g. "Buildings"'),
+  folder: z.string().optional().describe('Actors in this outliner folder and its descendants, e.g. "Buildings"'),
   class_filter: z.string().optional().describe('Exact class name filter, e.g. "StaticMeshActor"'),
   name_filter: z.string().optional().describe('Case-insensitive substring match on the actor label'),
   limit: z.number().int().positive().optional().default(50).describe('Max nodes returned (pagination)'),
@@ -389,6 +393,7 @@ function outlinerTreeScript(p: OutlinerTreeParams): string {
   return [
     PY_EDITOR_HELPERS,
     `_folder = ${p.folder !== undefined ? pyStr(p.folder) : 'None'}`,
+    'if _folder is not None: _folder = _folder.replace("\\\\", "/").strip("/")',
     `_cls = ${p.class_filter !== undefined ? pyStr(p.class_filter) : 'None'}`,
     `_name = ${p.name_filter !== undefined ? pyStr(p.name_filter) : 'None'}`,
     `_limit = ${p.limit}`,
@@ -404,7 +409,8 @@ function outlinerTreeScript(p: OutlinerTreeParams): string {
     '            fld = ""',
     '            try: fld = str(a.get_folder_path())',
     '            except Exception: pass',
-    '            if _folder is not None and fld != _folder: continue',
+    '            fld = fld.replace("\\\\", "/").strip("/")',
+    '            if _folder is not None and _folder and fld != _folder and not fld.startswith(_folder + "/"): continue',
     '            parent = None',
     '            try:',
     '                pa = a.get_attach_parent_actor()',
@@ -425,11 +431,12 @@ function outlinerTreeScript(p: OutlinerTreeParams): string {
 export const outlinerTreeDescriptor: PyToolDescriptor<typeof outlinerTreeSchema.shape> = {
   name: 'outliner_tree',
   description:
-    'Paginated world outliner: level actors with label, class, folder, and attachment parent — the agent\'s map of the level without dumping the whole world. Filter by folder/class/name.',
+    'Paginated world outliner: level actors with label, class, folder, and attachment parent — the agent\'s map of the level without dumping the whole world. Folder filters include descendants.',
   cost: 'low',
   returns: '{ok, nodes:[{actor_id,path,class,folder,attach_parent}], total, has_more, next_offset}',
   schema: outlinerTreeSchema.shape,
   meta: readMeta,
+  readOnly: true,
   buildScript: outlinerTreeScript,
   timeoutMs: 30_000,
 };
@@ -492,6 +499,7 @@ export const objectInspectDescriptor: PyToolDescriptor<typeof objectInspectSchem
   returns: '{ok, object, class, properties:[{name,type,value}], total, has_more, next_offset}',
   schema: objectInspectSchema.shape,
   meta: readMeta,
+  readOnly: true,
   buildScript: objectInspectScript,
   timeoutMs: 30_000,
 };
@@ -537,6 +545,7 @@ export const objectExistsDescriptor: PyToolDescriptor<typeof objectExistsSchema.
   returns: '{ok, exists, kind, path}',
   schema: objectExistsSchema.shape,
   meta: readMeta,
+  readOnly: true,
   buildScript: objectExistsScript,
   timeoutMs: 30_000,
 };
@@ -633,6 +642,7 @@ export const reflectSearchTypesDescriptor: PyToolDescriptor<typeof reflectSearch
   returns: '{ok, matches:[{name,kind}], total, has_more}',
   schema: reflectSearchTypesSchema.shape,
   meta: readMeta,
+  readOnly: true,
   buildScript: reflectSearchTypesScript,
   timeoutMs: 30_000,
 };
@@ -686,6 +696,7 @@ export const reflectClassDescriptor: PyToolDescriptor<typeof reflectClassSchema.
   returns: '{ok, class, super_chain[], cdo_summary:[{name, value?}]}',
   schema: reflectClassSchema.shape,
   meta: readMeta,
+  readOnly: true,
   buildScript: reflectClassScript,
   timeoutMs: 30_000,
 };

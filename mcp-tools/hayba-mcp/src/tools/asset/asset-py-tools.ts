@@ -243,6 +243,7 @@ export const assetGetSourcePathDescriptor: PyToolDescriptor<typeof assetGetSourc
   returns: '{ok, asset_path, has_import_data, source_paths[], count}',
   schema: assetGetSourcePathSchema.shape,
   meta: readMeta,
+  readOnly: true,
   buildScript: assetGetSourcePathScript,
   timeoutMs: 30_000,
 };

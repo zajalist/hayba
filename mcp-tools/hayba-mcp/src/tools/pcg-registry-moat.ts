@@ -129,6 +129,70 @@ interface PatternTemplate {
   edges: Array<{ from: string; from_pin: string; to: string; to_pin: string }>;
 }
 
+type CatalogStatus = 'confirmed' | 'absent' | 'unknown';
+
+interface TemplatePreflight {
+  catalog_version: string | null;
+  scope: 'catalog_only';
+  requiresLiveValidation: true;
+  note: string;
+  class_checks: Array<{ id: string; class: string; status: CatalogStatus }>;
+  pin_checks: Array<{ node: string; direction: 'input' | 'output'; pin: string; status: CatalogStatus }>;
+  edge_checks: Array<PatternTemplate['edges'][number] & {
+    status: CatalogStatus;
+    type_compatibility: 'compatible' | 'incompatible' | 'unknown';
+  }>;
+}
+
+function catalogPinStatus(node: CatalogNode | undefined, direction: 'input' | 'output', pin: string): CatalogStatus {
+  if (!node) return 'unknown';
+  const pins = direction === 'input' ? node.inputs : node.outputs;
+  if (pins.some(candidate => candidate.pin.toLowerCase() === pin.toLowerCase() && !/[()]/.test(candidate.pin))) return 'confirmed';
+  // Scraped PCGEx nodes can declare pins dynamically; an empty or expression-like
+  // list does not prove a pin is absent in a live editor.
+  if (pins.length === 0 || pins.some(candidate => /[()]/.test(candidate.pin))) return 'unknown';
+  return 'absent';
+}
+
+export function preflightPatternTemplate(template: PatternTemplate, catalog?: NodeCatalog): TemplatePreflight {
+  const byId = new Map(template.nodes.map(node => [node.id, catalog && findClass(catalog.nodes, node.class)]));
+  const class_checks = template.nodes.map(node => ({
+    id: node.id,
+    class: node.class,
+    status: (byId.get(node.id) ? 'confirmed' : catalog ? 'absent' : 'unknown') as CatalogStatus,
+  }));
+  const pin_checks = template.edges.flatMap(edge => [
+    { node: edge.from, direction: 'output' as const, pin: edge.from_pin,
+      status: catalogPinStatus(byId.get(edge.from), 'output', edge.from_pin) },
+    { node: edge.to, direction: 'input' as const, pin: edge.to_pin,
+      status: catalogPinStatus(byId.get(edge.to), 'input', edge.to_pin) },
+  ]);
+  const edge_checks = template.edges.map((edge, index) => {
+    const statuses = [pin_checks[index * 2].status, pin_checks[index * 2 + 1].status];
+    const output = byId.get(edge.from)?.outputs.find(pin => pin.pin.toLowerCase() === edge.from_pin.toLowerCase());
+    const input = byId.get(edge.to)?.inputs.find(pin => pin.pin.toLowerCase() === edge.to_pin.toLowerCase());
+    const outputType = output && normalizeType(output.type);
+    const inputType = input && normalizeType(input.type);
+    const type_compatibility: 'compatible' | 'incompatible' | 'unknown' = statuses.every(status => status === 'confirmed') && outputType && inputType
+      ? (inputType === 'any' || outputType === 'any' || inputType === outputType ? 'compatible' : 'incompatible')
+      : 'unknown';
+    const status: CatalogStatus = statuses.includes('absent') ? 'absent'
+      : statuses.includes('unknown') || type_compatibility !== 'compatible' ? 'unknown' : 'confirmed';
+    return { ...edge, status, type_compatibility };
+  });
+  return {
+    catalog_version: catalog?.version ?? null,
+    scope: 'catalog_only',
+    requiresLiveValidation: true,
+    note: catalog
+      ? 'Catalog checks do not establish which plugins, classes, or dynamic pins exist in the live editor. Validate the graph and cook in Unreal before use.'
+      : 'Catalog unavailable; all checks are unknown. Validate classes, pins, graph connections, and cook in Unreal before use.',
+    class_checks,
+    pin_checks,
+    edge_checks,
+  };
+}
+
 const PATTERNS: PatternTemplate[] = [
   {
     id: 'road-network',
@@ -170,7 +234,7 @@ const PATTERNS: PatternTemplate[] = [
   },
 ];
 
-export function getPatternTemplate(intent: string): PatternTemplate | { template: null; available: string[] } {
+export function getPatternTemplate(intent: string, catalog?: NodeCatalog | null): (PatternTemplate & { preflight: TemplatePreflight }) | { template: null; available: string[] } {
   const query = semanticVector(intent);
   const ranked = PATTERNS
     .map(template => ({ template, score: cosine(query, semanticVector(template.intent)) }))
@@ -178,7 +242,16 @@ export function getPatternTemplate(intent: string): PatternTemplate | { template
   if (!ranked[0] || ranked[0].score === 0) {
     return { template: null, available: PATTERNS.map(pattern => pattern.id) };
   }
-  return ranked[0].template;
+  const template = ranked[0].template;
+  let availableCatalog = catalog ?? undefined;
+  if (catalog === undefined) {
+    try {
+      availableCatalog = loadCatalog();
+    } catch {
+      // Template discovery remains available when the optional catalog is missing.
+    }
+  }
+  return { ...template, preflight: preflightPatternTemplate(template, availableCatalog) };
 }
 
 const NODE_FIELDS = [

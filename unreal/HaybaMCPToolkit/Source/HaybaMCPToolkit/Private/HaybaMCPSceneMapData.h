@@ -27,8 +27,8 @@ struct FHaybaSceneEdge
 
 // Spec §3.2 — Level Spatial Index (cognitive map). Each cell aggregates the
 // actors falling inside a 2D AABB and exposes a semantic label derived from
-// the dominant class names within. Result is lightweight (cells + labels,
-// no full actor data).
+// the dominant class names within. Loaded actor identity and folder metadata
+// support an inspector without creating one graph node per actor.
 struct FHaybaCogMapCell
 {
     FBox2D Bounds = FBox2D(ForceInit);     // XY world-space, units (cm/100 for display).
@@ -36,7 +36,15 @@ struct FHaybaCogMapCell
     EHaybaNodeSemantic Semantic = EHaybaNodeSemantic::Unknown;
     int32 ActorCount = 0;
     TArray<FString> DominantClasses;       // top 5 class names by count
-    TArray<FString> ActorLabels;           // for click-to-select
+    struct FActor
+    {
+        FString Id;                       // actor GUID when available; path fallback
+        FString Path;                     // current loaded object path for inspection
+        FString Label;
+        FString ClassName;
+        FString Folder;                   // full outliner folder path, empty for root
+    };
+    TArray<FActor> Actors;                 // inspector data; never expanded into graph nodes
     TArray<FString> Tags;                  // NEW — top-5 tags by frequency across the cell's actors
 };
 

@@ -2,11 +2,11 @@
 // SOURCE-HASH: 73b8eba3f73ee7693e105918f608724bf5c80372caae47b45289323d4ef146a0
 //
 // Source-of-truth files:
-//   D:/Hackathons/hayba/mcp-tools/hayba-mcp/src/plumb/primitives.ts   — PRIMITIVES array (13)
-//   D:/Hackathons/hayba/mcp-tools/hayba-mcp/src/plumb/contracts.ts    — EmitOp union + GATE_ORDER
-//   D:/Hackathons/hayba/mcp-tools/hayba-mcp/src/plumb/junction.ts     — JunctionType union
+//   mcp-tools/hayba-mcp/src/plumb/primitives.ts   — PRIMITIVES array (13)
+//   mcp-tools/hayba-mcp/src/plumb/contracts.ts    — EmitOp union + GATE_ORDER
+//   mcp-tools/hayba-mcp/src/plumb/junction.ts     — JunctionType union
 //
-// To regenerate: cd D:/Hackathons/hayba/mcp-tools/hayba-mcp && npm run gen:plumb-enums
+// To regenerate: cd mcp-tools/hayba-mcp && npm run gen:plumb-enums
 // "Plumb is the single rule authority" -- no C++ node may reference a value not in these enums.
 
 #pragma once

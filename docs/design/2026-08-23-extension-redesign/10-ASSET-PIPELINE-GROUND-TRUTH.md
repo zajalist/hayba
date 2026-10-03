@@ -25,6 +25,12 @@ PolyHaven / ambientCG / Sketchfab download returns `isError: true`
 does not.** Only **Fab** works end-to-end, because it routes to native
 `fab_download` in C++ and bypasses the TS gate.
 
+*(Correction, 2026-09-28: this was wrong. No C++ handler ever implemented
+`fab_download` or the other `fab_*` commands; the four Fab tools failed with
+"Unknown command" and have been removed. No source lands an asset in `/Game`
+end-to-end today, and the "Fab only" cell in the comparison table further down
+is wrong for the same reason.)*
+
 ### 2. Even ungated, the formats do not line up
 
 Native `asset_import` (`HaybaMCPAssetHandler.cpp:784`) accepts **only**
@@ -58,7 +64,8 @@ up and considerably worse: it is in the shipped system prompt.
 ## What exists (verified)
 
 **Acquisition.** Four search integrations — PolyHaven, ambientCG, Sketchfab
-(token), Fab (Epic login) — plus project Content Browser search. A genuinely
+(token), Fab (Epic login; *never implemented, removed 2026-09-28*) — plus
+project Content Browser search. A genuinely
 hardened download path: bounded fetch, unique cache dirs, safe leaf names,
 zip-slip/symlink-safe extraction (`secure-archive.ts`, 1,008 lines),
 enumeration limits (4096 files / 8192 entries / depth 32 / 256 MB file / 2 GB

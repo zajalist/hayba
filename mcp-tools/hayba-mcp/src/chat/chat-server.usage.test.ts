@@ -128,4 +128,36 @@ describe('chat-server SSE done frame — usage metrics (Issue #30)', () => {
     expect(done).toBeDefined();
     expect((done!.data as { usage?: unknown }).usage).toBeUndefined();
   });
+
+  it('exposes unreviewed validator IDs on the final SSE frame', async () => {
+    __resetChatState();
+    const app = express();
+    app.use(express.json());
+    let turn = 0;
+    const client: LLMClient = {
+      provider: 'anthropic', model: 'fake', protocol: 'anthropic',
+      async complete() { return { content: 'done', toolCalls: [], stopReason: 'end_turn' }; },
+      async *stream(): AsyncGenerator<LLMStreamEvent, void, unknown> {
+        turn += 1;
+        yield { type: 'done', response: turn === 1
+          ? { content: null, toolCalls: [{ id: 'warn1', name: 'validator_run', input: {} }], stopReason: 'tool_use' }
+          : { content: 'Reviewed later.', toolCalls: [], stopReason: 'end_turn' } };
+      },
+    };
+    registerChatRoutes(app, {
+      createClient: () => client,
+      dispatchTool: async () => ({ content: [{ type: 'text', text: JSON.stringify({ validator: { warning_ids: ['ui_engine_default_font'] } }) }] }),
+      tools: [{ name: 'validator_run', description: 'validate', input_schema: { type: 'object', properties: {} } }],
+    });
+    server = app.listen(0);
+    url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    const res = await fetch(`${url}/chat/stream`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ prompt: 'check fonts', provider: 'anthropic' }),
+    });
+    const frames = await collectSse(res as unknown as Response);
+    const done = frames.find((f) => f.event === 'done')?.data as { reason: string; pending_warning_ids?: string[] };
+    expect(done.reason).toBe('warnings_unreviewed');
+    expect(done.pending_warning_ids).toEqual(['ui_engine_default_font']);
+  });
 });

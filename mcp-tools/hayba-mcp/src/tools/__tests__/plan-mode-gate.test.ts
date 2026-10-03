@@ -6,7 +6,7 @@
  * changes state" — in two languages:
  *
  *   TS  NON_IDEMPOTENT      (tool-executor.ts)   → never auto-retry on transport failure
- *   C++ DestructiveCommands (HaybaMCPCommandHandler.cpp) → require an approved plan
+ *   C++ DestructiveCommands (HaybaMCPCommandHandler.cpp) → require exact approval
  *
  * A command whose double-execution has real side-effects is by definition
  * state-changing, so the first set must be a subset of the second. Nothing in
@@ -77,7 +77,7 @@ describe('Plan Mode gate covers every non-retryable command', () => {
       ungated,
       `These commands are declared non-idempotent in tool-executor.ts but are NOT in ` +
         `IsDestructiveCommand() in HaybaMCPCommandHandler.cpp, so Plan Mode will let them ` +
-        `run without an approved plan. Add them to the C++ set (or, if a command genuinely ` +
+        `run without exact approval. Add them to the C++ set (or, if a command genuinely ` +
         `does not change state, take it out of NON_IDEMPOTENT — but not both).`,
     ).toEqual([]);
   });
@@ -85,6 +85,50 @@ describe('Plan Mode gate covers every non-retryable command', () => {
   it.runIf(available)('keeps native asset registry discovery read-only and retry-safe', () => {
     expect(parseGatedCommands().has('asset_registry_query')).toBe(false);
     expect(NON_IDEMPOTENT.has('asset_registry_query')).toBe(false);
+  });
+
+  // The lease control plane must be answerable while a plan is pending and
+  // while other agents hold leases. Gating lease_acquire behind Approve would
+  // mean an agent cannot even queue for the world it wants to plan against.
+  // A retried lease_acquire is idempotent (T7: the same owner, claims, label
+  // and binding get the same lease_id back), so it stays out of NON_IDEMPOTENT.
+  it.runIf(available)('keeps the lease control plane ungated and retry-safe', () => {
+    const gated = parseGatedCommands();
+    for (const cmd of ['lease_acquire', 'lease_renew', 'lease_release', 'lease_status', 'lease_adopt']) {
+      expect(gated.has(cmd), cmd).toBe(false);
+      expect(NON_IDEMPOTENT.has(cmd), cmd).toBe(false);
+    }
+  });
+
+  it.runIf(available)('backs the retry-safety of lease_acquire with an idempotent table (T7)', () => {
+    const policy = readFileSync(
+      join(process.cwd(), '../../unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/HaybaMCPLeasePolicy.h'),
+      'utf-8',
+    );
+    expect(policy).toContain('if (FLease* Existing = FindReusable(Request))');
+    expect(policy).toContain('Result.bReused = true;');
+  });
+
+  // The old prose-plan flag must not authorize a native write. Dispatch spends
+  // an exact approval bound to the caller, command, parameters, target, lease,
+  // and source. Native module code consumes the token even on a mismatch.
+  it.runIf(available)('requires a single-use exact approval bound to the caller and operation', () => {
+    const router = readFileSync(CPP_PATH, 'utf-8');
+    const moduleSource = readFileSync(join(process.cwd(),
+      '../../unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/HaybaMCPModule.cpp'), 'utf-8');
+    const moduleHeader = readFileSync(join(process.cwd(),
+      '../../unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Public/HaybaMCPModule.h'), 'utf-8');
+    const gateStart = router.indexOf('if ((S.bPlanModeEnabled || bRequireExactReview) && IsDestructiveCommand(Cmd))');
+    expect(gateStart).toBeGreaterThan(-1);
+    const gateEnd = router.indexOf('S.PlanModeToolCallCount++', gateStart);
+    expect(gateEnd).toBeGreaterThan(gateStart);
+    const gate = router.slice(gateStart, gateEnd);
+
+    expect(gate).toMatch(/ConsumeExactExternalApproval\s*\(\s*Caller\s*,\s*Cmd\s*,\s*OperationDigest\s*,\s*TargetFingerprint\s*,\s*LeaseBinding\s*,\s*SourceBinding/);
+    expect(gate).not.toMatch(/\bbPlanApproved\b/);
+    expect(moduleHeader).toMatch(/Owner\s*==\s*InOwner/);
+    expect(moduleSource).toMatch(/ApprovedExternalOperation\.Matches\s*\(\s*Owner\s*,\s*Command/);
+    expect(moduleSource).toMatch(/if\s*\(ApprovedExternalOperation\.IsValid\(\)\)\s*ApprovedExternalOperation\s*=\s*\{\s*\}\s*;/);
   });
 
   it.runIf(available)('gates idempotent material mutation and compile/save commands', () => {

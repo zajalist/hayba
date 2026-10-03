@@ -102,22 +102,27 @@ hayba_invoke { name: "editor_run_console_command", args: { command: "LiveCoding.
 `hayba_invoke` takes **`args`**, not `params`.
 
 `{executed: true}` means "the console command ran" — **not** "the compile
-succeeded". Poll `D:\Projects\aphrosia\Saved\Logs\Aphrosia.log` for
+succeeded". Poll `$env:HAYBA_SCRATCH_HOST_DIR\Saved\Logs\<project-name>.log` for
 `LogLiveCoding: Display: Live coding succeeded` or `LogLiveCoding: Error`. Match
 on a **count** of terminal lines, not presence — earlier runs are still in the file.
 
 **Compile errors are NOT in the editor log.** It only says "see Live console".
-Read `C:\Users\Admin\AppData\Local\UnrealBuildTool\Log.txt`.
+Read `%LOCALAPPDATA%\UnrealBuildTool\Log.txt`.
 
 ### Editor closed → full build
+```powershell
+# Set UE_ROOT and HAYBA_SCRATCH_PROJECT for your local scratch host.
+$Target = [IO.Path]::GetFileNameWithoutExtension($env:HAYBA_SCRATCH_PROJECT) + 'Editor'
+& "$env:UE_ROOT\Engine\Build\BatchFiles\Build.bat" `
+  $Target Win64 Development "-Project=$env:HAYBA_SCRATCH_PROJECT" -NoHotReloadFromIDE
 ```
-"C:\Program Files\Epic Games\UE_5.8\Engine\Build\BatchFiles\Build.bat" \
-  AphrosiaEditor Win64 Development -Project="D:\Projects\aphrosia\Aphrosia.uproject"
-```
-Host project is **Aphrosia**, not geoforge (geoforge is stale and cannot build).
+Use an isolated scratch project whose editor is closed for full builds.
 
-"Unable to build while Live Coding is active" after the editor has exited means a
-stray `LiveCodingConsole` / `CrashReportClientEditor` survived. Kill those first.
+"Unable to build while Live Coding is active" after the editor has exited may
+mean a scratch-run `LiveCodingConsole` or `CrashReportClientEditor` survived.
+Before terminating anything, verify its PID, process start time, executable,
+command line, and scratch-project association. End only processes owned by
+that scratch run; another editor's Live Coding process may still be in use.
 
 ### Closing the editor
 Ask first unless told otherwise — another agent may be working in it.
@@ -160,7 +165,8 @@ render, and native-handler changes also require the editor-survival gate:
 
 ```powershell
 pwsh mcp-tools/hayba-mcp/scripts/test-editor-survival.ps1 `
-  -ProjectPath D:\Projects\aphrosia\Aphrosia.uproject `
+  -ProjectPath $env:HAYBA_SCRATCH_PROJECT `
+  -EditorExe "$env:UE_ROOT\Engine\Binaries\Win64\UnrealEditor.exe" `
   -OutputJson Saved\TestResults\hayba-survival.json `
   -OutputJUnit Saved\TestResults\hayba-survival.xml
 ```
@@ -274,8 +280,9 @@ if it asserts the wrong contract.*
   `legacy-commands/sidecar.json`, the test is fiction.
 - `wire-command-names.test.ts` now enforces this statically. It also carries a
   `KNOWN_UNIMPLEMENTED` list of tools that dispatch commands the plugin has
-  never had (the four `fab_*`, `plan_mark_step`, `hayba_request_input`,
-  `hayba_get_user_response`). **Shrink that list; never grow it.**
+  never had (`plan_mark_step`, `hayba_request_input`,
+  `hayba_get_user_response`; the four `fab_*` left it when their tools were
+  removed). **Shrink that list; never grow it.**
 
 ### Step 4 — Close the seam bypasses
 ```
@@ -353,10 +360,10 @@ A change is done when **all** of these hold. Anything short, say so explicitly.
 | Thing | Where |
 |---|---|
 | MCP server | `mcp-tools/hayba-mcp` (build: `npm run build:server`) |
-| Plugin source | `unreal/HaybaMCPToolkit` (symlinked into Aphrosia) |
-| Host project | `D:\Projects\aphrosia\Aphrosia.uproject` |
-| Editor log | `D:\Projects\aphrosia\Saved\Logs\Aphrosia.log` |
-| Compile errors | `C:\Users\Admin\AppData\Local\UnrealBuildTool\Log.txt` |
+| Plugin source | `unreal/HaybaMCPToolkit` (copied into scratch project) |
+| Host project | `$env:HAYBA_SCRATCH_PROJECT` |
+| Editor log | `$env:HAYBA_SCRATCH_HOST_DIR\Saved\Logs\<project-name>.log` |
+| Compile errors | `%LOCALAPPDATA%\UnrealBuildTool\Log.txt` |
 | C++ tests | `unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/Tests/` |
 | Test harness | `mcp-tools/hayba-mcp/src/tools/testing/scripted-ue.ts` |
 | Editor survival gate | `mcp-tools/hayba-mcp/scripts/test-editor-survival.ps1` |

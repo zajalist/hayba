@@ -1,12 +1,15 @@
 #include "HaybaMCPPythonHandler.h"
+#include "HaybaMCPUnattendedProbe.h"
 #include "IPythonScriptPlugin.h"
 #include "PythonScriptTypes.h"
 #include "Misc/Base64.h"
 #include "Dom/JsonObject.h"
-#include "HaybaMCPSeh.h"   // world-switch repair after a swallowed fault
-#if PLATFORM_WINDOWS
-#include <excpt.h>   // EXCEPTION_EXECUTE_HANDLER for the SEH guard below
-#endif
+#include "HaybaMCPSeh.h"   // RunGuardedAt: the toolkit's one SEH guard (ADR-0011)
+#include "HaybaMCPAccessPolicy.h"
+#include "HaybaMCPDeveloperSettings.h"
+#include "HaybaMCPLeaseManager.h"
+#include "HaybaMCPEditorHealth.h"
+#include "HaybaMCPHealthPolicy.h"
 
 namespace
 {
@@ -19,8 +22,14 @@ namespace
     constexpr int32 MaxPythonPolicyTokens = MaxPythonScriptChars;
     constexpr int32 MaxPythonPolicyLexedChars = MaxPythonPolicyExpandedChars;
     constexpr int32 MaxPythonCapturedCharsPerStream = 64 * 1024;
-    constexpr double MaxPythonExecutionSeconds = 5.0;
     constexpr int32 PythonDeadlineCheckInterval = 256;
+
+    // deadline_s above 5 s: the caller (or the lease its envelope names)
+    // holds an exclusive lease on the current world or on global.
+    bool CallerHoldsExclusiveLease()
+    {
+        return FHaybaMCPLeaseManager::Get().CallerHoldsExclusiveOnCurrentWorld();
+    }
 
     // Operations whose failure happens outside Python exception handling (or
     // outside this command entirely). `allow_unsafe` is a deprecated wire
@@ -38,6 +47,15 @@ namespace
         static const TArray<FFatalPythonRule> Rules = {
             { TEXT("set_lod_build_settings"), TEXT("HCR-STATICMESH-001"), TEXT("is a known static-mesh editor crash"), TEXT("use GeometryScript and copy_mesh_to_static_mesh") },
             { TEXT("build_scale3d"), TEXT("HCR-STATICMESH-001"), TEXT("is a known static-mesh editor crash"), TEXT("use GeometryScript transform_mesh and rebuild geometry") },
+            // Match these only against executable, controller-qualified references below.
+            // A LevelSequence may also expose set_frame_rate, so a bare method ban is too broad.
+            { TEXT("animationdatacontroller.set_frame_rate("), TEXT("HCR-ANIM-001"), TEXT("can leave AnimSequence frame data and compression out of sync and trigger a native editor assertion"), TEXT("use a safe named animation timing tool when available, or manually set a validated frame rate and frame count outside python_run") },
+            { TEXT("animationdatacontroller.set_number_of_frames("), TEXT("HCR-ANIM-001"), TEXT("can leave AnimSequence frame data and compression out of sync and trigger a native editor assertion"), TEXT("use a safe named animation timing tool when available, or manually set a validated frame rate and frame count outside python_run") },
+            { TEXT("animationdatacontroller.set_play_length("), TEXT("HCR-ANIM-001"), TEXT("can leave AnimSequence frame data and compression out of sync and trigger a native editor assertion"), TEXT("use a safe named animation timing tool when available, or manually set a validated frame rate and frame count outside python_run") },
+            { TEXT("animationdatacontroller.resize_number_of_frames("), TEXT("HCR-ANIM-001"), TEXT("can leave AnimSequence frame data and compression out of sync and trigger a native editor assertion"), TEXT("use a safe named animation timing tool when available, or manually set a validated frame rate and frame count outside python_run") },
+            { TEXT("animationdatacontroller.resize_play_length("), TEXT("HCR-ANIM-001"), TEXT("can leave AnimSequence frame data and compression out of sync and trigger a native editor assertion"), TEXT("use a safe named animation timing tool when available, or manually set a validated frame rate and frame count outside python_run") },
+            { TEXT("animationdatacontroller.resize_in_frames("), TEXT("HCR-ANIM-001"), TEXT("can leave AnimSequence frame data and compression out of sync and trigger a native editor assertion"), TEXT("use a safe named animation timing tool when available, or manually set a validated frame rate and frame count outside python_run") },
+            { TEXT("animationdatacontroller.resize("), TEXT("HCR-ANIM-001"), TEXT("can leave AnimSequence frame data and compression out of sync and trigger a native editor assertion"), TEXT("use a safe named animation timing tool when available, or manually set a validated frame rate and frame count outside python_run") },
             { TEXT("new_blank_map"), TEXT("HCR-WORLD-001"), TEXT("switches GWorld during the MCP command tick"), TEXT("use a deferred typed editor map command outside python_run") },
             { TEXT("new_map_from_template"), TEXT("HCR-WORLD-001"), TEXT("switches GWorld during the MCP command tick"), TEXT("use a deferred typed editor map command outside python_run") },
             { TEXT("editorloadingandsavingutils.load_map"), TEXT("HCR-WORLD-001"), TEXT("switches GWorld during the MCP command tick"), TEXT("use a deferred typed editor map command outside python_run") },
@@ -998,6 +1016,190 @@ namespace
         return Expanded;
     }
 
+    bool IsAnimationControllerGetter(const FString& Name)
+    {
+        return Name.EndsWith(TEXT(".get_controller"))
+            || Name.EndsWith(TEXT(".get_data_controller"))
+            || Name.EndsWith(TEXT(".get_animation_data_controller"));
+    }
+
+    bool IsAnimationControllerTimingMethod(const FString& Name)
+    {
+        return Name == TEXT("set_frame_rate")
+            || Name == TEXT("set_number_of_frames")
+            || Name == TEXT("set_play_length")
+            || Name == TEXT("resize_number_of_frames")
+            || Name == TEXT("resize_play_length")
+            || Name == TEXT("resize_in_frames")
+            || Name == TEXT("resize");
+    }
+
+    bool NeedsAnimationReceiverEvidence(const FString& Method)
+    {
+        // These names also occur on unrelated editor objects. The frame-count
+        // and frame-specific resize names are specific to animation timing.
+        return Method == TEXT("set_frame_rate") || Method == TEXT("resize");
+    }
+
+    bool HasAnimationSequenceReceiverName(const FString& Path)
+    {
+        int32 LastDot = INDEX_NONE;
+        const FString Receiver = Path.FindLastChar(TEXT('.'), LastDot)
+            ? Path.Mid(LastDot + 1) : Path;
+        return Receiver == TEXT("anim")
+            || Receiver == TEXT("animation")
+            || Receiver == TEXT("asset")
+            || Receiver == TEXT("anim_sequence")
+            || Receiver == TEXT("animation_sequence")
+            || Receiver == TEXT("animsequence")
+            || Receiver == TEXT("animationsequence")
+            || Receiver == TEXT("anim_seq")
+            || Receiver == TEXT("sequence");
+    }
+
+    void SkipPythonPolicyNewlines(const TArray<FPythonPolicyToken>& Tokens, int32& At)
+    {
+        while (Tokens.IsValidIndex(At)
+            && Tokens[At].Kind == EPythonPolicyTokenKind::Newline) ++At;
+    }
+
+    bool ConsumeZeroArgPythonCall(const TArray<FPythonPolicyToken>& Tokens, int32& At)
+    {
+        if (!Tokens.IsValidIndex(At)
+            || Tokens[At].Kind != EPythonPolicyTokenKind::OpenParen) return false;
+        ++At;
+        SkipPythonPolicyNewlines(Tokens, At);
+        if (!Tokens.IsValidIndex(At)
+            || Tokens[At].Kind != EPythonPolicyTokenKind::CloseParen) return false;
+        ++At;
+        return true;
+    }
+
+    bool IsControllerResultExpression(
+        const TArray<FPythonPolicyToken>& Tokens,
+        int32 At,
+        const TMap<FString, bool>& ControllerNames,
+        bool& bOutAnimationEvidence)
+    {
+        bOutAnimationEvidence = false;
+        int32 WrapperParens = 0;
+        while (Tokens.IsValidIndex(At)
+            && Tokens[At].Kind == EPythonPolicyTokenKind::OpenParen)
+        {
+            ++WrapperParens;
+            ++At;
+            SkipPythonPolicyNewlines(Tokens, At);
+        }
+        FString Path;
+        if (!ReadDottedPythonNameBounded(Tokens, At, Path, nullptr)) return false;
+        const bool* AliasEvidence = ControllerNames.Find(Path);
+        const bool bGetterOrClass = IsAnimationControllerGetter(Path)
+            || Path == TEXT("animationdatacontroller")
+            || Path.EndsWith(TEXT(".animationdatacontroller"));
+        if (!AliasEvidence && !bGetterOrClass) return false;
+        if (bGetterOrClass && !ConsumeZeroArgPythonCall(Tokens, At)) return false;
+        if (AliasEvidence) bOutAnimationEvidence = *AliasEvidence;
+        else if (IsAnimationControllerGetter(Path))
+        {
+            int32 GetterDot = INDEX_NONE;
+            Path.FindLastChar(TEXT('.'), GetterDot);
+            bOutAnimationEvidence = Path.EndsWith(TEXT(".get_animation_data_controller"))
+                || HasAnimationSequenceReceiverName(Path.Left(GetterDot));
+        }
+        else bOutAnimationEvidence = true;
+        while (WrapperParens-- > 0)
+        {
+            SkipPythonPolicyNewlines(Tokens, At);
+            if (!Tokens.IsValidIndex(At)
+                || Tokens[At].Kind != EPythonPolicyTokenKind::CloseParen) return false;
+            ++At;
+        }
+        return !Tokens.IsValidIndex(At)
+            || Tokens[At].Kind == EPythonPolicyTokenKind::Newline
+            || Tokens[At].Kind == EPythonPolicyTokenKind::Semicolon;
+    }
+
+    /**
+     * Add canonical references only when lexical syntax identifies an animation
+     * data controller. This follows the common `controller = asset.get_controller()`
+     * form and simple local aliases. Generic resize and set_frame_rate require
+     * an animation-named, asset, or explicit animation-controller receiver;
+     * frame-count-specific calls remain guarded
+     * through any get_controller() result. Strings and comments are skipped
+     * by the same bounded lexer used for the other fatal Python rules.
+     */
+    TSet<FString> FindAnimationControllerTimingReferences(const FString& Code)
+    {
+        const TArray<FPythonPolicyToken> Tokens = LexPythonPolicySource(Code);
+        TMap<FString, bool> ControllerNames;
+        TSet<FString> TimingReferences;
+        for (int32 Index = 0; Index < Tokens.Num(); ++Index)
+        {
+            if (!TokenIsIdentifier(Tokens, Index)) continue;
+
+            const bool bStatementStart = Index == 0
+                || Tokens[Index - 1].Kind == EPythonPolicyTokenKind::Newline
+                || Tokens[Index - 1].Kind == EPythonPolicyTokenKind::Semicolon
+                || Tokens[Index - 1].Kind == EPythonPolicyTokenKind::Colon;
+            if (bStatementStart
+                && Tokens.IsValidIndex(Index + 2)
+                && Tokens[Index + 1].Kind == EPythonPolicyTokenKind::Equal
+                && Tokens[Index + 2].Kind != EPythonPolicyTokenKind::Equal)
+            {
+                bool bAnimationEvidence = false;
+                if (IsControllerResultExpression(
+                    Tokens, Index + 2, ControllerNames, bAnimationEvidence))
+                    ControllerNames.Add(Tokens[Index].Text, bAnimationEvidence);
+                else ControllerNames.Remove(Tokens[Index].Text);
+            }
+
+            // `asset.get_controller().set_number_of_frames(...)` does not bind
+            // a local name; recognize this immediate, zero-argument chain.
+            int32 AfterGetter = Index + 1;
+            if (Index > 0
+                && Tokens[Index - 1].Kind == EPythonPolicyTokenKind::Dot
+                && (Tokens[Index].Text == TEXT("get_controller")
+                    || Tokens[Index].Text == TEXT("get_data_controller")
+                    || Tokens[Index].Text == TEXT("get_animation_data_controller"))
+                && ConsumeZeroArgPythonCall(Tokens, AfterGetter))
+            {
+                SkipPythonPolicyNewlines(Tokens, AfterGetter);
+                if (Tokens.IsValidIndex(AfterGetter + 2)
+                    && Tokens[AfterGetter].Kind == EPythonPolicyTokenKind::Dot
+                    && TokenIsIdentifier(Tokens, AfterGetter + 1)
+                    && IsAnimationControllerTimingMethod(Tokens[AfterGetter + 1].Text)
+                    && (!NeedsAnimationReceiverEvidence(Tokens[AfterGetter + 1].Text)
+                        || Tokens[Index].Text == TEXT("get_animation_data_controller")
+                        || (Index >= 2
+                            && HasAnimationSequenceReceiverName(Tokens[Index - 2].Text)))
+                    && Tokens[AfterGetter + 2].Kind == EPythonPolicyTokenKind::OpenParen)
+                {
+                    TimingReferences.Add(TEXT("animationdatacontroller.")
+                        + Tokens[AfterGetter + 1].Text + TEXT("("));
+                }
+            }
+
+            if (Index > 0 && Tokens[Index - 1].Kind == EPythonPolicyTokenKind::Dot) continue;
+            int32 AfterPath = Index;
+            FString Path;
+            if (!ReadDottedPythonNameBounded(Tokens, AfterPath, Path, nullptr)) continue;
+            int32 LastDot = INDEX_NONE;
+            if (!Path.FindLastChar(TEXT('.'), LastDot)) continue;
+            const FString Receiver = Path.Left(LastDot);
+            const FString Method = Path.Mid(LastDot + 1);
+            const bool* AnimationEvidence = ControllerNames.Find(Receiver);
+            if (IsAnimationControllerTimingMethod(Method)
+                && AnimationEvidence
+                && (!NeedsAnimationReceiverEvidence(Method) || *AnimationEvidence))
+            {
+                // Treat a method reference as a call, as the existing alias
+                // matcher does: `fn = controller.resize; fn(...)` is hazardous.
+                TimingReferences.Add(TEXT("animationdatacontroller.") + Method + TEXT("("));
+            }
+        }
+        return TimingReferences;
+    }
+
     bool FindReservedPythonRuntimeAccess(
         const FString& Code,
         const FString& AliasExpandedCalls,
@@ -1636,6 +1838,24 @@ namespace
         return false;
     }
 
+    // The `importlib.` rule is lexical-only, so a string or comment that names
+    // it passes. Alias expansion records only dotted paths that end in a name,
+    // so a bare `importlib.` attribute access never reaches it; the policy
+    // tokens (which exclude strings and comments) show it directly.
+    bool HasExecutableImportlibAttribute(const FString& Code)
+    {
+        const TArray<FPythonPolicyToken> Tokens = LexPythonPolicySource(Code);
+        for (int32 Index = 0; Index + 1 < Tokens.Num(); ++Index)
+        {
+            if (TokenIsIdentifier(Tokens, Index, TEXT("importlib"))
+                && Tokens[Index + 1].Kind == EPythonPolicyTokenKind::Dot)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
     bool FindFatalPythonPattern(
         const FString& Code,
         FString& OutPattern,
@@ -1691,17 +1911,38 @@ namespace
             return true;
         }
 
+        const TSet<FString> AnimationTimingReferences =
+            FindAnimationControllerTimingReferences(Code);
         for (const FFatalPythonRule& Rule : FatalPythonRules())
         {
+            const bool bAnimationRule = FCString::Strcmp(Rule.PolicyCode, TEXT("HCR-ANIM-001")) == 0;
+            bool bAnimationMatch = false;
+            if (bAnimationRule)
+            {
+                const FString Canonical(Rule.Pattern);
+                bAnimationMatch = AnimationTimingReferences.Contains(Canonical);
+                for (const FString& Reference : ExactExpandedCalls)
+                {
+                    if (Reference == Canonical
+                        || Reference.EndsWith(FString(TEXT(".")) + Canonical))
+                    {
+                        bAnimationMatch = true;
+                        break;
+                    }
+                }
+            }
             // Deadline-tampering rules are lexical-only. The compact stream
             // intentionally retains strings for property-name policies, so
             // using it here would reject print("sys.settrace(None)") even
             // though no instrumentation access is executable.
             const bool bDeadlineRule = FCString::Strcmp(Rule.PolicyCode, TEXT("HCR-TIME-001")) == 0;
             const bool bLexicalOnlyDynamicImport = FCString::Strcmp(Rule.Pattern, TEXT("importlib.")) == 0;
-            if ((!bDeadlineRule && !bLexicalOnlyDynamicImport
-                    && CompactContainsPolicyPattern(Compact, Rule.Pattern))
-                || CompactContainsPolicyPattern(AliasExpandedCalls, Rule.Pattern))
+            if (bAnimationMatch
+                || (!bAnimationRule
+                    && ((!bDeadlineRule && !bLexicalOnlyDynamicImport
+                            && CompactContainsPolicyPattern(Compact, Rule.Pattern))
+                        || CompactContainsPolicyPattern(AliasExpandedCalls, Rule.Pattern)
+                        || (bLexicalOnlyDynamicImport && HasExecutableImportlibAttribute(Code)))))
             {
                 OutPattern = Rule.Pattern;
                 OutPolicyCode = Rule.PolicyCode;
@@ -1738,57 +1979,72 @@ namespace
     }
 }
 
-// Run one Python command under Structured Exception Handling so a NATIVE access
-// violation inside CPython / the UE Python bindings (a stale or GC'd UObject, a
-// destroyed actor handle, re-entrant editor mutation) is converted into a
-// recoverable error instead of taking down the whole editor. The Python-level
-// try/except in the script wrapper cannot catch a C-level AV — only SEH can.
-//
-// This MUST be its own function with ONLY trivially-destructible params (raw
-// pointers + a bool&): MSVC forbids __try/__except in any function that needs
-// C++ object unwinding (C2712), and the handler is full of FString locals — and
-// even a TFunctionRef parameter trips it. After a caught AV the interpreter may
-// be degraded, so the caller stops and returns rather than issuing follow-ups.
-static bool ExecPythonGuardedRaw(IPythonScriptPlugin* Plugin, FPythonCommandEx* Cmd, bool& bOutCrashed)
+// Run one Python command under the toolkit's SEH guard so a NATIVE access
+// violation inside CPython / the UE Python bindings (a stale or GC'd UObject,
+// a destroyed actor handle, re-entrant editor mutation) is caught instead of
+// taking down the editor. The Python-level try/except in the wrapper cannot
+// catch a C-level AV; only SEH can. HaybaSeh::RunGuardedAt owns the one
+// __except (ADR-0011): it repairs a stranded play-world switch and records the
+// fault, which marks the editor unsafe and python_unhealthy until restart.
+// The thunk is captureless and the context is POD, so nothing needs C++
+// unwinding across __try (C2712).
+struct FPythonCommandRun
 {
-    bOutCrashed = false;
-#if PLATFORM_WINDOWS
-    // Keep the result in a trivially-destructible local and return AFTER the __try.
-    // MSVC 14.50+ raises C2712 if a `return <call>;` lives inside __try (the
-    // returned-value construction counts as object unwinding); the older 14.44
-    // toolchain did not. Capturing to a bool first sidesteps it without changing
-    // the SEH guard's behaviour.
-    bool bResult = false;
-    __try
+    IPythonScriptPlugin* Plugin;
+    FPythonCommandEx* Command;
+    bool bResult;
+};
+
+static bool RunPythonCommandGuarded(IPythonScriptPlugin* Plugin, FPythonCommandEx* Command, bool& bOutCrashed)
+{
+    FPythonCommandRun Run{ Plugin, Command, false };
+    HaybaSeh::RunGuardedAt(EHaybaFaultSite::Python, +[](void* P)
     {
-        bResult = Plugin->ExecPythonCommandEx(*Cmd);
-    }
-    __except (EXCEPTION_EXECUTE_HANDLER)
-    {
-        bOutCrashed = true;
-        bResult = false;
-    }
-    return bResult;
-#else
-    return Plugin->ExecPythonCommandEx(*Cmd);
-#endif
+        FPythonCommandRun* R = static_cast<FPythonCommandRun*>(P);
+        R->bResult = R->Plugin->ExecPythonCommandEx(*R->Command);
+    }, &Run, bOutCrashed);
+    return !bOutCrashed && Run.bResult;
 }
 
-// A caught fault does not unwind the frames it jumped over, so the engine's own
-// play-world switch (UEditorEngine::OnScriptExecutionStart, which fires whenever
-// python reaches Blueprint code on a PIE object) can be left pushed — and GWorld
-// stuck on the PIE world kills the editor on the next tick. See the long note in
-// HaybaMCPSeh.h. Same repair as HaybaSeh::RunGuarded, applied to this handler's
-// own guard; the __try stays isolated in ExecPythonGuardedRaw for C2712.
-static bool ExecPythonGuarded(IPythonScriptPlugin* Plugin, FPythonCommandEx* Cmd, bool& bOutCrashed)
+// The five native-fault replies of python_run (and the marker path). The
+// router answers native_fault_contained for them because FaultSequence moved;
+// this data travels along as `data`. None of them claims the editor is
+// healthy: after any of them the editor is unsafe until restart.
+static FHaybaHandlerResult MakeNativeFaultResult(const TCHAR* MatchedRule, bool bPostExecution)
 {
-    const HaybaSeh::FWorldSwitchSnapshot Before = HaybaSeh::CaptureWorldSwitchState();
-    const bool bResult = ExecPythonGuardedRaw(Plugin, Cmd, bOutCrashed);
-    if (bOutCrashed)
+    const FString Rule(MatchedRule);
+    const TCHAR* What = Rule == TEXT("cpython_corruption_marker")
+        ? TEXT("CPython reported internal corruption without a caught fault.")
+        : bPostExecution
+            ? TEXT("The interpreter faulted after the user script, while Hayba read its results.")
+            : TEXT("The script dereferenced an invalid object (a stale or destroyed actor or component handle, a garbage-collected UObject held across calls, or a re-entrant editor mutation).");
+    TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
+    Out->SetBoolField(TEXT("ok"), false);
+    Out->SetStringField(TEXT("policy_code"), TEXT("HCR-NATIVE-002"));
+    Out->SetStringField(TEXT("matched_rule"), Rule);
+    Out->SetStringField(TEXT("execution_phase"), bPostExecution ? TEXT("post_execution") : TEXT("execution"));
+    Out->SetStringField(TEXT("phase"), TEXT("execute"));
+    Out->SetStringField(TEXT("mutation_status"), TEXT("unknown"));
+    Out->SetBoolField(TEXT("may_have_executed"), true);
+    Out->SetBoolField(TEXT("session_suspect"), true);
+    Out->SetStringField(TEXT("error"), FString::Printf(
+        TEXT("python_run native_fault_contained [HCR-NATIVE-002]: matched '%s'. %s Its outcome is unknown and the script may have run. ")
+        TEXT("Fault contained; restart the editor before further work. Retry unchanged: forbidden."),
+        MatchedRule, What));
+    return FHaybaHandlerResult::Ok(Out);
+}
+
+// CPython-internal failures are visible as LogPython Error lines, as the
+// failure text of one of Hayba's own commands, or as the exact-type SystemError
+// text the wrapper hands over in _hayba_corruption. The user's stdout/stderr
+// capture is never scanned: a script can print anything (R-15).
+static void CollectInterpreterErrors(const FPythonCommandEx& Command, bool bCommandFailed, TArray<FString>& Out)
+{
+    for (const FPythonLogOutputEntry& Entry : Command.LogOutput)
     {
-        HaybaSeh::RepairWorldSwitchState(Before);
+        if (Entry.Type == EPythonLogOutputType::Error) Out.Add(Entry.Output);
     }
-    return bResult;
+    if (bCommandFailed && !Command.CommandResult.IsEmpty()) Out.Add(Command.CommandResult);
 }
 
 TArray<FString> FHaybaMCPPythonHandler::GetCommands() const
@@ -1939,6 +2195,47 @@ FHaybaHandlerResult FHaybaMCPPythonHandler::Run(const TSharedPtr<FJsonObject>& P
             bAllowUnsafeRequested ? TEXT("true") : TEXT("false")));
     }
 
+    // Cooperative deadline. Default 5 s; `deadline_s` may raise it to at most
+    // 60 s, but only for a caller holding an exclusive lease on the world (or
+    // with the server setting on). A long script holds the game thread and
+    // with it every other agent's queue, so it is refused, not clamped.
+    double RequestedDeadlineSeconds = 0.0;
+    const bool bHasDeadline = P->HasField(TEXT("deadline_s"));
+    if (bHasDeadline && !P->TryGetNumberField(TEXT("deadline_s"), RequestedDeadlineSeconds))
+    {
+        return FHaybaHandlerResult::Err(TEXT(
+            "python_run invalid_request [HCR-INPUT-002]: matched 'deadline_s_type'; field 'deadline_s' must be a number of seconds when present. "
+            "Retry unchanged: forbidden."));
+    }
+    // T8: `read_only` declares a script that only reads; the lease check then
+    // treats it as a Read (trusted like declared resources). Only a real
+    // boolean declares, so a string is refused here rather than ignored.
+    bool bDeclaredReadOnly = false;
+    if (const TSharedPtr<FJsonValue> ReadOnlyField = P->TryGetField(TEXT("read_only")))
+    {
+        if (ReadOnlyField->Type != EJson::Boolean)
+        {
+            return FHaybaHandlerResult::Err(TEXT(
+                "python_run invalid_request [HCR-INPUT-003]: matched 'read_only_type'; field 'read_only' must be a boolean when present. "
+                "Retry unchanged: forbidden."));
+        }
+        bDeclaredReadOnly = ReadOnlyField->AsBool();
+    }
+    const UHaybaMCPDeveloperSettings* DevSettings = GetDefault<UHaybaMCPDeveloperSettings>();
+    const HaybaMCPAccess::FPythonDeadline Deadline = HaybaMCPAccess::ResolvePythonDeadline(
+        bHasDeadline,
+        RequestedDeadlineSeconds,
+        CallerHoldsExclusiveLease(),
+        DevSettings && DevSettings->bAllowLongPythonDeadlineWithoutLease);
+    if (!Deadline.bAllowed)
+    {
+        return FHaybaHandlerResult::Err(FString::Printf(
+            TEXT("python_run policy_blocked [HCR-TIME-002]: matched 'deadline_s'; %s. Safe alternative: acquire an exclusive lease first, ")
+            TEXT("or split the work into requests that each finish within %.0f s. Retry unchanged: forbidden."),
+            *Deadline.Error, HaybaMCPAccess::DefaultPythonDeadlineSeconds));
+    }
+    const double MaxPythonExecutionSeconds = Deadline.Seconds;
+
     // Check Python plugin
     IPythonScriptPlugin* PythonPlugin = IPythonScriptPlugin::Get();
     if (!PythonPlugin)
@@ -2036,8 +2333,11 @@ FHaybaHandlerResult FHaybaMCPPythonHandler::Run(const TSharedPtr<FJsonObject>& P
     Wrapper += TEXT("_hb_trusted_gettrace = _hb_sys.gettrace\n");
     Wrapper += TEXT("_hb_trusted_monotonic = _hb_time.monotonic\n");
     Wrapper += TEXT("_hb_trusted_gc_collect = _hb_gc.collect\n");
-    Wrapper += TEXT("def _hb_execute_user(_hb_user_source, _hb_user_globals, _hb_set_trace, _hb_get_trace, _hb_now, _hb_collect, _hb_system):\n");
-    Wrapper += TEXT("    _hb_ok = True; _hb_timed_out = False; _hb_trace_events = 0\n");
+    // The built-in SystemError, saved before user code runs: the except block
+    // compares types against it, never against a name the script could shadow.
+    Wrapper += TEXT("_hb_trusted_system_error = SystemError\n");
+    Wrapper += TEXT("def _hb_execute_user(_hb_user_source, _hb_user_globals, _hb_set_trace, _hb_get_trace, _hb_now, _hb_collect, _hb_system, _hb_system_error):\n");
+    Wrapper += TEXT("    _hb_ok = True; _hb_timed_out = False; _hb_trace_events = 0; _hb_corruption = ''\n");
     Wrapper += FString::Printf(TEXT("    _hb_deadline = _hb_now() + %.3f\n"), MaxPythonExecutionSeconds);
     Wrapper += TEXT("    class _HaybaDeadlineExceeded(BaseException):\n");
     Wrapper += TEXT("        pass\n");
@@ -2075,6 +2375,15 @@ FHaybaHandlerResult FHaybaMCPPythonHandler::Run(const TSharedPtr<FJsonObject>& P
     // Python object. Do not touch .args or call str(exception): both can invoke
     // attacker-controlled/native code while reporting the original failure.
     Wrapper += TEXT("        _hb_err.write('<exception arguments omitted by bounded capture>\\n')\n");
+    // CPython-internal corruption surfaces as the exact built-in SystemError
+    // (for example, "SystemError: unknown opcode"), and this except block would
+    // otherwise swallow it as an ordinary script error. Only that exact type is
+    // read, only its first argument, only when it is a str, and at most 240
+    // characters of it. The text goes to a Hayba-owned builtin, never to stderr.
+    Wrapper += TEXT("        if type(_hb_exception) is _hb_system_error:\n");
+    Wrapper += TEXT("            _hb_args = BaseException.__getattribute__(_hb_exception, 'args')\n");
+    Wrapper += TEXT("            if type(_hb_args) is tuple and len(_hb_args) > 0 and type(_hb_args[0]) is str:\n");
+    Wrapper += TEXT("                _hb_corruption = 'SystemError: ' + _hb_args[0][:240]\n");
     // CPython disables tracing if the trace callback itself raises. Reinstall
     // the trusted trace before dropping request globals so hostile __del__ code
     // remains deadline-bounded. Restore any host trace only after clear/GC and
@@ -2096,7 +2405,7 @@ FHaybaHandlerResult FHaybaMCPPythonHandler::Run(const TSharedPtr<FJsonObject>& P
     Wrapper += TEXT("                _hb_system.stdout = _hb_previous_stdout; _hb_system.stderr = _hb_previous_stderr\n");
     Wrapper += TEXT("            finally:\n");
     Wrapper += TEXT("                _hb_set_trace(_hb_previous_trace)\n");
-    Wrapper += TEXT("    return _hb_ok, _hb_timed_out\n");
+    Wrapper += TEXT("    return _hb_ok, _hb_timed_out, _hb_corruption\n");
     // Give user code a private globals dictionary and a private copy of the
     // builtin-name mapping. Importing the process-global builtins module is
     // rejected lexically above, so simple assignments cannot poison readback
@@ -2106,12 +2415,13 @@ FHaybaHandlerResult FHaybaMCPPythonHandler::Run(const TSharedPtr<FJsonObject>& P
     // process built-in, which would invoke arbitrary object __str__/__repr__.
     Wrapper += TEXT("_hb_user_builtins['print'] = _hb_print\n");
     Wrapper += TEXT("_hb_g = {'print': _hb_print, '__name__': '__hayba_user__', '__builtins__': _hb_user_builtins}\n");
-    Wrapper += TEXT("_hb_ok, _hb_timed_out = _hb_execute_user(_hb_src, _hb_g, _hb_trusted_settrace, _hb_trusted_gettrace, _hb_trusted_monotonic, _hb_trusted_gc_collect, _hb_sys)\n");
+    Wrapper += TEXT("_hb_ok, _hb_timed_out, _hb_corruption = _hb_execute_user(_hb_src, _hb_g, _hb_trusted_settrace, _hb_trusted_gettrace, _hb_trusted_monotonic, _hb_trusted_gc_collect, _hb_sys, _hb_trusted_system_error)\n");
     Wrapper += TEXT("_hb_b._hayba_out = _hb_out.getvalue()\n");
     Wrapper += TEXT("_hb_b._hayba_err = _hb_err.getvalue()\n");
     Wrapper += TEXT("_hb_b._hayba_capture_meta = '%d,%d,%d,%d' % (int(_hb_out._hb_dropped > 0), int(_hb_err._hb_dropped > 0), _hb_out._hb_dropped, _hb_err._hb_dropped)\n");
     Wrapper += TEXT("_hb_b._hayba_ok = _hb_ok\n");
     Wrapper += TEXT("_hb_b._hayba_timed_out = _hb_timed_out\n");
+    Wrapper += TEXT("_hb_b._hayba_corruption = _hb_corruption\n");
     // The execution function already dropped the script namespace and forced a
     // CPython collection while its trusted trace remained active and while
     // still inside the SEH-guarded ExecPythonCommandEx below. This targets
@@ -2137,27 +2447,27 @@ FHaybaHandlerResult FHaybaMCPPythonHandler::Run(const TSharedPtr<FJsonObject>& P
     // uses 'single' mode and rejects our multi-line wrapper with
     // "SyntaxError: multiple statements found while compiling a single statement".
     RunCmd.ExecutionMode = EPythonCommandExecutionMode::ExecuteFile;
+
+    // PythonScriptPlugin scopes GIsRunningUnattendedScript for this flag, so
+    // saves and deliberate dialogs return their default instead of blocking
+    // the game thread on a modal. Apply it to every readback and cleanup too.
+    RunCmd.Flags |= EPythonCommandFlags::Unattended;
     // Guard the user-script execution against native access violations so a bad
     // script returns an error instead of crashing the editor.
     bool bRunCrashed = false;
-    const bool bExecOk = ExecPythonGuarded(PythonPlugin, &RunCmd, bRunCrashed);
+    HAYBA_UNATTENDED_PROBE("python_run", EnumHasAnyFlags(RunCmd.Flags, EPythonCommandFlags::Unattended));
+    const bool bExecOk = RunPythonCommandGuarded(PythonPlugin, &RunCmd, bRunCrashed);
     if (bRunCrashed)
     {
-        return FHaybaHandlerResult::Err(TEXT(
-            "python_run fatal_error [HCR-NATIVE-002]: matched 'native_access_violation'. The script "
-            "dereferenced an invalid object — typically a stale/destroyed actor or "
-            "component handle, a garbage-collected UObject held across ticks, or a "
-            "re-entrant editor mutation. The editor was kept alive by the SEH guard; "
-            "safe alternative: re-acquire handles fresh inside the run (do not cache UObject "
-            "references between python_run calls) and avoid mutating the level while iterating it. "
-            "Retry unchanged: forbidden; verify editor health before any further mutation."));
+        return MakeNativeFaultResult(TEXT("native_access_violation"), false);
     }
+    TArray<FString> InterpreterErrors;
+    CollectInterpreterErrors(RunCmd, !bExecOk, InterpreterErrors);
 
     // Evaluate a base64 expression and decode the result back to a string.
-    // Guarded by SEH too: the user script may have left the interpreter in a
-    // degraded state, so even this trivial readback can fault — better to lose
-    // the captured stdout than to take down the editor.
-    auto EvalB64 = [PythonPlugin](const FString& Attr, bool& bOutCrashed) -> FString
+    // Guarded too: the user script may have left the interpreter degraded, so
+    // even this trivial readback can fault.
+    auto EvalB64 = [PythonPlugin, &InterpreterErrors](const FString& Attr, bool& bOutCrashed) -> FString
     {
         bOutCrashed = false;
         FPythonCommandEx E;
@@ -2165,8 +2475,12 @@ FHaybaHandlerResult FHaybaMCPPythonHandler::Run(const TSharedPtr<FJsonObject>& P
             TEXT("__import__('base64').b64encode((getattr(__import__('builtins'),'%s','') or '').encode('utf-8')).decode('ascii')"),
             *Attr);
         E.ExecutionMode = EPythonCommandExecutionMode::EvaluateStatement;
-        ExecPythonGuarded(PythonPlugin, &E, bOutCrashed);
+
+        E.Flags |= EPythonCommandFlags::Unattended;
+        HAYBA_UNATTENDED_PROBE("python_run", EnumHasAnyFlags(E.Flags, EPythonCommandFlags::Unattended));
+        const bool bEvalOk = RunPythonCommandGuarded(PythonPlugin, &E, bOutCrashed);
         if (bOutCrashed) return FString();
+        CollectInterpreterErrors(E, !bEvalOk, InterpreterErrors);
         FString R = E.CommandResult.TrimStartAndEnd();
         if (R.Len() >= 2 && (R.StartsWith(TEXT("'")) || R.StartsWith(TEXT("\""))))
         {
@@ -2181,63 +2495,76 @@ FHaybaHandlerResult FHaybaMCPPythonHandler::Run(const TSharedPtr<FJsonObject>& P
     bool bStdOutReadCrashed = false;
     bool bStdErrReadCrashed = false;
     bool bCaptureMetaReadCrashed = false;
+    bool bCorruptionReadCrashed = false;
     const FString StdOut = EvalB64(TEXT("_hayba_out"), bStdOutReadCrashed);
     const FString StdErr = EvalB64(TEXT("_hayba_err"), bStdErrReadCrashed);
     const FString CaptureMeta = EvalB64(TEXT("_hayba_capture_meta"), bCaptureMetaReadCrashed);
-    if (bStdOutReadCrashed || bStdErrReadCrashed || bCaptureMetaReadCrashed)
+    const FString CorruptionText = EvalB64(TEXT("_hayba_corruption"), bCorruptionReadCrashed);
+    if (bStdOutReadCrashed || bStdErrReadCrashed || bCaptureMetaReadCrashed || bCorruptionReadCrashed)
     {
-        return FHaybaHandlerResult::Err(TEXT(
-            "python_run fatal_error [HCR-NATIVE-002]: matched 'post_execution_readback_access_violation'. "
-            "The interpreter faulted while reading captured output after the user script. Safe alternative: "
-            "restart the disposable editor before retrying, then remove stale UObject references and split the "
-            "script into smaller typed operations. Retry unchanged: forbidden; editor session health is suspect."));
+        return MakeNativeFaultResult(TEXT("post_execution_readback_access_violation"), true);
     }
+    // The exact-type SystemError text, when the user script ended in one.
+    if (!CorruptionText.IsEmpty()) InterpreterErrors.Add(CorruptionText);
 
     FPythonCommandEx OkCmd;
     OkCmd.Command = TEXT("repr(getattr(__import__('builtins'),'_hayba_ok',True))");
     OkCmd.ExecutionMode = EPythonCommandExecutionMode::EvaluateStatement;
+
+    OkCmd.Flags |= EPythonCommandFlags::Unattended;
     bool bOkReadCrashed = false;
-    ExecPythonGuarded(PythonPlugin, &OkCmd, bOkReadCrashed);
+    HAYBA_UNATTENDED_PROBE("python_run", EnumHasAnyFlags(OkCmd.Flags, EPythonCommandFlags::Unattended));
+    const bool bOkRead = RunPythonCommandGuarded(PythonPlugin, &OkCmd, bOkReadCrashed);
     if (bOkReadCrashed)
     {
-        return FHaybaHandlerResult::Err(TEXT(
-            "python_run fatal_error [HCR-NATIVE-002]: matched 'post_execution_status_access_violation'. "
-            "The interpreter faulted while reading completion state. Safe alternative: restart the disposable "
-            "editor before retrying and replace stale UObject access with a typed handler. Retry unchanged: forbidden; "
-            "editor session health is suspect."));
+        return MakeNativeFaultResult(TEXT("post_execution_status_access_violation"), true);
     }
-    const bool bUserOk = !bOkReadCrashed && !OkCmd.CommandResult.Contains(TEXT("False"));
+    CollectInterpreterErrors(OkCmd, !bOkRead, InterpreterErrors);
+    const bool bUserOk = !OkCmd.CommandResult.Contains(TEXT("False"));
 
     FPythonCommandEx TimeoutCmd;
     TimeoutCmd.Command = TEXT("repr(getattr(__import__('builtins'),'_hayba_timed_out',False))");
     TimeoutCmd.ExecutionMode = EPythonCommandExecutionMode::EvaluateStatement;
+
+    TimeoutCmd.Flags |= EPythonCommandFlags::Unattended;
     bool bTimeoutReadCrashed = false;
-    ExecPythonGuarded(PythonPlugin, &TimeoutCmd, bTimeoutReadCrashed);
+    HAYBA_UNATTENDED_PROBE("python_run", EnumHasAnyFlags(TimeoutCmd.Flags, EPythonCommandFlags::Unattended));
+    const bool bTimeoutRead = RunPythonCommandGuarded(PythonPlugin, &TimeoutCmd, bTimeoutReadCrashed);
     if (bTimeoutReadCrashed)
     {
-        return FHaybaHandlerResult::Err(TEXT(
-            "python_run fatal_error [HCR-NATIVE-002]: matched 'post_execution_deadline_readback_access_violation'. "
-            "The interpreter faulted while reading deadline state. Safe alternative: restart the disposable editor "
-            "before retrying and split the script into bounded typed operations. Retry unchanged: forbidden; editor "
-            "session health is suspect."));
+        return MakeNativeFaultResult(TEXT("post_execution_deadline_readback_access_violation"), true);
     }
-    const bool bTimedOut = !bTimeoutReadCrashed && TimeoutCmd.CommandResult.Contains(TEXT("True"));
+    CollectInterpreterErrors(TimeoutCmd, !bTimeoutRead, InterpreterErrors);
+    const bool bTimedOut = TimeoutCmd.CommandResult.Contains(TEXT("True"));
 
     FPythonCommandEx CleanupCmd;
     CleanupCmd.Command = TEXT(
         "import builtins as _hb_cleanup_b\n"
-        "for _hb_cleanup_name in ('_hayba_out','_hayba_err','_hayba_capture_meta','_hayba_ok','_hayba_timed_out'):\n"
+        "for _hb_cleanup_name in ('_hayba_out','_hayba_err','_hayba_capture_meta','_hayba_ok','_hayba_timed_out','_hayba_corruption'):\n"
         "    if hasattr(_hb_cleanup_b, _hb_cleanup_name): delattr(_hb_cleanup_b, _hb_cleanup_name)\n");
     CleanupCmd.ExecutionMode = EPythonCommandExecutionMode::ExecuteFile;
+
+    CleanupCmd.Flags |= EPythonCommandFlags::Unattended;
     bool bCleanupCrashed = false;
-    ExecPythonGuarded(PythonPlugin, &CleanupCmd, bCleanupCrashed);
+    HAYBA_UNATTENDED_PROBE("python_run", EnumHasAnyFlags(CleanupCmd.Flags, EPythonCommandFlags::Unattended));
+    const bool bCleanupOk = RunPythonCommandGuarded(PythonPlugin, &CleanupCmd, bCleanupCrashed);
     if (bCleanupCrashed)
     {
-        return FHaybaHandlerResult::Err(TEXT(
-            "python_run fatal_error [HCR-NATIVE-002]: matched 'post_execution_cleanup_access_violation'. "
-            "The interpreter faulted while releasing bounded capture state. Safe alternative: restart the disposable "
-            "editor before retrying and use typed handlers for native objects. Retry unchanged: forbidden; editor "
-            "session health is suspect."));
+        return MakeNativeFaultResult(TEXT("post_execution_cleanup_access_violation"), true);
+    }
+    CollectInterpreterErrors(CleanupCmd, !bCleanupOk, InterpreterErrors);
+
+    // Corruption without a caught fault (ADR-0011 design 7): the interpreter is
+    // damaged and later scripts fail inside CPython itself. InterpreterErrors
+    // holds LogPython Error lines, the failure text of Hayba's own commands and
+    // the exact-type SystemError text; never stdout or stderr.
+    for (const FString& Line : InterpreterErrors)
+    {
+        if (const TCHAR* Marker = HaybaMCPHealth::FindPythonCorruptionMarker(Line))
+        {
+            FHaybaEditorHealth::RecordPythonCorruption(Marker);
+            return MakeNativeFaultResult(TEXT("cpython_corruption_marker"), true);
+        }
     }
 
     if (bTimedOut)
@@ -2250,6 +2577,8 @@ FHaybaHandlerResult FHaybaMCPPythonHandler::Run(const TSharedPtr<FJsonObject>& P
     TSharedPtr<FJsonObject> Out = MakeShareable(new FJsonObject());
     Out->SetBoolField(TEXT("ok"), bExecOk && bUserOk);
     Out->SetNumberField(TEXT("tier"), static_cast<int32>(Tier));
+    Out->SetNumberField(TEXT("deadline_s"), MaxPythonExecutionSeconds);
+    Out->SetBoolField(TEXT("read_only_declared"), bDeclaredReadOnly);
     Out->SetBoolField(TEXT("allow_unsafe_requested"), bAllowUnsafeRequested);
     Out->SetBoolField(TEXT("allow_unsafe_effective"), false);
     Out->SetBoolField(TEXT("allow_unsafe_deprecated"), true);

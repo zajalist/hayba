@@ -8,7 +8,7 @@
 // pushes whenever an MCP command reaches Blueprint code on a PIE object. Left
 // pushed, GWorld stays on the PIE world and UEditorEngine::Tick asserts on the
 // next frame (EditorEngine.cpp:1758) — one frame after the guard reported the
-// editor kept alive. Observed twice on 2026-08-11 driving Aphrosia.
+// editor kept alive. This failure was observed in live PIE testing.
 //
 // The repair itself needs a live editor to prove. The DECISION — which drift is
 // ours to undo — is pure, and is what this pins: undo only the case where we

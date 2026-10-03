@@ -65,8 +65,8 @@ const DOMAINS: ReadonlyArray<{ domain: string; command_count: number; commands: 
   },
   {
     domain: 'scene',
-    command_count: 3,
-    commands: ['scene_export', 'scene_validate_physics', 'scene_get_actor_relations'],
+    command_count: 6,
+    commands: ['scene_export', 'world_semantic_snapshot', 'world_tile_capture', 'world_query', 'scene_validate_physics', 'scene_get_actor_relations'],
   },
   {
     domain: 'editor',
@@ -233,7 +233,6 @@ const DOMAINS: ReadonlyArray<{ domain: string; command_count: number; commands: 
 function domainOf(name: string): string {
   if (name === 'hayba_import_landscape' || name === 'import_landscape') return 'world';
   if (name === 'query_ue_docs') return 'docs';
-  if (name.startsWith('hayba_fab_')) return 'fab';
   if (
     name.startsWith('hayba_polyhaven_') ||
     name.startsWith('hayba_ambientcg_') ||

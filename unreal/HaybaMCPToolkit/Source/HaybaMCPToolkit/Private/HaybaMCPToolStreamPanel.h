@@ -12,6 +12,8 @@ enum class EHaybaRendererType : uint8
 struct FHaybaToolCall
 {
     FString ToolName;
+    // Bounded, redacted at ingress. These are the only payloads used by UI,
+    // search, clipboard, and archive; never retain the raw module record here.
     FString ParamsJson;
     FString ResultJson;
     EHaybaRendererType RendererType = EHaybaRendererType::Generic;
@@ -58,6 +60,8 @@ private:
     TSharedRef<SWidget> BuildGenericRenderer(const FHaybaToolCall& Call, int32 TurnIdx, int32 CallIdx);
     TSharedRef<SWidget> BuildToolbar();
     TSharedRef<SWidget> BuildStatsMenu();
+    TSharedRef<SWidget> BuildCompactMenu();
+    bool IsCompactToolbar() const;
 
     void RebuildSummary(TSharedPtr<FHaybaTurn> Turn) const;
 

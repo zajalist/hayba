@@ -116,6 +116,19 @@ describe('Node result-boundary advisory filtering', () => {
     expect(errors.isError).toBe(true);
   });
 
+  it('keeps canonical warning IDs in errors_only without leaking warning copy', () => {
+    const result = textResult({ counts: { warning: 1, error: 0 }, validator: { findings: [
+      { ruleId: 'ui_engine_default_font', severity: 'warning', message: 'Roboto assigned', hint: 'Review font' },
+    ] } });
+    const filtered = applyAdvisoryVerbosity(result, 'errors_only');
+    const joined = filtered.content.map((block) => block.type === 'text' ? block.text : '').join('\n');
+    expect(joined).toContain('ui_engine_default_font');
+    expect(joined).toContain('warning_ids');
+    expect(joined).toContain('"warning": 1');
+    expect(joined).not.toContain('Roboto assigned');
+    expect(joined).not.toContain('Review font');
+  });
+
   it('never alters image blocks', () => {
     const result: RichToolResult = { content: [{ type: 'image', data: 'x', mimeType: 'image/png' }] };
     expect(applyAdvisoryVerbosity(result, 'errors_only')).toBe(result);

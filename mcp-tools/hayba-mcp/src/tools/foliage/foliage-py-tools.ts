@@ -239,6 +239,7 @@ export const foliageCapabilityProbeDescriptor: PyToolDescriptor<typeof foliageCa
     '{ok, capabilities:{has_foliage_lib,has_add_instances,has_get_instance_transforms,has_remove_instances,has_proc_foliage,has_hism,has_foliage_type_ism}, engine_version, surface_actors:[{label,kind}], surface_actor_count, instanced_foliage_actors}',
   schema: foliageCapabilityProbeSchema.shape,
   meta: readMeta,
+  readOnly: true,
   buildScript: capabilityProbeScript,
   timeoutMs: 30_000,
 };
@@ -292,6 +293,7 @@ export const foliageScanTypesDescriptor: PyToolDescriptor<typeof foliageScanType
   returns: '{ok, types:[{path,class,mesh,density,radius,instance_count}], total, has_more, next_offset, warnings[]}',
   schema: foliageScanTypesSchema.shape,
   meta: readMeta,
+  readOnly: true,
   buildScript: scanTypesScript,
   timeoutMs: 30_000,
 };
@@ -344,6 +346,7 @@ export const foliageTypeInspectDescriptor: PyToolDescriptor<typeof foliageTypeIn
     '{ok, foliage_type_path, class, mesh_path, params:{density,radius,align_to_normal,random_yaw,collision_with_world,cast_shadow,scale_x,scale_y,scale_z,z_offset,cull_distance}, instance_count, warnings[]}',
   schema: foliageTypeInspectSchema.shape,
   meta: readMeta,
+  readOnly: true,
   buildScript: typeInspectScript,
   timeoutMs: 30_000,
 };
@@ -376,6 +379,7 @@ export const foliageGetInstanceCountDescriptor: PyToolDescriptor<typeof foliageG
   returns: '{ok, foliage_type_path, instance_count, warnings[]}',
   schema: foliageGetInstanceCountSchema.shape,
   meta: readMeta,
+  readOnly: true,
   buildScript: getInstanceCountScript,
   timeoutMs: 30_000,
 };

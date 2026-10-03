@@ -209,6 +209,7 @@ export const landscapeListDescriptor: PyToolDescriptor<typeof landscapeListSchem
     '{ok, landscapes:[{actor_label,path,class,is_primary,layout:{component_size_quads,subsection_size_quads,num_subsections},material,scale,world_bounds,layer_count}], total, has_more, next_offset}',
   schema: landscapeListSchema.shape,
   meta: readMeta,
+  readOnly: true,
   buildScript: listScript,
   timeoutMs: 30_000,
 };
@@ -260,6 +261,7 @@ export const landscapeInspectDescriptor: PyToolDescriptor<typeof landscapeInspec
     '{ok, actor_label, path, class, is_primary, layout, scale, location, world_bounds, material, hole_material, layers:[{name,layer_info}], proxies:[{label,loaded}], warnings[]}',
   schema: landscapeInspectSchema.shape,
   meta: readMeta,
+  readOnly: true,
   buildScript: inspectScript,
   timeoutMs: 30_000,
 };
@@ -298,6 +300,7 @@ export const landscapeLayerListDescriptor: PyToolDescriptor<typeof landscapeLaye
   returns: '{ok, actor_label, layers:[{name,layer_info,weightmap_present}], count, warnings?}',
   schema: landscapeLayerListSchema.shape,
   meta: readMeta,
+  readOnly: true,
   buildScript: layerListScript,
   timeoutMs: 30_000,
 };
@@ -329,6 +332,7 @@ export const landscapeGetMaterialDescriptor: PyToolDescriptor<typeof landscapeGe
   returns: '{ok, actor_label, material, hole_material}',
   schema: landscapeGetMaterialSchema.shape,
   meta: readMeta,
+  readOnly: true,
   buildScript: getMaterialScript,
   timeoutMs: 30_000,
 };
@@ -369,6 +373,7 @@ export const landscapeListSplinesDescriptor: PyToolDescriptor<typeof landscapeLi
   returns: '{ok, actor_label, spline_components:[{component,control_points,segments}], count}',
   schema: landscapeListSplinesSchema.shape,
   meta: readMeta,
+  readOnly: true,
   buildScript: listSplinesScript,
   timeoutMs: 30_000,
 };

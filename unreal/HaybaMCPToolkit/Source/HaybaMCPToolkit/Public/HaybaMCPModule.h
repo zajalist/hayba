@@ -21,6 +21,46 @@ struct FHaybaToolCallRecord
     FDateTime Timestamp;
 };
 
+struct FHaybaExternalPlanStep
+{
+    FString Title;
+    FString Description;
+    FString Tool;
+};
+
+// A single frozen native call. The digest covers the command and every input
+// parameter; TargetFingerprint is captured from the live editor object.
+// None of these fields is an authorization until ResolveExternalPlan succeeds.
+struct FHaybaExactExternalApproval
+{
+    FString ProposalId;
+    FString Command;
+    FString Owner;
+    FString Source;
+    FString SourceBinding;
+    FString OperationDigest;
+    FString ReviewParamsJson;
+    FString TargetRef;
+    FString TargetFingerprint;
+    FString LeaseBinding;
+    /** Kept in memory only to revalidate the live lease at the approval click. */
+    FString LeaseId;
+    int32 ConnectionId = 0;
+    FString PolicyVersion;
+    FString Consequence;
+    FDateTime ExpiresAt;
+
+    bool IsValid() const { return !ProposalId.IsEmpty() && !OperationDigest.IsEmpty() && !TargetFingerprint.IsEmpty(); }
+    bool Matches(const FString& InOwner, const FString& InCommand, const FString& InDigest,
+        const FString& InTargetFingerprint, const FString& InLeaseBinding, const FString& InSourceBinding,
+        const FString& InPolicyVersion, FDateTime Now) const
+    {
+        return IsValid() && Now <= ExpiresAt && Owner == InOwner && Command == InCommand &&
+            OperationDigest == InDigest && TargetFingerprint == InTargetFingerprint &&
+            LeaseBinding == InLeaseBinding && SourceBinding == InSourceBinding && PolicyVersion == InPolicyVersion;
+    }
+};
+
 class FHaybaMCPModule : public IModuleInterface
 {
 public:
@@ -59,6 +99,7 @@ public:
     static const FName TabStudio;
 
     // Weak references to live sub-panels (set by SHaybaMCPMainPanel as it builds them).
+    TWeakPtr<class SHaybaMCPMainPanel>       MainPanel;
     TWeakPtr<class SHaybaMCPToolStreamPanel> ToolStreamPanel;
     TWeakPtr<class SHaybaMCPSceneMapPanel>   SceneMapPanel;
     TWeakPtr<class SHaybaMCPPlanPanel>       PlanPanel;
@@ -74,25 +115,40 @@ public:
     void ClearToolCallHistory();
     static constexpr int32 ToolCallHistoryMax = 200;
 
-    // Plan Mode handshake — set by Plan panel's Approve click, reset by every
-    // destructive command so each plan must be approved exactly once.
+    // Legacy Plan panel state retained for its chat event bridge. It is not a
+    // native external-command authorization; only ApprovedExternalOperation is.
     bool bPlanApproved = false;
+    // Owner of the legacy prose plan, retained for display and migration only.
+    FString PlanOwner;
 
     // External MCP proposals survive navigation and tab recreation. Chat has
     // its own exact-call approval protocol; never broadcast chat approval here.
     FString PendingExternalPlan;
-    void ProposeExternalPlan(const FString& Summary)
+    FString PendingExternalPlanId;
+    TArray<FHaybaExternalPlanStep> PendingExternalSteps;
+    FHaybaExactExternalApproval PendingExternalOperation;
+    FHaybaExactExternalApproval ApprovedExternalOperation;
+    bool PendingExternalPlanIsExact = false;
+    void ProposeExternalPlan(const FString& Summary,
+        TArray<FHaybaExternalPlanStep> Steps = {})
     {
         bPlanApproved = false;
         PendingExternalPlan = Summary;
+        PendingExternalPlanId = FGuid::NewGuid().ToString(EGuidFormats::Digits);
+        PendingExternalSteps = MoveTemp(Steps);
+        PendingExternalOperation = {};
+        ApprovedExternalOperation = {};
+        PendingExternalPlanIsExact = false;
     }
-    bool ResolveExternalPlan(bool bApprove)
-    {
-        if (PendingExternalPlan.IsEmpty()) return false;
-        bPlanApproved = bApprove;
-        PendingExternalPlan.Empty();
-        return true;
-    }
+    /** Legacy no-token approval is intentionally non-authorizing. */
+    bool ResolveExternalPlan(bool /*bApprove*/) { return false; }
+    bool ResolveExternalPlan(const FString& ExpectedProposalId, bool bApprove);
+    void ProposeExactExternalOperation(FHaybaExactExternalApproval Operation);
+    void InvalidateExternalApproval();
+    bool ConsumeExactExternalApproval(const FString& Owner, const FString& Command,
+        const FString& OperationDigest, const FString& TargetFingerprint, const FString& LeaseBinding,
+        const FString& SourceBinding,
+        const FString& PolicyVersion);
 
     // Satellite modules (HaybaMCPGAS/Niagara/MetaSound/Sequencer) register their
     // command handlers into the core router at their own StartupModule, so an
@@ -100,6 +156,9 @@ public:
     // unregistered (the router returns a clean "unknown command" instead of the
     // whole plugin failing to load). No-ops safely if the core router isn't up.
     HAYBAMCPTOOLKIT_API void RegisterExternalHandler(TSharedRef<IHaybaMCPHandler> Handler);
+
+    /** The live command router (tests read its registered command set). */
+    TSharedPtr<FHaybaMCPCommandHandler> GetCommandHandler() const { return CommandHandler; }
     HAYBAMCPTOOLKIT_API void UnregisterExternalHandler(const TSharedRef<IHaybaMCPHandler>& Handler);
 
     // Multicast — fires synchronously when a tool call is recorded on the Game

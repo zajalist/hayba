@@ -16,10 +16,20 @@ export interface BrainConnector {
   setRefreshToken(token: string | null, email?: string): void;
   startSignin(): Promise<DeviceStart>;
   pollSignin(deviceCode: string): Promise<DevicePoll>;
+  /** Advisory only. Returns a name from the offered shortlist, or null. */
+  rankRoute?(intent: RouteIntent, mode: RouteMode, candidateIds: string[]): Promise<string | null>;
   openSession(
     sessionId: string, llm: LlmMode, manifest: ToolManifestEntry[], permissions: Permissions,
   ): Promise<{ ok: true; session: BrainSession } | { ok: false; reason: string; message: string }>;
 }
+
+export type RouteIntent = 'inspect_scene' | 'new_scene' | 'refine_scene' | 'debug_level' | 'pcg_build' | 'material_edit' | 'asset_search' | 'custom_python' | 'unknown';
+export type RouteMode = 'explore' | 'draft' | 'production';
+
+// The dashboard creates the connector after MCP tool registration. Resolve it
+// at call time so external MCP hosts use the same in-memory sign-in state.
+let activeConnector: BrainConnector | null = null;
+export function getActiveBrainConnector(): BrainConnector | null { return activeConnector; }
 
 /** A non-2xx answer from the brain's HTTP endpoints. */
 class BrainHttpError extends Error {
@@ -64,13 +74,34 @@ export function createBrainConnector(opts: {
     return inflight;
   }
 
-  return {
+  const connector: BrainConnector = {
     configured: () => opts.brainUrl.length > 0,
     signedIn: () => ({ signedIn: refreshToken !== null, email }),
     takeRotatedRefreshToken() { const r = rotated; rotated = null; return r; },
     setRefreshToken(token, mail) { refreshToken = token; rotated = null; email = token ? mail ?? email : undefined; access = null; },
     startSignin: () => post<DeviceStart>('/device/start', {}),
     pollSignin: (deviceCode) => post<DevicePoll>('/device/poll', { device_code: deviceCode }),
+    async rankRoute(intent, mode, candidateIds) {
+      if (!opts.brainUrl || !refreshToken) return null;
+      // The MCP handler supplies a verified shortlist. Build the wire body
+      // field by field so extra properties cannot cross the HTTP boundary.
+      const body = { intent, mode, candidate_ids: candidateIds.slice(0, 5) };
+      try {
+        const token = await getAccessToken();
+        const res = await doFetch(`${http}/v1/route/advice`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+          body: JSON.stringify(body),
+          signal: AbortSignal.timeout(31_000),
+        });
+        if (!res.ok) return null;
+        const reply = await res.json() as { preferred_id?: unknown };
+        return typeof reply.preferred_id === 'string' && body.candidate_ids.includes(reply.preferred_id)
+          ? reply.preferred_id : null;
+      } catch {
+        return null;
+      }
+    },
     async openSession(sessionId, llm, manifest, permissions) {
       if (!opts.brainUrl) return { ok: false, reason: 'not_configured', message: 'Hayba Pro is not configured on this machine.' };
       if (!refreshToken) return { ok: false, reason: 'auth', message: 'Sign in to Hayba Pro in Settings first.' };
@@ -91,4 +122,6 @@ export function createBrainConnector(opts: {
       }
     },
   };
+  activeConnector = connector;
+  return connector;
 }

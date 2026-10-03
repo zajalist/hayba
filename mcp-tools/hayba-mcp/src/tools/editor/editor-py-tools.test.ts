@@ -156,6 +156,8 @@ describe('outliner_tree', () => {
     expect(s).toContain('get_attach_parent_actor');
     expect(s).toContain("_folder = 'Buildings'");
     expect(s).toContain('_limit = 50');
+    expect(s).toContain('fld != _folder and not fld.startswith(_folder + "/")');
+    expect(s).toContain('fld = fld.replace("\\\\", "/").strip("/")');
   });
 });
 

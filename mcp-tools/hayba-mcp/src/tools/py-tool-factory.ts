@@ -68,6 +68,13 @@ export interface PyToolDescriptor<S extends z.ZodRawShape = z.ZodRawShape> {
   /** Override the python_run timeout (ms). Defaults to runUePythonJson's. */
   timeoutMs?: number;
   /**
+   * The script only reads (reviewed): python_run is sent with read_only:true,
+   * so it never conflicts with another owner's lease. Default false: an
+   * undeclared script is X on global for conflicts (fail closed, T8).
+   * lease-enforcement-contract.test.ts pins the reviewed list.
+   */
+  readOnly?: boolean;
+  /**
    * When set, the result is passed through appendNicheBriefing(niche, ...) —
    * reproducing the historic withNicheBriefing wrap (e.g. niche: 'material').
    * Forwarded verbatim to the ToolDescriptor by toToolDescriptor.
@@ -117,7 +124,7 @@ export function makePyToolHandler<S extends z.ZodRawShape>(
     }
     try {
       const script = d.buildScript(parsed.data);
-      const result = await runUePythonJson(script, d.timeoutMs);
+      const result = await runUePythonJson(script, d.timeoutMs, { readOnly: d.readOnly === true });
       return okResult(result);
     } catch (e) {
       return errorResult(`${d.name} error: ${e instanceof Error ? e.message : String(e)}`);

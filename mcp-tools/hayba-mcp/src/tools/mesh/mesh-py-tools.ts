@@ -127,6 +127,7 @@ export const meshGetSocketsDescriptor: PyToolDescriptor<typeof meshGetSocketsSch
   returns: '{ok, asset_path, sockets:[{name,location,rotation,scale}], count}',
   schema: meshGetSocketsSchema.shape,
   meta: readMeta,
+  readOnly: true,
   buildScript: meshGetSocketsScript,
   timeoutMs: 30_000,
 };
@@ -179,6 +180,7 @@ export const meshGetLodsDescriptor: PyToolDescriptor<typeof meshGetLodsSchema.sh
   returns: '{ok, asset_path, lod_count, lods:[{lod,triangles,vertices}]}',
   schema: meshGetLodsSchema.shape,
   meta: readMeta,
+  readOnly: true,
   buildScript: meshGetLodsScript,
   timeoutMs: 30_000,
 };
@@ -222,6 +224,7 @@ export const meshGetMaterialsDescriptor: PyToolDescriptor<typeof meshGetMaterial
   returns: '{ok, asset_path, materials:[{slot_index,slot_name,material}], count}',
   schema: meshGetMaterialsSchema.shape,
   meta: readMeta,
+  readOnly: true,
   buildScript: meshGetMaterialsScript,
   timeoutMs: 30_000,
 };
@@ -271,6 +274,7 @@ export const meshGetBoundsDescriptor: PyToolDescriptor<typeof meshGetBoundsSchem
   returns: '{ok, asset_path, origin, extent, sphere_radius, min, max}',
   schema: meshGetBoundsSchema.shape,
   meta: readMeta,
+  readOnly: true,
   buildScript: meshGetBoundsScript,
   timeoutMs: 30_000,
 };

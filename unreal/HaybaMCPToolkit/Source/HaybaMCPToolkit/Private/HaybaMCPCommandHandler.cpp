@@ -16,6 +16,16 @@
 #include "HaybaMCPValidationPanel.h"
 #include "HaybaMCPMemoryPanel.h"
 #include "HaybaMCPDiffPanel.h"
+#include "HaybaMCPMainPanel.h"
+#include "HaybaMCPAccessPolicy.h"
+#include "HaybaMCPLeaseManager.h"
+#include "HaybaMCPEnforcementPolicy.h"
+#include "HaybaMCPEditorHealth.h"
+#include "HaybaMCPHealthPolicy.h"
+#include "HaybaMCPCommandSets.h"
+#include "HaybaMCPWarningLimiter.h"
+#include "HaybaMCPEditorState.h"
+#include "HaybaMCPEditorStatePolicy.h"
 #include "Json.h"
 #include "Editor.h"
 #include "EngineUtils.h"
@@ -23,6 +33,16 @@
 #include "Modules/ModuleManager.h"
 #include "Framework/Notifications/NotificationManager.h"
 #include "Widgets/Notifications/SNotificationList.h"
+#include "Framework/Application/SlateApplication.h"
+#include "HAL/FileManager.h"
+#include "ImageUtils.h"
+#include "Misc/FileHelper.h"
+#include "Misc/Paths.h"
+#include "Serialization/ArchiveUObject.h"
+#include "Hash/Blake3.h"
+#include "Policies/CondensedJsonPrintPolicy.h"
+#include "Serialization/JsonWriter.h"
+#include "Components/ActorComponent.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogHaybaMCPCmd, Log, All);
 
@@ -31,6 +51,59 @@ static bool IsDestructiveCommand(const FString& Cmd);
 namespace
 {
     constexpr int32 MaxPromotedFailureChars = 4096;
+
+    using FExactJsonWriter = TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>;
+
+    void WriteExactSortedJson(const TSharedRef<FJsonValue>& Value, FExactJsonWriter& Writer)
+    {
+        switch (Value->Type)
+        {
+        case EJson::Object:
+        {
+            Writer.WriteObjectStart();
+            const TSharedPtr<FJsonObject>& Object = Value->AsObject();
+            if (Object.IsValid())
+            {
+                TArray<FString> Keys;
+                for (const auto& Pair : Object->Values) Keys.Add(FString(*Pair.Key));
+                Keys.Sort();
+                for (const FString& Key : Keys)
+                {
+                    const TSharedPtr<FJsonValue> Child = Object->TryGetField(Key);
+                    if (!Child.IsValid()) Writer.WriteNull(Key);
+                    else
+                    {
+                        Writer.WriteIdentifierPrefix(Key);
+                        WriteExactSortedJson(Child.ToSharedRef(), Writer);
+                    }
+                }
+            }
+            Writer.WriteObjectEnd();
+            break;
+        }
+        case EJson::Array:
+            Writer.WriteArrayStart();
+            for (const TSharedPtr<FJsonValue>& Item : Value->AsArray())
+            {
+                if (Item.IsValid()) WriteExactSortedJson(Item.ToSharedRef(), Writer);
+                else Writer.WriteNull();
+            }
+            Writer.WriteArrayEnd();
+            break;
+        case EJson::String: Writer.WriteValue(Value->AsString()); break;
+        case EJson::Number: Writer.WriteValue(Value->AsNumber()); break;
+        case EJson::Boolean: Writer.WriteValue(Value->AsBool()); break;
+        default: Writer.WriteNull(); break;
+        }
+    }
+
+    void HashExactUtf8Field(FBlake3& Hasher, const FString& Value)
+    {
+        const FTCHARToUTF8 Utf8(*Value);
+        const uint64 Length = uint64(Utf8.Length());
+        Hasher.Update(&Length, sizeof(Length));
+        if (Length > 0) Hasher.Update(Utf8.Get(), Length);
+    }
 
     FString BoundFailureDiagnostic(const FString& Input)
     {
@@ -333,8 +406,11 @@ namespace
             : EHaybaMCPMutationStatus::Unknown;
 
         const FString Lower = Error.ToLower();
-        if (bSessionSuspect || Lower.Contains(TEXT("structured exception"))
-            || Lower.Contains(TEXT("session as suspect")) || Lower.Contains(TEXT("seh")))
+        // Only a bracketed native-fault code or the explicit flag makes a
+        // command suspect; no prose ("seh" in "BaseHealth") ever does.
+        const bool bNativeFaultCode = Lower.Contains(TEXT("[hcr-native-002]"))
+            || Lower.Contains(TEXT("[hcr-native-003]")) || Lower.Contains(TEXT("[hcr-native-004]"));
+        if (bSessionSuspect || bNativeFaultCode)
         {
             Signals.bStructuredException = true;
             Signals.FailureKind = EHaybaMCPFailureKind::SessionSuspect;
@@ -342,7 +418,7 @@ namespace
             Signals.Phase = EHaybaMCPCommandPhase::Execute;
             Signals.MutationStatus = EHaybaMCPMutationStatus::Unknown;
         }
-        else if (Lower.Contains(TEXT("hcr-")) || (bKnownPreflight && (
+        else if ((Lower.Contains(TEXT("hcr-")) && !bNativeFaultCode) || (bKnownPreflight && (
             Lower.Contains(TEXT("policy_blocked")) || Lower.Contains(TEXT("blocked permanently"))
             || Lower.Contains(TEXT("not permitted")) || Lower.Contains(TEXT("forbidden"))
             || Lower.Contains(TEXT("approval")) || Lower.Contains(TEXT("plan mode"))
@@ -352,9 +428,8 @@ namespace
                 || Lower.Contains(TEXT("crash")) || Lower.Contains(TEXT("deadlock"));
             Signals.FailureKind = EHaybaMCPFailureKind::PolicyBlocked;
             Signals.Code = Signals.bCrashGuardRejected ? TEXT("crash_guard_blocked") : TEXT("policy_blocked");
-            // Stable HCR codes are emitted only by guards that reject before
-            // Execute. Generic handler prose is never allowed to make this
-            // claim, but a named crash guard is an authoritative phase fact.
+            // Stable HCR codes other than HCR-NATIVE-* are emitted only by
+            // guards that reject before Execute.
             Signals.Phase = EHaybaMCPCommandPhase::Preflight;
             Signals.MutationStatus = EHaybaMCPMutationStatus::NotStarted;
         }
@@ -396,6 +471,31 @@ namespace
     }
 }
 
+// Exact approvals deliberately use their own collision-resistant digest. The
+// general execution journal's older SHA-1 hash is not an authorization token.
+namespace HaybaMCPExactApproval
+{
+    FString HashBinding(const FString& Domain, const FString& First, const FString& Second)
+    {
+        FBlake3 Hasher;
+        HashExactUtf8Field(Hasher, Domain);
+        HashExactUtf8Field(Hasher, First);
+        HashExactUtf8Field(Hasher, Second);
+        return LexToString(Hasher.Finalize());
+    }
+
+    FString HashOperation(const TSharedPtr<FJsonObject>& Operation)
+    {
+        if (!Operation.IsValid()) return FString();
+        FString CanonicalJson;
+        TSharedRef<FExactJsonWriter> Writer = TJsonWriterFactory<TCHAR,
+            TCondensedJsonPrintPolicy<TCHAR>>::Create(&CanonicalJson);
+        WriteExactSortedJson(MakeShared<FJsonValueObject>(Operation), Writer.Get());
+        Writer->Close();
+        return HashBinding(TEXT("native-exact-operation-v2"), CanonicalJson, FString());
+    }
+}
+
 static bool IsDestructiveCommand(const FString& Cmd)
 {
     // Plan-Mode gate coverage. Audited (2026-07-04) against every mutating
@@ -427,6 +527,9 @@ static bool IsDestructiveCommand(const FString& Cmd)
     static const TSet<FString> DestructiveCommands = {
         // Arbitrary code / wildcard invocation
         TEXT("python_run"),
+        // Runs any number of commands under one lease (each step is gated
+        // again unless the batch itself was approved). See docs/adr/0010.
+        TEXT("editor_batch"),
         TEXT("actor_call_function"),
         TEXT("editor_run_console_command"),
         TEXT("editor_save_all_and_quit"),
@@ -436,6 +539,7 @@ static bool IsDestructiveCommand(const FString& Cmd)
         // Actor lifecycle + mutation
         TEXT("actor_spawn"),
         TEXT("actor_delete"),
+        TEXT("actor_transform"),
         TEXT("actor_duplicate"),
         TEXT("actor_batch_spawn"),
         TEXT("actor_spawn_from_asset"),
@@ -605,6 +709,18 @@ bool FHaybaMCPCommandHandler::ShouldCreateEditorTransaction(const FString& Cmd)
     if (Cmd == TEXT("level_save")) return false;
 
     return true;
+}
+
+bool FHaybaMCPCommandHandler::IsPlanGatedCommand(const FString& Cmd)
+{
+    return IsDestructiveCommand(Cmd);
+}
+
+bool FHaybaMCPCommandHandler::ShouldCreateEditorTransaction(
+    const FString& Cmd, const TSharedPtr<FJsonObject>& Params)
+{
+    return ShouldCreateEditorTransaction(Cmd)
+        && HaybaMCPAccess::ParamsAllowEditorTransaction(Cmd, Params);
 }
 
 static void MaybeShowPlanModePrompt()
@@ -816,6 +932,126 @@ static AActor* FindActorByLabel_GameThread(const FString& Label)
     return nullptr;
 }
 
+namespace
+{
+    // No object-sized buffer: every serialized field contributes to a strong
+    // digest as it is written. An unusually large target fails closed before
+    // the next chunk is accepted, keeping approval capture bounded.
+    class FApprovalHashArchive final : public FArchiveUObject
+    {
+    public:
+        FApprovalHashArchive() { SetIsSaving(true); }
+
+        virtual void Serialize(void* Data, int64 Length) override
+        {
+            if (Length < 0 || uint64(Length) > MaxBytes - HashedBytes)
+            {
+                bWithinLimit = false;
+                SetError();
+                return;
+            }
+            Hasher.Update(&Length, sizeof(Length));
+            if (Length > 0) Hasher.Update(Data, uint64(Length));
+            HashedBytes += uint64(Length);
+        }
+
+        virtual FArchive& operator<<(FName& Name) override
+        {
+            AddString(Name.ToString());
+            return *this;
+        }
+
+        virtual FArchive& operator<<(UObject*& Object) override
+        {
+            AddString(GetPathNameSafe(Object));
+            return *this;
+        }
+
+        virtual FString GetArchiveName() const override { return TEXT("FApprovalHashArchive"); }
+        bool IsWithinLimit() const { return bWithinLimit && !IsError(); }
+        FString Fingerprint() const { return LexToString(Hasher.Finalize()); }
+
+    private:
+        void AddString(const FString& Value)
+        {
+            FTCHARToUTF8 Utf8(*Value);
+            Serialize(const_cast<ANSICHAR*>(Utf8.Get()), Utf8.Length());
+        }
+
+        static constexpr uint64 MaxBytes = 8ull * 1024ull * 1024ull;
+        FBlake3 Hasher;
+        uint64 HashedBytes = 0;
+        bool bWithinLimit = true;
+    };
+}
+
+bool FHaybaMCPCommandHandler::CaptureExactApprovalTarget(const FString& Cmd,
+    const TSharedPtr<FJsonObject>& Params, FString& OutTargetRef, FString& OutFingerprint)
+{
+    check(IsInGameThread());
+    OutTargetRef.Empty();
+    OutFingerprint.Empty();
+    // Only operations with a uniquely resolvable existing actor are reviewable
+    // in this slice. Generic Python, asset writes, batches, and creates need
+    // operation-specific target inventories before they can be approved.
+    const bool bNameOrLabel = Cmd == TEXT("actor_transform") || Cmd == TEXT("actor_delete");
+    const bool bNameOnly = Cmd == TEXT("actor_set_properties") || Cmd == TEXT("actor_tag") ||
+        Cmd == TEXT("actor_set_visibility");
+    if (!bNameOrLabel && !bNameOnly) return false;
+    if (!Params.IsValid() || !GEditor || Params->HasField(TEXT("actorId"))) return false;
+    FString ActorId;
+    Params->TryGetStringField(TEXT("actor_id"), ActorId);
+    if (ActorId.IsEmpty()) return false;
+    UWorld* World = GEditor->GetEditorWorldContext().World();
+    if (!World) return false;
+    AActor* Target = nullptr;
+    for (TActorIterator<AActor> It(World); It; ++It)
+    {
+        if (It->GetName() != ActorId && (!bNameOrLabel || It->GetActorLabel() != ActorId)) continue;
+        if (Target) return false; // Ambiguous labels are never stable references.
+        Target = *It;
+    }
+    if (!Target) return false;
+
+    OutTargetRef = Target->GetPathName() + TEXT("#") + Target->GetActorGuid().ToString(EGuidFormats::Digits);
+    return FingerprintActorForApproval(Target, OutFingerprint);
+}
+
+bool FHaybaMCPCommandHandler::FingerprintActorForApproval(AActor* Target, FString& OutFingerprint)
+{
+    OutFingerprint.Empty();
+    if (!Target || !IsInGameThread()) return false;
+    TArray<UActorComponent*> Components;
+    Target->GetComponents(Components);
+    if (Components.Num() > 256) return false;
+    FApprovalHashArchive Archive;
+    Target->Serialize(Archive);
+    if (!Archive.IsWithinLimit()) return false;
+    FString VisibleState = Target->GetPathName() + TEXT("|") + Target->GetActorGuid().ToString() +
+        TEXT("|") + Target->GetActorTransform().ToString() +
+        FString::Printf(TEXT("|hidden:%d:%d"), Target->IsHidden(), Target->IsTemporarilyHiddenInEditor());
+    if (Target->Tags.Num() > 256 || VisibleState.Len() > 64 * 1024) return false;
+    for (const FName Tag : Target->Tags)
+    {
+        VisibleState += TEXT("|tag:") + Tag.ToString();
+        if (VisibleState.Len() > 64 * 1024) return false;
+    }
+    const FTCHARToUTF8 VisibleUtf8(*VisibleState);
+    Archive.Serialize(const_cast<ANSICHAR*>(VisibleUtf8.Get()), VisibleUtf8.Length());
+    Components.Sort([](const UActorComponent& A, const UActorComponent& B)
+    {
+        return A.GetPathName() < B.GetPathName();
+    });
+    for (UActorComponent* Component : Components)
+    {
+        if (!Component) continue;
+        Component->Serialize(Archive);
+        if (!Archive.IsWithinLimit()) return false;
+    }
+    OutFingerprint = Archive.Fingerprint();
+    return true;
+}
+
 /**
  * Snapshot relevant fields of an actor BEFORE a destructive command runs.
  * Returns a map of "Property" -> "Before-value string".
@@ -1009,8 +1245,13 @@ static void PushDiffEntries(const FString& Cmd, const TSharedPtr<FJsonObject>& P
 static FString HandleProposePlan(const FString& Id, const TSharedPtr<FJsonObject>& Params)
 {
     TArray<FHaybaPlanStep> Steps;
+    TArray<FHaybaExternalPlanStep> ReviewSteps;
     const TArray<TSharedPtr<FJsonValue>>* StepsArr = nullptr;
-    if (Params.IsValid() && Params->TryGetArrayField(TEXT("steps"), StepsArr))
+    if (!Params.IsValid() || !Params->TryGetArrayField(TEXT("steps"), StepsArr) ||
+        !StepsArr || StepsArr->IsEmpty() || StepsArr->Num() > 16)
+        return FHaybaMCPCommandHandler::MakeErrorResponse(Id,
+            TEXT("A plan needs 1–16 concrete steps."), TEXT("hayba_propose_plan"), false, true);
+    if (StepsArr)
     {
         for (int32 i = 0; i < StepsArr->Num(); i++)
         {
@@ -1031,14 +1272,34 @@ static FString HandleProposePlan(const FString& Id, const TSharedPtr<FJsonObject
             {
                 S.Title = Val->AsString();
             }
+            S.Title.TrimStartAndEndInline();
+            if (S.Title.IsEmpty() || S.Title.Len() > 300 ||
+                S.Description.Len() > 600 || S.Tool.Len() > 80)
+                return FHaybaMCPCommandHandler::MakeErrorResponse(Id,
+                    TEXT("Each plan step needs a title within the review limits."),
+                    TEXT("hayba_propose_plan"), false, true);
             Steps.Add(S);
+            FHaybaExternalPlanStep Review;
+            Review.Title = S.Title;
+            Review.Description = S.Description;
+            Review.Tool = S.Tool;
+            ReviewSteps.Add(MoveTemp(Review));
         }
     }
     int32 AwaitSecs = 30;
     if (Params.IsValid()) Params->TryGetNumberField(TEXT("await_seconds"), AwaitSecs);
 
+    const FString Proposer = FHaybaMCPLeaseManager::Get().EffectiveOwner();
     if (FHaybaMCPModule* M = FModuleManager::GetModulePtr<FHaybaMCPModule>("HaybaMCPToolkit"))
     {
+        // Plan approval is per owner: only the agent that proposed this plan
+        // may spend the Approve click. A different agent's proposal must not
+        // inherit an approval the user gave someone else.
+        if (M->PlanOwner != Proposer)
+        {
+            M->bPlanApproved = false;
+        }
+        M->PlanOwner = Proposer;
         TArray<FString> Summary;
         for (const FHaybaPlanStep& Step : Steps)
         {
@@ -1046,12 +1307,15 @@ static FString HandleProposePlan(const FString& Id, const TSharedPtr<FJsonObject
                 Step.Tool.IsEmpty() ? TEXT("") : TEXT(" — "), *Step.Tool,
                 Step.Description.IsEmpty() ? TEXT("") : TEXT("\n"), *Step.Description));
         }
-        M->ProposeExternalPlan(FString::Join(Summary, TEXT("\n\n")));
+        M->ProposeExternalPlan(FString::Join(Summary, TEXT("\n\n")), MoveTemp(ReviewSteps));
     }
 
     auto Data = MakeShared<FJsonObject>();
     Data->SetBoolField(TEXT("received"), true);
     Data->SetNumberField(TEXT("step_count"), Steps.Num());
+    Data->SetStringField(TEXT("plan_owner"), Proposer);
+    if (const FHaybaMCPModule* M = FModuleManager::GetModulePtr<FHaybaMCPModule>("HaybaMCPToolkit"))
+        Data->SetStringField(TEXT("plan_id"), M->PendingExternalPlanId);
     return FHaybaMCPCommandHandler::MakeOkResponse(Id, Data, TEXT("hayba_propose_plan"));
 }
 
@@ -1066,6 +1330,189 @@ static FString JsonToString(const TSharedRef<FJsonObject>& Obj)
     return Output;
 }
 
+// One refusal builder for every router gate (spec R2, §4.1). Explicit advisory
+// signals, never SignalsForError: no refusal is classified by its words.
+struct FGateRefusal
+{
+    FString Code;                        // top-level `code`
+    FString Message;                     // `error`
+    FString DetailKey;                   // "editor_health" | "pie" | "busy" | "lease"
+    TSharedPtr<FJsonObject> Detail;
+    EHaybaMCPFailureKind FailureKind = EHaybaMCPFailureKind::PolicyBlocked;
+    bool bRetryUnchangedSafe = false;
+    bool bEditorUnsafe = false;
+    TArray<FString> MandatoryRecovery;   // phase is always Preflight, mutation NotStarted
+};
+
+static FString MakeGateRefusal(const FString& Id, const FString& Cmd, const FGateRefusal& Refusal)
+{
+    TSharedRef<FJsonObject> Response = MakeShared<FJsonObject>();
+    Response->SetStringField(TEXT("id"), Id);
+    Response->SetBoolField(TEXT("ok"), false);
+    Response->SetStringField(TEXT("code"), Refusal.Code);
+    Response->SetStringField(TEXT("error"), Refusal.Message);
+    if (!Refusal.DetailKey.IsEmpty() && Refusal.Detail.IsValid())
+    {
+        Response->SetObjectField(Refusal.DetailKey, Refusal.Detail.ToSharedRef());
+    }
+    FHaybaMCPAdvisorySignals Signals;
+    Signals.Operation = Cmd;
+    Signals.bOperationSucceeded = false;
+    Signals.Error = Refusal.Message;
+    Signals.Code = Refusal.Code;
+    Signals.FailureKind = Refusal.FailureKind;
+    Signals.Phase = EHaybaMCPCommandPhase::Preflight;
+    Signals.MutationStatus = EHaybaMCPMutationStatus::NotStarted;
+    Signals.bRetryUnchangedSafe = Refusal.bRetryUnchangedSafe;
+    Signals.bEditorUnsafe = Refusal.bEditorUnsafe;
+    Signals.MandatoryRecovery = Refusal.MandatoryRecovery;
+    HaybaMCPAdvisory::ApplyToResponse(Response, Signals, FHaybaMCPSettings::Get().AdvisoryVerbosity);
+    return JsonToString(Response);
+}
+
+/** Slots 1-3 refusal Warnings: at most once per key every 30 s, with the suppressed count. */
+static FWarningLimiter& GateRefusalLimiter()
+{
+    static FWarningLimiter* Limiter = new FWarningLimiter([]() { return FPlatformTime::Seconds(); });
+    return *Limiter;
+}
+
+/** Print every closed window's swallowed count. Call before each Note (R-18). */
+static void LogDrainedGateRefusals()
+{
+    for (const FWarningLimiter::FDrained& Drained : GateRefusalLimiter().DrainExpired())
+    {
+        TArray<FString> Parts;
+        Drained.Key.ParseIntoArray(Parts, TEXT("|"), false);
+        UE_LOG(LogHaybaMCPCmd, Warning, TEXT("[%s] %s%s: owner='%s' cmd='%s'"),
+            Parts.IsValidIndex(0) ? *Parts[0] : TEXT("gate"),
+            Parts.IsValidIndex(1) ? *Parts[1] : *Drained.Key,
+            *FWarningLimiter::RepeatedMoreTimes(Drained.Suppressed),
+            Parts.IsValidIndex(2) ? *Parts[2] : TEXT(""),
+            Parts.IsValidIndex(3) ? *Parts[3] : TEXT(""));
+    }
+}
+
+/** pie_active Warning: once per (owner, command, session kind) per 30 s through
+ *  the shared gate limiter. A user PIE during a bpgraph build (25-35 calls/s)
+ *  would otherwise log every refused call (R-18: drain at every log site). */
+static void LogPieActiveRefusal(const FString& Cmd, const FString& Caller, const HaybaMCPState::FPieState& Pie)
+{
+    LogDrainedGateRefusals();   // T1.3: one drained-line format for every gate
+    const FWarningLimiter::FHit Hit = GateRefusalLimiter().Note(FWarningLimiter::MakeKey(
+        TEXT("pie"), TEXT("pie_active"), Caller, Cmd,
+        Pie.Kind == HaybaMCPState::EPieKind::User ? TEXT("user") : TEXT("agent")));
+    if (!Hit.bLog)
+    {
+        return;
+    }
+    UE_LOG(LogHaybaMCPCmd, Warning, TEXT("pie_active: refused '%s' from '%s' during %s PIE (%s)%s"),
+        *Cmd, *Caller, *HaybaMCPState::LexPie(Pie), HaybaMCPState::LexPiePhase(Pie.Phase),
+        *FWarningLimiter::PreviousWindowSuffix(Hit.SuppressedInPreviousWindow));
+}
+
+/** LeaseEnforcement as slot 3 reads it: Off, Advisory, or anything stronger
+ *  (Enforced; EnforcedForWrites once T8 adds it), which refuses. Keyed on
+ *  the two weak values, so a mode inserted later refuses without an edit here. */
+static HaybaMCPState::EBusyMode CurrentAssetBusyMode()
+{
+    const UHaybaMCPDeveloperSettings* Settings = GetDefault<UHaybaMCPDeveloperSettings>();
+    const EHaybaMCPLeaseEnforcement Mode = Settings ? Settings->LeaseEnforcement : EHaybaMCPLeaseEnforcement::Advisory;
+    if (Mode == EHaybaMCPLeaseEnforcement::Off) return HaybaMCPState::EBusyMode::Off;
+    if (Mode == EHaybaMCPLeaseEnforcement::Advisory) return HaybaMCPState::EBusyMode::Advisory;
+    return HaybaMCPState::EBusyMode::Refusing;
+}
+
+/** Slot 3's Warning lines go through the shared gate limiter: at most one line
+ *  per key per 30 s window. Every call first drains closed windows through
+ *  T1.3's LogDrainedGateRefusals(), so the "repeated N more times" line is
+ *  not lost when a storm stops (R-18) and every gate shares one format. */
+static void LogAssetBusy(const FString& Key, const FString& Line)
+{
+    LogDrainedGateRefusals();
+    const FWarningLimiter::FHit Hit = GateRefusalLimiter().Note(Key);
+    if (Hit.bLog)
+    {
+        UE_LOG(LogHaybaMCPCmd, Warning, TEXT("%s%s"), *Line, *FWarningLimiter::PreviousWindowSuffix(Hit.SuppressedInPreviousWindow));
+    }
+}
+
+/** Slot 1 (ADR-0011): the editor is unsafe and Cmd is not in CommandsAllowedWhileUnsafe(GateCause). */
+static FString RefuseWhileUnsafe(const FString& Id, const FString& Cmd, const FString& Owner, HaybaMCPHealth::ECause GateCause)
+{
+    FHaybaEditorHealth::NoteRefusal();
+    const FHaybaEditorHealth::FSnapshot Health = FHaybaEditorHealth::Snapshot();
+
+    FGateRefusal Refusal;
+    Refusal.Code = TEXT("editor_unsafe_restart_required");
+    Refusal.Message = HaybaMCPHealth::UnsafeRefusalMessage(Cmd, Health.FaultedAtUtc, Health.FaultedCommand, Health.Cause, GateCause);
+    Refusal.DetailKey = TEXT("editor_health");
+    Refusal.Detail = FHaybaEditorHealth::MakeHealthJson();
+    Refusal.FailureKind = EHaybaMCPFailureKind::PolicyBlocked;
+    Refusal.bEditorUnsafe = true;
+    Refusal.MandatoryRecovery.Add(TEXT("Fault contained; restart the editor before further work."));
+
+    if (Health.RefusedCount == 1)
+    {
+        UE_LOG(LogHaybaMCPHealth, Error,
+            TEXT("editor_unsafe_restart_required: refused '%s' (id %s, owner %s); first refusal since the native fault. Later refusals log at Warning, at most once per command every 30 s."),
+            *Cmd, *Id, *Owner);
+    }
+    else
+    {
+        LogDrainedGateRefusals();
+        const FWarningLimiter::FHit Hit = GateRefusalLimiter().Note(
+            FWarningLimiter::MakeKey(TEXT("gate"), Refusal.Code, FString(), Cmd));
+        if (Hit.bLog)
+        {
+            UE_LOG(LogHaybaMCPHealth, Warning, TEXT("editor_unsafe_restart_required: refused '%s' (id %s, owner %s)%s"),
+                *Cmd, *Id, *Owner, *FWarningLimiter::PreviousWindowSuffix(Hit.SuppressedInPreviousWindow));
+        }
+    }
+    return MakeGateRefusal(Id, Cmd, Refusal);
+}
+
+/** The command that faulted (or whose own guard caught a fault) answers this, and nothing else runs. */
+static FString MakeNativeFaultContained(const FString& Id, const FString& Cmd, const FString& Message, const TSharedPtr<FJsonObject>& Data)
+{
+    const FHaybaEditorHealth::FSnapshot Health = FHaybaEditorHealth::Snapshot();
+    TSharedRef<FJsonObject> Response = MakeShared<FJsonObject>();
+    Response->SetStringField(TEXT("id"), Id);
+    Response->SetBoolField(TEXT("ok"), false);
+    Response->SetStringField(TEXT("code"), TEXT("native_fault_contained"));
+    Response->SetStringField(TEXT("error"), Message);
+    Response->SetObjectField(TEXT("editor_health"), FHaybaEditorHealth::MakeHealthJson());
+    // data is always present (spec 4.2: the fault code is in the error text and
+    // in data.policy_code). It starts as a copy of what the handler returned, so
+    // the handler's own fields survive; the fault facts are written last, so a
+    // handler that returned ok:true after its own guard caught a fault is overruled.
+    TSharedRef<FJsonObject> FaultData = MakeShared<FJsonObject>();
+    if (Data.IsValid())
+    {
+        for (const auto& Field : Data->Values)
+        {
+            FaultData->SetField(FString(*Field.Key), Field.Value);
+        }
+    }
+    FaultData->SetBoolField(TEXT("ok"), false);
+    FaultData->SetStringField(TEXT("policy_code"), HaybaMCPHealth::FaultCodeFor(Health.LastCause));
+    FaultData->SetStringField(TEXT("mutation_status"), TEXT("unknown"));
+    FaultData->SetBoolField(TEXT("may_have_executed"), true);
+    Response->SetObjectField(TEXT("data"), FaultData);
+    FHaybaMCPAdvisorySignals Signals;
+    Signals.Operation = Cmd;
+    Signals.bOperationSucceeded = false;
+    Signals.Error = Message;
+    Signals.Code = TEXT("native_fault_contained");
+    Signals.FailureKind = EHaybaMCPFailureKind::SessionSuspect;
+    Signals.bStructuredException = true;
+    Signals.Phase = EHaybaMCPCommandPhase::Execute;
+    Signals.MutationStatus = EHaybaMCPMutationStatus::Unknown;
+    Signals.bEditorUnsafe = true;
+    HaybaMCPAdvisory::ApplyToResponse(Response, Signals, FHaybaMCPSettings::Get().AdvisoryVerbosity);
+    return JsonToString(Response);
+}
+
 // ProcessCommand can be called directly by tests or future integrations, but
 // all editor-facing dispatch must stay on the game thread. This response is
 // intentionally a fixed literal: the refusal must not parse caller-controlled
@@ -1073,6 +1520,15 @@ static FString JsonToString(const TSharedRef<FJsonObject>& Obj)
 static FString MakeOffGameThreadResponse()
 {
     return TEXT("{\"id\":\"\",\"ok\":false,\"error\":\"Request rejected: Hayba command dispatch must run on the Unreal game thread; no operation was started.\",\"data\":{}}");
+}
+
+/** Handler refusal codes that travel as data.code and are promoted to the
+ *  top-level envelope code (R3: no new FHaybaHandlerResult field). T5 adds
+ *  package_read_only. */
+static bool IsWireRefusalCode(const FString& Code)
+{
+    static const TSet<FString> Codes = { TEXT("pie_blocked"), TEXT("package_read_only") };
+    return Codes.Contains(Code);
 }
 
 static FString ShapeOkResponse(
@@ -1086,6 +1542,14 @@ static FString ShapeOkResponse(
     if (!Signals.bOperationSucceeded && !Signals.Error.IsEmpty())
     {
         Response->SetStringField(TEXT("error"), Signals.Error);
+    }
+    if (!Signals.bOperationSucceeded && Data.IsValid())
+    {
+        FString DataCode;
+        if (Data->TryGetStringField(TEXT("code"), DataCode) && IsWireRefusalCode(DataCode))
+        {
+            Response->SetStringField(TEXT("code"), DataCode);
+        }
     }
     Response->SetObjectField(TEXT("data"),
         Data.IsValid() ? Data.ToSharedRef() : MakeShared<FJsonObject>());
@@ -1150,7 +1614,37 @@ TArray<FString> FHaybaMCPCommandHandler::GetAllCommands() const
     return Out;
 }
 
+void FHaybaMCPCommandHandler::NotifyConnectionClosed(int32 ConnId)
+{
+    FHaybaMCPLeaseManager::Get().OnConnectionClosed(ConnId);
+    if (FHaybaMCPModule* M = FModuleManager::GetModulePtr<FHaybaMCPModule>("HaybaMCPToolkit"))
+    {
+        if ((M->PendingExternalOperation.IsValid() && M->PendingExternalOperation.ConnectionId == ConnId) ||
+            (M->ApprovedExternalOperation.IsValid() && M->ApprovedExternalOperation.ConnectionId == ConnId))
+            M->InvalidateExternalApproval();
+    }
+}
+
 FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
+{
+    return ProcessCommand(CommandJson, 0);
+}
+
+/** Add top-level fields to a finished response envelope (rare path: only a
+ *  lease conflict or warning pays for the re-parse). */
+static FString AddEnvelopeFields(const FString& Response, TFunctionRef<void(FJsonObject&)> Apply)
+{
+    TSharedPtr<FJsonObject> Envelope;
+    TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(Response);
+    if (!FJsonSerializer::Deserialize(Reader, Envelope) || !Envelope.IsValid())
+    {
+        return Response;
+    }
+    Apply(*Envelope);
+    return JsonToString(Envelope.ToSharedRef());
+}
+
+FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson, int32 ConnId)
 {
     // This must remain the first branch. Even JSON parsing and the normal
     // response helpers are outside the supported off-thread contract.
@@ -1158,6 +1652,53 @@ FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
     {
         return MakeOffGameThreadResponse();
     }
+
+    // Publish who is calling for the whole dispatch: lease_acquire, python_run
+    // deadline_s and the Plan-Mode gate all ask. Owner and lease_id are
+    // filled in once the envelope has parsed.
+    FHaybaMCPRequestContext Context;
+    Context.ConnId = ConnId;
+    Context.Owner = FHaybaMCPLeaseManager::ResolveOwner(nullptr, ConnId);
+    return ProcessWithContext(CommandJson, Context);
+}
+
+FString FHaybaMCPCommandHandler::ProcessBatchStep(
+    const FString& CommandJson, const FString& BatchJobId, bool bPlanPreApproved, const FString& BatchOwner)
+{
+    if (!IsInGameThread())
+    {
+        return MakeOffGameThreadResponse();
+    }
+    FHaybaMCPRequestContext Context;
+    Context.Owner = BatchOwner;
+    Context.BatchJobId = BatchJobId;
+    Context.bPlanPreApproved = bPlanPreApproved;
+    return ProcessWithContext(CommandJson, Context);
+}
+
+FString FHaybaMCPCommandHandler::ProcessWithContext(const FString& CommandJson, FHaybaMCPRequestContext& Context)
+{
+    FString Response;
+    {
+        FHaybaMCPLeaseManager::FScope Scope(Context);
+        Response = ProcessCommandInContext(CommandJson);
+    }
+    if (Context.LeaseWarning.IsValid() || Context.StateWarning.IsValid())
+    {
+        // One re-parse for both warnings. lease_warning first, then state_warning (P0 T3).
+        const TSharedPtr<FJsonObject> LeaseWarning = Context.LeaseWarning;
+        const TSharedPtr<FJsonObject> StateWarning = Context.StateWarning;
+        Response = AddEnvelopeFields(Response, [&LeaseWarning, &StateWarning](FJsonObject& Envelope)
+        {
+            if (LeaseWarning.IsValid()) Envelope.SetObjectField(TEXT("lease_warning"), LeaseWarning);
+            if (StateWarning.IsValid()) Envelope.SetObjectField(TEXT("state_warning"), StateWarning);
+        });
+    }
+    return Response;
+}
+
+FString FHaybaMCPCommandHandler::ProcessCommandInContext(const FString& CommandJson)
+{
 
     TSharedPtr<FJsonObject> Parsed;
     TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(CommandJson);
@@ -1202,13 +1743,211 @@ FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
     }
     if (!Params.IsValid()) Params = MakeShared<FJsonObject>();
 
-    UE_LOG(LogHaybaMCPCmd, Log, TEXT("Processing command: %s (id: %s)"), *Cmd, *Id);
+    // Owner first (T9): the envelope owner, else the connection's adopted owner,
+    // else conn:<n> / local. The envelope lease is classified, never an identity.
+    FHaybaMCPLeaseManager& Leases = FHaybaMCPLeaseManager::Get();
+    FString EnvelopeOwner;
+    FString EnvelopeLease;
+    Parsed->TryGetStringField(TEXT("owner"), EnvelopeOwner);
+    Parsed->TryGetStringField(TEXT("lease"), EnvelopeLease);
+    // Only literal true adds a gate. False, missing, or malformed values never
+    // disable the project-wide Plan Mode setting.
+    bool bRequireExactReview = false;
+    Parsed->TryGetBoolField(TEXT("require_exact_review"), bRequireExactReview);
+    FHaybaMCPRequestContext* CallerContext = Leases.Current();
+    check(CallerContext); // ProcessWithContext always publishes one.
+    CallerContext->LeaseToken = EnvelopeLease;
+    if (CallerContext->BatchJobId.IsEmpty())
+    {
+        CallerContext->Caller = FHaybaMCPLeaseManager::ResolveCaller(EnvelopeOwner, CallerContext->ConnId, EnvelopeLease);
+        CallerContext->Owner = CallerContext->Caller.Owner;
+    }
+    else
+    {
+        // A batch step acts as its batch's owner, which editor_batch checked when it
+        // accepted the batch (R-27). ProcessBatchStep set Context.Owner.
+        CallerContext->Caller = FHaybaMCPLeaseManager::ResolveBatchCaller(CallerContext->Owner, EnvelopeLease);
+    }
+    // T6.2's flag stays on the context; from T9 on it is derived from the resolution.
+    CallerContext->bOwnerFromEnvelope = FHaybaMCPLeaseManager::IsIdentifiedCaller(CallerContext->Caller);
+
+    UE_LOG(LogHaybaMCPCmd, Log, TEXT("Processing command: %s (id: %s, owner: %s, via: %s, conn: %d, lease: %s%s)"),
+        *Cmd, *Id, *CallerContext->Owner, *CallerContext->Caller.Via, CallerContext->ConnId,
+        LexLeaseRef(CallerContext->Caller.LeaseRef),
+        CallerContext->BatchJobId.IsEmpty() ? TEXT("") : *FString::Printf(TEXT(", batch: %s"), *CallerContext->BatchJobId.Left(8)));
 
     // Auth gate
     FString AuthReason;
     if (!FHaybaMCPSecurityManager::Get().ValidateRequest(Parsed, AuthReason))
     {
         return MakeErrorResponse(Id, AuthReason, Cmd, false, true);
+    }
+
+    // Slot 0 (T9): an envelope may not claim a synthetic owner that is not the
+    // caller's own. Skipped for batch steps: their owner was checked at submit.
+    if (CallerContext->BatchJobId.IsEmpty() && CallerContext->Caller.bReservedViolation)
+    {
+        const FString Claimed = HaybaMCPEnforcement::SanitizeOwner(EnvelopeOwner);
+        FGateRefusal R;
+        R.Code = TEXT("owner_reserved");
+        R.Message = FString::Printf(
+            TEXT("owner_reserved: '%s' was not run: the envelope owner '%s' is reserved for %s, and this request came from %s. ")
+            TEXT("Send your own owner (HAYBA_AGENT_ID), or no owner to act as '%s'."),
+            *Cmd, *Claimed,
+            Claimed == TEXT("local") ? TEXT("in-process callers") : TEXT("the connection it names"),
+            CallerContext->ConnId > 0 ? *FString::Printf(TEXT("connection %d"), CallerContext->ConnId) : TEXT("an in-process caller"),
+            *CallerContext->Owner);
+        TSharedPtr<FJsonObject> Detail = MakeShared<FJsonObject>();
+        Detail->SetStringField(TEXT("claimed_owner"), Claimed);
+        Detail->SetNumberField(TEXT("conn"), CallerContext->ConnId);
+        Detail->SetStringField(TEXT("caller_owner"), CallerContext->Owner);
+        R.DetailKey = TEXT("owner");
+        R.Detail = Detail;
+        R.FailureKind = EHaybaMCPFailureKind::InputRejected;
+        // The router rule for every gate log site (R-18): drain first, then Note,
+        // and the one suffix format of FWarningLimiter.
+        LogDrainedGateRefusals();
+        const FWarningLimiter::FHit Hit = GateRefusalLimiter().Note(
+            FWarningLimiter::MakeKey(TEXT("gate"), TEXT("owner_reserved"), CallerContext->Owner, Cmd, Claimed));
+        if (Hit.bLog)
+        {
+            UE_LOG(LogHaybaMCPCmd, Warning, TEXT("%s%s"), *R.Message,
+                *FWarningLimiter::PreviousWindowSuffix(Hit.SuppressedInPreviousWindow));
+        }
+        return MakeGateRefusal(Id, Cmd, R);
+    }
+
+    // Presence is owner-first and authenticated. Synthetic identities and
+    // refused reserved claims do not prove an agent is connected.
+    Leases.NoteAuthenticatedCaller(CallerContext->Owner, CallerContext->ConnId,
+        FHaybaMCPLeaseManager::IsIdentifiedCaller(CallerContext->Caller));
+
+    // Slot 1 (ADR-0011): a contained native fault left this process unsafe.
+    // Everything outside CommandsAllowedWhileUnsafe(most severe cause so far)
+    // is refused; only an editor restart clears it. Before the lease gate, so
+    // the refusal never depends on who holds what. Batch steps and in-process
+    // callers come through here too.
+    if (FHaybaEditorHealth::IsUnsafe())
+    {
+        const HaybaMCPHealth::ECause GateCause = FHaybaEditorHealth::GateCause();
+        if (!HaybaMCPHealth::IsCommandAllowedWhileUnsafe(Cmd, GateCause))
+        {
+            const FHaybaMCPRequestContext* GateContext = Leases.Current();
+            return RefuseWhileUnsafe(Id, Cmd, GateContext ? GateContext->Owner : FString(TEXT("local")), GateCause);
+        }
+    }
+
+    // Slot 2: pie_active (docs/adr/0012). PIE is a state, not a lock. While a
+    // session runs or is queued only the named read/control/observation sets
+    // run; a drive command runs only for the agent that owns the session;
+    // editor_stop_pie of an agent PIE runs for anyone. A command authorized
+    // here as a PIE command skips the lease gate below (R13).
+    bool bPieAuthorized = false;
+    {
+        const HaybaMCPState::FPieState Pie = FHaybaMCPEditorState::Get().CurrentPie();
+        if (Pie.Kind != HaybaMCPState::EPieKind::None)
+        {
+            const FString Caller = Leases.EffectiveOwner();
+            const HaybaMCPState::FPieVerdict PieVerdict = HaybaMCPState::CheckPie(Pie, Cmd, Caller);
+            if (!PieVerdict.bAllow)
+            {
+                const double Now = FPlatformTime::Seconds();
+                TSharedPtr<FJsonObject> PieDetail = MakeShared<FJsonObject>();
+                PieDetail->SetStringField(TEXT("pie"), HaybaMCPState::LexPie(Pie));
+                PieDetail->SetStringField(TEXT("phase"), HaybaMCPState::LexPiePhase(Pie.Phase));
+                PieDetail->SetBoolField(TEXT("simulating"), Pie.bSimulating);
+                PieDetail->SetNumberField(TEXT("since_s"), FMath::Max(0.0, Now - Pie.Since));
+                PieDetail->SetStringField(TEXT("command"), Cmd);
+                PieDetail->SetStringField(TEXT("caller_owner"), Caller);
+                PieDetail->SetStringField(TEXT("rule"), HaybaMCPState::LexPieRule(PieVerdict.Rule));
+                LogPieActiveRefusal(Cmd, Caller, Pie);
+
+                FGateRefusal Refusal;
+                Refusal.Code = TEXT("pie_active");
+                Refusal.Message = HaybaMCPState::FormatPieActiveMessage(Pie, Cmd, PieVerdict.Rule, Now);
+                Refusal.DetailKey = TEXT("pie");
+                Refusal.Detail = PieDetail;
+                Refusal.FailureKind = EHaybaMCPFailureKind::Retryable;
+                Refusal.bRetryUnchangedSafe = true;
+                return MakeGateRefusal(Id, Cmd, Refusal);
+            }
+            bPieAuthorized = PieVerdict.bAuthorizedAsPie;
+            if (PieVerdict.bNonOwnerStop)
+            {
+                UE_LOG(LogHaybaMCPCmd, Warning, TEXT("editor_stop_pie: '%s' stopped an agent PIE owned by '%s'"), *Caller, *Pie.Owner);
+            }
+        }
+    }
+
+    // Slot 3: asset_busy (P0 T3; R10: before the lease gate). A build marks
+    // its assets busy by holding asset:<path> X leases (D5).
+    //  - editor_start_pie / editor_save_all_and_quit are refused while ANY
+    //    owner holds one, the caller included, in every mode except Off.
+    //  - Compile/save of one asset is refused while ANOTHER owner holds X on
+    //    it, under a refusing LeaseEnforcement. Under Advisory it runs and
+    //    the reply carries state_warning.
+    {
+        const HaybaMCPState::FBusyQuery BusyQuery = HaybaMCPState::BusyQueryFor(Cmd, Params);
+        const HaybaMCPState::EBusyMode BusyMode = CurrentAssetBusyMode();
+        if (!BusyQuery.IsEmpty() && BusyMode != HaybaMCPState::EBusyMode::Off)
+        {
+            const FString BusyCaller = Leases.EffectiveOwner();
+            const TArray<HaybaMCPState::FBusyAsset> BusyAssets = BusyQuery.bAnyBusy
+                ? FHaybaMCPEditorState::Get().BuildingAssets()
+                : FHaybaMCPEditorState::Get().BusyAssetsFor(BusyQuery.AssetKeys, BusyCaller);
+            const HaybaMCPState::EBusyGate BusyGate =
+                HaybaMCPState::DecideAssetBusy(BusyQuery, BusyAssets.Num(), BusyMode);
+            if (BusyGate != HaybaMCPState::EBusyGate::Pass)
+            {
+                const HaybaMCPState::FBusyAsset& First = BusyAssets[0];
+                const TSharedRef<FJsonObject> BusyDetail = HaybaMCPState::MakeBusyDetail(Cmd, BusyCaller, BusyAssets);
+                const FString BusyKey = FWarningLimiter::MakeKey(TEXT("gate"), TEXT("asset_busy"), BusyCaller, Cmd, First.Owner);
+                if (BusyGate == HaybaMCPState::EBusyGate::Refuse)
+                {
+                    LogAssetBusy(BusyKey, FString::Printf(
+                        TEXT("asset_busy: refused '%s' from '%s': %s is being built by '%s' (label %s)"),
+                        *Cmd, *BusyCaller, *First.Asset, *First.Owner, *HaybaMCPState::LabelOrNone(First.Label)));
+                    FGateRefusal Refusal;
+                    Refusal.Code = TEXT("asset_busy");
+                    Refusal.Message = HaybaMCPState::MakeBusyMessage(Cmd, First);
+                    Refusal.DetailKey = TEXT("busy");
+                    Refusal.Detail = BusyDetail;
+                    Refusal.FailureKind = EHaybaMCPFailureKind::Retryable;
+                    return MakeGateRefusal(Id, Cmd, Refusal);
+                }
+                LogAssetBusy(BusyKey, FString::Printf(
+                    TEXT("[advisory] asset_busy: '%s' from '%s' runs while %s is being built by '%s' (label %s)"),
+                    *Cmd, *BusyCaller, *First.Asset, *First.Owner, *HaybaMCPState::LabelOrNone(First.Label)));
+                if (FHaybaMCPRequestContext* BusyContext = Leases.Current())
+                {
+                    const TSharedRef<FJsonObject> StateWarning = MakeShared<FJsonObject>();
+                    StateWarning->SetStringField(TEXT("code"), TEXT("asset_busy"));
+                    StateWarning->SetObjectField(TEXT("busy"), BusyDetail);
+                    BusyContext->StateWarning = StateWarning;
+                }
+            }
+        }
+    }
+
+    // Slot 4: the lease gate (T8). Never blocks: a refusal is preflight, a
+    // warning rides on the reply. A PIE command slot 2 authorized (a drive
+    // command from the PIE's owner, or editor_stop_pie of an agent PIE) skips
+    // it, so a lease taken during the PIE cannot deadlock the PIE (R13).
+    if (!bPieAuthorized)
+    {
+        const FHaybaMCPLeaseManager::FVerdict Verdict = Leases.CheckCommand(Cmd, Params);
+        if (Verdict.bRefuse)
+        {
+            const bool bHeld = Verdict.Reason == HaybaMCPEnforcement::EReason::Held;
+            FGateRefusal Refusal;
+            Refusal.Code = Verdict.Code;
+            Refusal.Message = Verdict.Message;
+            Refusal.DetailKey = TEXT("lease");
+            Refusal.Detail = Verdict.Detail;
+            Refusal.FailureKind = bHeld ? EHaybaMCPFailureKind::Retryable : EHaybaMCPFailureKind::InputRejected;
+            Refusal.bRetryUnchangedSafe = bHeld;
+            return MakeGateRefusal(Id, Cmd, Refusal);
+        }
     }
 
     // Special-case: hayba_propose_plan pushes to the UI Plan panel (no domain handler).
@@ -1224,6 +1963,85 @@ FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
         PushMemoryResultsToPanel(Params);
         auto Data = MakeShared<FJsonObject>();
         Data->SetBoolField(TEXT("received"), true);
+        return MakeOkResponse(Id, Data, Cmd);
+    }
+
+    // Local scratch QA only. Capture is deliberately absent from the public
+    // sidecar tool list and writes solely under this project's Saved directory.
+    if (Cmd == TEXT("ui_capture_panel"))
+    {
+        const FString OptIn = FPlatformMisc::GetEnvironmentVariable(TEXT("HAYBA_ENABLE_UI_CAPTURE"));
+        FString ScratchHost = FPlatformMisc::GetEnvironmentVariable(TEXT("HAYBA_SCRATCH_HOST_DIR"));
+        FString ProjectDir = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir());
+        const FString CaptureMarker = FPaths::Combine(
+            FPaths::ProjectSavedDir(), TEXT("HaybaMCP"), TEXT(".scratch-capture-allowed"));
+        if (!ScratchHost.IsEmpty()) ScratchHost = FPaths::ConvertRelativePathToFull(ScratchHost);
+        FPaths::NormalizeDirectoryName(ScratchHost);
+        FPaths::NormalizeDirectoryName(ProjectDir);
+        if (OptIn != TEXT("1") || ScratchHost.IsEmpty() ||
+            !ScratchHost.Equals(ProjectDir, ESearchCase::IgnoreCase) ||
+            !IFileManager::Get().FileExists(*CaptureMarker))
+        {
+            return MakeErrorResponse(Id,
+                TEXT("ui_capture_panel: scratch capture is not enabled for this project"), Cmd,
+                false, true);
+        }
+
+        FString Want;
+        if (!Params.IsValid() || !Params->TryGetStringField(TEXT("panel"), Want))
+            return MakeErrorResponse(Id, TEXT("ui_capture_panel: panel is required"), Cmd, false, true);
+        Want.ToLowerInline();
+        static const TMap<FString, EHaybaPanel> ByName = {
+            { TEXT("chat"), EHaybaPanel::Chat },
+            { TEXT("world"), EHaybaPanel::World },
+            { TEXT("settings"), EHaybaPanel::Settings },
+        };
+        const EHaybaPanel* Destination = ByName.Find(Want);
+        if (!Destination)
+            return MakeErrorResponse(Id, TEXT("ui_capture_panel: expected chat, world, or settings"), Cmd,
+                false, true);
+
+        FHaybaMCPModule* M = FModuleManager::GetModulePtr<FHaybaMCPModule>("HaybaMCPToolkit");
+        TSharedPtr<SHaybaMCPMainPanel> Panel = M ? M->MainPanel.Pin() : nullptr;
+        if (!Panel.IsValid())
+            return MakeErrorResponse(Id, TEXT("ui_capture_panel: open the Hayba dock first"), Cmd,
+                false, true);
+        if (Want == TEXT("settings"))
+            Panel->ShowSection(EHaybaSection::Settings);
+        else
+            Panel->ShowPanel(*Destination);
+        FSlateApplication::Get().Tick();
+
+        TArray<FColor> Pixels;
+        FIntVector Size(0, 0, 0);
+        if (!FSlateApplication::Get().TakeScreenshot(Panel.ToSharedRef(), Pixels, Size) ||
+            Size.X <= 200 || Size.Y <= 200 || Pixels.Num() == 0)
+            return MakeErrorResponse(Id, TEXT("ui_capture_panel: Slate returned no usable pixels"), Cmd,
+                false, true);
+        for (FColor& Pixel : Pixels) Pixel.A = 255;
+        TArray64<uint8> Png;
+        FImageUtils::PNGCompressImageArray(Size.X, Size.Y, Pixels, Png);
+        if (Png.Num() <= 2000)
+            return MakeErrorResponse(Id, TEXT("ui_capture_panel: PNG output was empty"), Cmd,
+                false, true);
+
+        const FString CaptureDir = FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("HaybaMCP"), TEXT("Captures"));
+        IFileManager::Get().MakeDirectory(*CaptureDir, true);
+        const FString OutPath = FPaths::Combine(CaptureDir,
+            FString::Printf(TEXT("%s-%s.png"), *Want, *FGuid::NewGuid().ToString(EGuidFormats::Digits)));
+        if (!FFileHelper::SaveArrayToFile(Png, *OutPath))
+            return MakeErrorResponse(Id, TEXT("ui_capture_panel: could not save PNG"), Cmd,
+                false, true);
+        const int64 OnDisk = IFileManager::Get().FileSize(*OutPath);
+        if (OnDisk <= 2000)
+            return MakeErrorResponse(Id, TEXT("ui_capture_panel: PNG verification failed"), Cmd,
+                false, true);
+        auto Data = MakeShared<FJsonObject>();
+        Data->SetStringField(TEXT("path"), OutPath);
+        Data->SetNumberField(TEXT("width"), Size.X);
+        Data->SetNumberField(TEXT("height"), Size.Y);
+        Data->SetNumberField(TEXT("bytes"), static_cast<double>(OnDisk));
+        Data->SetBoolField(TEXT("verified"), true);
         return MakeOkResponse(Id, Data, Cmd);
     }
 
@@ -1287,45 +2105,105 @@ FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
         return MakeOkResponse(Id, Data, Cmd);
     }
 
-    // Plan Mode safety gate: destructive commands require an approved plan.
+    // Plan Mode safety gate: an external write needs a frozen, single-use
+    // native call approval. Prose plans are useful context but cannot spend
+    // this gate, regardless of the legacy per-plan persistence preference.
     {
         auto& S = FHaybaMCPSettings::Get();
-        if (S.bPlanModeEnabled && IsDestructiveCommand(Cmd))
+        if ((S.bPlanModeEnabled || bRequireExactReview) && IsDestructiveCommand(Cmd))
         {
             FHaybaMCPModule* M = FModuleManager::GetModulePtr<FHaybaMCPModule>("HaybaMCPToolkit");
-            const bool bApproved = (M && M->bPlanApproved);
-            if (!bApproved)
+            const FString Caller = Leases.EffectiveOwner();
+            const FHaybaMCPRequestContext* GateContext = Leases.Current();
+            const bool bBatchCovered = !bRequireExactReview && GateContext && GateContext->bPlanPreApproved;
+            if (!bBatchCovered)
             {
+                if (GateContext && !GateContext->LeaseToken.IsEmpty() &&
+                    GateContext->Caller.LeaseRef != ELeaseRef::Bound)
+                {
+                    if (M) M->InvalidateExternalApproval();
+                    FGateRefusal Refusal;
+                    Refusal.Code = TEXT("exact_approval_unavailable");
+                    Refusal.Message = FString::Printf(TEXT("%s was not run: its named lease is no longer valid for exact approval."), *Cmd);
+                    return MakeGateRefusal(Id, Cmd, Refusal);
+                }
+                FString TargetRef;
+                FString TargetFingerprint;
+                if (!M || !CaptureExactApprovalTarget(Cmd, Params, TargetRef, TargetFingerprint))
+                {
+                    if (M) M->InvalidateExternalApproval();
+                    FGateRefusal Refusal;
+                    Refusal.Code = TEXT("exact_approval_unavailable");
+                    Refusal.Message = FString::Printf(TEXT("%s was not run: its target cannot be frozen for exact native review. Use a supported actor edit or keep this operation in Draft until a target adapter is available."), *Cmd);
+                    return MakeGateRefusal(Id, Cmd, Refusal);
+                }
+
+                TSharedPtr<FJsonObject> Operation = MakeShared<FJsonObject>();
+                Operation->SetStringField(TEXT("cmd"), Cmd);
+                Operation->SetObjectField(TEXT("params"), Params);
+                const FString OperationDigest = HaybaMCPExactApproval::HashOperation(Operation);
+                const HaybaMCPSecretRedaction::FResult SafeInput = HaybaMCPSecretRedaction::Redact(Params);
+                const FString ReviewParams = SafeInput.Value.IsValid() ? JsonToString(SafeInput.Value.ToSharedRef()) : FString();
+                if (SafeInput.Summary.bApplied || SafeInput.Summary.bTruncated ||
+                    ReviewParams.IsEmpty() || ReviewParams.Len() > 8192)
+                {
+                    M->InvalidateExternalApproval();
+                    FGateRefusal Refusal;
+                    Refusal.Code = TEXT("exact_approval_unavailable");
+                    Refusal.Message = FString::Printf(TEXT("%s was not run: its parameters cannot be shown completely and safely for exact review."), *Cmd);
+                    return MakeGateRefusal(Id, Cmd, Refusal);
+                }
+
+                // Binding includes the lease reference classification. A lease
+                // that expires or changes between review and dispatch changes
+                // this digest even if the caller repeats the same token.
+                const FString LeaseBinding = HaybaMCPExactApproval::HashBinding(
+                    TEXT("native-exact-lease-v2"),
+                    GateContext ? GateContext->LeaseToken : FString(),
+                    GateContext ? FString(LexLeaseRef(GateContext->Caller.LeaseRef)) : TEXT("none"));
+                const FString Source = GateContext ? FString::Printf(TEXT("%s (connection %d)"),
+                    *GateContext->Caller.Via, GateContext->ConnId) : TEXT("local");
+                const FString SourceBinding = HaybaMCPExactApproval::HashBinding(
+                    TEXT("native-exact-source-v2"), Source, FString());
+                const FString PolicyVersion = bRequireExactReview
+                    ? TEXT("native-exact-v2-request-required") : TEXT("native-exact-v2");
+                if (M->ConsumeExactExternalApproval(Caller, Cmd, OperationDigest,
+                    TargetFingerprint, LeaseBinding, SourceBinding, PolicyVersion))
+                {
+                    // Consumed before dispatch. A retry, even after failure,
+                    // requires a new proposal and an explicit new click.
+                }
+                else
+                {
+                    FHaybaExactExternalApproval Proposal;
+                    Proposal.Command = Cmd;
+                    Proposal.Owner = Caller;
+                    Proposal.Source = Source;
+                    Proposal.SourceBinding = SourceBinding;
+                    Proposal.OperationDigest = OperationDigest;
+                    Proposal.ReviewParamsJson = ReviewParams;
+                    Proposal.TargetRef = TargetRef;
+                    Proposal.TargetFingerprint = TargetFingerprint;
+                    Proposal.LeaseBinding = LeaseBinding;
+                    Proposal.LeaseId = GateContext ? GateContext->LeaseToken : FString();
+                    Proposal.ConnectionId = GateContext ? GateContext->ConnId : 0;
+                    Proposal.PolicyVersion = PolicyVersion;
+                    Proposal.Consequence = Cmd == TEXT("actor_delete")
+                        ? TEXT("Deletes this actor from the loaded editor world. Save is separate; undo may be available while the actor remains valid.")
+                        : TEXT("Changes this actor in the loaded editor world. Save is separate; undo may be available while the actor remains valid.");
+                    Proposal.ExpiresAt = FDateTime::UtcNow() + FTimespan::FromMinutes(5);
+                    M->ProposeExactExternalOperation(MoveTemp(Proposal));
+
                 auto Data = MakeShared<FJsonObject>();
                 Data->SetStringField(TEXT("status"), TEXT("plan_mode_required"));
-                Data->SetStringField(TEXT("hint"), TEXT("Plan Mode is ON. Call hayba_propose_plan with a steps[] array, then the user must review and approve the external MCP proposal in Agent before destructive commands run."));
-                // Under strict consume the previous Approve was SPENT by the
-                // last destructive command. Without saying so, the second call
-                // in a sequence looks exactly like Approve never worked, and
-                // the user clicks it again wondering what broke.
-                Data->SetStringField(TEXT("approval_mode"),
-                    S.bPlanApprovalStrictConsume ? TEXT("per_call_consume") : TEXT("per_plan_persist"));
-                if (S.bPlanApprovalStrictConsume)
-                {
-                    Data->SetStringField(TEXT("approval_mode_note"),
-                        TEXT("Strict consume is on: each Approve authorises exactly ONE destructive command, so an "
-                             "earlier approval in this sequence has already been used. Set "
-                             "bPlanApprovalStrictConsume=false in the Hayba settings for one Approve to cover a whole plan."));
-                }
+                Data->SetStringField(TEXT("hint"), TEXT("Review the exact native command and target in Chat, approve its proposal ID, then retry this same command. The approval can be used once."));
+                Data->SetStringField(TEXT("proposal_id"), M->PendingExternalPlanId);
+                Data->SetStringField(TEXT("operation_digest"), OperationDigest);
+                Data->SetStringField(TEXT("target_ref"), TargetRef);
+                Data->SetStringField(TEXT("target_fingerprint"), TargetFingerprint);
+                Data->SetStringField(TEXT("approval_mode"), TEXT("exact_call_once"));
                 return MakeOkResponse(Id, Data, Cmd);
-            }
-            // How long one Approve lasts is now a SETTING rather than a
-            // commented-out line, because both answers are right for different
-            // sessions and the choice was previously made by editing source.
-            //
-            // Default (false) keeps the existing per-plan behaviour: a plan
-            // whose steps are "delete these six assets" must not stop dead
-            // after the first one. Strict consume spends the approval on the
-            // first destructive command, which is what an unattended agent
-            // against content that matters wants.
-            if (S.bPlanApprovalStrictConsume && M)
-            {
-                M->bPlanApproved = false;
+                }
             }
         }
         S.PlanModeToolCallCount++;
@@ -1378,6 +2256,12 @@ FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
             TEXT("so restart the editor."), *Cmd), Cmd, false, true);
     }
 
+    // Touch-on-use (T7): the command passed every gate (slots 0-4, inline
+    // specials, the Plan gate) and is about to run, so the leases of its owner
+    // whose locks it uses stay alive. Reads, status polls and refused commands
+    // never get here or never touch.
+    Leases.TouchOnUse(Cmd, Params);
+
     // Capture actor before-state for destructive ops so the Diff panel shows true Before -> After.
     const TMap<FString, FString> BeforeState = CaptureBeforeState(Cmd, Params);
 
@@ -1392,7 +2276,11 @@ FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
     // world/GameInstance, which crashes the editor on PIE stop with
     // "Object 'GameInstance ...' from PIE level still referenced". AI-driven
     // edits made mid-PIE don't need undo support badly enough to risk that.
-    const bool bCreateEditorTransaction = ShouldCreateEditorTransaction(Cmd);
+    // A caller may opt a single request out (`transaction:false`), and a
+    // python_run that loads/unloads World Partition actors is always opted
+    // out: unloading inside BeginTransaction left UTransBuffer with a non-zero
+    // active count and the next tick crashed in Landscape.
+    const bool bCreateEditorTransaction = ShouldCreateEditorTransaction(Cmd, Params);
     const bool bInPIE = GEditor && GEditor->PlayWorld != nullptr;
     if (bCreateEditorTransaction && GEditor && !bInPIE)
     {
@@ -1407,24 +2295,25 @@ FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
     const FString ParamsHash = FHaybaMCPSecurityManager::HashParams(Params);
     const double Start = FPlatformTime::Seconds();
 
-    // SEH-guard the handler-dispatch seam so a NATIVE structured exception
-    // (access violation, etc.) inside ANY of the registered handlers is converted
-    // into a recoverable error envelope instead of taking down the whole editor.
-    // Previously only the python and material handlers self-guarded their
-    // crash-prone calls (ExecPythonGuarded / HaybaSeh::RunGuarded), leaving the
-    // other ~31 handlers unrecoverable; wrapping this single dispatch point makes
-    // the entire handler surface recoverable in one place. Those per-handler
-    // guards are KEPT (a caught fault there yields a clean FHaybaHandlerResult, so
-    // this outer guard never sees it — no double-fault, no behaviour change).
+    // SEH-guard the handler-dispatch seam (ADR-0011). A native structured
+    // exception inside ANY handler is caught by HaybaSeh::RunGuardedAt, which
+    // repairs a stranded play-world switch and records the fault: the editor is
+    // sticky-unsafe until restart. The per-handler guards (python, material)
+    // record through the same path, so a handler that caught its own fault and
+    // still returned Ok is detected by FaultSequence moving.
     //
     // The thunk MUST be a captureless lambda (-> function pointer) and the result
     // is written back through a pointer in the context struct, because MSVC forbids
-    // C++ object unwinding across __try (C2712) — RunGuarded isolates the __try in
-    // its own translation unit and only ever invokes a function pointer. Mirrors
-    // the FStatsCtx usage in HaybaMCPMaterialHandler.cpp.
+    // C++ object unwinding across __try (C2712); RunGuardedAt isolates the __try in
+    // its own translation unit and only ever invokes a function pointer.
+    const uint64 FaultSequenceBefore = FHaybaEditorHealth::FaultSequence();
     FHaybaHandlerResult Result;
     bool bHandlerCrashed = false;
     {
+        static const FString LocalOwner(TEXT("local"));
+        const FHaybaMCPRequestContext* DispatchContext = Leases.Current();
+        FHaybaEditorHealth::FScopedDispatchNote DispatchNote(Cmd, Id, DispatchContext ? DispatchContext->Owner : LocalOwner);
+
         struct FDispatchCtx
         {
             IHaybaMCPHandler* Handler;
@@ -1433,43 +2322,31 @@ FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
             FHaybaHandlerResult* Out;
         } Ctx{ &Found->Get(), &Cmd, &Params, &Result };
 
-        HaybaSeh::RunGuarded(+[](void* P)
+        HaybaSeh::RunGuardedAt(EHaybaFaultSite::Dispatch, +[](void* P)
         {
             FDispatchCtx* C = static_cast<FDispatchCtx*>(P);
             *C->Out = C->Handler->Handle(*C->Cmd, *C->Params);
         }, &Ctx, bHandlerCrashed);
-
-        if (bHandlerCrashed)
-        {
-            UE_LOG(LogHaybaMCPCmd, Error,
-                TEXT("SEH guard caught a structured exception in handler for command '%s' (id: %s) — skipping post-processing"),
-                *Cmd, *Id);
-            Result = FHaybaHandlerResult::Err(FString::Printf(
-                TEXT("handler crashed (SEH): command '%s' faulted with a structured exception ")
-                TEXT("(e.g. a null/stale UObject in the handler, or a stale Python-registered editor delegate ")
-                TEXT("firing on a GC'd target). Post-processing was skipped; completion cannot be proven and the outcome is unknown. ")
-                TEXT("Treat the editor session as suspect and restart it before mutating more state."),
-                *Cmd));
-        }
     }
+    const bool bInnerFaultCaught = FHaybaEditorHealth::FaultSequence() != FaultSequenceBefore;
 
     const int64 DurMs = (int64)((FPlatformTime::Seconds() - Start) * 1000.0);
 
-    if (bHandlerCrashed)
+    if (bHandlerCrashed || bInnerFaultCaught)
     {
         // Never continue through transaction completion, diff capture, panel
         // dispatch, response trimming, or a second params serialization after
         // a native fault. The 2026-08-09 test_run incident proved that the old
-        // "keep going" path could immediately double-fault in HashParams and
-        // terminate UE despite the SEH guard's recovery claim.
+        // "keep going" path could immediately double-fault in HashParams.
         if (bCreateEditorTransaction && GEditor && !bInPIE)
         {
             GEditor->CancelTransaction(0);
         }
-        FHaybaJournalEntry CrashEntry{
-            FDateTime::UtcNow(), Cmd, ParamsHash, DurMs, false, Result.ErrorMessage };
+        const FHaybaEditorHealth::FSnapshot Health = FHaybaEditorHealth::Snapshot();
+        const FString FaultMessage = HaybaMCPHealth::NativeFaultContainedMessage(Cmd, Health.LastCause, Health.LastExceptionCode);
+        FHaybaJournalEntry CrashEntry{ FDateTime::UtcNow(), Cmd, ParamsHash, DurMs, false, FaultMessage };
         FHaybaMCPSecurityManager::Get().Journal(CrashEntry);
-        return MakeErrorResponse(Id, Result.ErrorMessage, Cmd, /*bSessionSuspect=*/true);
+        return MakeNativeFaultContained(Id, Cmd, FaultMessage, bHandlerCrashed ? nullptr : Result.Data);
     }
 
     // Classify the handler's complete typed result before ANY success-dependent
@@ -1590,6 +2467,12 @@ FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
             // are correctness, not presentation. Keep the full bounded object.
             Limits.MaxTopLevelFields = 32;
         }
+        else if (Cmd == TEXT("editor_get_state"))
+        {
+            // 18-19 top-level state facts after T1-T3 (R-21); the generic 20
+            // would drop the lexically last ones silently.
+            Limits.MaxTopLevelFields = 32;
+        }
         else if (Cmd == TEXT("python_run"))
         {
             // python_run's stdout carries the HAYBA_JSON result line for every
@@ -1601,18 +2484,28 @@ FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
             Limits.MaxStringChars = 64 * 1024;
             Limits.MaxArrayItems = 200;
         }
-        else if (Cmd == TEXT("editor_pie_actor_list")
+        else if (Cmd == TEXT("world_semantic_snapshot")
+            || Cmd == TEXT("world_query")
+            || Cmd == TEXT("editor_pie_actor_list")
             || Cmd == TEXT("editor_pie_actor_inspect")
             || Cmd == TEXT("editor_pie_project_world")
+            || Cmd == TEXT("editor_pie_sightlines")
             || Cmd == TEXT("editor_pie_click_actor"))
         {
-            // These read-only tools intentionally hand actor_path and
-            // component_path back to the caller as exact follow-up keys. The
+            // These read-only tools intentionally hand actor, component, and
+            // scene-node paths back to the caller as exact follow-up keys. The
             // generic 512-character ellipsis turns a valid long UE object path
             // into an identifier that can never resolve. Inputs are capped at
             // 2048 in both TS and native parsing; matching that ceiling here
             // preserves round-trip identity while keeping the frame bounded.
             Limits.MaxStringChars = 2048;
+            if (Cmd == TEXT("world_semantic_snapshot") || Cmd == TEXT("world_query"))
+            {
+                // Captured tile pages include provenance, coverage, paging and
+                // capture identity together. The generic 20-field limit drops
+                // valid top-level keys from this bounded response.
+                Limits.MaxTopLevelFields = 32;
+            }
         }
         FHaybaMCPResponseBuilder Builder(Limits);
         TSharedRef<FJsonObject> Trimmed = Builder.Build(DataObj.ToSharedRef());

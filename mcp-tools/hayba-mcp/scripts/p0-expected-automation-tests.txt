@@ -1,0 +1,113 @@
+# P0 safety train: every Hayba automation test the train adds or depends on.
+# One full test name per line. Lines starting with '#' are comments.
+# Each task appends its own "# T<n>" section in the commit that adds the tests.
+# Checked by scripts/check-automation-report.mjs against a -ReportExportPath index.json.
+
+# T0
+Hayba.MCP.Advisory.AllStates
+Hayba.MCP.Advisory.ResponseBoundary
+Hayba.MCP.Editor.GetStateNative
+Hayba.MCP.Lease.Classification
+Hayba.MCP.Lease.ClassificationDrift
+Hayba.MCP.Lease.Envelope
+Hayba.MCP.Lease.Table
+Hayba.MCP.Seh.WorldSwitchDriftClassification
+
+# T1
+Hayba.MCP.Health.ClassifyCaughtFault
+Hayba.MCP.Health.UnsafeGatePolicy
+Hayba.MCP.Health.AllowlistDrift
+Hayba.MCP.Health.EngineAssertCodeIsEngineFatal
+Hayba.MCP.Lease.WarningLimiter
+Hayba.MCP.Health.UserNotifiedOnce
+Hayba.MCP.Health.PythonFaultUnhooksPreGc
+Hayba.MCP.Health.DispatchFaultIsSticky
+Hayba.MCP.Health.InnerGuardOkResultIsForcedToFault
+Hayba.MCP.Health.FaultInjectionIsGuarded
+Hayba.MCP.Health.PythonGuardFaultSetsPythonUnhealthy
+Hayba.MCP.Health.BatchStepRefusedWhileUnsafe
+Hayba.MCP.Health.BatchPumpStopsWhileUnsafe
+
+# T2
+Hayba.MCP.State.PieRule
+Hayba.MCP.State.PieVerdict
+Hayba.MCP.State.PieTracker
+Hayba.MCP.State.ResolvePieBackstop
+Hayba.MCP.State.UserPlayDecision
+Hayba.MCP.Batch.HoldExcludedFromFenceTimeout
+Hayba.MCP.Batch.ValidateRejectsPieSteps
+Hayba.MCP.State.HooksBoundAtStartup
+Hayba.MCP.State.RouterRefusesMutationDuringPIE
+Hayba.MCP.State.RouterPieOwnerDrive
+Hayba.MCP.State.RouterStopAgentPieFromAnyCaller
+Hayba.MCP.State.StartPieBlockedByModal
+Hayba.MCP.State.GetStateShape
+Hayba.MCP.State.PieSafeDrift
+Hayba.MCP.State.StartPieBlockedByDirtyCode
+Hayba.MCP.State.BatchHoldsDuringPIE
+# optional: Hayba.MCP.State.RealPIE (run alone with -HaybaRealPIETests)
+# T3
+Hayba.MCP.Lease.AssetWrites
+Hayba.MCP.Lease.AssetHolders
+Hayba.MCP.State.AssetBusyTargets
+Hayba.MCP.State.RouterAssetBusyStartPie
+Hayba.MCP.State.RouterAssetBusyCompile
+
+# T4
+Hayba.MCP.Lease.IdFormat
+Hayba.MCP.Lease.IdParam
+Hayba.MCP.Lease.IdSurvivesRedaction
+Hayba.MCP.Lease.WireRoundTrip
+Hayba.MCP.Batch.WireRoundTrip
+
+# T5
+Hayba.MCP.Save.ReadOnly.FindReadOnlyPackageFiles
+Hayba.MCP.Save.ReadOnly.SaveAndVerifyRefusesWithoutSaving
+Hayba.MCP.Save.ReadOnly.NoErrorSaveSurvivesMissedPreflight
+Hayba.MCP.Save.ReadOnly.BlueprintCompileRefusesBeforeCompiling
+Hayba.MCP.Save.ReadOnly.CreateGraphKeepsExistingGraph
+Hayba.MCP.MetaSound.Compile.ReadOnlyRefusesBeforeConform
+Hayba.MCP.Save.ReadOnly.WidgetSaveAndCompileRefuse
+Hayba.MCP.Save.ReadOnly.MaterialRefusesBeforeEdit
+Hayba.MCP.Save.ReadOnly.AudioAndSaveAllRefuse
+Hayba.MCP.Save.ReadOnly.LevelSaveRefusesWithoutModal
+Hayba.MCP.Save.ReadOnly.PythonMapSaveReturnsWithoutModal
+Hayba.MCP.Save.ReadOnly.SanitizerPackagesRefuseBeforeMutation
+Hayba.MCP.Save.ReadOnly.EnvelopeCarriesCodeAndHint
+
+# T6
+Hayba.MCP.Lease.EnforcementDecision
+Hayba.MCP.Lease.OwnerPresence
+Hayba.MCP.Lease.ProcessingLogOwner
+
+# T7
+Hayba.MCP.Lease.IdempotentAcquire
+Hayba.MCP.Lease.RenewByOwner
+
+Hayba.MCP.Lease.TouchOnUse
+Hayba.MCP.Lease.RenewRevivesOrphanedLeaseOfSameOwner
+Hayba.MCP.Lease.ConnectionDrop
+Hayba.MCP.Lease.RenewWithoutHandle
+Hayba.MCP.Lease.RedactedMarkerShim
+
+# Native EOF/drain correction
+Hayba.MCP.Transport.NativeIncompleteFIN
+Hayba.MCP.Transport.NativeDelayedHalfClose
+Hayba.MCP.Transport.NativeWouldBlock
+Hayba.MCP.Transport.NativeResetDrain
+Hayba.MCP.Transport.NativeShutdownPending
+Hayba.MCP.Transport.NativePartialNextFIN
+Hayba.MCP.Transport.NativeWriterStartFailure
+
+# T8
+Hayba.MCP.Lease.EnforcedForWritesTwoOwners
+Hayba.MCP.Lease.PieCommandsClassify
+Hayba.MCP.Lease.ReadClassDrift
+Hayba.MCP.Lease.PythonRunClassification
+
+# T9
+Hayba.MCP.Lease.ResolveCaller
+Hayba.MCP.Lease.ReservedOwner
+Hayba.MCP.Lease.RouterBinding
+Hayba.MCP.Lease.UnknownLeaseRefusesWrites
+Hayba.MCP.Lease.Adopt

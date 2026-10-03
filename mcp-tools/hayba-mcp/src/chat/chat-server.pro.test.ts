@@ -9,6 +9,7 @@ import type { LLMClient, LLMResponse } from '../agents/llm-client.js';
 import { createBrainConnector, type BrainConnector } from '../brain/brain-connector.js';
 import type { BrainSession, SocketLike } from '../brain/brain-session.js';
 import { FakeSocket } from '../brain/fake-socket.test-helpers.js';
+import { executeCommand } from '../tools/tool-executor.js';
 
 const TOOL = 'zz_thing_delete';
 const ARGS = { path: '/Game/Thing' };
@@ -216,11 +217,125 @@ describe('chat server Pro loop', () => {
     await s.frames;
   });
 
+  it('consumes each Pro wire done before a second turn on the same brain session', async () => {
+    const brain = new FakeBrain();
+    const connector = brainConnector(brain);
+    start(connector);
+    const first = await stream({ prompt: 'first', loop: 'pro' });
+    await waitFor(() => brain.sentTypes().includes('turn'));
+    brain.push({ type: 'event', event: { type: 'message_delta', activityId: 'a1', text: 'first reply' } });
+    brain.finishTurn('a1');
+    const firstFrames = await first.frames;
+    expect(firstFrames.filter((frame) => frame.event === 'text_delta').map((frame) => frame.data.text).join('')).toBe('first reply');
+
+    const second = await stream({ session_id: first.sessionId, prompt: 'second', loop: 'pro' });
+    await waitFor(() => brain.sentTypes().filter((type) => type === 'turn').length === 2);
+    brain.push({ type: 'event', event: { type: 'message_delta', activityId: 'a2', text: 'second reply' } });
+    brain.finishTurn('a2');
+    const secondFrames = await second.frames;
+    expect(secondFrames.filter((frame) => frame.event === 'text_delta').map((frame) => frame.data.text).join('')).toBe('second reply');
+    expect(secondFrames.at(-1)).toMatchObject({ event: 'done', data: { reason: 'end_turn', assistant_text: 'second reply' } });
+    expect(connector.opened).toHaveLength(1);
+  });
+
+  it('reports a Pro connection ending before wire done as unavailable', async () => {
+    const brain = new FakeBrain();
+    const connector = brainConnector(brain);
+    start(connector);
+    const turn = await stream({ prompt: 'hello', loop: 'pro' });
+    await waitFor(() => brain.sentTypes().includes('turn'));
+    brain.push({ type: 'event', event: { type: 'activity_completed', activityId: 'a1', outcome: 'succeeded', reason: 'end_turn' } });
+    await connector.opened[0].close();
+    const frames = await turn.frames;
+    expect(frames.some((frame) => frame.event === 'error' && frame.data.kind === 'brain_unavailable')).toBe(true);
+    expect(frames.at(-1)).toMatchObject({ event: 'done', data: { reason: 'brain_unavailable' } });
+    expect(frames.some((frame) => frame.event === 'activity_completed')).toBe(false);
+  });
+
+  it('returns the last task choices with saved history without persisting its key', async () => {
+    const brain = new FakeBrain();
+    start(brainConnector(brain));
+    const sessionId = 'task_choices_chat';
+    await post('/chat/config', { session_id: sessionId, provider: 'openrouter', model: 'first', api_key: 'synthetic-byok-key' });
+    const turn = await stream({ session_id: sessionId, prompt: 'inspect the room',
+      mode: 'draft', loop: 'pro', llm: 'byok', model: 'second' });
+    await waitFor(() => brain.sentTypes().includes('turn'));
+    brain.finishTurn('a1');
+    await turn.frames;
+    const response = await fetch(`${base}/chat/sessions/${sessionId}`);
+    expect(response.status).toBe(200);
+    const raw = await response.text();
+    expect(raw).not.toContain('synthetic-byok-key');
+    expect(JSON.parse(raw)).toMatchObject({ turnSettings: {
+      provider: 'openrouter', model: 'second', mode: 'draft', loop: 'pro',
+    } });
+  });
+
+  it('opens a new BYOK brain session when the next turn selects another model', async () => {
+    const brain = new FakeBrain();
+    start(brainConnector(brain));
+    await post('/chat/config', { session_id: 'model_switch_chat', provider: 'openrouter', model: 'first', api_key: 'sk-or-key' });
+    const first = await stream({ session_id: 'model_switch_chat', prompt: 'first', loop: 'pro', llm: 'byok' });
+    await waitFor(() => brain.sentTypes().includes('turn'));
+    expect(brain.sock.sent[0].llm).toMatchObject({ model: 'first' });
+    brain.finishTurn('a1');
+    await first.frames;
+
+    const second = await stream({ session_id: 'model_switch_chat', prompt: 'second', loop: 'pro', llm: 'byok', model: 'second' });
+    await waitFor(() => brain.sockets.length === 2 && brain.sentTypes().includes('turn'));
+    expect(brain.sock.sent[0].llm).toMatchObject({ model: 'second' });
+    expect(brain.sockets[0].readyState).toBe(3);
+    brain.finishTurn('a2');
+    await second.frames;
+  });
+
+  it('reopens a BYOK brain session when its API key rotates', async () => {
+    const brain = new FakeBrain();
+    start(brainConnector(brain));
+    const sessionId = 'rotated_key_chat';
+    await post('/chat/config', { session_id: sessionId, provider: 'openrouter', model: 'm', api_key: 'synthetic-old-key' });
+    const first = await stream({ session_id: sessionId, prompt: 'first', loop: 'pro', llm: 'byok' });
+    await waitFor(() => brain.sentTypes().includes('turn'));
+    brain.finishTurn('a1');
+    await first.frames;
+
+    await post('/chat/config', { session_id: sessionId, provider: 'openrouter', model: 'm', api_key: 'synthetic-new-key' });
+    const second = await stream({ session_id: sessionId, prompt: 'second', loop: 'pro', llm: 'byok' });
+    await waitFor(() => brain.sockets.length === 2 && brain.sentTypes().includes('turn'));
+    expect(brain.sockets[0].readyState).toBe(3);
+    expect(brain.sock.sent[0].llm).toMatchObject({ api_key: 'synthetic-new-key' });
+    brain.finishTurn('a2');
+    await second.frames;
+  });
+
+  it('sends DeepSeek BYOK to the Brain without a client-chosen endpoint', async () => {
+    const brain = new FakeBrain();
+    start(brainConnector(brain));
+    await post('/chat/config', { provider: 'deepseek', model: 'deepseek-flash', api_key: 'synthetic-deepseek-key' });
+    const s = await stream({ prompt: 'hi', loop: 'pro', llm: 'byok' });
+    await waitFor(() => brain.sentTypes().includes('turn'));
+    expect(brain.sock.sent[0]).toMatchObject({
+      type: 'hello', llm: { mode: 'byok', provider: 'deepseek', model: 'deepseek-flash', api_key: 'synthetic-deepseek-key' },
+    });
+    expect(brain.sock.sent[0].llm).not.toHaveProperty('base_url');
+    brain.finishTurn('a1');
+    await s.frames;
+  });
+
   it('rejects an unknown loop value', async () => {
     start(brainConnector(new FakeBrain()));
     const res = await post('/chat/stream', { prompt: 'hi', loop: 'turbo' });
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({ error: 'invalid loop' });
+  });
+
+  it('rejects Pro effort before opening a brain session', async () => {
+    const brain = new FakeBrain();
+    start(brainConnector(brain));
+    const response = await post('/chat/stream', { prompt: 'hi', loop: 'pro', reasoning_effort: 'high' });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: 'Hayba Pro does not support per-turn reasoning effort' });
+    expect(brain.sockets).toHaveLength(0);
   });
 
   it('approve resumes the remote session instead of starting a new turn', async () => {
@@ -244,6 +359,26 @@ describe('chat server Pro loop', () => {
 
     expect(brain.sentTypes().filter((t) => t === 'turn')).toHaveLength(1);
     expect(connector.opened).toHaveLength(1);
+  });
+
+  it('requires native exact review for a Pro Production tool call', async () => {
+    const brain = new FakeBrain();
+    const sent: Array<{ params: Record<string, unknown>; required: boolean }> = [];
+    const dispatchTool = vi.fn((name: string, args: Record<string, unknown>) =>
+      executeCommand(name, args, { sender: async (_cmd, params, _timeout, options) => {
+        sent.push({ params, required: options?.requireExactReview === true });
+        return { id: 'test', ok: true, data: {} };
+      } }));
+    start(brainConnector(brain), dispatchTool as unknown as Parameters<typeof start>[1]);
+    const sessionId = await parkAtApproval(brain);
+    expect((await post('/chat/approve', { session_id: sessionId })).status).toBe(200);
+    const resumed = await stream({ session_id: sessionId, prompt: '', loop: 'pro', mode: 'production' });
+    await waitFor(() => brain.sentTypes().includes('approve'));
+    brain.push({ type: 'tool_call', id: 't1', name: TOOL, args: ARGS, gated: true });
+    await waitFor(() => sent.length === 1);
+    brain.finishTurn('a1');
+    await resumed.frames;
+    expect(sent).toEqual([{ params: ARGS, required: true }]);
   });
 
   it('cancels a parked (declined) brain turn before starting a new one', async () => {

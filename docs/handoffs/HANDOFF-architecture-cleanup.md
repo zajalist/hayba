@@ -38,21 +38,22 @@ was verified that way and the commits say so.
 
 ## 1. Verification commands
 
-```bash
+```powershell
 # TS gate — the authoritative one
 cd mcp-tools/hayba-mcp && npx tsc --noEmit && npm test
 npm run lint:legacy-wrappers        # SEPARATE from npm test. Easy to forget.
 
 # C++ build (editor must be CLOSED)
-"C:\Program Files\Epic Games\UE_5.8\Engine\Build\BatchFiles\Build.bat" \
-  AphrosiaEditor Win64 Development -Project="D:\Projects\aphrosia\Aphrosia.uproject"
+$Target = [IO.Path]::GetFileNameWithoutExtension($env:HAYBA_SCRATCH_PROJECT) + 'Editor'
+& "$env:UE_ROOT\Engine\Build\BatchFiles\Build.bat" `
+  $Target Win64 Development "-Project=$env:HAYBA_SCRATCH_PROJECT" -NoHotReloadFromIDE
 
 # C++ tests, headless
-"C:\Program Files\Epic Games\UE_5.8\Engine\Binaries\Win64\UnrealEditor-Cmd.exe" \
-  "D:\Projects\aphrosia\Aphrosia.uproject" \
-  -ExecCmds="Automation RunTests Hayba.MCP; Quit" -unattended -nopause -nosplash -NullRHI -log
-# results go to D:\Projects\aphrosia\Saved\Logs\Aphrosia.log, NOT stdout:
-grep -E "Test Completed" /d/Projects/aphrosia/Saved/Logs/Aphrosia.log
+& "$env:UE_ROOT\Engine\Binaries\Win64\UnrealEditor-Cmd.exe" `
+  "$env:HAYBA_SCRATCH_PROJECT" `
+  '-ExecCmds=Automation RunTests Hayba.MCP; Quit' -unattended -nopause -nosplash -NullRHI -log
+# results go to $env:HAYBA_SCRATCH_HOST_DIR\Saved\Logs\<project-name>.log, NOT stdout:
+Select-String -Path "$env:HAYBA_SCRATCH_HOST_DIR\Saved\Logs\*.log" -Pattern 'Test Completed'
 ```
 
 Expected: **16 of 17 `Hayba.MCP` tests pass.** The one failure is
@@ -189,7 +190,7 @@ honest error, but never a success). The rule they follow is
 
 - `gas`, `metasound`, and the stale `niagara_*` / `seq_*` names. These are NOT
   missing descriptors. `unreal/HaybaMCP{GAS,MetaSound,Niagara,Sequencer}/` are
-  four complete plugins that are **absent from `Aphrosia/Plugins/`**, so their
+  four complete plugins that were **absent from the observed host's `Plugins/` directory**, so their
   commands answer `Unknown command`. The `niagara_*` / `seq_*` surfaces agents
   use today come from the TS/python tool layer instead. Settle the packaging
   question before writing another line of code here: install and build them, or

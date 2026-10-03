@@ -873,7 +873,7 @@ Backing split: **~48 C++-backed**, **6 python_run-backed** (hayba_introspect + 5
 ## Disabled / parked (commented out in index.ts, NOT counted)
 Gaea + terrain + knowledge block (lines ~1402–1626) and `hayba_ue_landscape_pipeline`: `hayba_search_gaea_archetypes`, `hayba_get_full_archetype_graph`, `hayba_query_gaea_knowledge`, `hayba_brainstorm_gaea`, `hayba_bake_terrain`, `hayba_create_terrain`, `hayba_open_in_gaea`, `hayba_read_terrain_variables`, `hayba_set_terrain_variables`, `hayba_open_session`, `hayba_close_session`, `hayba_add_node`, `hayba_remove_node`, `hayba_connect_nodes`, `hayba_get_graph_state`, `hayba_get_parameters`, `hayba_set_parameter`, `hayba_list_node_types`, `hayba_cook_graph`, `hayba_ue_landscape_pipeline` (~20 disabled).
 
-Relevant files: `D:/Hackathons/hayba/mcp-tools/hayba-mcp/src/tools/index.ts` (registrations + STANDARD_DESCRIPTORS + recordEagerSchemas), `D:/Hackathons/hayba/mcp-tools/hayba-mcp/src/tools/routing/register.ts` (deferred meta-tools + ALWAYS_ON_META), `D:/Hackathons/hayba/mcp-tools/hayba-mcp/src/tools/ue-python.ts` (python_run-backed helper).
+Relevant files: `mcp-tools/hayba-mcp/src/tools/index.ts` (registrations + STANDARD_DESCRIPTORS + recordEagerSchemas), `mcp-tools/hayba-mcp/src/tools/routing/register.ts` (deferred meta-tools + ALWAYS_ON_META), `mcp-tools/hayba-mcp/src/tools/ue-python.ts` (python_run-backed helper).
 
 
 ## Capability-gap analysis
@@ -1030,7 +1030,7 @@ Below, each area lists: current state, what's missing, est. tools, and feasibili
 3. **High-leverage C++:** transactions/undo (unlocks safe agent experimentation), then fix the **Blueprint `add_node` stub** (the largest false-advertised capability).
 4. **Accept ceilings:** Niagara and ControlRig authoring are genuine UE Python limitations — scope them to template-instantiation + param overrides rather than full graph authoring.
 
-Relevant files: `D:/Hackathons/hayba/mcp-tools/hayba-mcp/src/tools/index.ts` (tool registry), `D:/Hackathons/hayba/mcp-tools/hayba-mcp/src/tools/code-mode/list-tool-categories.ts` (advertised vs callable), `D:/Hackathons/hayba/mcp-tools/hayba-mcp/src/legacy-commands/sidecar.json` (invoke allowlist), `D:/Hackathons/hayba/unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/handlers/HaybaMCPBlueprintHandler.cpp:345` (the `not_implemented_in_v1` stub).
+Relevant files: `mcp-tools/hayba-mcp/src/tools/index.ts` (tool registry), `mcp-tools/hayba-mcp/src/tools/code-mode/list-tool-categories.ts` (advertised vs callable), `mcp-tools/hayba-mcp/src/legacy-commands/sidecar.json` (invoke allowlist), `unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/handlers/HaybaMCPBlueprintHandler.cpp:345` (the `not_implemented_in_v1` stub).
 
 
 ## In-editor AI chat revival

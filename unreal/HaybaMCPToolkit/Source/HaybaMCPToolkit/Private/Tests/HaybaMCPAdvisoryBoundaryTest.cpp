@@ -2,6 +2,7 @@
 #include "HaybaMCPCommandHandler.h"
 #include "HaybaMCPSettings.h"
 #include "HaybaMCPAdvisoryTypes.h"
+#include "HaybaMCPResponseBuilder.h"
 #include "Misc/ScopeExit.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
@@ -122,7 +123,7 @@ bool FHaybaMCPAdvisoryBoundaryTest::RunTest(const FString&)
     {
         const TSharedPtr<FJsonObject> Envelope = ParseEnvelope(
             FHaybaMCPCommandHandler::MakeOkResponse(
-                TEXT("2c"), MakeShared<FJsonObject>(), TEXT("actor_set_transform")));
+                TEXT("2c"), MakeShared<FJsonObject>(), TEXT("actor_transform")));
         TestEqual(TEXT("unverified mutation warns by default"),
             Envelope->GetObjectField(TEXT("advisory"))->GetStringField(TEXT("state")),
             FString(TEXT("success_needs_verification")));
@@ -130,7 +131,7 @@ bool FHaybaMCPAdvisoryBoundaryTest::RunTest(const FString&)
         TSharedPtr<FJsonObject> VerifiedData = MakeShared<FJsonObject>();
         VerifiedData->SetBoolField(TEXT("readback_verified"), true);
         const TSharedPtr<FJsonObject> VerifiedEnvelope = ParseEnvelope(
-            FHaybaMCPCommandHandler::MakeOkResponse(TEXT("2d"), VerifiedData, TEXT("actor_set_transform")));
+            FHaybaMCPCommandHandler::MakeOkResponse(TEXT("2d"), VerifiedData, TEXT("actor_transform")));
         TestFalse(TEXT("verified mutation does not emit optional warning noise"),
             VerifiedEnvelope->HasField(TEXT("advisory")));
     }
@@ -235,6 +236,37 @@ bool FHaybaMCPAdvisoryBoundaryTest::RunTest(const FString&)
             FString(TEXT("input_rejected")));
     }
 
+    {
+        // No prose inference: a property named BaseHealth once made this "session_suspect" ("seh").
+        const TSharedPtr<FJsonObject> BaseHealth = ParseEnvelope(
+            FHaybaMCPCommandHandler::MakeErrorResponse(TEXT("8"), TEXT("Property 'BaseHealth' not found"), TEXT("object_get_property")));
+        TestNotEqual(TEXT("'BaseHealth' is not a structured exception"),
+            BaseHealth->GetObjectField(TEXT("advisory"))->GetStringField(TEXT("state")), FString(TEXT("session_suspect")));
+    }
+    for (const TCHAR* Code : { TEXT("HCR-NATIVE-002"), TEXT("HCR-NATIVE-003"), TEXT("HCR-NATIVE-004") })
+    {
+        // A post-execution fault text is never "not_started", even from an old handler that returns Err.
+        const TSharedPtr<FJsonObject> Envelope = ParseEnvelope(FHaybaMCPCommandHandler::MakeErrorResponse(TEXT("9"),
+            FString::Printf(TEXT("python_run fatal_error [%s]: matched 'post_execution_readback_access_violation'."), Code),
+            TEXT("python_run")));
+        const TSharedPtr<FJsonObject> Advisory = Envelope->GetObjectField(TEXT("advisory"));
+        TestEqual(*FString::Printf(TEXT("%s is session_suspect"), Code), Advisory->GetStringField(TEXT("state")), FString(TEXT("session_suspect")));
+        TestEqual(*FString::Printf(TEXT("%s is never not_started"), Code), Advisory->GetStringField(TEXT("mutation_status")), FString(TEXT("unknown")));
+    }
+    {
+        // Health correctness fields survive the 20-field presentation cap.
+        TSharedRef<FJsonObject> Wide = MakeShared<FJsonObject>();
+        for (int32 I = 0; I < 25; ++I) Wide->SetNumberField(FString::Printf(TEXT("a_%02d"), I), I);
+        Wide->SetBoolField(TEXT("editor_unsafe"), true);
+        Wide->SetBoolField(TEXT("python_unhealthy"), true);
+        Wide->SetObjectField(TEXT("health"), MakeShared<FJsonObject>());
+        Wide->SetBoolField(TEXT("may_have_executed"), true);
+        const TSharedRef<FJsonObject> Trimmed = FHaybaMCPResponseBuilder(FHaybaResponseLimits()).Build(Wide);
+        for (const TCHAR* Field : { TEXT("editor_unsafe"), TEXT("python_unhealthy"), TEXT("health"), TEXT("may_have_executed") })
+        {
+            TestTrue(*FString::Printf(TEXT("%s is never dropped"), Field), Trimmed->HasField(Field));
+        }
+    }
     return true;
 }
 

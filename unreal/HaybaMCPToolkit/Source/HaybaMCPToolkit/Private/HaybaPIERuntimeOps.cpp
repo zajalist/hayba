@@ -303,6 +303,67 @@ namespace HaybaPIERuntimeOps
         return Out;
     }
 
+    FSightlinesRequest ParseSightlines(FHaybaParamReader& R)
+    {
+        FSightlinesRequest Out;
+        Out.World = ParseWorldSelector(R);
+        const TSharedPtr<FJsonObject>& Raw = R.Raw();
+        if (Raw.IsValid())
+        {
+            for (const TPair<FString, TSharedPtr<FJsonValue>>& Field : Raw->Values)
+            {
+                if (Field.Key != TEXT("pie_instance") && Field.Key != TEXT("eye_positions")
+                    && Field.Key != TEXT("target_location"))
+                    R.AddError(FString::Printf(TEXT("unknown field '%s'"), *Field.Key));
+            }
+        }
+        Out.TargetLocation = OptionalFiniteVec3(R, TEXT("target_location")).Get(FVector::ZeroVector);
+        if (!Raw.IsValid() || !Raw->HasField(TEXT("target_location")))
+            R.AddError(TEXT("'target_location' is required"));
+
+        const TArray<TSharedPtr<FJsonValue>>* Eyes = nullptr;
+        if (!Raw.IsValid() || !Raw->TryGetArrayField(TEXT("eye_positions"), Eyes)
+            || !Eyes || Eyes->Num() < 1 || Eyes->Num() > MaxSightlineEyes)
+        {
+            R.AddError(TEXT("'eye_positions' must contain 1 to 32 explicit [x,y,z] positions"));
+            return Out;
+        }
+        for (int32 Index = 0; Index < Eyes->Num(); ++Index)
+        {
+            const TArray<TSharedPtr<FJsonValue>>* Coordinates = nullptr;
+            if (!(*Eyes)[Index].IsValid() || (*Eyes)[Index]->Type != EJson::Array
+                || !(*Eyes)[Index]->TryGetArray(Coordinates)
+                || !Coordinates || Coordinates->Num() != 3)
+            {
+                R.AddError(FString::Printf(TEXT("eye_positions[%d] must be [x,y,z]"), Index));
+                continue;
+            }
+            double Values[3] = {};
+            bool bValid = true;
+            for (int32 Axis = 0; Axis < 3; ++Axis)
+            {
+                const TSharedPtr<FJsonValue>& Field = (*Coordinates)[Axis];
+                bValid = bValid && Field.IsValid() && Field->Type == EJson::Number
+                    && Field->TryGetNumber(Values[Axis]) && FMath::IsFinite(Values[Axis])
+                    && FMath::Abs(Values[Axis]) <= MaxWorldCoordinateAbs;
+            }
+            if (!bValid)
+            {
+                R.AddError(FString::Printf(TEXT("eye_positions[%d] needs 3 finite coordinates within world bounds"), Index));
+                continue;
+            }
+            const FVector Eye(Values[0], Values[1], Values[2]);
+            const double Distance = FVector::Distance(Eye, Out.TargetLocation);
+            if (Distance <= 0.0 || !FMath::IsFinite(Distance) || Distance > MaxSightlineLengthCm)
+            {
+                R.AddError(FString::Printf(TEXT("eye_positions[%d] must be more than 0 and at most 10000 cm from target_location"), Index));
+                continue;
+            }
+            Out.EyePositions.Add(Eye);
+        }
+        return Out;
+    }
+
     FWorldSelection SelectWorld(
         const TArray<FWorldCandidate>& Candidates,
         const TOptional<int32>& RequestedPIEInstance,

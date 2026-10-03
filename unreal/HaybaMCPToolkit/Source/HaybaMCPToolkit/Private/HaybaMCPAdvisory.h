@@ -86,6 +86,8 @@ struct FHaybaMCPAdvisorySignals
     bool bCrashGuardRejected = false;
     bool bStructuredException = false;
     bool bRetryUnchangedSafe = false;
+    /** A contained native fault left the editor unsafe (ADR-0011): restart required, never retryable. */
+    bool bEditorUnsafe = false;
     int32 SucceededCount = 0;
     int32 FailedCount = 0;
     EHaybaMCPCommandPhase Phase = EHaybaMCPCommandPhase::Parse;
