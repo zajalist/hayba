@@ -6,7 +6,7 @@
  * changes state" — in two languages:
  *
  *   TS  NON_IDEMPOTENT      (tool-executor.ts)   → never auto-retry on transport failure
- *   C++ DestructiveCommands (HaybaMCPCommandHandler.cpp) → require an approved plan
+ *   C++ DestructiveCommands (HaybaMCPCommandHandler.cpp) → require exact approval
  *
  * A command whose double-execution has real side-effects is by definition
  * state-changing, so the first set must be a subset of the second. Nothing in
@@ -77,7 +77,7 @@ describe('Plan Mode gate covers every non-retryable command', () => {
       ungated,
       `These commands are declared non-idempotent in tool-executor.ts but are NOT in ` +
         `IsDestructiveCommand() in HaybaMCPCommandHandler.cpp, so Plan Mode will let them ` +
-        `run without an approved plan. Add them to the C++ set (or, if a command genuinely ` +
+        `run without exact approval. Add them to the C++ set (or, if a command genuinely ` +
         `does not change state, take it out of NON_IDEMPOTENT — but not both).`,
     ).toEqual([]);
   });
@@ -109,13 +109,26 @@ describe('Plan Mode gate covers every non-retryable command', () => {
     expect(policy).toContain('Result.bReused = true;');
   });
 
-  // One global Approve used to cover whichever agent sent the next
-  // destructive command. Approval is now spent only by the plan's owner.
-  it.runIf(available)('scopes plan approval to the owner that proposed the plan', () => {
-    const src = readFileSync(CPP_PATH, 'utf-8');
-    expect(src).toContain('HaybaMCPLease::PlanApprovalApplies(M->bPlanApproved, M->PlanOwner, Caller)');
-    expect(src).toContain('M->PlanOwner = Proposer;');
-    expect(src).not.toContain('const bool bApproved = (M && M->bPlanApproved);');
+  // The old prose-plan flag must not authorize a native write. Dispatch spends
+  // an exact approval bound to the caller, command, parameters, target, lease,
+  // and source. Native module code consumes the token even on a mismatch.
+  it.runIf(available)('requires a single-use exact approval bound to the caller and operation', () => {
+    const router = readFileSync(CPP_PATH, 'utf-8');
+    const moduleSource = readFileSync(join(process.cwd(),
+      '../../unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/HaybaMCPModule.cpp'), 'utf-8');
+    const moduleHeader = readFileSync(join(process.cwd(),
+      '../../unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Public/HaybaMCPModule.h'), 'utf-8');
+    const gateStart = router.indexOf('if (S.bPlanModeEnabled && IsDestructiveCommand(Cmd))');
+    expect(gateStart).toBeGreaterThan(-1);
+    const gateEnd = router.indexOf('S.PlanModeToolCallCount++', gateStart);
+    expect(gateEnd).toBeGreaterThan(gateStart);
+    const gate = router.slice(gateStart, gateEnd);
+
+    expect(gate).toMatch(/ConsumeExactExternalApproval\s*\(\s*Caller\s*,\s*Cmd\s*,\s*OperationDigest\s*,\s*TargetFingerprint\s*,\s*LeaseBinding\s*,\s*SourceBinding/);
+    expect(gate).not.toMatch(/\bbPlanApproved\b/);
+    expect(moduleHeader).toMatch(/Owner\s*==\s*InOwner/);
+    expect(moduleSource).toMatch(/ApprovedExternalOperation\.Matches\s*\(\s*Owner\s*,\s*Command/);
+    expect(moduleSource).toMatch(/if\s*\(ApprovedExternalOperation\.IsValid\(\)\)\s*ApprovedExternalOperation\s*=\s*\{\s*\}\s*;/);
   });
 
   it.runIf(available)('gates idempotent material mutation and compile/save commands', () => {
