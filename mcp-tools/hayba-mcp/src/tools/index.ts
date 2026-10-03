@@ -32,6 +32,7 @@ import { actorSpawnHandler, meta as actorSpawnMeta } from './actor/actor-spawn.j
 import { actorListHandler, meta as actorListMeta } from './actor/actor-list.js';
 import { worldBudgetSnapshotHandler, meta as worldBudgetSnapshotMeta } from './world/world-budget-snapshot.js';
 import { worldSemanticSnapshotHandler, schema as worldSemanticSnapshotSchema, meta as worldSemanticSnapshotMeta } from './world/world-semantic-snapshot.js';
+import { worldTileCaptureHandler, schema as worldTileCaptureSchema, meta as worldTileCaptureMeta } from './world/world-tile-capture.js';
 import { worldCompareSnapshotsHandler, meta as worldCompareSnapshotsMeta, schema as worldCompareSnapshotsSchema } from './world/world-compare-snapshots.js';
 import { actorDeleteHandler, meta as actorDeleteMeta } from './actor/actor-delete.js';
 import { actorTransformHandler, meta as actorTransformMeta } from './actor/actor-transform.js';
@@ -1865,12 +1866,21 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
   },
   {
     name: 'world_semantic_snapshot',
-    description: 'Page through the loaded editor world as linked authored sources and derived spatial clusters. Overview reports coverage and table counts; nodes, clusters, membership, and optional surface samples are bounded pages. Pass expected_scan_id between pages to refuse a changed scan. No visual-quality or production-performance verdict.',
+    description: 'Inspect three separate loaded-world observations: mesh hierarchy and spatial clusters (source=mesh), CPU mesh point-cloud tiles linked to actor/component/instance sources, compact authored semantic groups, and spatial relations (source=mesh_tile), or first-visible editor-camera depth (source=view_depth). Use world_tile_capture to capture a tile on demand. For mesh_tile, pass its tile_id and the capture_id returned by start as expected_capture_id even on the first overview; reuse both for pages and relations. An uncaptured tile reports not_captured; an evicted pinned capture ID is refused so the agent can recapture. No visual-quality or production-performance verdict.',
     meta: worldSemanticSnapshotMeta,
     handler: worldSemanticSnapshotHandler,
     cost: 'medium',
-    returns: '{scan_id,section,offset,limit,total_items,next_offset,totals,coverage,originCm,boundsCm,items}',
+    returns: '{source,section,status?,scan_id?,capture_id?,tile_id?,page_id?,captured_at_utc?,coverage?,gaps?,loaded_only?,bounds_cm?,totals?,point_count?,offset?,limit?,total_items?,next_offset?,items?}',
     schema: worldSemanticSnapshotSchema.shape,
+  },
+  {
+    name: 'world_tile_capture',
+    description: 'Start, poll, or cancel an asynchronous World tile capture. Start with either canonical tile_id (tile:LOD:X:Y:Z) or position_cm {x,y,z} plus lod (0–2); position coordinates are centimeters and resolve to the containing tile. Samples bounded CPU mesh geometry from loaded editor actors only; it does not load cells, render, or capture during PIE. Start returns tile_id and capture_id immediately. Poll by capture_id until captured or partial, then read source=mesh_tile with world_semantic_snapshot using tile_id and expected_capture_id from start, including on the first overview and all relation/detail pages.',
+    meta: worldTileCaptureMeta,
+    handler: worldTileCaptureHandler,
+    cost: 'medium',
+    returns: '{action,status,tile_id,capture_id,scanned_actor_slots,eligible_actor_count,processed_actor_count,point_count,page_count,gaps,deduplicated?,reason?,captured_at_utc?}',
+    schema: worldTileCaptureSchema.shape,
   },
   {
     name: 'world_compare_snapshots',
@@ -4015,6 +4025,7 @@ const fetchMeshBounds = async (asset: string) => {
 export function inferDir(name: string): string | null {
   if (name === 'query_ue_docs') return 'docs';
   if (name.startsWith('actor_')) return 'actor';
+  if (name.startsWith('world_')) return 'world';
   if (name.startsWith('scene_')) return 'scene';
   if (name.startsWith('editor_')) return 'editor';
   if (name.startsWith('material_')) return 'material';

@@ -14,6 +14,9 @@ public:
 private:
     FHaybaHandlerResult Export(const TSharedPtr<FJsonObject>& P);
     FHaybaHandlerResult WorldSemanticSnapshot(const TSharedPtr<FJsonObject>& P);
+    FHaybaHandlerResult WorldTileCapture(const TSharedPtr<FJsonObject>& P);
+    FHaybaHandlerResult ViewDepthSnapshot(const TSharedPtr<FJsonObject>& P, UWorld* World);
+    FHaybaHandlerResult WorldTileSnapshot(const TSharedPtr<FJsonObject>& P, UWorld* World);
     FHaybaHandlerResult ValidatePhysics(const TSharedPtr<FJsonObject>& P);
     FHaybaHandlerResult GetActorRelations(const TSharedPtr<FJsonObject>& P);
 

@@ -66,7 +66,7 @@ const DOMAINS: ReadonlyArray<{ domain: string; command_count: number; commands: 
   {
     domain: 'scene',
     command_count: 4,
-    commands: ['scene_export', 'world_semantic_snapshot', 'scene_validate_physics', 'scene_get_actor_relations'],
+    commands: ['scene_export', 'world_semantic_snapshot', 'world_tile_capture', 'scene_validate_physics', 'scene_get_actor_relations'],
   },
   {
     domain: 'editor',

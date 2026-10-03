@@ -107,6 +107,18 @@ FSnapshot Build(UWorld* World);
 FSnapshot BuildBatch(UWorld* World, const TArray<TWeakObjectPtr<AActor>>& LoadedActors,
     int32 PointLimit, double TimeLimitSeconds = 0.012);
 
+/** Refine one fixed world-space tile from loaded CPU mesh render LODs. Points
+ * are sampled on triangles clipped to RegionCm; no viewport/depth pixels are
+ * substituted. All limits still apply per game-thread page. */
+FSnapshot BuildTileBatch(UWorld* World, const TArray<TWeakObjectPtr<AActor>>& LoadedActors,
+    const FBox& RegionCm, int32 PointLimit, double TimeLimitSeconds = 0.020);
+
+/** World-space tile geometry is independent of overview bounds and scan order. */
+bool TileBounds(int32 LOD, int32 X, int32 Y, int32 Z, FBox& OutBounds);
+FString TileId(int32 LOD, int32 X, int32 Y, int32 Z);
+bool TriangleBoundsIntersectsTile(const FVector& A, const FVector& B, const FVector& C,
+    const FBox& RegionCm);
+
 /** Shared UI/MCP metadata shape. Defaults to compact summaries without point positions. */
 TSharedRef<FJsonObject> ToMetadataJson(const FSnapshot& Snapshot, bool bIncludeSplats = false,
     const FString& Section = FString(), int32 Start = 0, int32 Limit = MAX_int32);

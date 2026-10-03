@@ -69,7 +69,7 @@ namespace HaybaMCPCommandSets
 			TEXT("asset_search"), TEXT("asset_registry_query"), TEXT("asset_get_info"), TEXT("asset_get_dependencies"),
 			TEXT("asset_get_referencers"), TEXT("asset_get_references"), TEXT("asset_browse"),
 			// plain reads
-            TEXT("actor_list"), TEXT("world_budget_snapshot"), TEXT("world_semantic_snapshot"), TEXT("actor_get_properties"), TEXT("actor_get_components"), TEXT("object_get_property"),
+            TEXT("actor_list"), TEXT("world_budget_snapshot"), TEXT("world_semantic_snapshot"), TEXT("world_tile_capture"), TEXT("actor_get_properties"), TEXT("actor_get_components"), TEXT("object_get_property"),
 			TEXT("blueprint_get_info"), TEXT("blueprint_inspect_graph"), TEXT("anim_blueprint_get_info"), TEXT("bt_get_info"),
 			TEXT("material_get_info"), TEXT("material_list"), TEXT("data_get"), TEXT("level_get_info"), TEXT("level_list"),
 			TEXT("level_get_spatial_index"), TEXT("scene_get_actor_relations"), TEXT("spline_get_info"),

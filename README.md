@@ -41,7 +41,7 @@ A typical request is concrete: *“Inspect this level, propose a route to the fo
 | **Shared-editor coordination** | Owner-bound leases and busy-asset rules turn competing writes into explicit refusals. Bounded batches stop when editor state changes. The orchestrator can respond instead of guessing what happened. | `0.4.0` candidate |
 | **Native crash and state guards** | A contained native fault leaves the editor in a sticky unsafe state. Play, dirty Blueprints, read-only saves, and unattended execution receive checks at the editor boundary. | `0.4.0` candidate |
 | **Reviewable changes** | Plan Mode can require approval before destructive steps. Supported operations use Unreal undo transactions; structured results expose refusals and partial work. | Available; expanded in `0.4.0` |
-| **A scene-derived World view** | The development preview samples loaded mesh surfaces and links them to source actors, folders, components, instances, and spatial clusters. It reports coverage instead of implying an unloaded region was inspected. | Development branch |
+| **A scene-derived World view** | The development preview samples loaded meshes and first-visible depth. Agents can capture local geometry tiles on demand, page authored sources and provisional spatial relations, and inspect coverage gaps; most depth points remain unattributed. | Development branch |
 
 The [tool reference](docs/wiki/) covers individual operations. Optional [GAS and MetaSound plugins](docs/adr/0008-satellite-plugins-earn-their-place.md) extend the core. The distinction is how the tools work together under a shared editor's live constraints.
 
@@ -59,9 +59,9 @@ Hayba does not treat every refusal as failure. A structured refusal tells the ag
 
 ## World, from scene evidence
 
-The current preview progressively scans loaded static meshes. The scratch-editor capture above shows 130,048 surface samples from 1,024 synthetic actors. Each sample can be traced to its source; an unloaded cell is still unknown.
+The current preview progressively scans loaded static meshes. The scratch-editor capture above shows 130,048 surface samples from 1,024 synthetic actors, with source links for those mesh samples. A [second scratch capture](docs/media/world-depth-scratch-preview.png) includes 37,277 depth-derived points from a 256×256 capture of first-visible surfaces. A [zoom-local tile](docs/media/world-tile-scratch-preview.png) adds 8,192 points sampled from mesh triangles. An agent can start a loaded-world tile capture with `world_tile_capture`, then inspect its bounded geometry, source nodes, and authored semantic groups with `world_semantic_snapshot`. The latest depth observation also has queryable pages with a capture ID, camera, coverage, and gaps. Uncaptured regions report `not_captured`. The depth pass covers one editor-camera view, not an entire level; only sparse depth-matched collision labels identify possible sources. Unloaded cells and occluded surfaces remain unknown.
 
-[Open the World capture](docs/media/world-mesh-splat-preview.png) · [Read the World model](docs/world-intelligence.md)
+[Open the World capture](docs/media/world-mesh-splat-preview.png) · [Zoom-local mesh detail](docs/media/world-tile-scratch-preview.png) · [Read the World model](docs/world-intelligence.md)
 
 ## The next World layer
 

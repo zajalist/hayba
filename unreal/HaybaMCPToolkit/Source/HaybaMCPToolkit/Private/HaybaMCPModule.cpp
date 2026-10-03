@@ -61,6 +61,7 @@
 #include "handlers/HaybaMCPBatchHandler.h"
 #include "HaybaMCPEditorState.h"
 #include "HaybaMCPCaptureActor.h"
+#include "HaybaMCPWorldTileCapture.h"
 #include "HaybaMCPSettings.h"
 #include "HaybaMCPRenderSafety.h"
 #include "Json.h"
@@ -161,6 +162,7 @@ void FHaybaMCPModule::StartupModule()
 
     FHaybaMCPStyle::Initialize();
     FHaybaMCPSettings::Get().Load();
+    HaybaWorldTileCapture::Initialize();
 
     CommandHandler = MakeShared<FHaybaMCPCommandHandler>();
     CommandHandler->RegisterHandler(MakeShared<FHaybaMCPLegacyHandler>());
@@ -406,6 +408,7 @@ void FHaybaMCPModule::ShutdownModule()
 
     // Ticker lambdas execute plugin code. Remove/fail an in-flight test job
     // before module unload so no callback can jump into an unloaded DLL.
+    HaybaWorldTileCapture::Shutdown();
     FHaybaMCPTestHandler::ShutdownActiveRun();
     auto& TM = FGlobalTabmanager::Get();
     if (PlanOverlay) { PlanOverlay->Unregister(); PlanOverlay.Reset(); }

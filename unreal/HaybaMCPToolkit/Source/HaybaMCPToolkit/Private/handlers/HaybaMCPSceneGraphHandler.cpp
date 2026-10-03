@@ -1,6 +1,10 @@
 #include "HaybaMCPSceneGraphHandler.h"
 #include "HaybaMCPParams.h"
 #include "HaybaMCPWorldGeometry.h"
+#include "HaybaMCPViewDepthSnapshot.h"
+#include "HaybaMCPWorldTileSnapshot.h"
+#include "HaybaMCPWorldTileCapture.h"
+#include "HaybaMCPWorldRelations.h"
 #include "Editor.h"
 #include "EngineUtils.h"
 #include "GameFramework/Actor.h"
@@ -73,6 +77,7 @@ TArray<FString> FHaybaMCPSceneGraphHandler::GetCommands() const
     return {
         TEXT("scene_export"),
         TEXT("world_semantic_snapshot"),
+        TEXT("world_tile_capture"),
         TEXT("scene_validate_physics"),
         TEXT("scene_get_actor_relations"),
     };
@@ -82,6 +87,7 @@ FHaybaHandlerResult FHaybaMCPSceneGraphHandler::Handle(const FString& Cmd, const
 {
     if (Cmd == TEXT("scene_export"))              return Export(Params);
     if (Cmd == TEXT("world_semantic_snapshot"))   return WorldSemanticSnapshot(Params);
+    if (Cmd == TEXT("world_tile_capture"))        return WorldTileCapture(Params);
     if (Cmd == TEXT("scene_validate_physics"))    return ValidatePhysics(Params);
     if (Cmd == TEXT("scene_get_actor_relations")) return GetActorRelations(Params);
 
@@ -333,11 +339,23 @@ FHaybaHandlerResult FHaybaMCPSceneGraphHandler::Export(const TSharedPtr<FJsonObj
 
 FHaybaHandlerResult FHaybaMCPSceneGraphHandler::WorldSemanticSnapshot(const TSharedPtr<FJsonObject>& P)
 {
-    UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
-    if (!World)
-        return FHaybaHandlerResult::Err(TEXT("world_semantic_snapshot: no editor world"));
     if (!P.IsValid())
         return FHaybaHandlerResult::Err(TEXT("world_semantic_snapshot: parameters must be an object"));
+    FString Source = TEXT("mesh");
+    if (const TSharedPtr<FJsonValue>* Value = P->Values.Find(TEXT("source"));
+        Value && (!Value->IsValid() || (*Value)->Type != EJson::String))
+        return FHaybaHandlerResult::Err(TEXT("world_semantic_snapshot: source must be a string"));
+    P->TryGetStringField(TEXT("source"), Source);
+    if (Source != TEXT("mesh") && Source != TEXT("view_depth") && Source != TEXT("mesh_tile"))
+        return FHaybaHandlerResult::Err(TEXT("world_semantic_snapshot: unknown source"));
+    UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
+    if (Source == TEXT("view_depth")) return ViewDepthSnapshot(P, World);
+    if (Source == TEXT("mesh_tile")) return WorldTileSnapshot(P, World);
+    if (P->HasField(TEXT("expected_capture_id")) || P->HasField(TEXT("group_id")) ||
+        P->HasField(TEXT("tile_id")) || P->HasField(TEXT("page_id")))
+        return FHaybaHandlerResult::Err(TEXT("world_semantic_snapshot: capture filter requires source view_depth or mesh_tile"));
+    if (!World)
+        return FHaybaHandlerResult::Err(TEXT("world_semantic_snapshot: no editor world"));
 
     FString Section = TEXT("overview");
     if (const TSharedPtr<FJsonValue>* Value = P->Values.Find(TEXT("section"));
@@ -510,6 +528,7 @@ FHaybaHandlerResult FHaybaMCPSceneGraphHandler::WorldSemanticSnapshot(const TSha
         Snapshot, false, TEXT("overview"));
     TSharedRef<FJsonObject> Out = MakeShared<FJsonObject>();
     Out->SetStringField(TEXT("scan_id"), ScanId);
+    Out->SetStringField(TEXT("source"), TEXT("mesh"));
     Out->SetStringField(TEXT("section"), Section);
     Out->SetNumberField(TEXT("offset"), Offset);
     Out->SetNumberField(TEXT("limit"), Limit);
@@ -588,6 +607,286 @@ FHaybaHandlerResult FHaybaMCPSceneGraphHandler::WorldSemanticSnapshot(const TSha
     if (Offset + Items.Num() < Matched) Out->SetNumberField(TEXT("next_offset"), Offset + Items.Num());
     else Out->SetField(TEXT("next_offset"), MakeShared<FJsonValueNull>());
     Out->SetArrayField(TEXT("items"), MoveTemp(Items));
+    return FHaybaHandlerResult::Ok(Out);
+}
+
+FHaybaHandlerResult FHaybaMCPSceneGraphHandler::ViewDepthSnapshot(
+    const TSharedPtr<FJsonObject>& P, UWorld* World)
+{
+    FString Section = TEXT("overview");
+    if (const TSharedPtr<FJsonValue>* Value = P->Values.Find(TEXT("section"));
+        Value && (!Value->IsValid() || (*Value)->Type != EJson::String))
+        return FHaybaHandlerResult::Err(TEXT("world_semantic_snapshot: section must be a string"));
+    P->TryGetStringField(TEXT("section"), Section);
+    if (Section != TEXT("overview") && Section != TEXT("groups") && Section != TEXT("points"))
+        return FHaybaHandlerResult::Err(TEXT("world_semantic_snapshot: view_depth section must be overview, groups, or points"));
+
+    auto ReadPageNumber = [&P](const TCHAR* Name, int32 Default, int32 Max, int32& Out)
+    {
+        Out = Default;
+        const TSharedPtr<FJsonValue>* Value = P->Values.Find(Name);
+        if (!Value) return true;
+        if (!Value->IsValid() || (*Value)->Type != EJson::Number) return false;
+        const double Number = (*Value)->AsNumber();
+        if (!FMath::IsFinite(Number) || Number < 0.0 || Number > Max ||
+            FMath::FloorToDouble(Number) != Number) return false;
+        Out = static_cast<int32>(Number);
+        return true;
+    };
+    int32 Offset = 0, Limit = 32;
+    if (!ReadPageNumber(TEXT("offset"), 0, 100000, Offset) ||
+        !ReadPageNumber(TEXT("limit"), 32, 32, Limit) || Limit == 0)
+        return FHaybaHandlerResult::Err(TEXT("world_semantic_snapshot: invalid depth pagination"));
+    if (P->HasField(TEXT("cluster_index")) || P->HasField(TEXT("node_index")) ||
+        P->HasField(TEXT("expected_scan_id")) || P->HasField(TEXT("tile_id")) ||
+        P->HasField(TEXT("page_id")))
+        return FHaybaHandlerResult::Err(TEXT("world_semantic_snapshot: mesh filter does not apply to view_depth"));
+
+    FString GroupId;
+    if (const TSharedPtr<FJsonValue>* Value = P->Values.Find(TEXT("group_id"));
+        Value && (!Value->IsValid() || (*Value)->Type != EJson::String))
+        return FHaybaHandlerResult::Err(TEXT("world_semantic_snapshot: group_id must be a string"));
+    P->TryGetStringField(TEXT("group_id"), GroupId);
+    if (GroupId.Len() > 64 || (!GroupId.IsEmpty() &&
+        (Section != TEXT("points") || !GroupId.StartsWith(TEXT("cell:")))))
+        return FHaybaHandlerResult::Err(TEXT("world_semantic_snapshot: invalid depth group_id"));
+
+    FString ExpectedCaptureId;
+    if (const TSharedPtr<FJsonValue>* Value = P->Values.Find(TEXT("expected_capture_id"));
+        Value && (!Value->IsValid() || (*Value)->Type != EJson::String))
+        return FHaybaHandlerResult::Err(TEXT("world_semantic_snapshot: expected_capture_id must be a string"));
+    if (P->TryGetStringField(TEXT("expected_capture_id"), ExpectedCaptureId))
+    {
+        if (ExpectedCaptureId.Len() != 32)
+            return FHaybaHandlerResult::Err(TEXT("world_semantic_snapshot: malformed expected_capture_id"));
+        for (const TCHAR Digit : ExpectedCaptureId)
+            if (!((Digit >= TEXT('0') && Digit <= TEXT('9')) ||
+                (Digit >= TEXT('A') && Digit <= TEXT('F')) ||
+                (Digit >= TEXT('a') && Digit <= TEXT('f'))))
+                return FHaybaHandlerResult::Err(TEXT("world_semantic_snapshot: malformed expected_capture_id"));
+    }
+    const TSharedPtr<const HaybaViewDepthSnapshot::FSnapshot> Snapshot =
+        HaybaViewDepthSnapshot::GetForWorld(World);
+    if (!ExpectedCaptureId.IsEmpty() && (!Snapshot.IsValid() ||
+        !ExpectedCaptureId.Equals(Snapshot->CaptureId, ESearchCase::IgnoreCase)))
+        return FHaybaHandlerResult::Err(TEXT("world_semantic_snapshot: capture changed; restart pagination"));
+    if (!Snapshot.IsValid())
+    {
+        TSharedRef<FJsonObject> Out = HaybaViewDepthSnapshot::BuildNotCaptured();
+        Out->SetStringField(TEXT("section"), Section);
+        Out->SetNumberField(TEXT("offset"), Offset);
+        Out->SetNumberField(TEXT("limit"), Limit);
+        return FHaybaHandlerResult::Ok(Out);
+    }
+    return FHaybaHandlerResult::Ok(
+        HaybaViewDepthSnapshot::BuildPage(*Snapshot, Section, Offset, Limit, GroupId));
+}
+
+FHaybaHandlerResult FHaybaMCPSceneGraphHandler::WorldTileCapture(const TSharedPtr<FJsonObject>& P)
+{
+    if (!P.IsValid())
+        return FHaybaHandlerResult::Err(TEXT("world_tile_capture: parameters must be an object"));
+
+    FString Action;
+    if (!P->TryGetStringField(TEXT("action"), Action) ||
+        (Action != TEXT("start") && Action != TEXT("status") && Action != TEXT("cancel")))
+        return FHaybaHandlerResult::Err(TEXT("world_tile_capture: action must be start, status, or cancel"));
+
+    auto ReadOptionalString = [&P](const TCHAR* Name, FString& Out) -> bool
+    {
+        if (!P->HasField(Name)) return true;
+        return P->TryGetStringField(Name, Out) && !Out.IsEmpty();
+    };
+    FString TileId;
+    FString CaptureId;
+    if (!ReadOptionalString(TEXT("tile_id"), TileId) ||
+        !ReadOptionalString(TEXT("capture_id"), CaptureId) ||
+        TileId.Len() > 96 || CaptureId.Len() > 32)
+        return FHaybaHandlerResult::Err(TEXT("world_tile_capture: invalid tile_id or capture_id"));
+    if (!CaptureId.IsEmpty())
+    {
+        if (CaptureId.Len() != 32)
+            return FHaybaHandlerResult::Err(TEXT("world_tile_capture: capture_id must be 32 hexadecimal characters"));
+        for (const TCHAR Digit : CaptureId)
+            if (!FChar::IsHexDigit(Digit))
+                return FHaybaHandlerResult::Err(TEXT("world_tile_capture: capture_id must be 32 hexadecimal characters"));
+    }
+    const bool bHasPosition = P->HasField(TEXT("position_cm"));
+    const bool bHasLOD = P->HasField(TEXT("lod"));
+    if ((Action == TEXT("start") &&
+            (!CaptureId.IsEmpty() || (TileId.IsEmpty() == bHasPosition) || (bHasPosition != bHasLOD))) ||
+        (Action != TEXT("start") &&
+            ((TileId.IsEmpty() == CaptureId.IsEmpty()) || bHasPosition || bHasLOD)))
+        return FHaybaHandlerResult::Err(TEXT("world_tile_capture: start requires tile_id or position_cm with lod; status and cancel require exactly one of capture_id or tile_id"));
+
+    int32 LOD = 0, TileX = 0, TileY = 0, TileZ = 0;
+    if (bHasPosition)
+    {
+        const TSharedPtr<FJsonObject>* Position = nullptr;
+        const TSharedPtr<FJsonValue>* LODValue = P->Values.Find(TEXT("lod"));
+        if (!P->TryGetObjectField(TEXT("position_cm"), Position) ||
+            !Position || !Position->IsValid() || !LODValue ||
+            !LODValue->IsValid() || (*LODValue)->Type != EJson::Number)
+            return FHaybaHandlerResult::Err(TEXT("world_tile_capture: position_cm must be an object and lod must be 0, 1, or 2"));
+        const double LODNumber = (*LODValue)->AsNumber();
+        if (!FMath::IsFinite(LODNumber) || FMath::FloorToDouble(LODNumber) != LODNumber ||
+            LODNumber < 0.0 || LODNumber > 2.0)
+            return FHaybaHandlerResult::Err(TEXT("world_tile_capture: lod must be 0, 1, or 2"));
+        LOD = static_cast<int32>(LODNumber);
+        double Coordinates[3] = {};
+        constexpr const TCHAR* CoordinateNames[] = {TEXT("x"), TEXT("y"), TEXT("z")};
+        for (int32 Axis = 0; Axis < 3; ++Axis)
+        {
+            const TSharedPtr<FJsonValue>* Value = (*Position)->Values.Find(CoordinateNames[Axis]);
+            if (!Value || !Value->IsValid() || (*Value)->Type != EJson::Number ||
+                !FMath::IsFinite((*Value)->AsNumber()) ||
+                FMath::Abs((*Value)->AsNumber()) > 100000000.0)
+                return FHaybaHandlerResult::Err(TEXT("world_tile_capture: position_cm requires finite x, y, z within 100000000 cm"));
+            Coordinates[Axis] = (*Value)->AsNumber();
+        }
+        const double EdgeCm = 4000.0 / static_cast<double>(1 << LOD);
+        TileX = FMath::FloorToInt(Coordinates[0] / EdgeCm);
+        TileY = FMath::FloorToInt(Coordinates[1] / EdgeCm);
+        TileZ = FMath::FloorToInt(Coordinates[2] / EdgeCm);
+    }
+
+    UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
+    HaybaWorldTileCapture::FStatus Status;
+    HaybaWorldTileCapture::FStartResult Started;
+    if (Action == TEXT("start"))
+    {
+        // The service validates tile bounds and editor safety before queuing any
+        // work. A rejected start is still a machine-readable state for callers.
+        Started = bHasPosition
+            ? HaybaWorldTileCapture::Start(World, LOD, TileX, TileY, TileZ)
+            : HaybaWorldTileCapture::StartById(World, TileId);
+        Status = Started.Status;
+    }
+    else if (Action == TEXT("cancel"))
+    {
+        Status = HaybaWorldTileCapture::Cancel(World,
+            CaptureId.IsEmpty() ? TileId : CaptureId);
+    }
+    else
+    {
+        Status = HaybaWorldTileCapture::GetStatus(World,
+            CaptureId.IsEmpty() ? TileId : CaptureId);
+    }
+
+    TSharedRef<FJsonObject> Out = MakeShared<FJsonObject>();
+    Out->SetStringField(TEXT("action"), Action);
+    Out->SetStringField(TEXT("status"), HaybaWorldTileCapture::StateName(Status.State));
+    Out->SetStringField(TEXT("tile_id"), Status.TileId);
+    Out->SetStringField(TEXT("capture_id"), Status.CaptureId);
+    Out->SetNumberField(TEXT("scanned_actor_slots"), Status.ScannedActorSlots);
+    Out->SetNumberField(TEXT("eligible_actor_count"), Status.EligibleActorCount);
+    Out->SetNumberField(TEXT("processed_actor_count"), Status.ProcessedActorCount);
+    Out->SetNumberField(TEXT("point_count"), Status.PointCount);
+    Out->SetNumberField(TEXT("page_count"), Status.PageCount);
+    TArray<TSharedPtr<FJsonValue>> Gaps;
+    for (const FString& Gap : Status.Gaps)
+        Gaps.Add(MakeShared<FJsonValueString>(Gap));
+    Out->SetArrayField(TEXT("gaps"), MoveTemp(Gaps));
+    if (Action == TEXT("start"))
+    {
+        Out->SetBoolField(TEXT("deduplicated"), Started.bDeduplicated);
+        if (!Started.Error.IsEmpty()) Out->SetStringField(TEXT("reason"), Started.Error);
+    }
+    if (Status.Snapshot.IsValid())
+        Out->SetStringField(TEXT("captured_at_utc"), Status.Snapshot->CapturedAtUtc);
+    return FHaybaHandlerResult::Ok(Out);
+}
+
+FHaybaHandlerResult FHaybaMCPSceneGraphHandler::WorldTileSnapshot(
+    const TSharedPtr<FJsonObject>& P, UWorld* World)
+{
+    FString Section = TEXT("overview");
+    if (const TSharedPtr<FJsonValue>* Value = P->Values.Find(TEXT("section"));
+        Value && (!Value->IsValid() || (*Value)->Type != EJson::String))
+        return FHaybaHandlerResult::Err(TEXT("world_semantic_snapshot: section must be a string"));
+    P->TryGetStringField(TEXT("section"), Section);
+    if (Section != TEXT("overview") && Section != TEXT("pages") && Section != TEXT("semantic") &&
+        Section != TEXT("relations") &&
+        Section != TEXT("nodes") && Section != TEXT("points"))
+        return FHaybaHandlerResult::Err(TEXT("world_semantic_snapshot: mesh_tile section must be overview, pages, semantic, relations, nodes, or points"));
+    if (P->HasField(TEXT("cluster_index")) || P->HasField(TEXT("node_index")) ||
+        P->HasField(TEXT("expected_scan_id")) || P->HasField(TEXT("group_id")))
+        return FHaybaHandlerResult::Err(TEXT("world_semantic_snapshot: mesh filters do not apply to mesh_tile"));
+
+    FString TileId;
+    if (!P->TryGetStringField(TEXT("tile_id"), TileId))
+        return FHaybaHandlerResult::Err(TEXT("world_semantic_snapshot: mesh_tile requires tile_id"));
+    TArray<FString> Parts;
+    TileId.ParseIntoArray(Parts, TEXT(":"), false);
+    if (TileId.Len() > 96 || Parts.Num() != 5 || Parts[0] != TEXT("tile") ||
+        (Parts[1] != TEXT("0") && Parts[1] != TEXT("1") && Parts[1] != TEXT("2")))
+        return FHaybaHandlerResult::Err(TEXT("world_semantic_snapshot: invalid tile_id"));
+    for (int32 PartIndex = 2; PartIndex < Parts.Num(); ++PartIndex)
+    {
+        const FString& Part = Parts[PartIndex];
+        const int32 FirstDigit = Part.StartsWith(TEXT("-")) ? 1 : 0;
+        if (Part.Len() <= FirstDigit || Part.Len() > 12)
+            return FHaybaHandlerResult::Err(TEXT("world_semantic_snapshot: invalid tile_id"));
+        for (int32 CharIndex = FirstDigit; CharIndex < Part.Len(); ++CharIndex)
+            if (!FChar::IsDigit(Part[CharIndex]))
+                return FHaybaHandlerResult::Err(TEXT("world_semantic_snapshot: invalid tile_id"));
+    }
+
+    auto ReadPageNumber = [&P](const TCHAR* Name, int32 Default, int32 Max, int32& Out)
+    {
+        Out = Default;
+        const TSharedPtr<FJsonValue>* Value = P->Values.Find(Name);
+        if (!Value) return true;
+        if (!Value->IsValid() || (*Value)->Type != EJson::Number) return false;
+        const double Number = (*Value)->AsNumber();
+        if (!FMath::IsFinite(Number) || Number < 0.0 || Number > Max ||
+            FMath::FloorToDouble(Number) != Number) return false;
+        Out = static_cast<int32>(Number);
+        return true;
+    };
+    int32 Offset = 0, Limit = 32, PageId = INDEX_NONE;
+    if (!ReadPageNumber(TEXT("offset"), 0, 100000, Offset) ||
+        !ReadPageNumber(TEXT("limit"), 32, 32, Limit) || Limit == 0 ||
+        !ReadPageNumber(TEXT("page_id"), INDEX_NONE, 100000, PageId))
+        return FHaybaHandlerResult::Err(TEXT("world_semantic_snapshot: invalid tile pagination"));
+    if ((Section == TEXT("nodes") || Section == TEXT("points")) && PageId == INDEX_NONE)
+        return FHaybaHandlerResult::Err(TEXT("world_semantic_snapshot: page_id is required for tile nodes and points"));
+    if ((Section == TEXT("overview") || Section == TEXT("pages") ||
+        Section == TEXT("semantic") || Section == TEXT("relations")) && P->HasField(TEXT("page_id")))
+        return FHaybaHandlerResult::Err(TEXT("world_semantic_snapshot: page_id applies only to tile nodes and points"));
+
+    FString ExpectedCaptureId;
+    if (const TSharedPtr<FJsonValue>* Value = P->Values.Find(TEXT("expected_capture_id"));
+        Value && (!Value->IsValid() || (*Value)->Type != EJson::String))
+        return FHaybaHandlerResult::Err(TEXT("world_semantic_snapshot: expected_capture_id must be a string"));
+    if (P->TryGetStringField(TEXT("expected_capture_id"), ExpectedCaptureId))
+    {
+        if (ExpectedCaptureId.Len() != 32)
+            return FHaybaHandlerResult::Err(TEXT("world_semantic_snapshot: malformed expected_capture_id"));
+        for (const TCHAR Digit : ExpectedCaptureId)
+            if (!FChar::IsHexDigit(Digit))
+                return FHaybaHandlerResult::Err(TEXT("world_semantic_snapshot: malformed expected_capture_id"));
+    }
+    if (Section != TEXT("overview") && ExpectedCaptureId.IsEmpty())
+        return FHaybaHandlerResult::Err(TEXT("world_semantic_snapshot: read tile overview first, then pass expected_capture_id"));
+    const TSharedPtr<const HaybaWorldTileSnapshot::FTile> Snapshot =
+        HaybaWorldTileSnapshot::GetForWorld(World, TileId, ExpectedCaptureId);
+    if (!ExpectedCaptureId.IsEmpty() && (!Snapshot.IsValid() ||
+        !ExpectedCaptureId.Equals(Snapshot->CaptureId, ESearchCase::IgnoreCase)))
+        return FHaybaHandlerResult::Err(TEXT("world_semantic_snapshot: tile capture changed; restart pagination"));
+    if (!Snapshot.IsValid())
+    {
+        TSharedRef<FJsonObject> Out = HaybaWorldTileSnapshot::BuildNotCaptured(TileId);
+        Out->SetStringField(TEXT("section"), Section);
+        Out->SetNumberField(TEXT("offset"), Offset);
+        Out->SetNumberField(TEXT("limit"), Limit);
+        return FHaybaHandlerResult::Ok(Out);
+    }
+    TSharedRef<FJsonObject> Out = Section == TEXT("relations")
+        ? HaybaWorldRelations::BuildPage(HaybaWorldRelations::Build(*Snapshot), Offset, Limit)
+        : HaybaWorldTileSnapshot::BuildPage(*Snapshot,
+            Section == TEXT("overview") ? TEXT("summary") : Section, PageId, Offset, Limit);
+    Out->SetStringField(TEXT("section"), Section);
     return FHaybaHandlerResult::Ok(Out);
 }
 

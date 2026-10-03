@@ -7,7 +7,7 @@
   <style>
     @font-face { font-family: 'Noto Sans'; src: url('../Fonts/noto-sans-latin-400-normal.woff2') format('woff2'); font-style: normal; font-weight: 400; font-display: swap; }
     @font-face { font-family: 'Noto Sans'; src: url('../Fonts/noto-sans-latin-600-normal.woff2') format('woff2'); font-style: normal; font-weight: 600; font-display: swap; }
-    :root { color-scheme: dark; --bg: #211F1D; --surface: #2B2825; --sunken: #191816; --hover: #38332E; --line: #4A443D; --line-strong: #685E53; --text: #F1EDE6; --secondary: #C9BFB2; --muted: #A99D90; --attention: #C47A28; }
+    :root { color-scheme: dark; --bg: #1B1A18; --surface: #292623; --sunken: #171615; --hover: #34302B; --line: #3D3833; --line-strong: #5E554D; --text: #EAE6E1; --secondary: #BCB4AB; --muted: #9B9187; --attention: #C47A28; }
     * { box-sizing: border-box; }
     html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: var(--bg); color: var(--text); font: 13px/1.45 'Noto Sans', 'Segoe UI', sans-serif; }
     ::selection { color: var(--text); background: #6A4827; }
@@ -17,14 +17,18 @@
     #scene:focus-visible, button:focus-visible { outline: 2px solid var(--attention); outline-offset: 2px; }
     .top { position: absolute; top: 12px; right: 12px; pointer-events: none; }
     .controls { display: flex; gap: 3px; pointer-events: auto; }
-    .controls button { display: grid; place-items: center; width: 34px; height: 34px; padding: 0; border-color: transparent; background: var(--surface); }
+    .controls button { display: flex; align-items: center; justify-content: center; gap: 7px; width: 34px; height: 34px; padding: 0; border-color: transparent; background: var(--surface); }
+    .controls #explore { width: auto; padding: 0 11px; color: var(--secondary); }
     .controls button img { display: block; width: 17px; height: 17px; opacity: .75; }
     .controls button:hover img, .controls button[aria-expanded="true"] img { opacity: 1; }
     button { background: var(--surface); color: var(--text); border: 1px solid var(--line); border-radius: 7px; padding: 6px 10px; font: inherit; cursor: pointer; }
     button:hover { border-color: var(--line-strong); background: var(--hover); }
     button:active { background: var(--sunken); }
     button[aria-selected="true"], button[aria-expanded="true"] { border-color: var(--line-strong); background: var(--hover); }
-    #message { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); max-width: 370px; padding: 15px 18px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); color: var(--secondary); text-align: center; pointer-events: none; }
+    #message { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: min(370px, calc(100% - 36px)); padding: 15px 18px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); color: var(--secondary); text-align: center; }
+    #message.compact { top: auto; bottom: 56px; transform: translateX(-50%); text-align: left; }
+    #message button { display: block; margin: 12px auto 0; min-height: 34px; }
+    #message.compact button { margin-left: 0; }
     #message[hidden] { display: none; }
     #message strong { display: block; margin-bottom: 5px; color: var(--text); font-weight: 600; }
     #message strong:only-child { margin-bottom: 0; }
@@ -32,6 +36,15 @@
     .badge { max-width: min(580px, 72vw); padding: 5px 7px; background: var(--surface); border: 1px solid var(--line); border-radius: 7px; color: var(--secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     #selected { color: var(--text); border-color: var(--attention); max-width: 40vw; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
     #selected[hidden] { display: none; }
+    .scope { display: flex; align-items: center; gap: 5px; max-width: min(560px, 88vw); min-height: 38px; padding: 3px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--surface); pointer-events: auto; }
+    .scope[hidden] { display: none; }
+    .scope button { flex: none; width: 30px; height: 30px; padding: 6px; border-color: transparent; background: transparent; }
+    .scope button:hover { background: var(--hover); }
+    .scope button img { display: block; width: 16px; height: 16px; opacity: .78; }
+    #scope-prev img { transform: rotate(90deg); }
+    #scope-next img { transform: rotate(-90deg); }
+    .scope-copy { min-width: 0; max-width: 420px; padding: 0 5px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--text); font-size: 12px; }
+    .scope-copy small { margin-left: 7px; color: var(--secondary); font-size: 11px; }
     .inspect { position: absolute; left: 15px; bottom: 68px; width: min(352px, calc(100vw - 30px)); max-height: min(430px, 68vh); display: flex; flex-direction: column; overflow: hidden; pointer-events: auto; background: var(--surface); border: 1px solid var(--line-strong); border-radius: 10px; }
     .inspect[hidden] { display: none; }
     .inspect-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; padding: 12px 13px 8px; }
@@ -57,20 +70,20 @@
   </style>
 </head>
 <body>
-  <main id="stage" aria-label="Loaded world 3D preview">
-    <canvas id="scene" tabindex="0" aria-label="3D loaded mesh sample. Drag to orbit, Shift-drag or right-drag to pan, scroll to zoom, and click to select an actor."></canvas>
+  <main id="stage" aria-label="Loaded world point cloud">
+    <canvas id="scene" tabindex="0" aria-label="Loaded world point cloud. Drag to orbit, Shift-drag or right-drag to pan, scroll to zoom, click to inspect a point, and Alt-scroll to change its selected group."></canvas>
     <div class="top">
-      <div class="controls"><button type="button" id="explore" aria-label="Explore world structure" title="Explore world structure" aria-controls="inspect" aria-expanded="false"><img src="../Icons/squares-four.svg" alt="" /></button><button type="button" id="fit" aria-label="Fit world" title="Fit world"><img src="../Icons/arrows-out.svg" alt="" /></button><button type="button" id="refresh" aria-label="Rescan loaded world" title="Rescan loaded world"><img src="../Icons/arrow-clockwise.svg" alt="" /></button></div>
+      <div class="controls"><button type="button" id="explore" aria-label="Explore world structure" title="Explore world structure" aria-controls="inspect" aria-expanded="false"><img src="../Icons/squares-four.svg" alt="" /><span>Explore</span></button><button type="button" id="fit" aria-label="Fit main scene; Shift-click to fit all points" title="Fit main scene · Shift-click to fit all points"><img src="../Icons/arrows-out.svg" alt="" /></button><button type="button" id="refresh" aria-label="Rescan loaded world" title="Rescan loaded world"><img src="../Icons/arrow-clockwise.svg" alt="" /></button></div>
     </div>
-    <div id="message"><strong>Loading world…</strong></div>
+    <div id="message" role="status" aria-live="polite" aria-atomic="true"><strong>Loading World…</strong></div>
     <aside class="inspect" id="inspect" aria-label="World structure" hidden>
       <div class="inspect-head"><div><strong id="inspect-title">World structure</strong><span id="inspect-subtitle">Loaded sources and spatial groups</span></div><button type="button" id="inspect-close" aria-label="Close World structure">Close</button></div>
       <div class="inspect-tabs" role="tablist" aria-label="Hierarchy"><button type="button" id="spatial-tab" role="tab" aria-selected="true" aria-controls="inspect-body">Spatial</button><button type="button" id="authored-tab" role="tab" aria-selected="false" aria-controls="inspect-body">Authored</button></div>
       <nav class="inspect-trail" id="inspect-trail" aria-label="Hierarchy path"></nav>
       <div class="inspect-body" id="inspect-body" role="tabpanel"></div>
     </aside>
-    <div class="bottom"><div class="badge" id="selected" hidden></div></div>
+    <div class="bottom"><div class="scope" id="scope" role="group" aria-label="Selected point group" title="Scroll here or Alt-scroll over World to cycle groups" hidden><button type="button" id="scope-prev" aria-label="Previous group" title="Previous group"><img src="../Icons/chevron-down.svg" alt="" /></button><div class="scope-copy" id="scope-copy" aria-live="polite"></div><button type="button" id="scope-next" aria-label="Next group" title="Next group"><img src="../Icons/chevron-down.svg" alt="" /></button></div><div class="badge" id="selected" hidden></div></div>
   </main>
-  <script src="splat-view.js"></script>
+  <script src="splat-view.js?v=0.4.0"></script>
 </body>
 </html>

@@ -30,6 +30,9 @@ constexpr int32 MaxInstancesPerComponent = 16;
 constexpr int32 MaxSplats = 4096;
 constexpr int32 MaxTrianglesVisited = 32768;
 constexpr int32 MaxTrianglesPerSource = 512;
+constexpr int32 MaxTileTrianglesPerSource = 4096;
+constexpr int32 MaxTileFragmentsPerSource = 8192;
+constexpr int32 MaxTileInstanceVisitsPerComponent = 4096;
 constexpr int32 MaxTagsPerNode = 32;
 constexpr int32 MaxTagsPerCluster = 16;
 constexpr double MaxActorVisitSeconds = 0.050;
@@ -62,6 +65,7 @@ struct FCandidate
     int32 ActorIndex = INDEX_NONE;
     int32 InstanceCount = 1;
     int32 ComponentNodeIndex = INDEX_NONE;
+    TArray<int32> TileInstances;
 };
 
 struct FSurfaceTriangle
@@ -69,6 +73,56 @@ struct FSurfaceTriangle
     FVector A, B, C, Normal;
     double CumulativeArea = 0.0;
 };
+
+/** Clip a real transformed mesh triangle to a world-space tile. This avoids
+ * both invented points and rejection-sampling holes on large boundary faces. */
+void AddClippedTriangle(const FVector& A, const FVector& B, const FVector& C,
+    const FVector& Normal, const FBox& Region, TArray<FSurfaceTriangle>& Surface,
+    double& TotalArea)
+{
+    TArray<FVector, TInlineAllocator<12>> Polygon;
+    TArray<FVector, TInlineAllocator<12>> Next;
+    Polygon.Add(A);
+    Polygon.Add(B);
+    Polygon.Add(C);
+    for (int32 Axis = 0; Axis < 3; ++Axis)
+    {
+        for (int32 Side = 0; Side < 2; ++Side)
+        {
+            const double Plane = Side == 0 ? Region.Min[Axis] : Region.Max[Axis];
+            const double Direction = Side == 0 ? 1.0 : -1.0;
+            Next.Reset();
+            if (Polygon.IsEmpty()) return;
+            FVector Previous = Polygon.Last();
+            double PreviousDistance = Direction * (Previous[Axis] - Plane);
+            for (const FVector& Current : Polygon)
+            {
+                const double CurrentDistance = Direction * (Current[Axis] - Plane);
+                if ((CurrentDistance >= 0.0) != (PreviousDistance >= 0.0))
+                {
+                    const double Denominator = PreviousDistance - CurrentDistance;
+                    const double T = FMath::IsNearlyZero(Denominator) ? 0.0 :
+                        FMath::Clamp(PreviousDistance / Denominator, 0.0, 1.0);
+                    Next.Add(FMath::Lerp(Previous, Current, T));
+                }
+                if (CurrentDistance >= 0.0) Next.Add(Current);
+                Previous = Current;
+                PreviousDistance = CurrentDistance;
+            }
+            Polygon = MoveTemp(Next);
+        }
+    }
+    for (int32 Index = 1; Index + 1 < Polygon.Num(); ++Index)
+    {
+        const FVector& P0 = Polygon[0];
+        const FVector& P1 = Polygon[Index];
+        const FVector& P2 = Polygon[Index + 1];
+        const double Area = FVector::CrossProduct(P1 - P0, P2 - P0).Size() * 0.5;
+        if (!FMath::IsFinite(Area) || Area <= UE_DOUBLE_SMALL_NUMBER) continue;
+        TotalArea += Area;
+        Surface.Add({P0, P1, P2, Normal, TotalArea});
+    }
+}
 
 double RadicalInverse(uint32 Number, uint32 Base)
 {
@@ -266,7 +320,8 @@ void BuildSpatialClusters(FSnapshot& Result, double Start, double Deadline)
 }
 
 static FSnapshot BuildInternal(UWorld* World,
-    const TArray<TWeakObjectPtr<AActor>>* BatchActors, int32 PointLimit, double TimeLimitSeconds)
+    const TArray<TWeakObjectPtr<AActor>>* BatchActors, int32 PointLimit,
+    double TimeLimitSeconds, const FBox* RegionCm = nullptr)
 {
     FSnapshot Result;
     if (!World) return Result;
@@ -402,6 +457,7 @@ static FSnapshot BuildInternal(UWorld* World,
         }
         AActor* Actor = Selected.Actor.Get();
         if (!IsValid(Actor) || Actor->GetWorld() != World) { MarkPartial(Result, TEXT("selected_actor_unavailable")); continue; }
+        if (RegionCm && !Actor->GetComponentsBoundingBox(true).Intersect(*RegionCm)) continue;
         ++Result.ActorCount;
         const int32 ActorIndex = Result.Actors.Add({Actor->GetActorLabel(), Actor->GetFolderPath().ToString(), Actor->GetPathName(), Actor});
         const ULevel* Level = Actor->GetLevel();
@@ -473,6 +529,11 @@ static FSnapshot BuildInternal(UWorld* World,
                 break;
             }
             if (!IsValid(RawComponent) || !RawComponent->IsRegistered()) continue;
+            if (RegionCm)
+            {
+                const UPrimitiveComponent* Primitive = Cast<UPrimitiveComponent>(RawComponent);
+                if (Primitive && !Primitive->Bounds.GetBox().Intersect(*RegionCm)) continue;
+            }
             const bool bLandscape = RawComponent->IsA<ULandscapeComponent>();
             const bool bSkeletal = RawComponent->IsA<USkeletalMeshComponent>();
             UStaticMeshComponent* Component = Cast<UStaticMeshComponent>(RawComponent);
@@ -551,7 +612,29 @@ static FSnapshot BuildInternal(UWorld* World,
             if (Instances > 0)
             {
                 Result.Nodes[ComponentNodeIndex].GeometryStatus = TEXT("eligible_no_source");
-                Candidates.Add({Component, &LOD, ActorIndex, Instances, ComponentNodeIndex});
+                FCandidate Candidate{Component, &LOD, ActorIndex, Instances, ComponentNodeIndex};
+                if (RegionCm && Instanced)
+                {
+                    const int32 VisitCount = FMath::Min(Instances, MaxTileInstanceVisitsPerComponent);
+                    if (VisitCount < Instances) MarkPartial(Result, TEXT("tile_instance_visit_cap"));
+                    const FBox MeshBounds = Mesh->GetBoundingBox();
+                    for (int32 Visit = 0; Visit < VisitCount; ++Visit)
+                    {
+                        if ((Visit & 127) == 0 && TimedOut(Start, ProcessDeadline))
+                        { MarkPartial(Result, TEXT("tile_instance_time_budget")); break; }
+                        const int32 InstanceIndex = VisitCount == Instances ? Visit :
+                            static_cast<int32>((static_cast<int64>(2 * Visit + 1) * Instances) / (2 * VisitCount));
+                        FTransform InstanceTransform;
+                        if (!Instanced->GetInstanceTransform(InstanceIndex, InstanceTransform, true)) continue;
+                        if (MeshBounds.TransformBy(InstanceTransform).Intersect(*RegionCm))
+                            Candidate.TileInstances.Add(InstanceIndex);
+                        if (Candidate.TileInstances.Num() >= 256)
+                        { MarkPartial(Result, TEXT("tile_instance_source_cap")); break; }
+                    }
+                    Candidate.InstanceCount = Candidate.TileInstances.Num();
+                }
+                if (Candidate.InstanceCount > 0) Candidates.Add(MoveTemp(Candidate));
+                else Result.Nodes[ComponentNodeIndex].GeometryStatus = TEXT("outside_tile_or_unvisited");
             }
             else Result.Nodes[ComponentNodeIndex].GeometryStatus = TEXT("empty_instance_set");
         }
@@ -582,8 +665,9 @@ static FSnapshot BuildInternal(UWorld* World,
             FTransform Transform = Candidate.Component->GetComponentTransform();
             if (UInstancedStaticMeshComponent* Instanced = Cast<UInstancedStaticMeshComponent>(Candidate.Component))
             {
-                const int32 Index = static_cast<int32>(FMath::Min<int64>(Candidate.InstanceCount - 1,
+                const int32 CandidateIndex = static_cast<int32>(FMath::Min<int64>(Candidate.InstanceCount - 1,
                     (static_cast<int64>(2 * Pass + 1) * Candidate.InstanceCount) / (2 * Allowed)));
+                const int32 Index = RegionCm ? Candidate.TileInstances[CandidateIndex] : CandidateIndex;
                 if (!Instanced->GetInstanceTransform(Index, Transform, true))
                 {
                     Count(Result, TEXT("instance_transform_unavailable"));
@@ -636,7 +720,8 @@ static FSnapshot BuildInternal(UWorld* World,
         const int32 Quota = FMath::Max(1, (PointLimit - Result.Splats.Num()) / SourcesLeft);
         const int32 TriangleBudget = FMath::Max(1,
             (MaxTrianglesVisited - TrianglesVisited) / SourcesLeft);
-        const int32 CountToInspect = FMath::Min3(TriangleCount, MaxTrianglesPerSource, TriangleBudget);
+        const int32 CountToInspect = FMath::Min3(TriangleCount,
+            RegionCm ? MaxTileTrianglesPerSource : MaxTrianglesPerSource, TriangleBudget);
         TArray<FSurfaceTriangle> Surface;
         Surface.Reserve(CountToInspect);
         double TotalArea = 0.0;
@@ -662,9 +747,19 @@ static FSnapshot BuildInternal(UWorld* World,
             const double Area = Cross.Size() * 0.5;
             if (A.ContainsNaN() || B.ContainsNaN() || C.ContainsNaN() ||
                 !FMath::IsFinite(Area) || Area <= UE_DOUBLE_SMALL_NUMBER) continue;
-            TotalArea += Area;
+            if (RegionCm)
+            {
+                if (TriangleBoundsIntersectsTile(A, B, C, *RegionCm))
+                    AddClippedTriangle(A, B, C, Cross.GetSafeNormal(), *RegionCm, Surface, TotalArea);
+                if (Surface.Num() >= MaxTileFragmentsPerSource)
+                { MarkPartial(Result, TEXT("tile_triangle_fragment_cap")); break; }
+            }
+            else
+            {
+                TotalArea += Area;
+                Surface.Add({A, B, C, Cross.GetSafeNormal(), TotalArea});
+            }
             if (!FMath::IsFinite(TotalArea)) { MarkPartial(Result, TEXT("surface_area_overflow")); break; }
-            Surface.Add({A, B, C, Cross.GetSafeNormal(), TotalArea});
         }
         if (CountToInspect < TriangleCount) Result.bDownsampled = true;
         if (Result.bTruncated && (TimedOut(Start, SurfaceDeadline) || !FMath::IsFinite(TotalArea))) break;
@@ -698,6 +793,7 @@ static FSnapshot BuildInternal(UWorld* World,
             const double V = RadicalInverse(Sequence, 3);
             const FVector Point = (1.0 - U) * Triangle.A + U * (1.0 - V) * Triangle.B + U * V * Triangle.C;
             if (Point.ContainsNaN()) continue;
+            if (RegionCm && !RegionCm->IsInsideOrOn(Point)) continue;
             FSplat& Splat = Result.Splats.AddDefaulted_GetRef();
             Splat.PositionCm = Point - Result.OriginCm;
             Splat.Normal = Triangle.Normal;
@@ -726,6 +822,40 @@ FSnapshot BuildBatch(UWorld* World, const TArray<TWeakObjectPtr<AActor>>& Loaded
     int32 PointLimit, double TimeLimitSeconds)
 {
     return BuildInternal(World, &LoadedActors, PointLimit, TimeLimitSeconds);
+}
+
+FSnapshot BuildTileBatch(UWorld* World, const TArray<TWeakObjectPtr<AActor>>& LoadedActors,
+    const FBox& RegionCm, int32 PointLimit, double TimeLimitSeconds)
+{
+    if (!RegionCm.IsValid) return FSnapshot();
+    return BuildInternal(World, &LoadedActors, PointLimit, TimeLimitSeconds, &RegionCm);
+}
+
+bool TileBounds(int32 LOD, int32 X, int32 Y, int32 Z, FBox& OutBounds)
+{
+    if (LOD < 0 || LOD > 2 || FMath::Abs(static_cast<int64>(X)) > 100000 ||
+        FMath::Abs(static_cast<int64>(Y)) > 100000 || FMath::Abs(static_cast<int64>(Z)) > 100000)
+        return false;
+    const double Edge = 4000.0 / static_cast<double>(1 << LOD);
+    const FVector Min(static_cast<double>(X) * Edge, static_cast<double>(Y) * Edge,
+        static_cast<double>(Z) * Edge);
+    OutBounds = FBox(Min, Min + FVector(Edge, Edge, Edge));
+    return true;
+}
+
+FString TileId(int32 LOD, int32 X, int32 Y, int32 Z)
+{
+    return FString::Printf(TEXT("tile:%d:%d:%d:%d"), LOD, X, Y, Z);
+}
+
+bool TriangleBoundsIntersectsTile(const FVector& A, const FVector& B, const FVector& C,
+    const FBox& RegionCm)
+{
+    FBox TriangleBounds(EForceInit::ForceInit);
+    TriangleBounds += A;
+    TriangleBounds += B;
+    TriangleBounds += C;
+    return TriangleBounds.Intersect(RegionCm);
 }
 
 TSharedPtr<FJsonValue> SplatToJson(const FSplat& Splat)

@@ -2220,6 +2220,13 @@ FString FHaybaMCPCommandHandler::ProcessCommandInContext(const FString& CommandJ
             // 2048 in both TS and native parsing; matching that ceiling here
             // preserves round-trip identity while keeping the frame bounded.
             Limits.MaxStringChars = 2048;
+            if (Cmd == TEXT("world_semantic_snapshot"))
+            {
+                // Captured tile pages include provenance, coverage, paging and
+                // capture identity together. The generic 20-field limit drops
+                // valid top-level keys from this bounded response.
+                Limits.MaxTopLevelFields = 32;
+            }
         }
         FHaybaMCPResponseBuilder Builder(Limits);
         TSharedRef<FJsonObject> Trimmed = Builder.Build(DataObj.ToSharedRef());
