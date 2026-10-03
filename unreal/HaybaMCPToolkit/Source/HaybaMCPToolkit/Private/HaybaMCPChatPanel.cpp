@@ -550,7 +550,7 @@ void SHaybaMCPChatPanel::Construct(const FArguments&, FHaybaMCPModule* InModule)
                         return Module && Module->PendingExternalPlanIsExact
                             ? (bAwaitingPlanApproval && !IsNativeApprovalForCurrentActivity(Module->PendingExternalPlanId)
                                 ? LOCTEXT("ExternalOtherOperationTitle", "External request")
-                                : LOCTEXT("ExternalOperationTitle", "Review operation"))
+                                : LOCTEXT("ExternalOperationTitle", "Review edit"))
                             : LOCTEXT("ExternalPlanTitle", "Plan preview");
                     })
                     .Font(FHaybaMCPStyle::Font(15, true)) ]
@@ -713,7 +713,7 @@ void SHaybaMCPChatPanel::RebuildExternalProposal()
         AddReviewLine(TEXT("Source  "), Operation.Source);
         if (!Operation.ReviewParamsJson.IsEmpty())
         {
-            ExternalPlanStepsBox->AddSlot().AutoHeight().Padding(0.f, 6.f, 0.f, 0.f)
+            ExternalPlanStepsBox->AddSlot().AutoHeight().HAlign(HAlign_Left).Padding(0.f, 6.f, 0.f, 0.f)
             [ SAssignNew(ExternalDetailsButton, SButton)
                 .ButtonStyle(&FHaybaMCPStyle::Get().GetWidgetStyle<FButtonStyle>("Hayba.Button.Switcher"))
                 .ContentPadding(FMargin(8.f, 4.f))
@@ -727,8 +727,8 @@ void SHaybaMCPChatPanel::RebuildExternalProposal()
                     return FReply::Handled();
                 })
                 [ SNew(STextBlock).Text_Lambda([this]() { return bExternalDetailsExpanded
-                    ? LOCTEXT("ExternalHideParams", "Hide parameters")
-                    : LOCTEXT("ExternalShowParams", "Review parameters"); })
+                    ? LOCTEXT("ExternalHideParams", "Hide exact parameters")
+                    : LOCTEXT("ExternalShowParams", "View exact parameters"); })
                     .Font(FHaybaMCPStyle::Font(11)) ] ];
             if (bExternalDetailsExpanded)
             {
