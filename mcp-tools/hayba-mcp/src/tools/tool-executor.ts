@@ -1,4 +1,5 @@
 import type { HaybaToolCost } from './hayba-tool-meta.js';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import type { TcpResponse } from '../tcp-client.js';
 import { getToolMeta } from './tool-meta-registry.js';
 import { isHeavyOp, HEAVY_OP_TIMEOUT_MS } from './heavy-ops.js';
@@ -277,7 +278,15 @@ async function makeEditorBusyError(cmd: string, cause: unknown): Promise<UeToolE
   );
 }
 
-export type Sender = (cmd: string, params: Record<string, unknown>, timeoutMs: number) => Promise<TcpResponse>;
+export type Sender = (cmd: string, params: Record<string, unknown>, timeoutMs: number,
+  options?: { requireExactReview?: boolean }) => Promise<TcpResponse>;
+
+// The chat turn's safety requirement follows async captured TS handlers without
+// becoming a model-visible tool argument. Concurrent chat turns stay isolated.
+const exactReviewScope = new AsyncLocalStorage<boolean>();
+export function withExactReview<T>(required: boolean, operation: () => Promise<T>): Promise<T> {
+  return exactReviewScope.run(required || exactReviewScope.getStore() === true, operation);
+}
 
 export interface ExecuteOpts {
   /** Override the cost-derived default timeout. */
@@ -304,7 +313,9 @@ export async function executeCommand<T = Record<string, unknown>>(
   const heavy = isHeavyOp(cmd);
   const timeout = opts.timeout ?? resolveTimeoutMs(cmd);
 
-  const attemptOnce = async (): Promise<TcpResponse> => sender(cmd, params, timeout);
+  const requireExactReview = exactReviewScope.getStore() === true;
+  const attemptOnce = async (): Promise<TcpResponse> =>
+    sender(cmd, params, timeout, requireExactReview ? { requireExactReview: true } : undefined);
 
   let resp: TcpResponse;
   try {
@@ -381,8 +392,8 @@ export class InMemoryToolExecutor {
  *  unit-tested without the network. */
 export async function installLiveSender(): Promise<void> {
   const { ensureConnected } = await import('../tcp-client.js');
-  setDefaultSender(async (cmd, params, timeoutMs) => {
+  setDefaultSender(async (cmd, params, timeoutMs, options) => {
     const client = await ensureConnected();
-    return client.send(cmd, params, timeoutMs);
+    return client.send(cmd, params, timeoutMs, options);
   });
 }

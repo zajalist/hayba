@@ -17,6 +17,7 @@ import {
 } from '../../src/chat/chat-server.js';
 import { resolveConfig, type LLMClient, type LLMStreamEvent } from '../../src/agents/llm-client.js';
 import { temporarySessionStore } from '../../src/chat/session-store.test-helpers.js';
+import { executeCommand } from '../../src/tools/tool-executor.js';
 import {
   CHAT_CONTEXT_TTL_MS,
   chatSessionDir,
@@ -178,6 +179,26 @@ describe('sidecar SSE chat server', () => {
 
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({ error: 'invalid agent mode' });
+  });
+
+  it('carries native exact review on Community Production dispatch without tool-param injection', async () => {
+    const sent: Array<{ params: Record<string, unknown>; required: boolean }> = [];
+    const client = makeFakeClientFactory([
+      { content: null, toolCalls: [{ id: 'a1', name: 'get_thing', input: { actor_id: 'A' } }], stopReason: 'tool_use' },
+      { content: 'done', toolCalls: [], stopReason: 'end_turn' },
+    ]);
+    ({ server, url } = startApp({
+      createClient: client, tools: [{ name: 'get_thing', description: '', input_schema: { type: 'object', properties: {} } }],
+      dispatchTool: (name, args) => executeCommand(name, args, { sender: async (_cmd, params, _timeout, options) => {
+        sent.push({ params, required: options?.requireExactReview === true });
+        return { id: 'test', ok: true, data: {} };
+      } }),
+    }));
+    const response = await fetch(`${url}/chat/stream`, { method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ prompt: 'tag A', provider: 'mock', mode: 'production' }) });
+    await readAllFrames(response.body!);
+    expect(sent).toEqual([{ params: { actor_id: 'A' }, required: true }]);
   });
 
   it('keeps Explore mode read-only by withholding destructive tools from dispatch', async () => {

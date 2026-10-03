@@ -1750,6 +1750,10 @@ FString FHaybaMCPCommandHandler::ProcessCommandInContext(const FString& CommandJ
     FString EnvelopeLease;
     Parsed->TryGetStringField(TEXT("owner"), EnvelopeOwner);
     Parsed->TryGetStringField(TEXT("lease"), EnvelopeLease);
+    // Only literal true adds a gate. False, missing, or malformed values never
+    // disable the project-wide Plan Mode setting.
+    bool bRequireExactReview = false;
+    Parsed->TryGetBoolField(TEXT("require_exact_review"), bRequireExactReview);
     FHaybaMCPRequestContext* CallerContext = Leases.Current();
     check(CallerContext); // ProcessWithContext always publishes one.
     CallerContext->LeaseToken = EnvelopeLease;
@@ -2106,12 +2110,12 @@ FString FHaybaMCPCommandHandler::ProcessCommandInContext(const FString& CommandJ
     // this gate, regardless of the legacy per-plan persistence preference.
     {
         auto& S = FHaybaMCPSettings::Get();
-        if (S.bPlanModeEnabled && IsDestructiveCommand(Cmd))
+        if ((S.bPlanModeEnabled || bRequireExactReview) && IsDestructiveCommand(Cmd))
         {
             FHaybaMCPModule* M = FModuleManager::GetModulePtr<FHaybaMCPModule>("HaybaMCPToolkit");
             const FString Caller = Leases.EffectiveOwner();
             const FHaybaMCPRequestContext* GateContext = Leases.Current();
-            const bool bBatchCovered = GateContext && GateContext->bPlanPreApproved;
+            const bool bBatchCovered = !bRequireExactReview && GateContext && GateContext->bPlanPreApproved;
             if (!bBatchCovered)
             {
                 if (GateContext && !GateContext->LeaseToken.IsEmpty() &&
@@ -2161,8 +2165,10 @@ FString FHaybaMCPCommandHandler::ProcessCommandInContext(const FString& CommandJ
                     *GateContext->Caller.Via, GateContext->ConnId) : TEXT("local");
                 const FString SourceBinding = HaybaMCPExactApproval::HashBinding(
                     TEXT("native-exact-source-v2"), Source, FString());
+                const FString PolicyVersion = bRequireExactReview
+                    ? TEXT("native-exact-v2-request-required") : TEXT("native-exact-v2");
                 if (M->ConsumeExactExternalApproval(Caller, Cmd, OperationDigest,
-                    TargetFingerprint, LeaseBinding, SourceBinding, TEXT("native-exact-v2")))
+                    TargetFingerprint, LeaseBinding, SourceBinding, PolicyVersion))
                 {
                     // Consumed before dispatch. A retry, even after failure,
                     // requires a new proposal and an explicit new click.
@@ -2181,7 +2187,7 @@ FString FHaybaMCPCommandHandler::ProcessCommandInContext(const FString& CommandJ
                     Proposal.LeaseBinding = LeaseBinding;
                     Proposal.LeaseId = GateContext ? GateContext->LeaseToken : FString();
                     Proposal.ConnectionId = GateContext ? GateContext->ConnId : 0;
-                    Proposal.PolicyVersion = TEXT("native-exact-v2");
+                    Proposal.PolicyVersion = PolicyVersion;
                     Proposal.Consequence = Cmd == TEXT("actor_delete")
                         ? TEXT("Deletes this actor from the loaded editor world. Save is separate; undo may be available while the actor remains valid.")
                         : TEXT("Changes this actor in the loaded editor world. Save is separate; undo may be available while the actor remains valid.");

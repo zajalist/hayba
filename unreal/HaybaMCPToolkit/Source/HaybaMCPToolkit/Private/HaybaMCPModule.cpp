@@ -522,7 +522,8 @@ bool FHaybaMCPModule::ResolveExternalPlan(const FString& ExpectedProposalId, boo
         HaybaMCPExactApproval::HashOperation(FrozenCall) == Candidate.OperationDigest &&
         FHaybaMCPCommandHandler::CaptureExactApprovalTarget(Candidate.Command, Params, CurrentRef, CurrentFingerprint) &&
         CurrentRef == Candidate.TargetRef && CurrentFingerprint == Candidate.TargetFingerprint &&
-        Candidate.PolicyVersion == TEXT("native-exact-v2") && FHaybaMCPSettings::Get().bPlanModeEnabled &&
+        (Candidate.PolicyVersion == TEXT("native-exact-v2-request-required") ||
+         (Candidate.PolicyVersion == TEXT("native-exact-v2") && FHaybaMCPSettings::Get().bPlanModeEnabled)) &&
         FDateTime::UtcNow() <= Candidate.ExpiresAt;
 
     // Reject and stale proposals both clear the pending review. A second

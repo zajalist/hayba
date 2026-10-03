@@ -254,6 +254,15 @@ bool FHaybaExactApprovalRouterScratchTest::RunTest(const FString&)
     };
     Settings.bPlanModeEnabled = true;
     const FString ActorId = Actor->GetName();
+    auto SendRequired = [&Router, Conn, &Owner](const FString& Cmd, const TSharedPtr<FJsonObject>& Params,
+        bool bRequired = true)
+    {
+        TSharedPtr<FJsonObject> EnvelopeObject = Json(Envelope(Owner, Cmd, Params));
+        EnvelopeObject->SetBoolField(TEXT("require_exact_review"), bRequired);
+        FString Request;
+        FJsonSerializer::Serialize(EnvelopeObject.ToSharedRef(), TJsonWriterFactory<>::Create(&Request));
+        return Json(Router->ProcessCommand(Request, Conn));
+    };
     auto TagParams = [&ActorId](const TCHAR* Tag)
     {
         TSharedPtr<FJsonObject> Params = MakeShared<FJsonObject>();
@@ -309,6 +318,58 @@ bool FHaybaExactApprovalRouterScratchTest::RunTest(const FString&)
     Router->NotifyConnectionClosed(Conn);
     TestFalse(TEXT("connection close invalidates pending approval"), Module->PendingExternalPlanIsExact);
     TestFalse(TEXT("disconnected operation did not run"), Actor->Tags.Contains(TEXT("disconnect-must-not-run")));
+
+    // Production Chat requires this gate even when the project preference is
+    // off. The policy version binds the click to the restrictive envelope.
+    Settings.bPlanModeEnabled = false;
+    const TSharedPtr<FJsonObject> Required = TagParams(TEXT("request-required"));
+    Status.Empty();
+    DataOf(SendRequired(TEXT("actor_tag"), Required))->TryGetStringField(TEXT("status"), Status);
+    TestEqual(TEXT("request policy gates while global Plan Mode is off"), Status,
+        FString(TEXT("plan_mode_required")));
+    TestEqual(TEXT("proposal binds request policy"), Module->PendingExternalOperation.PolicyVersion,
+        FString(TEXT("native-exact-v2-request-required")));
+    const FString RequiredId = Module->PendingExternalPlanId;
+    TestTrue(TEXT("request-required proposal approves while global mode is off"),
+        Module->ResolveExternalPlan(RequiredId, true));
+    Settings.bPlanModeEnabled = true;
+    Status.Empty();
+    DataOf(SendRequired(TEXT("actor_tag"), Required, false))->TryGetStringField(TEXT("status"), Status);
+    TestEqual(TEXT("ordinary envelope cannot consume request-required token"), Status,
+        FString(TEXT("plan_mode_required")));
+    TestFalse(TEXT("policy downgrade did not mutate actor"), Actor->Tags.Contains(TEXT("request-required")));
+    Settings.bPlanModeEnabled = false;
+    Status.Empty();
+    DataOf(SendRequired(TEXT("actor_tag"), Required))->TryGetStringField(TEXT("status"), Status);
+    TestEqual(TEXT("request policy needs a fresh token after downgrade attempt"), Status,
+        FString(TEXT("plan_mode_required")));
+    const FString FreshRequiredId = Module->PendingExternalPlanId;
+    TestTrue(TEXT("fresh request-required proposal approves"),
+        Module->ResolveExternalPlan(FreshRequiredId, true));
+    TestEqual(TEXT("request-required approved call executes once"),
+        CodeOf(SendRequired(TEXT("actor_tag"), Required)), FString());
+    TestTrue(TEXT("request-required mutation landed"), Actor->Tags.Contains(TEXT("request-required")));
+    Status.Empty();
+    DataOf(SendRequired(TEXT("actor_tag"), Required))->TryGetStringField(TEXT("status"), Status);
+    TestEqual(TEXT("request-required approval cannot replay"), Status,
+        FString(TEXT("plan_mode_required")));
+
+    for (const FString& Unsupported : { TEXT("python_run"), TEXT("editor_batch"),
+        TEXT("blueprint_create"), TEXT("asset_import") })
+    {
+        TestEqual(*FString::Printf(TEXT("%s fails closed without an exact target"), *Unsupported),
+            CodeOf(SendRequired(Unsupported, MakeShared<FJsonObject>())),
+            FString(TEXT("exact_approval_unavailable")));
+    }
+
+    // A false envelope flag cannot cancel the global preference.
+    Settings.bPlanModeEnabled = true;
+    Status.Empty();
+    DataOf(SendRequired(TEXT("actor_tag"), TagParams(TEXT("false-cannot-bypass")), false))
+        ->TryGetStringField(TEXT("status"), Status);
+    TestEqual(TEXT("false flag cannot bypass global Plan Mode"), Status,
+        FString(TEXT("plan_mode_required")));
+    TestFalse(TEXT("false-flag operation did not run"), Actor->Tags.Contains(TEXT("false-cannot-bypass")));
     return true;
 }
 

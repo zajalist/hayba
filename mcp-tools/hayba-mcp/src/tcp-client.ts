@@ -16,6 +16,8 @@ export interface TcpCommand {
   owner?: string;
   /** A held lease_id to act under (helper processes only; an MCP server sends its owner instead). */
   lease?: string;
+  /** A restrictive, per-request native review requirement from in-editor Chat. */
+  require_exact_review?: true;
 }
 
 export interface TcpResponse {
@@ -64,10 +66,12 @@ export function buildEnvelope(
   params: Record<string, unknown>,
   owner?: string | null,
   lease?: string | null,
+  requireExactReview = false,
 ): TcpCommand {
   const command: TcpCommand = { cmd, id, params };
   if (owner) command.owner = owner;
   if (lease) command.lease = lease;
+  if (requireExactReview) command.require_exact_review = true;
   return command;
 }
 
@@ -227,13 +231,15 @@ export class UETcpClient extends EventEmitter {
     this.leaseFromEnv = false;
   }
 
-  async send(cmd: string, params: Record<string, unknown> = {}, timeoutMs = 30000): Promise<TcpResponse> {
+  async send(cmd: string, params: Record<string, unknown> = {}, timeoutMs = 30000,
+    options?: { requireExactReview?: boolean }): Promise<TcpResponse> {
     if (!this.socket || !this.connected) {
       throw new Error('Not connected to UE TCP server');
     }
 
     const id = `req_${++this.requestCounter}`;
-    const command = buildEnvelope(cmd, id, params, this.owner, this.lease);
+    const command = buildEnvelope(cmd, id, params, this.owner, this.lease,
+      options?.requireExactReview === true);
     const json = JSON.stringify(command);
     const payload = Buffer.from(json, 'utf-8');
 

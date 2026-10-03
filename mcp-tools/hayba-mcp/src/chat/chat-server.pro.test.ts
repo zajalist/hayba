@@ -9,6 +9,7 @@ import type { LLMClient, LLMResponse } from '../agents/llm-client.js';
 import { createBrainConnector, type BrainConnector } from '../brain/brain-connector.js';
 import type { BrainSession, SocketLike } from '../brain/brain-session.js';
 import { FakeSocket } from '../brain/fake-socket.test-helpers.js';
+import { executeCommand } from '../tools/tool-executor.js';
 
 const TOOL = 'zz_thing_delete';
 const ARGS = { path: '/Game/Thing' };
@@ -323,6 +324,26 @@ describe('chat server Pro loop', () => {
 
     expect(brain.sentTypes().filter((t) => t === 'turn')).toHaveLength(1);
     expect(connector.opened).toHaveLength(1);
+  });
+
+  it('requires native exact review for a Pro Production tool call', async () => {
+    const brain = new FakeBrain();
+    const sent: Array<{ params: Record<string, unknown>; required: boolean }> = [];
+    const dispatchTool = vi.fn((name: string, args: Record<string, unknown>) =>
+      executeCommand(name, args, { sender: async (_cmd, params, _timeout, options) => {
+        sent.push({ params, required: options?.requireExactReview === true });
+        return { id: 'test', ok: true, data: {} };
+      } }));
+    start(brainConnector(brain), dispatchTool as unknown as Parameters<typeof start>[1]);
+    const sessionId = await parkAtApproval(brain);
+    expect((await post('/chat/approve', { session_id: sessionId })).status).toBe(200);
+    const resumed = await stream({ session_id: sessionId, prompt: '', loop: 'pro', mode: 'production' });
+    await waitFor(() => brain.sentTypes().includes('approve'));
+    brain.push({ type: 'tool_call', id: 't1', name: TOOL, args: ARGS, gated: true });
+    await waitFor(() => sent.length === 1);
+    brain.finishTurn('a1');
+    await resumed.frames;
+    expect(sent).toEqual([{ params: ARGS, required: true }]);
   });
 
   it('cancels a parked (declined) brain turn before starting a new one', async () => {

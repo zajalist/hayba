@@ -62,6 +62,7 @@ import {
 } from './agent-loop.js';
 import type { LLMTool, LLMUsage } from '../agents/llm-client.js';
 import { createChatDispatcher } from './tool-dispatch.js';
+import { withExactReview } from '../tools/tool-executor.js';
 import { buildHandsManifest, isExploreReadOnlyTool, type GuardContext } from '../brain/hands-guard.js';
 import type { BrainConnector } from '../brain/brain-connector.js';
 import type { BrainSession } from '../brain/brain-session.js';
@@ -1298,6 +1299,11 @@ interface TurnError {
 }
 
 async function runTurn(session: ChatSession, params: RunTurnParams): Promise<void> {
+  // Native exact review is mandatory for Chat Production, including captured
+  // TS handlers and Pro calls. Scope each dispatch so concurrent turns cannot
+  // weaken one another and no policy field enters model-owned tool parameters.
+  const dispatchTool: DispatchTool = (name, args) =>
+    withExactReview(params.mode === 'production', () => params.dispatchTool(name, args));
   let finalReason: string | null = null;
   let lastError: TurnError | null = null;
   // Hayba Pro: set when the brain became unavailable mid-turn.
@@ -1364,7 +1370,7 @@ async function runTurn(session: ChatSession, params: RunTurnParams): Promise<voi
           pinnedSpecialistId: params.remote.pinnedSpecialistId,
           approvals: params.remote.approvals,
           approvedCall: params.approvedCall,
-          dispatchTool: params.dispatchTool,
+          dispatchTool,
           guard: params.remote.guard,
           signal: params.signal,
           onUnavailable: (reason) => { unavailableReason = reason; },
@@ -1379,7 +1385,7 @@ async function runTurn(session: ChatSession, params: RunTurnParams): Promise<voi
               : params.tools,
           archetypeFilter: params.archetypeFilter,
           pinnedSpecialistId: params.pinnedSpecialistId,
-          dispatchTool: params.dispatchTool,
+          dispatchTool,
           signal: params.signal,
           planMode: true, // honour Plan Mode; UE side is authoritative, TS side gated
           approvedCall: params.approvedCall,
