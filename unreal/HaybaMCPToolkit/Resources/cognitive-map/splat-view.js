@@ -332,6 +332,35 @@
     const edge = 4000 / (1 << lod);
     return `tile:${lod}:${Math.floor(point[0] / edge)}:${Math.floor(point[1] / edge)}:${Math.floor(point[2] / edge)}`;
   }
+  function refinementCandidates(width = canvas.clientWidth, height = canvas.clientHeight) {
+    const lod = desiredTileLod();
+    if (lod < 0) return [];
+    const edge = 4000 / (1 << lod);
+    const center = state.target.map((value, axis) => value + state.originCm[axis]);
+    const cell = center.map(value => Math.floor(value / edge));
+    const radius = lod === 2 ? 2 : 1;
+    const matrix = viewProjection(width / Math.max(1, height));
+    const candidates = [];
+    for (let dy = -radius; dy <= radius; dy++) for (let dx = -radius; dx <= radius; dx++) {
+      const zs = dx === 0 && dy === 0 ? [-1, 0, 1] : [0];
+      for (const dz of zs) {
+        const coords = [cell[0] + dx, cell[1] + dy, cell[2] + dz];
+        const min = coords.map(value => value * edge);
+        const max = min.map(value => value + edge);
+        const focal = dx === 0 && dy === 0 && dz === 0;
+        if (!focal && !tileOnScreen({ boundsCm: { min, max } }, matrix, width, height)) continue;
+        const tileCenter = min.map((value, axis) => value + edge / 2 - state.originCm[axis]);
+        const pixel = project(...tileCenter, matrix, width, height);
+        const screenDistance = pixel ? Math.hypot((pixel.x - width / 2) / Math.max(1, width),
+          (pixel.y - height / 2) / Math.max(1, height)) : Infinity;
+        candidates.push({ id: `tile:${lod}:${coords.join(':')}`, focal,
+          priority: screenDistance + .02 * (Math.abs(dx) + Math.abs(dy) + Math.abs(dz)) });
+      }
+    }
+    candidates.sort((a, b) => Number(b.focal) - Number(a.focal) || a.priority - b.priority ||
+      a.id.localeCompare(b.id));
+    return candidates.map(candidate => candidate.id);
+  }
   function tileOnScreen(tile, matrix, width, height) {
     const bounds = tile.boundsCm;
     if (!bounds || !finite3(bounds.min) || !finite3(bounds.max)) return false;
@@ -373,12 +402,15 @@
       if (item.count >= baseCounts[index]) continue;
       item.count++; baseRemaining--;
     }
-    let remaining = MAX_GPU_DRAW_POINTS - plan.reduce((sum, item) => sum + item.count, 0);
-    for (const chunk of tiles) {
-      const count = Math.min(chunk.count, remaining);
-      if (count > 0) plan.push({ chunk, count });
-      remaining -= count;
+    const tileBudget = MAX_GPU_DRAW_POINTS - plan.reduce((sum, item) => sum + item.count, 0);
+    const tileFraction = Math.min(1, tileBudget / Math.max(1, tileCount));
+    const tilePlan = tiles.map(chunk => ({ chunk, count: Math.floor(chunk.count * tileFraction) }));
+    let tileRemaining = Math.min(tileCount, tileBudget) - tilePlan.reduce((sum, item) => sum + item.count, 0);
+    for (const item of tilePlan) {
+      if (!tileRemaining) break;
+      if (item.count < item.chunk.count) { item.count++; tileRemaining--; }
     }
+    plan.push(...tilePlan.filter(item => item.count > 0));
     return plan;
   }
   // Each prefix is already spatially distributed by lodOrder. Sample evenly
@@ -1094,15 +1126,9 @@
     window.clearTimeout(refineTimer);
     refineTimer = window.setTimeout(() => {
       refineTimer = null;
-      const lod = desiredTileLod();
-      if (lod < 0 || !Number.isSafeInteger(state.generation)) return;
-      const center = state.target.map((value, axis) => value + state.originCm[axis]);
-      const edge = 4000 / (1 << lod);
-      const offsets = [[0, 0, 0], [1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0],
-        [0, 0, 1], [0, 0, -1]];
-      state.refineQueue = offsets.map(offset => tileIdAt(lod, center.map((value, axis) => value + offset[axis] * edge)))
-        .filter((id, index, ids) => ids.indexOf(id) === index && !state.tiles.has(id) &&
-          id !== state.refineInFlight);
+      if (!Number.isSafeInteger(state.generation)) return;
+      state.refineQueue = refinementCandidates().filter(id => !state.tiles.has(id) &&
+        id !== state.refineInFlight);
       startNextRefinement();
     }, 100);
   }
@@ -1605,7 +1631,7 @@
     updateViewState(); requestDraw();
   });
   if (window.__haybaTest) window.__haybaTest = { state, lodOrder, lodCount, visibleChunkCounts, forEachCanvasSample,
-    visibleRenderPlan, visibleTileChunks, desiredTileLod, tileIdAt, residentPointLimit,
+    visibleRenderPlan, visibleTileChunks, desiredTileLod, tileIdAt, refinementCandidates, residentPointLimit,
     sourceForPoint, tileScopesForPoint, viewProjection, project, scopesForPoint, selectScope };
   initWebGL(); awaitScanProgress(); requestDraw();
 })();

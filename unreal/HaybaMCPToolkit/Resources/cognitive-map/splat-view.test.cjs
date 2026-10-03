@@ -33,7 +33,7 @@ const window = { __haybaTest: true, devicePixelRatio: 1, addEventListener() {}, 
 const script = fs.readFileSync(path.join(__dirname, 'splat-view.js'), 'utf8');
 vm.runInNewContext(script, { document, window, requestAnimationFrame(callback) { frames.push(callback); } }, { filename: 'splat-view.js' });
 const { state, lodOrder, lodCount, visibleChunkCounts, visibleRenderPlan, visibleTileChunks,
-  desiredTileLod, tileIdAt, residentPointLimit, sourceForPoint, tileScopesForPoint,
+  desiredTileLod, tileIdAt, refinementCandidates, residentPointLimit, sourceForPoint, tileScopesForPoint,
   forEachCanvasSample, viewProjection, project, scopesForPoint, selectScope } = window.__haybaTest;
 
 const order = lodOrder(512);
@@ -569,6 +569,12 @@ window.haybaReset();
 state.userMoved = true; state.target = [500, 500, 500]; state.distance = 1500;
 assert.equal(desiredTileLod(), 2);
 assert.equal(tileIdAt(2, [500, 500, 500]), focalId);
+const nearbyCandidates = refinementCandidates(800, 600);
+assert.equal(nearbyCandidates[0], focalId, 'the focal tile is requested first');
+assert.ok(nearbyCandidates.length > 7 && nearbyCandidates.length <= 27,
+  'local zoom requests a bounded, view-visible neighborhood beyond the former seven-tile cross');
+assert.equal(new Set(nearbyCandidates).size, nearbyCandidates.length);
+assert.ok(nearbyCandidates.every(id => /^tile:2:-?\d+:-?\d+:-?\d+$/.test(id)));
 const focalPlan = visibleRenderPlan(800, 600);
 assert.equal(focalPlan.filter(item => item.chunk.tile?.id === focalId).reduce((sum, item) => sum + item.count, 0), 8192);
 assert.equal(focalPlan.some(item => item.chunk.tile?.id === distantId), false,
@@ -579,7 +585,12 @@ assert.ok(visibleTileChunks(800, 600).some(chunk => chunk.tile.id === distantId)
 assert.equal(visibleTileChunks(800, 600).some(chunk => chunk.tile.id === focalId), false);
 state.distance = 13000;
 assert.equal(desiredTileLod(), -1);
+assert.equal(refinementCandidates(800, 600).length, 0, 'overview does not queue refinement');
 assert.equal(visibleTileChunks(800, 600).length, 0, 'overview drops high-detail tile draw calls');
+state.distance = 4000;
+assert.equal(desiredTileLod(), 1);
+assert.ok(refinementCandidates(800, 600).length <= 11,
+  'broader zoom uses a smaller view-prioritized tile neighborhood');
 console.log('splat-view focused tile LOD, semantics, and source provenance: passed');
 
 // This feeds 256 distinct 8,192-point tiles through the same callback path as
@@ -594,6 +605,11 @@ assert.equal(state.tileChunks.length, 256 * 8);
 assert.equal(residentPointLimit(), 256 * 8192);
 state.target = [500, 500, 500]; state.distance = 1500;
 const densePlan = visibleRenderPlan(800, 600);
+const denseVisible = visibleTileChunks(800, 600);
+assert.ok(denseVisible.length > 11, 'stress view contains more tiles than the full-detail draw budget');
+for (const chunk of denseVisible)
+  assert.ok(densePlan.some(item => item.chunk === chunk && item.count > 0),
+    'fair point LOD keeps every visible refined tile represented');
 assert.ok(densePlan.reduce((sum, item) => sum + item.count, 0) <= 180000,
   'two million resident points still obey the GPU draw ceiling');
 assert.ok(densePlan.some(item => item.chunk.tile?.id === focalId));
@@ -601,7 +617,7 @@ assert.equal(densePlan.some(item => item.chunk.tile?.id === distantId), false);
 console.log(`splat-view 2,097,152 resident points: ${elapsedMs} ms ingest; ` +
   `${Math.round((memoryAfter.arrayBuffers - memoryBefore.arrayBuffers) / 1048576)} MiB ArrayBuffer delta; ` +
   `${Math.round((memoryAfter.rss - memoryBefore.rss) / 1048576)} MiB RSS delta; ` +
-  `${densePlan.reduce((sum, item) => sum + item.count, 0)} visible points`);
+  `${densePlan.reduce((sum, item) => sum + item.count, 0)} drawn points across ${denseVisible.length} visible tiles`);
 fillTile(16, 0);
 assert.equal(state.tilePointCount, 256 * 8192, 'an additional tile evicts before raising resident memory');
 assert.equal(state.tiles.size, 256);
