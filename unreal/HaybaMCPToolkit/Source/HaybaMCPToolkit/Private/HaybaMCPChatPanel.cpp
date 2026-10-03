@@ -34,6 +34,7 @@
 #include "Widgets/Notifications/SNotificationList.h"
 
 #include "HAL/PlatformApplicationMisc.h"
+#include "HAL/PlatformMisc.h"
 #include "HAL/PlatformTime.h"
 #include "DragAndDrop/AssetDragDropOp.h"
 #include "Input/DragAndDrop.h"          // FExternalDragOperation (SlateCore)
@@ -1148,6 +1149,33 @@ TSharedRef<SWidget> SHaybaMCPChatPanel::BuildInput()
                         bIsStreaming ? TEXT("Hayba.Icon.Stop") : TEXT("Hayba.Icon.Send")); }) ]
                 ]
             ]
+            + SVerticalBox::Slot().AutoHeight().Padding(2.f, 5.f, 0.f, 0.f)
+            [
+                SNew(SVerticalBox)
+                .Visibility_Lambda([this]() { return bCredentialSetupRequired && NeedsCredentialSetup()
+                    ? EVisibility::Visible : EVisibility::Collapsed; })
+                + SVerticalBox::Slot().AutoHeight()
+                [ SNew(STextBlock)
+                    .Text(LOCTEXT("ChatCredentialSetup", "Add an API key to send. Draft kept here."))
+                    .Font(FHaybaMCPStyle::Font(11))
+                    .ColorAndOpacity(FHaybaMCPStyle::Colour(TEXT("Hayba.Color.Text.Secondary")))
+                    .AutoWrapText(true) ]
+                + SVerticalBox::Slot().AutoHeight().Padding(0.f, 4.f, 0.f, 0.f)
+                [ SNew(SHorizontalBox)
+                    + SHorizontalBox::Slot().AutoWidth()
+                    [ SNew(SButton)
+                        .ButtonStyle(&FHaybaMCPStyle::Get().GetWidgetStyle<FButtonStyle>("Hayba.Button.Task"))
+                        .Text(LOCTEXT("ChatCredentialSettings", "Settings"))
+                        .OnClicked(this, &SHaybaMCPChatPanel::OnOpenCredentialSettings) ]
+                    + SHorizontalBox::Slot().AutoWidth().Padding(6.f, 0.f, 0.f, 0.f)
+                    [ SNew(SButton)
+                        .Visibility_Lambda([this]() { return !IsProLoopActive()
+                            ? EVisibility::Visible : EVisibility::Collapsed; })
+                        .ButtonStyle(&FHaybaMCPStyle::Get().GetWidgetStyle<FButtonStyle>("Hayba.Button.Task"))
+                        .Text(LOCTEXT("ChatCredentialTry", "Try anyway"))
+                        .ToolTipText(LOCTEXT("ChatCredentialTryTip", "Use a provider key configured in the running sidecar's environment."))
+                        .OnClicked(this, &SHaybaMCPChatPanel::OnTryUnverifiedCredential) ] ]
+            ]
         ];
 }
 
@@ -1730,8 +1758,16 @@ FReply SHaybaMCPChatPanel::OnSendOrStop()
 FReply SHaybaMCPChatPanel::OnSendCurrentInput()
 {
     if (!CanSend() || !InputBox.IsValid()) return FReply::Handled();
+    const bool bBypass = bAllowUnverifiedCredentialSendOnce;
+    bAllowUnverifiedCredentialSendOnce = false;
     FString Text = InputBox->GetText().ToString().TrimStartAndEnd();
     if (Text.IsEmpty()) return FReply::Handled();
+    if (NeedsCredentialSetup() && !bBypass)
+    {
+        bCredentialSetupRequired = true;
+        return FReply::Handled();
+    }
+    bCredentialSetupRequired = false;
 
     RetryPromptText.Empty();
     RetryMessageIndex = INDEX_NONE;
@@ -1894,6 +1930,44 @@ bool SHaybaMCPChatPanel::IsProLoopActive() const
     return AgentClient.IsValid() ? AgentClient->IsProLoopActive() : FHaybaMCPSettings::Get().bUseHaybaPro;
 }
 
+bool SHaybaMCPChatPanel::NeedsCredentialSetup() const
+{
+    if (IsSubscriptionModel()) return false;
+    const FHaybaMCPSettings& Settings = FHaybaMCPSettings::Get();
+    const FHaybaProviderInfo* Provider = FHaybaMCPSettings::FindProvider(Settings.SelectedProviderId);
+    if (!IsProLoopActive() && (!Provider || !Provider->bNeedsKey)) return false;
+    if (!FHaybaMCPSettings::GetProviderKey(Settings.SelectedProviderId).IsEmpty()) return false;
+    // Pro BYOK sends only the vault key. Community also supports these provider
+    // environment keys. An external sidecar may have a different environment,
+    // so the conditional prompt offers a one-turn override.
+    if (!IsProLoopActive())
+    {
+        const TCHAR* EnvKey = nullptr;
+        if (Settings.SelectedProviderId == TEXT("anthropic")) EnvKey = TEXT("ANTHROPIC_API_KEY");
+        else if (Settings.SelectedProviderId == TEXT("openai")) EnvKey = TEXT("OPENAI_API_KEY");
+        else if (Settings.SelectedProviderId == TEXT("deepseek")) EnvKey = TEXT("DEEPSEEK_API_KEY");
+        else if (Settings.SelectedProviderId == TEXT("groq")) EnvKey = TEXT("GROQ_API_KEY");
+        else if (Settings.SelectedProviderId == TEXT("openrouter")) EnvKey = TEXT("OPENROUTER_API_KEY");
+        if (EnvKey && !FPlatformMisc::GetEnvironmentVariable(EnvKey).IsEmpty()) return false;
+    }
+    return true;
+}
+
+FReply SHaybaMCPChatPanel::OnOpenCredentialSettings()
+{
+    if (Module)
+        if (TSharedPtr<SHaybaMCPMainPanel> Main = Module->MainPanel.Pin())
+            Main->ShowPanel(EHaybaPanel::Settings);
+    return FReply::Handled();
+}
+
+FReply SHaybaMCPChatPanel::OnTryUnverifiedCredential()
+{
+    if (IsProLoopActive()) return FReply::Handled();
+    bAllowUnverifiedCredentialSendOnce = true;
+    return OnSendCurrentInput();
+}
+
 void SHaybaMCPChatPanel::StartAgentTurn(const FString& Prompt)
 {
     LastPrompt = Prompt;
@@ -1914,14 +1988,6 @@ void SHaybaMCPChatPanel::StartAgentTurn(const FString& Prompt)
         return;
     }
     // Hayba Pro on subscription models needs no local provider key.
-    const FHaybaProviderInfo* Provider = FHaybaMCPSettings::FindProvider(Settings.SelectedProviderId);
-    const bool bNeedsProviderKey = !IsSubscriptionModel() &&
-        (IsProLoopActive() || (Provider && Provider->bNeedsKey));
-    if (bNeedsProviderKey && !Settings.HasApiKey())
-    {
-        AddSystemError(TEXT("No API key configured — add one in Settings to chat"), Prompt);
-        return;
-    }
     if (!IsSubscriptionModel() && EffectiveModelId().IsEmpty())
     {
         AddSystemError(TEXT("Choose a model in Chat or Settings before sending."), Prompt);
@@ -2335,13 +2401,6 @@ FReply SHaybaMCPChatPanel::OnUseCommunityForThisChat()
 {
     if (!CanSend() || !AgentClient.IsValid() || AgentClient->IsTurnActive()) return FReply::Handled();
     // Community runs on the local provider key.
-    const FHaybaMCPSettings& Settings = FHaybaMCPSettings::Get();
-    const FHaybaProviderInfo* Provider = FHaybaMCPSettings::FindProvider(Settings.SelectedProviderId);
-    if (Provider && Provider->bNeedsKey && !Settings.HasApiKey())
-    {
-        AddSystemError(TEXT("No API key configured — add one in Settings to chat"), TEXT(""));
-        return FReply::Handled();
-    }
     AgentClient->ForceCommunityThisChat();
     CommunityFallbackMessageIndex = INDEX_NONE;
 

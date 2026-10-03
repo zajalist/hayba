@@ -145,6 +145,8 @@ private:
     FString                                 RestoredProviderId;
     FString                                 RestoredLoop;
     bool                                    bModelDiscoveryLoading = false;
+    bool                                    bCredentialSetupRequired = false;
+    bool                                    bAllowUnverifiedCredentialSendOnce = false;
     struct FMessageWidgets
     {
         TSharedPtr<SWidget> Row;
@@ -195,6 +197,9 @@ private:
     int32           CommunityFallbackMessageIndex = INDEX_NONE;
     /** True when the next turn routes through Hayba Pro (setting on, not forced to Community). */
     bool            IsProLoopActive() const;
+    bool            NeedsCredentialSetup() const;
+    FReply          OnOpenCredentialSettings();
+    FReply          OnTryUnverifiedCredential();
     FReply          OnUseCommunityForThisChat();
 
     void            EnsureAgentClient();
