@@ -38,9 +38,10 @@
 #include "ImageUtils.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
-#include "Misc/SecureHash.h"
 #include "Serialization/ArchiveUObject.h"
 #include "Hash/Blake3.h"
+#include "Policies/CondensedJsonPrintPolicy.h"
+#include "Serialization/JsonWriter.h"
 #include "Components/ActorComponent.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogHaybaMCPCmd, Log, All);
@@ -50,6 +51,59 @@ static bool IsDestructiveCommand(const FString& Cmd);
 namespace
 {
     constexpr int32 MaxPromotedFailureChars = 4096;
+
+    using FExactJsonWriter = TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>;
+
+    void WriteExactSortedJson(const TSharedRef<FJsonValue>& Value, FExactJsonWriter& Writer)
+    {
+        switch (Value->Type)
+        {
+        case EJson::Object:
+        {
+            Writer.WriteObjectStart();
+            const TSharedPtr<FJsonObject>& Object = Value->AsObject();
+            if (Object.IsValid())
+            {
+                TArray<FString> Keys;
+                for (const auto& Pair : Object->Values) Keys.Add(Pair.Key);
+                Keys.Sort();
+                for (const FString& Key : Keys)
+                {
+                    const TSharedPtr<FJsonValue> Child = Object->TryGetField(Key);
+                    if (!Child.IsValid()) Writer.WriteNull(Key);
+                    else
+                    {
+                        Writer.WriteIdentifierPrefix(Key);
+                        WriteExactSortedJson(Child.ToSharedRef(), Writer);
+                    }
+                }
+            }
+            Writer.WriteObjectEnd();
+            break;
+        }
+        case EJson::Array:
+            Writer.WriteArrayStart();
+            for (const TSharedPtr<FJsonValue>& Item : Value->AsArray())
+            {
+                if (Item.IsValid()) WriteExactSortedJson(Item.ToSharedRef(), Writer);
+                else Writer.WriteNull();
+            }
+            Writer.WriteArrayEnd();
+            break;
+        case EJson::String: Writer.WriteValue(Value->AsString()); break;
+        case EJson::Number: Writer.WriteValue(Value->AsNumber()); break;
+        case EJson::Boolean: Writer.WriteValue(Value->AsBool()); break;
+        default: Writer.WriteNull(); break;
+        }
+    }
+
+    void HashExactUtf8Field(FBlake3& Hasher, const FString& Value)
+    {
+        const FTCHARToUTF8 Utf8(*Value);
+        const uint64 Length = uint64(Utf8.Length());
+        Hasher.Update(&Length, sizeof(Length));
+        if (Length > 0) Hasher.Update(Utf8.Get(), Length);
+    }
 
     FString BoundFailureDiagnostic(const FString& Input)
     {
@@ -414,6 +468,31 @@ namespace
             Signals.MutationStatus = EHaybaMCPMutationStatus::Unknown;
         }
         return Signals;
+    }
+}
+
+// Exact approvals deliberately use their own collision-resistant digest. The
+// general execution journal's older SHA-1 hash is not an authorization token.
+namespace HaybaMCPExactApproval
+{
+    FString HashBinding(const FString& Domain, const FString& First, const FString& Second)
+    {
+        FBlake3 Hasher;
+        HashExactUtf8Field(Hasher, Domain);
+        HashExactUtf8Field(Hasher, First);
+        HashExactUtf8Field(Hasher, Second);
+        return LexToString(Hasher.Finalize());
+    }
+
+    FString HashOperation(const TSharedPtr<FJsonObject>& Operation)
+    {
+        if (!Operation.IsValid()) return FString();
+        FString CanonicalJson;
+        TSharedRef<FExactJsonWriter> Writer = TJsonWriterFactory<TCHAR,
+            TCondensedJsonPrintPolicy<TCHAR>>::Create(&CanonicalJson);
+        WriteExactSortedJson(MakeShared<FJsonValueObject>(Operation), Writer.Get());
+        Writer->Close();
+        return HashBinding(TEXT("native-exact-operation-v2"), CanonicalJson, FString());
     }
 }
 
@@ -2058,7 +2137,7 @@ FString FHaybaMCPCommandHandler::ProcessCommandInContext(const FString& CommandJ
                 TSharedPtr<FJsonObject> Operation = MakeShared<FJsonObject>();
                 Operation->SetStringField(TEXT("cmd"), Cmd);
                 Operation->SetObjectField(TEXT("params"), Params);
-                const FString OperationDigest = FHaybaMCPSecurityManager::HashParams(Operation);
+                const FString OperationDigest = HaybaMCPExactApproval::HashOperation(Operation);
                 const HaybaMCPSecretRedaction::FResult SafeInput = HaybaMCPSecretRedaction::Redact(Params);
                 const FString ReviewParams = SafeInput.Value.IsValid() ? JsonToString(SafeInput.Value.ToSharedRef()) : FString();
                 if (SafeInput.Summary.bApplied || SafeInput.Summary.bTruncated ||
@@ -2074,14 +2153,16 @@ FString FHaybaMCPCommandHandler::ProcessCommandInContext(const FString& CommandJ
                 // Binding includes the lease reference classification. A lease
                 // that expires or changes between review and dispatch changes
                 // this digest even if the caller repeats the same token.
-                const FString LeaseBinding = FMD5::HashAnsiString(*FString::Printf(TEXT("%s:%s"),
-                    GateContext ? *GateContext->LeaseToken : TEXT(""),
-                    GateContext ? LexLeaseRef(GateContext->Caller.LeaseRef) : TEXT("none")));
+                const FString LeaseBinding = HaybaMCPExactApproval::HashBinding(
+                    TEXT("native-exact-lease-v2"),
+                    GateContext ? GateContext->LeaseToken : FString(),
+                    GateContext ? FString(LexLeaseRef(GateContext->Caller.LeaseRef)) : TEXT("none"));
                 const FString Source = GateContext ? FString::Printf(TEXT("%s (connection %d)"),
                     *GateContext->Caller.Via, GateContext->ConnId) : TEXT("local");
-                const FString SourceBinding = FMD5::HashAnsiString(*Source);
+                const FString SourceBinding = HaybaMCPExactApproval::HashBinding(
+                    TEXT("native-exact-source-v2"), Source, FString());
                 if (M->ConsumeExactExternalApproval(Caller, Cmd, OperationDigest,
-                    TargetFingerprint, LeaseBinding, SourceBinding, TEXT("native-exact-v1")))
+                    TargetFingerprint, LeaseBinding, SourceBinding, TEXT("native-exact-v2")))
                 {
                     // Consumed before dispatch. A retry, even after failure,
                     // requires a new proposal and an explicit new click.
@@ -2100,7 +2181,7 @@ FString FHaybaMCPCommandHandler::ProcessCommandInContext(const FString& CommandJ
                     Proposal.LeaseBinding = LeaseBinding;
                     Proposal.LeaseId = GateContext ? GateContext->LeaseToken : FString();
                     Proposal.ConnectionId = GateContext ? GateContext->ConnId : 0;
-                    Proposal.PolicyVersion = TEXT("native-exact-v1");
+                    Proposal.PolicyVersion = TEXT("native-exact-v2");
                     Proposal.Consequence = Cmd == TEXT("actor_delete")
                         ? TEXT("Deletes this actor from the loaded editor world. Save is separate; undo may be available while the actor remains valid.")
                         : TEXT("Changes this actor in the loaded editor world. Save is separate; undo may be available while the actor remains valid.");

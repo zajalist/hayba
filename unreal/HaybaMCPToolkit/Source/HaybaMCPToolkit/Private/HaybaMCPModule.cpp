@@ -87,6 +87,11 @@
 #include "Widgets/Docking/SDockTab.h"
 #include "Interfaces/IPluginManager.h"
 
+namespace HaybaMCPExactApproval
+{
+    FString HashOperation(const TSharedPtr<FJsonObject>& Operation);
+}
+
 DEFINE_LOG_CATEGORY_STATIC(LogHaybaMCP, Log, All);
 
 const FName FHaybaMCPModule::TabMain(TEXT("HaybaMCP_Main"));
@@ -514,10 +519,10 @@ bool FHaybaMCPModule::ResolveExternalPlan(const FString& ExpectedProposalId, boo
         (!LiveLease->bBindConnection || LiveLease->ConnId == Candidate.ConnectionId));
     const bool bStillCurrent = bParamsParsed &&
         bLeaseStillValid &&
-        FHaybaMCPSecurityManager::HashParams(FrozenCall) == Candidate.OperationDigest &&
+        HaybaMCPExactApproval::HashOperation(FrozenCall) == Candidate.OperationDigest &&
         FHaybaMCPCommandHandler::CaptureExactApprovalTarget(Candidate.Command, Params, CurrentRef, CurrentFingerprint) &&
         CurrentRef == Candidate.TargetRef && CurrentFingerprint == Candidate.TargetFingerprint &&
-        Candidate.PolicyVersion == TEXT("native-exact-v1") && FHaybaMCPSettings::Get().bPlanModeEnabled &&
+        Candidate.PolicyVersion == TEXT("native-exact-v2") && FHaybaMCPSettings::Get().bPlanModeEnabled &&
         FDateTime::UtcNow() <= Candidate.ExpiresAt;
 
     // Reject and stale proposals both clear the pending review. A second

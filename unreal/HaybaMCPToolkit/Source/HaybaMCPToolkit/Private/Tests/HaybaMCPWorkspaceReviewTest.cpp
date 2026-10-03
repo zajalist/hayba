@@ -19,7 +19,67 @@
 #include "Editor.h"
 #include "Engine/World.h"
 
+namespace HaybaMCPExactApproval
+{
+    FString HashOperation(const TSharedPtr<FJsonObject>& Operation);
+    FString HashBinding(const FString& Domain, const FString& First, const FString& Second);
+}
+
 #if WITH_DEV_AUTOMATION_TESTS
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FHaybaExactApprovalDigestTest, "Hayba.MCP.Workspace.ExactApprovalDigest",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FHaybaExactApprovalDigestTest::RunTest(const FString&)
+{
+    TSharedPtr<FJsonObject> NestedA = MakeShared<FJsonObject>();
+    NestedA->SetNumberField(TEXT("z"), 40);
+    NestedA->SetStringField(TEXT("a"), TEXT("marker"));
+    TSharedPtr<FJsonObject> ParamsA = MakeShared<FJsonObject>();
+    ParamsA->SetObjectField(TEXT("location"), NestedA);
+    ParamsA->SetStringField(TEXT("actor_id"), TEXT("ScratchActor"));
+    TSharedPtr<FJsonObject> OperationA = MakeShared<FJsonObject>();
+    OperationA->SetObjectField(TEXT("params"), ParamsA);
+    OperationA->SetStringField(TEXT("cmd"), TEXT("actor_transform"));
+
+    TSharedPtr<FJsonObject> NestedB = MakeShared<FJsonObject>();
+    NestedB->SetStringField(TEXT("a"), TEXT("marker"));
+    NestedB->SetNumberField(TEXT("z"), 40);
+    TSharedPtr<FJsonObject> ParamsB = MakeShared<FJsonObject>();
+    ParamsB->SetStringField(TEXT("actor_id"), TEXT("ScratchActor"));
+    ParamsB->SetObjectField(TEXT("location"), NestedB);
+    TSharedPtr<FJsonObject> OperationB = MakeShared<FJsonObject>();
+    OperationB->SetStringField(TEXT("cmd"), TEXT("actor_transform"));
+    OperationB->SetObjectField(TEXT("params"), ParamsB);
+
+    const FString Digest = HaybaMCPExactApproval::HashOperation(OperationA);
+    TestEqual(TEXT("operation digest is a full BLAKE3 hex hash"), Digest.Len(), 64);
+    TestEqual(TEXT("nested JSON key insertion order is immaterial"),
+        HaybaMCPExactApproval::HashOperation(OperationB), Digest);
+    NestedB->SetNumberField(TEXT("z"), 41);
+    TestTrue(TEXT("changed operation input changes digest"),
+        HaybaMCPExactApproval::HashOperation(OperationB) != Digest);
+    NestedB->SetNumberField(TEXT("z"), 40);
+    OperationB->SetStringField(TEXT("cmd"), TEXT("actor_delete"));
+    TestTrue(TEXT("changed command changes digest"),
+        HaybaMCPExactApproval::HashOperation(OperationB) != Digest);
+    TestTrue(TEXT("missing operation has no digest"),
+        HaybaMCPExactApproval::HashOperation(TSharedPtr<FJsonObject>()).IsEmpty());
+
+    const FString Lease = HaybaMCPExactApproval::HashBinding(TEXT("native-exact-lease-v2"),
+        TEXT("ticket:alpha"), TEXT("bound"));
+    TestEqual(TEXT("lease binding is a full BLAKE3 hex hash"), Lease.Len(), 64);
+    TestEqual(TEXT("lease binding is deterministic"),
+        HaybaMCPExactApproval::HashBinding(TEXT("native-exact-lease-v2"), TEXT("ticket:alpha"), TEXT("bound")), Lease);
+    TestTrue(TEXT("framed fields cannot be confused by delimiters"),
+        HaybaMCPExactApproval::HashBinding(TEXT("native-exact-lease-v2"), TEXT("ticket"), TEXT("alpha:bound")) != Lease);
+    TestTrue(TEXT("binding domains are isolated"),
+        HaybaMCPExactApproval::HashBinding(TEXT("native-exact-source-v2"), TEXT("ticket:alpha"), TEXT("bound")) != Lease);
+    const FString UnicodeSource = TEXT("source \u00E9");
+    TestTrue(TEXT("UTF-8 source changes remain bound"),
+        HaybaMCPExactApproval::HashBinding(TEXT("native-exact-source-v2"), UnicodeSource, FString()) !=
+        HaybaMCPExactApproval::HashBinding(TEXT("native-exact-source-v2"), TEXT("source e"), FString()));
+    return true;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FHaybaExactActorFingerprintTest, "Hayba.MCP.Workspace.ExactActorFingerprint",
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 bool FHaybaExactActorFingerprintTest::RunTest(const FString&)
@@ -97,7 +157,7 @@ bool FHaybaExternalProposalTest::RunTest(const FString&)
     First.LeaseBinding = TEXT("lease-a");
     First.Source = TEXT("external (connection 1)");
     First.SourceBinding = TEXT("source-a");
-    First.PolicyVersion = TEXT("native-exact-v1");
+    First.PolicyVersion = TEXT("native-exact-v2");
     First.ExpiresAt = FDateTime::UtcNow() + FTimespan::FromMinutes(5);
     Module.ProposeExactExternalOperation(First);
     const FString FirstId = Module.PendingExternalPlanId;
@@ -207,6 +267,9 @@ bool FHaybaExactApprovalRouterScratchTest::RunTest(const FString&)
     TestEqual(TEXT("router requires exact review"), Status, FString(TEXT("plan_mode_required")));
     const FString FirstId = Module->PendingExternalPlanId;
     TestTrue(TEXT("native card is exact"), Module->PendingExternalPlanIsExact);
+    TestEqual(TEXT("router uses BLAKE3 operation digest"), Module->PendingExternalOperation.OperationDigest.Len(), 64);
+    TestEqual(TEXT("router uses BLAKE3 source binding"), Module->PendingExternalOperation.SourceBinding.Len(), 64);
+    TestEqual(TEXT("router uses BLAKE3 lease binding"), Module->PendingExternalOperation.LeaseBinding.Len(), 64);
     TestTrue(TEXT("first click approves frozen target"), Module->ResolveExternalPlan(FirstId, true));
     TestFalse(TEXT("double approval click refused"), Module->ResolveExternalPlan(FirstId, true));
     TestEqual(TEXT("approved command executes"), CodeOf(Send(*Router, Conn, Owner, TEXT("actor_tag"), First)), FString());
@@ -276,12 +339,12 @@ bool FHaybaWorkspaceVisualReview::RunTest(const FString&)
                 Proposal.Owner = TEXT("external-test-client");
                 Proposal.Source = TEXT("External MCP client (connection 7)");
                 Proposal.SourceBinding = TEXT("visual-fixture-source");
-                Proposal.OperationDigest = TEXT("f22e5863a18f746e3d588d811560a45f");
+                Proposal.OperationDigest = TEXT("f22e5863a18f746e3d588d811560a45ff22e5863a18f746e3d588d811560a45f");
                 Proposal.ReviewParamsJson = TEXT("{\"actor_id\":\"BlockoutMarker\",\"location\":[120,0,40]}");
                 Proposal.TargetRef = TEXT("/Scratch/Map.BlockoutMarker#sample");
                 Proposal.TargetFingerprint = TEXT("visual-fixture-version");
                 Proposal.LeaseBinding = TEXT("visual-fixture-lease");
-                Proposal.PolicyVersion = TEXT("native-exact-v1");
+                Proposal.PolicyVersion = TEXT("native-exact-v2");
                 Proposal.Consequence = TEXT("Moves the blockout marker in the loaded editor world. Save is separate.");
                 Proposal.ExpiresAt = FDateTime::UtcNow() + FTimespan::FromMinutes(5);
                 Module.ProposeExactExternalOperation(MoveTemp(Proposal));
