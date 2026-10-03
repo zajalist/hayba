@@ -158,6 +158,7 @@ $Invoker={
 }
 $EditorPid=42; $EditorExe='C:/fake/UnrealEditor.exe'; $ProjectPath='C:/fake/Scratch.uproject'; $SessionToken='disposable_test_token'; $Auth=''
 $MaxCaseMs=500
+$CaseMaxMs=$MaxCaseMs # The fixture creates synthetic clocks without Start-CaseBudget.
 $cases=@(
     @{name='early_listener'},@{name='listener_late'},@{name='explicit_attach'},
     @{name='exhausted';error='startup deadline'},@{name='setup_exhausted';error='startup deadline'},
