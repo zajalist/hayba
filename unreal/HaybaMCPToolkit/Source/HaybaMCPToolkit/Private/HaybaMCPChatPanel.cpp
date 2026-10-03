@@ -464,18 +464,23 @@ void SHaybaMCPChatPanel::Construct(const FArguments&, FHaybaMCPModule* InModule)
             [
                 SNew(SVerticalBox)
                 + SVerticalBox::Slot().AutoHeight()
-                [ SNew(STextBlock).Text(LOCTEXT("ExternalPlanTitle", "Review external plan"))
+                [ SNew(STextBlock).Text_Lambda([this]()
+                    {
+                        return Module && Module->PendingExternalPlanIsExact
+                            ? LOCTEXT("ExternalOperationTitle", "Review operation")
+                            : LOCTEXT("ExternalPlanTitle", "Plan preview");
+                    })
                     .Font(FHaybaMCPStyle::Font(15, true)) ]
                 + SVerticalBox::Slot().AutoHeight().Padding(0.f, 10.f, 0.f, 4.f)
                 [ SNew(SBox).MaxDesiredHeight(230.f)
                     [ SNew(SScrollBox) + SScrollBox::Slot()
                         [ SAssignNew(ExternalPlanStepsBox, SVerticalBox) ] ] ]
                 + SVerticalBox::Slot().AutoHeight().Padding(0.f, 8.f, 0.f, 0.f)
-                [ SNew(STextBlock).Text_Lambda([]()
+                [ SNew(STextBlock).Text_Lambda([this]()
                     {
-                        return FHaybaMCPSettings::Get().bPlanApprovalStrictConsume
-                            ? LOCTEXT("ExternalPlanScopeOnce", "Allows one destructive command from this client.")
-                            : LOCTEXT("ExternalPlanScopePlan", "Allows this client's destructive commands until a new plan replaces it.");
+                        return Module && Module->PendingExternalPlanIsExact
+                            ? LOCTEXT("ExternalExactScope", "Approval applies once to this operation while its target is unchanged.")
+                            : LOCTEXT("ExternalPreviewScope", "This outline cannot authorize an edit. The agent must submit a specific operation for review.");
                     })
                     .Font(FHaybaMCPStyle::Font(11)).AutoWrapText(true)
                     .ColorAndOpacity(FHaybaMCPStyle::Colour(TEXT("Hayba.Color.Text.Secondary"))) ]
@@ -486,16 +491,30 @@ void SHaybaMCPChatPanel::Construct(const FArguments&, FHaybaMCPModule* InModule)
                     [ SNew(SButton)
                         .ButtonStyle(&FHaybaMCPStyle::Get().GetWidgetStyle<FButtonStyle>("Hayba.Button.Review.Primary"))
                         .ContentPadding(FMargin(14.f, 7.f))
-                        .OnClicked_Lambda([this]() { if (Module) Module->ResolveExternalPlan(true); return FReply::Handled(); })
-                        [ SNew(STextBlock).Text(LOCTEXT("ExternalApprove", "Approve plan"))
+                        .Visibility_Lambda([this]() { return Module && Module->PendingExternalPlanIsExact
+                            ? EVisibility::Visible : EVisibility::Collapsed; })
+                        .IsEnabled_Lambda([this]() { return Module && Module->PendingExternalPlanIsExact &&
+                            DisplayedExternalPlanId == Module->PendingExternalPlanId; })
+                        .OnClicked_Lambda([this]()
+                        {
+                            if (Module && !Module->ResolveExternalPlan(DisplayedExternalPlanId, true))
+                                Toast(LOCTEXT("ExternalApprovalExpired", "Operation changed or expired. Review the latest request."));
+                            return FReply::Handled();
+                        })
+                        [ SNew(STextBlock).Text(LOCTEXT("ExternalApprove", "Approve operation"))
                             .Font(FHaybaMCPStyle::Font(12, true))
                             .ColorAndOpacity(FHaybaMCPStyle::Colour(TEXT("Hayba.Color.Surface.Canvas"))) ] ]
                     + SHorizontalBox::Slot().AutoWidth().Padding(8.f, 0.f)
                     [ SNew(SButton)
                         .ButtonStyle(&FHaybaMCPStyle::Get().GetWidgetStyle<FButtonStyle>("Hayba.Button.Switcher"))
                         .ContentPadding(FMargin(14.f, 7.f))
-                        .OnClicked_Lambda([this]() { if (Module) Module->ResolveExternalPlan(false); return FReply::Handled(); })
-                        [ SNew(STextBlock).Text(LOCTEXT("ExternalReject", "Reject"))
+                        .OnClicked_Lambda([this]()
+                        {
+                            if (Module) Module->ResolveExternalPlan(DisplayedExternalPlanId, false);
+                            return FReply::Handled();
+                        })
+                        [ SNew(STextBlock).Text_Lambda([this]() { return Module && Module->PendingExternalPlanIsExact
+                            ? LOCTEXT("ExternalReject", "Reject") : LOCTEXT("ExternalDismiss", "Dismiss"); })
                             .Font(FHaybaMCPStyle::Font(12)) ] ]
                 ]
             ]
@@ -551,8 +570,51 @@ void SHaybaMCPChatPanel::RebuildExternalProposal()
 {
     if (!ExternalPlanStepsBox.IsValid()) return;
     ExternalPlanStepsBox->ClearChildren();
+    if (DisplayedExternalPlanId != (Module ? Module->PendingExternalPlanId : FString()))
+        bExternalDetailsExpanded = false;
     DisplayedExternalPlanId = Module ? Module->PendingExternalPlanId : FString();
     if (!Module || Module->PendingExternalPlan.IsEmpty()) return;
+    if (Module->PendingExternalPlanIsExact)
+    {
+        const FHaybaExactExternalApproval& Operation = Module->PendingExternalOperation;
+        auto AddReviewLine = [this](const FString& Label, const FString& Value)
+        {
+            if (Value.IsEmpty()) return;
+            ExternalPlanStepsBox->AddSlot().AutoHeight().Padding(0.f, 2.f)
+            [ SNew(STextBlock).Text(FText::FromString(Label + Value))
+                .Font(FHaybaMCPStyle::Font(11)).AutoWrapText(true) ];
+        };
+        AddReviewLine(TEXT("Source  "), Operation.Source);
+        AddReviewLine(TEXT("Owner  "), Operation.Owner);
+        AddReviewLine(TEXT("Operation  "), Operation.Command);
+        AddReviewLine(TEXT("Target  "), Operation.TargetRef);
+        AddReviewLine(TEXT("Effect  "), Operation.Consequence);
+        if (!Operation.ReviewParamsJson.IsEmpty())
+        {
+            ExternalPlanStepsBox->AddSlot().AutoHeight().Padding(0.f, 6.f, 0.f, 0.f)
+            [ SNew(SButton)
+                .ButtonStyle(&FHaybaMCPStyle::Get().GetWidgetStyle<FButtonStyle>("Hayba.Button.Switcher"))
+                .ContentPadding(FMargin(8.f, 4.f))
+                .OnClicked_Lambda([this]()
+                {
+                    bExternalDetailsExpanded = !bExternalDetailsExpanded;
+                    RebuildExternalProposal();
+                    return FReply::Handled();
+                })
+                [ SNew(STextBlock).Text_Lambda([this]() { return bExternalDetailsExpanded
+                    ? LOCTEXT("ExternalHideParams", "Hide parameters")
+                    : LOCTEXT("ExternalShowParams", "Review parameters"); })
+                    .Font(FHaybaMCPStyle::Font(11)) ] ];
+            if (bExternalDetailsExpanded)
+            {
+                AddReviewLine(TEXT("Parameters  "), Operation.ReviewParamsJson);
+                AddReviewLine(TEXT("Operation digest  "), Operation.OperationDigest);
+                AddReviewLine(TEXT("Target fingerprint  "), Operation.TargetFingerprint);
+                AddReviewLine(TEXT("Expires  "), Operation.ExpiresAt.ToString());
+            }
+        }
+        return;
+    }
     if (Module->PendingExternalSteps.IsEmpty())
     {
         ExternalPlanStepsBox->AddSlot().AutoHeight()

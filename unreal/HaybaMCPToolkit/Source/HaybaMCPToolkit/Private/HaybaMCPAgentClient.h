@@ -17,6 +17,8 @@ namespace HaybaChatEndpoint
 // Talks to the Node sidecar (SidecarURL, default http://localhost:7821) chat
 // surface defined in mcp-tools/hayba-mcp/src/chat/chat-server.ts:
 //
+//   0. GET /api/health — verifies the expected Hayba chat protocol before a
+//      decrypted BYOK key is sent to anything listening on the configured port.
 //   1. POST /chat/config  (once per session) — pushes {provider, model,
 //      base_url?, api_key} into the sidecar's in-memory config store. This is the
 //      KEY HANDOFF: the decrypted BYOK key travels over loopback to /chat/config
@@ -199,6 +201,10 @@ private:
     friend class FHaybaActivityResumeDisconnectTest;
     friend class FHaybaAgentHttpDeferralTest;
     friend class FHaybaAgentStreamTerminalTest;
+	friend class FHaybaAgentSidecarIdentityTest;
+	/** Verify the HTTP service before any BYOK key leaves the vault. */
+	void CheckSidecarThenStream(const FString& UserPrompt);
+	static bool HasCompatibleSidecarIdentity(const FJsonObject& Health);
 	void PostConfig(const FString& UserPrompt);
 	/** /chat/config when this session has none yet, then /chat/stream. */
 	void ConfigureAndStream(const FString& UserPrompt);
@@ -229,6 +235,7 @@ private:
 
 	// State
 	FString SessionId;
+	TSharedPtr<IHttpRequest, ESPMode::ThreadSafe> IdentityRequest;
 	TSharedPtr<IHttpRequest, ESPMode::ThreadSafe> ConfigRequest;
 	TSharedPtr<IHttpRequest, ESPMode::ThreadSafe> StreamRequest;
 	FHaybaMCPChatConfigGate ConfigGate;

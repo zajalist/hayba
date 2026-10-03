@@ -158,12 +158,58 @@ void FHaybaMCPAgentClient::SendPrompt(const FString& UserPrompt, const FString& 
 	AccumulatedText.Empty();
 	bCurrentTurnPro = IsProLoopActive();
 
-	if (IsProLoopActive())
+	CheckSidecarThenStream(UserPrompt);
+}
+
+bool FHaybaMCPAgentClient::HasCompatibleSidecarIdentity(const FJsonObject& Health)
+{
+	FString Service;
+	FString Protocol;
+	FString Status;
+	return Health.TryGetStringField(TEXT("service"), Service) && Service == TEXT("hayba-mcp") &&
+		Health.TryGetStringField(TEXT("chatProtocol"), Protocol) &&
+		Protocol == TEXT("hayba-chat-2026-10-03") &&
+		Health.TryGetStringField(TEXT("status"), Status) && Status == TEXT("ok");
+}
+
+void FHaybaMCPAgentClient::CheckSidecarThenStream(const FString& UserPrompt)
+{
+	TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();
+	IdentityRequest = Request;
+	Request->SetURL(FHaybaMCPSettings::Get().SidecarURL / TEXT("api/health"));
+	Request->SetVerb(TEXT("GET"));
+	Request->SetTimeout(5.0f);
+	const uint32 Generation = TurnGeneration;
+	TWeakPtr<FHaybaMCPAgentClient> WeakSelf = AsShared();
+	Request->OnProcessRequestComplete().BindLambda(
+		[WeakSelf, UserPrompt, Generation](FHttpRequestPtr, FHttpResponsePtr Response, bool bConnected)
+		{
+			TSharedPtr<FHaybaMCPAgentClient> Self = WeakSelf.Pin();
+			if (!Self.IsValid() || !Self->IsTurnCurrent(Generation)) return;
+			Self->IdentityRequest.Reset();
+			TSharedPtr<FJsonObject> Health;
+			const bool bCompatible = bConnected && Response.IsValid() &&
+				Response->GetResponseCode() == 200 && Response->GetContent().Num() <= 4096 &&
+				FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Response->GetContentAsString()), Health) &&
+				Health.IsValid() && FHaybaMCPAgentClient::HasCompatibleSidecarIdentity(*Health);
+			if (!bCompatible)
+			{
+				Self->OnError.Broadcast(FHaybaChatError{
+					TEXT("The chat sidecar is unavailable or incompatible. Restart Hayba's sidecar, then retry; your message is still here."),
+					TEXT("sidecar_identity") });
+				Self->EmitLocalDone(TEXT("error"), /*cancelled*/ false);
+				return;
+			}
+			if (Self->bCurrentTurnPro) Self->CheckBrainThenStream(UserPrompt);
+			else Self->ConfigureAndStream(UserPrompt);
+		});
+	if (!Request->ProcessRequest() && IsTurnCurrent(Generation))
 	{
-		CheckBrainThenStream(UserPrompt);
-		return;
+		IdentityRequest.Reset();
+		OnError.Broadcast(FHaybaChatError{
+			TEXT("Could not connect to the Hayba chat sidecar. Restart it, then retry."), TEXT("transport") });
+		EmitLocalDone(TEXT("error"), /*cancelled*/ false);
 	}
-	ConfigureAndStream(UserPrompt);
 }
 
 void FHaybaMCPAgentClient::ForceCommunityThisChat()
@@ -186,6 +232,7 @@ void FHaybaMCPAgentClient::CheckBrainThenStream(const FString& UserPrompt)
 	TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();
 	Request->SetURL(FHaybaMCPSettings::Get().SidecarURL / TEXT("brain/status"));
 	Request->SetVerb(TEXT("GET"));
+	Request->SetTimeout(10.0f);
 
 	TWeakPtr<FHaybaMCPAgentClient> WeakSelf = AsShared();
 	const FString CapturedPrompt = UserPrompt;
@@ -260,6 +307,7 @@ void FHaybaMCPAgentClient::PostBrainConfig(const FString& UserPrompt, const FStr
 	Request->SetVerb(TEXT("POST"));
 	Request->SetHeader(TEXT("Content-Type"), TEXT("application/json"));
 	Request->SetContentAsString(JsonToString(Body));
+	Request->SetTimeout(10.0f);
 
 	// NB: never log the body — it carries the refresh token.
 	UE_LOG(LogHaybaAgentClient, Verbose, TEXT("POST /brain/config (token %d bytes, not logged)"), RefreshToken.Len());
@@ -297,6 +345,7 @@ void FHaybaMCPAgentClient::StoreRotatedBrainToken()
 	TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();
 	Request->SetURL(FHaybaMCPSettings::Get().SidecarURL / TEXT("brain/status"));
 	Request->SetVerb(TEXT("GET"));
+	Request->SetTimeout(10.0f);
 	Request->OnProcessRequestComplete().BindLambda(
 		[](FHttpRequestPtr /*Req*/, FHttpResponsePtr Response, bool bConnected)
 		{
@@ -366,6 +415,7 @@ void FHaybaMCPAgentClient::PostConfig(const FString& UserPrompt)
 	Request->SetVerb(TEXT("POST"));
 	Request->SetHeader(TEXT("Content-Type"), TEXT("application/json"));
 	Request->SetContentAsString(JsonToString(Body));
+	Request->SetTimeout(10.0f);
 
 	// NB: never log the body — it carries the raw key.
 	UE_LOG(LogHaybaAgentClient, Verbose, TEXT("POST /chat/config provider=%s (key %d bytes, not logged)"),
@@ -558,8 +608,14 @@ TSharedRef<IHttpRequest, ESPMode::ThreadSafe> FHaybaMCPAgentClient::CreateStream
 			}
 			else
 			{
-				// Stream closed without an explicit done frame — synthesize one.
-				Self->EmitLocalDone(TEXT("end_turn"), /*cancelled*/ false);
+				// A successful HTTP response is not proof that the agent finished.
+				// Preserve any partial text, but surface the missing terminal frame so
+				// Chat can offer recovery instead of presenting a truncated answer as
+				// a completed turn.
+				Self->OnError.Broadcast(FHaybaChatError{
+					TEXT("Chat stream ended before completion. Your partial reply was kept; retry the request."),
+					TEXT("protocol") });
+				Self->EmitLocalDone(TEXT("error"), /*cancelled*/ false);
 			}
 			Self->StreamRequest.Reset();
 		});
@@ -907,6 +963,12 @@ void FHaybaMCPAgentClient::Cancel()
 		bTurnPending = false;
 		++TurnGeneration;
 		ConfigGate.Cancel();
+		if (IdentityRequest.IsValid())
+		{
+			IdentityRequest->OnProcessRequestComplete().Unbind();
+			IdentityRequest->CancelRequest();
+			IdentityRequest.Reset();
+		}
 		if (ConfigRequest.IsValid())
 		{
 			ConfigRequest->OnProcessRequestComplete().Unbind();

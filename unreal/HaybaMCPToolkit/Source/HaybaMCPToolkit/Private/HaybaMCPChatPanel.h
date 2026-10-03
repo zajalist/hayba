@@ -131,6 +131,7 @@ private:
     TSharedPtr<SVerticalBox>                ModelMenuItems;
     TSharedPtr<SVerticalBox>                ExternalPlanStepsBox;
     FString                                 DisplayedExternalPlanId;
+    bool                                    bExternalDetailsExpanded = false;
     TSharedPtr<FHaybaMCPModelDiscoveryClient> ModelDiscoveryClient;
     TOptional<FHaybaMCPModelDiscoveryResult> DiscoveredModels;
     FString                                 ModelSearch;
