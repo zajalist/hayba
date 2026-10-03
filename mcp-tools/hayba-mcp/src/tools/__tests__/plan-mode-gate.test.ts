@@ -118,7 +118,7 @@ describe('Plan Mode gate covers every non-retryable command', () => {
       '../../unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/HaybaMCPModule.cpp'), 'utf-8');
     const moduleHeader = readFileSync(join(process.cwd(),
       '../../unreal/HaybaMCPToolkit/Source/HaybaMCPToolkit/Public/HaybaMCPModule.h'), 'utf-8');
-    const gateStart = router.indexOf('if (S.bPlanModeEnabled && IsDestructiveCommand(Cmd))');
+    const gateStart = router.indexOf('if ((S.bPlanModeEnabled || bRequireExactReview) && IsDestructiveCommand(Cmd))');
     expect(gateStart).toBeGreaterThan(-1);
     const gateEnd = router.indexOf('S.PlanModeToolCallCount++', gateStart);
     expect(gateEnd).toBeGreaterThan(gateStart);

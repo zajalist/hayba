@@ -315,7 +315,9 @@ export async function executeCommand<T = Record<string, unknown>>(
 
   const requireExactReview = exactReviewScope.getStore() === true;
   const attemptOnce = async (): Promise<TcpResponse> =>
-    sender(cmd, params, timeout, requireExactReview ? { requireExactReview: true } : undefined);
+    requireExactReview
+      ? sender(cmd, params, timeout, { requireExactReview: true })
+      : sender(cmd, params, timeout);
 
   let resp: TcpResponse;
   try {
@@ -394,6 +396,8 @@ export async function installLiveSender(): Promise<void> {
   const { ensureConnected } = await import('../tcp-client.js');
   setDefaultSender(async (cmd, params, timeoutMs, options) => {
     const client = await ensureConnected();
-    return client.send(cmd, params, timeoutMs, options);
+    return options?.requireExactReview
+      ? client.send(cmd, params, timeoutMs, options)
+      : client.send(cmd, params, timeoutMs);
   });
 }
