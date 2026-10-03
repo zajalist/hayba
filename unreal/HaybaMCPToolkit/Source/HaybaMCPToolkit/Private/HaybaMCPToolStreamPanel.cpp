@@ -480,17 +480,19 @@ void SHaybaMCPToolStreamPanel::RebuildTurnsContainer()
 
 TSharedRef<SWidget> SHaybaMCPToolStreamPanel::BuildToolbar()
 {
-    // UE5-stock layout: SSearchBox on the left filling, then small action buttons.
+    // Keep search useful in a narrow dock; secondary actions move into More.
     return SNew(SHorizontalBox)
         + SHorizontalBox::Slot().FillWidth(1.f).VAlign(VAlign_Center)
         [
             SNew(SSearchBox)
-            .HintText(NSLOCTEXT("Hayba", "Stream.SearchHint", "Search tool name, params, or result..."))
+            .HintText(NSLOCTEXT("Hayba", "Stream.SearchHint", "Search calls"))
+            .ToolTipText(NSLOCTEXT("Hayba", "Stream.SearchTT", "Search tool name, request, and response"))
             .OnTextChanged(this, &SHaybaMCPToolStreamPanel::OnSearchChanged)
         ]
         + SHorizontalBox::Slot().AutoWidth().Padding(8.f, 0.f, 0.f, 0.f)
         [
             SNew(SComboButton)
+            .Visibility_Lambda([this](){ return IsCompactToolbar() ? EVisibility::Collapsed : EVisibility::Visible; })
             .ButtonStyle(FAppStyle::Get(), "SimpleButton")
             .HasDownArrow(true)
             .ContentPadding(FMargin(8.f, 4.f))
@@ -512,7 +514,7 @@ TSharedRef<SWidget> SHaybaMCPToolStreamPanel::BuildToolbar()
         + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(8.f, 0.f, 0.f, 0.f)
         [
             SNew(STextBlock)
-            .Visibility_Lambda([this](){ return CountSelected() > 0 ? EVisibility::Visible : EVisibility::Collapsed; })
+            .Visibility_Lambda([this](){ return !IsCompactToolbar() && CountSelected() > 0 ? EVisibility::Visible : EVisibility::Collapsed; })
             .ColorAndOpacity(FSlateColor(FLinearColor(1.0f, 0.78f, 0.30f)))
             .Text_Lambda([this](){ return FText::FromString(FString::Printf(TEXT("%d turn%s selected"),
                 CountSelected(), CountSelected() == 1 ? TEXT("") : TEXT("s"))); })
@@ -522,7 +524,7 @@ TSharedRef<SWidget> SHaybaMCPToolStreamPanel::BuildToolbar()
             SNew(SButton)
             .ButtonStyle(FAppStyle::Get(), "SimpleButton")
             .ToolTipText(NSLOCTEXT("Hayba", "Stream.ClearSelTT", "Clear selection"))
-            .Visibility_Lambda([this](){ return CountSelected() > 0 ? EVisibility::Visible : EVisibility::Collapsed; })
+            .Visibility_Lambda([this](){ return !IsCompactToolbar() && CountSelected() > 0 ? EVisibility::Visible : EVisibility::Collapsed; })
             .ContentPadding(FMargin(6.f, 2.f))
             .OnClicked(this, &SHaybaMCPToolStreamPanel::OnClearSelection)
             [ SNew(STextBlock).Text(NSLOCTEXT("Hayba", "Stream.ClearSel", "Clear")) ]
@@ -530,6 +532,7 @@ TSharedRef<SWidget> SHaybaMCPToolStreamPanel::BuildToolbar()
         + SHorizontalBox::Slot().AutoWidth().Padding(6.f, 0.f, 0.f, 0.f)
         [
             SNew(SButton)
+            .Visibility_Lambda([this](){ return IsCompactToolbar() ? EVisibility::Collapsed : EVisibility::Visible; })
             .ButtonStyle(FAppStyle::Get(), "SimpleButton")
             .ToolTipText_Lambda([this]()
             {
@@ -546,6 +549,7 @@ TSharedRef<SWidget> SHaybaMCPToolStreamPanel::BuildToolbar()
         + SHorizontalBox::Slot().AutoWidth().Padding(6.f, 0.f, 0.f, 0.f)
         [
             SNew(SButton)
+            .Visibility_Lambda([this](){ return IsCompactToolbar() ? EVisibility::Collapsed : EVisibility::Visible; })
             .ButtonStyle(FAppStyle::Get(), "SimpleButton")
             .ToolTipText_Lambda([this]()
             {
@@ -562,6 +566,7 @@ TSharedRef<SWidget> SHaybaMCPToolStreamPanel::BuildToolbar()
         + SHorizontalBox::Slot().AutoWidth().Padding(6.f, 0.f, 0.f, 0.f)
         [
             SNew(SButton)
+            .Visibility_Lambda([this](){ return IsCompactToolbar() ? EVisibility::Collapsed : EVisibility::Visible; })
             .ButtonStyle(FAppStyle::Get(), "SimpleButton")
             .ToolTipText(NSLOCTEXT("Hayba", "Stream.ClearAllTT", "Clear the panel without archiving"))
             .ContentPadding(FMargin(6.f))
@@ -569,7 +574,69 @@ TSharedRef<SWidget> SHaybaMCPToolStreamPanel::BuildToolbar()
             [
                 SNew(SImage).Image(FAppStyle::GetBrush("Icons.Delete"))
             ]
+        ]
+        + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(6.f, 0.f, 0.f, 0.f)
+        [
+            SNew(SButton)
+            .Visibility_Lambda([this](){ return IsCompactToolbar() ? EVisibility::Visible : EVisibility::Collapsed; })
+            .ButtonStyle(FAppStyle::Get(), "SimpleButton")
+            .ToolTipText_Lambda([this]()
+            {
+                return CountSelected() > 0
+                    ? NSLOCTEXT("Hayba", "Stream.CompactCopySelTT", "Copy selected turns as redacted JSONL")
+                    : NSLOCTEXT("Hayba", "Stream.CompactCopyTT", "Copy visible calls as redacted JSONL");
+            })
+            .ContentPadding(FMargin(6.f, 3.f))
+            .OnClicked(this, &SHaybaMCPToolStreamPanel::OnCopyAll)
+            [ SNew(STextBlock).Text(NSLOCTEXT("Hayba", "Stream.CompactCopy", "Copy")) ]
+        ]
+        + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(4.f, 0.f, 0.f, 0.f)
+        [
+            SNew(SComboButton)
+            .Visibility_Lambda([this](){ return IsCompactToolbar() ? EVisibility::Visible : EVisibility::Collapsed; })
+            .ButtonStyle(FAppStyle::Get(), "SimpleButton")
+            .HasDownArrow(true)
+            .ToolTipText(NSLOCTEXT("Hayba", "Stream.MoreTT", "Activity actions and statistics"))
+            .ContentPadding(FMargin(6.f, 3.f))
+            .ButtonContent()
+            [ SNew(STextBlock).Text(NSLOCTEXT("Hayba", "Stream.More", "More")) ]
+            .OnGetMenuContent(this, &SHaybaMCPToolStreamPanel::BuildCompactMenu)
         ];
+}
+
+bool SHaybaMCPToolStreamPanel::IsCompactToolbar() const
+{
+    return GetCachedGeometry().GetLocalSize().X < 520.f;
+}
+
+TSharedRef<SWidget> SHaybaMCPToolStreamPanel::BuildCompactMenu()
+{
+    FMenuBuilder Menu(true, nullptr, nullptr, false, &FAppStyle::Get(), false);
+    Menu.AddSubMenu(
+        NSLOCTEXT("Hayba", "Stream.MoreStats", "Stats"),
+        NSLOCTEXT("Hayba", "Stream.MoreStatsTT", "Call counts by tool and domain"),
+        FNewMenuDelegate::CreateLambda([this](FMenuBuilder& Submenu)
+        {
+            Submenu.AddWidget(BuildStatsMenu(), FText::GetEmpty(), true, false);
+        }));
+    if (CountSelected() > 0)
+    {
+        Menu.AddMenuEntry(
+            NSLOCTEXT("Hayba", "Stream.MoreClearSelection", "Clear selection"), FText::GetEmpty(), FSlateIcon(),
+            FUIAction(FExecuteAction::CreateLambda([this]() { OnClearSelection(); })));
+    }
+    Menu.AddMenuSeparator();
+    Menu.AddMenuEntry(
+        CountSelected() > 0
+            ? NSLOCTEXT("Hayba", "Stream.MoreArchiveSelected", "Archive selected turns")
+            : NSLOCTEXT("Hayba", "Stream.MoreArchiveAll", "Archive all calls"),
+        NSLOCTEXT("Hayba", "Stream.MoreArchiveTT", "Save redacted JSONL to the project's Saved folder"),
+        FSlateIcon(), FUIAction(FExecuteAction::CreateLambda([this]() { OnArchive(); })));
+    Menu.AddMenuEntry(
+        NSLOCTEXT("Hayba", "Stream.MoreClear", "Clear Activity"),
+        NSLOCTEXT("Hayba", "Stream.MoreClearTT", "Clear Activity without archiving"),
+        FSlateIcon(), FUIAction(FExecuteAction::CreateLambda([this]() { OnClear(); })));
+    return Menu.MakeWidget();
 }
 
 TSharedRef<SWidget> SHaybaMCPToolStreamPanel::BuildStatsMenu()

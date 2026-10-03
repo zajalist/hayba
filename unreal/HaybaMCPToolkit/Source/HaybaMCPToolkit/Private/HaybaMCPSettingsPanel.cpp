@@ -369,9 +369,8 @@ void SHaybaMCPSettingsPanel::Construct(const FArguments& InArgs)
                         BuildSection(
                             NSLOCTEXT("Hayba", "Settings.Sec.PlanMode", "Editor safety"),
                             NSLOCTEXT("Hayba", "Settings.Sec.PlanMode.TT",
-                                "Require a reviewed plan for external MCP clients before they change the project. "
-                                "Review incoming proposals in Agent. Built-in chat keeps its own action approvals "
-                                "and Explore / Draft / Production modes."),
+                                "Review each exact edit from an external MCP client before it runs. "
+                                "Built-in chat keeps its own approvals."),
                             SNew(SVerticalBox)
                             + SVerticalBox::Slot().AutoHeight().Padding(0.f, 2.f)
                             [ BuildLabeledRow(
@@ -395,11 +394,10 @@ void SHaybaMCPSettingsPanel::Construct(const FArguments& InArgs)
                             ]
                             + SVerticalBox::Slot().AutoHeight().Padding(0.f, 2.f)
                             [ BuildToggle(
-                                NSLOCTEXT("Hayba", "S.Plan", "Require a plan for changes from other apps"),
+                                NSLOCTEXT("Hayba", "S.Plan", "Review each external edit"),
                                 NSLOCTEXT("Hayba", "S.Plan.TT",
-                                    "Applies to the native command gate used by external MCP hosts. "
-                                    "Turning this off allows their write commands without this plan review. "
-                                    "Built-in chat approvals remain enabled. Default: on."),
+                                    "Approve one exact command and target once. Changed edits need a new review. "
+                                    "Turning this off skips this review; other edit safeguards and built-in chat approvals remain enabled."),
                                 [](){ return FHaybaMCPSettings::Get().bPlanModeEnabled; },
                                 [](bool b){ FHaybaMCPSettings::Get().bPlanModeEnabled = b; }) ]
                         , false)

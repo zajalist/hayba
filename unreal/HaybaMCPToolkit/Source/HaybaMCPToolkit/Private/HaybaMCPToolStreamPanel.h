@@ -60,6 +60,8 @@ private:
     TSharedRef<SWidget> BuildGenericRenderer(const FHaybaToolCall& Call, int32 TurnIdx, int32 CallIdx);
     TSharedRef<SWidget> BuildToolbar();
     TSharedRef<SWidget> BuildStatsMenu();
+    TSharedRef<SWidget> BuildCompactMenu();
+    bool IsCompactToolbar() const;
 
     void RebuildSummary(TSharedPtr<FHaybaTurn> Turn) const;
 
