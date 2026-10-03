@@ -919,10 +919,9 @@ bool FHaybaMCPCommandHandler::CaptureExactApprovalTarget(const FString& Cmd,
     const bool bNameOnly = Cmd == TEXT("actor_set_properties") || Cmd == TEXT("actor_tag") ||
         Cmd == TEXT("actor_set_visibility");
     if (!bNameOrLabel && !bNameOnly) return false;
-    if (!Params.IsValid() || !GEditor) return false;
+    if (!Params.IsValid() || !GEditor || Params->HasField(TEXT("actorId"))) return false;
     FString ActorId;
-    if (!Params->TryGetStringField(TEXT("actorId"), ActorId))
-        Params->TryGetStringField(TEXT("actor_id"), ActorId);
+    Params->TryGetStringField(TEXT("actor_id"), ActorId);
     if (ActorId.IsEmpty()) return false;
     UWorld* World = GEditor->GetEditorWorldContext().World();
     if (!World) return false;

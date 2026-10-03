@@ -74,12 +74,18 @@ bool FHaybaExternalProposalTest::RunTest(const FString&)
     TestFalse(TEXT("batch has no exact target adapter and must refuse under Plan Mode"),
         FHaybaMCPCommandHandler::CaptureExactApprovalTarget(TEXT("editor_batch"),
             MakeShared<FJsonObject>(), UnsupportedRef, UnsupportedVersion));
+    TSharedPtr<FJsonObject> ConflictingActorIds = MakeShared<FJsonObject>();
+    ConflictingActorIds->SetStringField(TEXT("actor_id"), TEXT("ExecutedActor"));
+    ConflictingActorIds->SetStringField(TEXT("actorId"), TEXT("DifferentReviewedActor"));
+    TestFalse(TEXT("router snapshot refuses a second actor identifier"),
+        FHaybaMCPCommandHandler::CaptureExactApprovalTarget(TEXT("actor_delete"),
+            ConflictingActorIds, UnsupportedRef, UnsupportedVersion));
 
     FHaybaExactExternalApproval First;
     First.Command = TEXT("actor_transform");
     First.Owner = TEXT("agent-a");
     First.OperationDigest = TEXT("digest-a");
-    First.ReviewParamsJson = TEXT("{\"actorId\":\"TestActor\"}");
+    First.ReviewParamsJson = TEXT("{\"actor_id\":\"TestActor\"}");
     First.TargetRef = TEXT("/Temp/TestWorld.TestActor#guid");
     First.TargetFingerprint = TEXT("version-a");
     First.LeaseBinding = TEXT("lease-a");
