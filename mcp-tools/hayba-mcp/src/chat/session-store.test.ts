@@ -177,6 +177,23 @@ describe('SessionStore', () => {
     expect(store.load(id)?.activities).toEqual(before.activities);
   });
 
+  it('persists only bounded turn choices when a conversation resumes', () => {
+    const store = new SessionStore(directory);
+    const { id } = store.create();
+    store.replaceMessages(id, [{ role: 'user', content: 'Inspect the plaza' }], {
+      provider: 'anthropic', model: 'claude-opus-4-8', reasoningEffort: 'high',
+      mode: 'draft', loop: 'community', apiKey: 'SENTINEL_KEY',
+    });
+    const reopened = new SessionStore(directory).load(id);
+    expect(reopened?.turnSettings).toEqual({
+      provider: 'anthropic', model: 'claude-opus-4-8', reasoningEffort: 'high',
+      mode: 'draft', loop: 'community',
+    });
+    expect(readFileSync(join(directory, `${id}.json`), 'utf8')).not.toContain('SENTINEL_KEY');
+    store.replaceMessages(id, [{ role: 'user', content: 'Continue' }]);
+    expect(store.load(id)?.turnSettings).toEqual(reopened?.turnSettings);
+  });
+
   it('writes redacted temporary bytes and preserves the old JSON if atomic replacement fails', () => {
     const store = new SessionStore(directory);
     const { id } = store.create();

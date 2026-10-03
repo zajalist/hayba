@@ -44,6 +44,13 @@ const ActivitySchema = z.object({
   reason: safeText.optional(),
   steps: z.array(z.object({ name: safeText, status: z.enum(['running', 'succeeded', 'failed']) })),
 });
+const TurnSettingsSchema = z.object({
+  provider: safeText.pipe(z.string().max(64)).optional(),
+  model: safeText.pipe(z.string().max(256)).optional(),
+  reasoningEffort: z.string().max(32).regex(/^[a-z]+$/).optional(),
+  mode: z.enum(['explore', 'draft', 'production']),
+  loop: z.enum(['community', 'pro']),
+});
 const SessionSchema = z.object({
   version: z.literal(1),
   id: z.string(),
@@ -53,6 +60,7 @@ const SessionSchema = z.object({
   activities: z.array(ActivitySchema),
   artifacts: z.array(ArtifactSchema),
   usage: UsageSchema.optional(),
+  turnSettings: TurnSettingsSchema.optional(),
 });
 const RecordSchema = z.object({
   messages: z.array(z.object({ role: z.enum(['user', 'assistant']), content: z.unknown() })).optional(),
@@ -63,6 +71,7 @@ const RecordSchema = z.object({
 
 export type SavedSession = z.infer<typeof SessionSchema>;
 export type SavedActivity = z.infer<typeof ActivitySchema>;
+export type SavedTurnSettings = z.infer<typeof TurnSettingsSchema>;
 export type SessionSummary = Pick<SavedSession, 'id' | 'createdAt' | 'updatedAt'> & { messageCount: number; title: string };
 
 export function isValidSessionId(id: unknown): id is string {
@@ -163,10 +172,11 @@ export class SessionStore {
   }
 
   /** Install the authoritative transcript without changing activity or usage history. */
-  replaceMessages(id: string, input: unknown): SavedSession {
+  replaceMessages(id: string, input: unknown, turnSettings?: unknown): SavedSession {
     const session = this.load(id);
     if (!session) throw new Error('unknown session');
     session.messages = sessionMessages(input);
+    if (turnSettings !== undefined) session.turnSettings = TurnSettingsSchema.parse(turnSettings);
     session.updatedAt = new Date().toISOString();
     return this.write(session);
   }

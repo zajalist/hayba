@@ -102,4 +102,45 @@ describe('known-crashers', () => {
   it('does not classify policy vocabulary inside inert string literals', () => {
     expect(scanPythonForCrashers("module_name = 'importlib.util'; similarly_named_inspector = 1")).toBeNull();
   });
+
+  it('blocks animation-controller timing edits through explicit classes and getter aliases', () => {
+    for (const script of [
+      'unreal.AnimationDataController.set_number_of_frames(48)',
+      'from unreal import AnimationDataController as ADC\nADC.resize_in_frames(48, 0, 24)',
+      'controller = anim_sequence.get_controller()\ncontroller.set_frame_rate(rate)',
+      'controller = asset.get_controller()\ncontroller.set_frame_rate(rate)',
+      'controller = asset.get_controller()\ncontroller.resize(2.0)',
+      'asset.get_controller().set_frame_rate(rate)',
+      'asset.get_animation_data_controller().resize(2.0)',
+      'controller = widget.get_animation_data_controller()\ncontroller.set_frame_rate(rate)',
+      'controller = asset.get_controller(\n)\ncontroller.set_number_of_frames(48)',
+      'controller = ((asset.get_controller(\n)))\ncontroller.set_play_length(2.0)',
+      'controller = asset.get_controller()\ncopy = controller\ncopy.resize_in_frames(48, 0, 24)',
+      'controller = unreal.AnimationDataController()\ncontroller.resize(2.0)',
+      'asset.get_controller(\n).resize_number_of_frames(48, 0, 24)',
+      'anim_sequence.get_controller().resize(2.0)',
+      "controller = asset.get_controller()\nf'{controller.set_number_of_frames(48)}'",
+      "f'{asset.get_controller().set_number_of_frames(48)}'",
+    ]) {
+      expect(scanPythonForCrashers(script)?.code, script).toBe('HCR-ANIM-001');
+    }
+  });
+
+  it('does not confuse unrelated controllers, strings, or comments with animation timing edits', () => {
+    for (const script of [
+      'MyAnimationDataController.set_number_of_frames(48)',
+      'widget.get_controller().resize(100)',
+      'widget.get_controller().set_frame_rate(rate)',
+      'controller = image.get_controller()\ncontroller.resize(100)',
+      'controller = image.get_controller()\ncontroller.set_frame_rate(rate)',
+      'controller = anim_sequence.get_controller()\ncontroller = widget\ncontroller.resize(100)',
+      "print('AnimationDataController.set_number_of_frames(48)')",
+      "# controller = asset.get_controller()\n# controller.set_number_of_frames(48)\nvalue = 1",
+      "f'AnimationDataController.set_number_of_frames(48) is text'",
+      "f'{{controller.set_number_of_frames(48)}}'",
+      "f\"{'controller.set_number_of_frames(48)'}\"",
+    ]) {
+      expect(scanPythonForCrashers(script), script).toBeNull();
+    }
+  });
 });

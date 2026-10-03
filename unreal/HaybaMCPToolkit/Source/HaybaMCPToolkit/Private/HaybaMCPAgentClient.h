@@ -5,6 +5,12 @@
 
 class FJsonObject;
 
+namespace HaybaChatEndpoint
+{
+    /** Built-in provider endpoints are implicit for Pro BYOK; genuine overrides remain explicit. */
+    bool IsCustom(const FString& ProviderId, const FString& BaseURL);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // FHaybaMCPAgentClient — Server-Sent-Events consumer for the BYOK copilot.
 //
@@ -12,7 +18,7 @@ class FJsonObject;
 // surface defined in mcp-tools/hayba-mcp/src/chat/chat-server.ts:
 //
 //   1. POST /chat/config  (once per session) — pushes {provider, model,
-//      base_url, api_key} into the sidecar's in-memory config store. This is the
+//      base_url?, api_key} into the sidecar's in-memory config store. This is the
 //      KEY HANDOFF: the decrypted BYOK key travels over loopback to /chat/config
 //      and is never placed on the MCP command socket, never journaled, never
 //      logged. (Chosen over copilot_get_key — one egress, key never round-trips
@@ -106,12 +112,13 @@ public:
 
 	/**
 	 * Push provider/key config to the sidecar (once) then start a streaming turn
-	 * with the given user prompt. Provider/model/baseURL/key are resolved from
-	 * FHaybaMCPSettings (selected provider + DPAPI vault). Each new turn refreshes
-	 * the sidecar config so edits saved in Settings take effect without reopening
-	 * the chat. A parked approval resumes under its original turn configuration.
+	 * with the given user prompt. Provider/baseURL/key come from
+	 * FHaybaMCPSettings (selected provider + DPAPI vault); the composer may
+	 * override model and reasoning effort for this turn. Each new turn refreshes
+	 * the sidecar config. A parked approval resumes under its original choice.
 	 */
-	void SendPrompt(const FString& UserPrompt, const FString& WorkMode = TEXT("production"));
+	void SendPrompt(const FString& UserPrompt, const FString& WorkMode = TEXT("production"),
+		const FString& ModelId = FString(), const FString& ReasoningEffort = FString());
 
 	/** Use the UI conversation id before the first send so reopening a saved
 	 *  transcript can reconnect while the sidecar still holds that session. */
@@ -123,7 +130,8 @@ public:
 	/**
 	 * Plan-mode resume: after the user Approves a gated action in the Plan tab,
 	 * POST /chat/approve {session_id} (binds the paused call), then re-issue
-	 * /chat/stream with an EMPTY prompt so the stored server transcript continues
+	 * /chat/stream with the original Community prompt (or empty Pro prompt) so
+	 * the stored server transcript continues
 	 * and the one approved call dispatches past the TS gate exactly once. NEVER
 	 * call this without an explicit human Approve — it is the resume half of the
 	 * plan_request handshake.
@@ -189,6 +197,8 @@ public:
 private:
     friend class FHaybaActivityClientFramesTest;
     friend class FHaybaActivityResumeDisconnectTest;
+    friend class FHaybaAgentHttpDeferralTest;
+    friend class FHaybaAgentStreamTerminalTest;
 	void PostConfig(const FString& UserPrompt);
 	/** /chat/config when this session has none yet, then /chat/stream. */
 	void ConfigureAndStream(const FString& UserPrompt);
@@ -223,7 +233,9 @@ private:
 	TSharedPtr<IHttpRequest, ESPMode::ThreadSafe> StreamRequest;
 	FHaybaMCPChatConfigGate ConfigGate;
 	bool bStreaming = false;
-	bool bTerminalEmitted = false;   // guards against double done (local + server)
+	bool bTerminalEmitted = false;   // true only after OnDone was broadcast (local or server)
+	bool bApprovalPauseSeen = false; // approval may intentionally close a stream before its done frame
+	FString ApprovalActivityId;     // only this activity's outcome can clear the pause
 	bool bCurrentTurnPro = false;    // the in-flight/last turn asked for loop=pro
 	/** SendPrompt until /chat/stream starts: the /brain/status, /brain/config, /chat/config round-trips. */
 	bool bTurnPending = false;
@@ -238,6 +250,10 @@ private:
 	FString AccumulatedText;
 	/** Explicit composer mode, sent on every stream request (including resumes). */
 	FString WorkMode = TEXT("production");
+	FString TurnPrompt;
+	/** Frozen composer selection for the active turn and any approval resume. */
+	FString TurnModelId;
+	FString TurnReasoningEffort;
 	/** Unresolved identities owned by this client, retained across approval resume requests. */
 	TSet<FString> StreamActivityIds;
 };

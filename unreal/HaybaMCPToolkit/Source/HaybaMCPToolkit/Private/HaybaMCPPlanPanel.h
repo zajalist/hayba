@@ -4,6 +4,7 @@
 
 class SVerticalBox;
 class SScrollBox;
+class SButton;
 
 struct FHaybaPlanStep
 {
@@ -46,8 +47,12 @@ public:
     bool IsApproved() const { return bApproved; }
 
 private:
+#if WITH_DEV_AUTOMATION_TESTS
+    friend class FHaybaReviewSafetyTest;
+#endif
     TArray<TSharedPtr<FHaybaPlanStep>> Steps;
     TSharedPtr<SVerticalBox> StepContainer;
+    TSharedPtr<SButton> ApproveButton;
     int32 AwaitSeconds = 0;
     bool  bApproved = false;
     FDateTime LoadedAt = FDateTime::MinValue();
@@ -58,9 +63,6 @@ private:
     TSharedRef<SWidget> BuildActionBar();
     void RebuildSteps();
 
-    // Test action — populate with a sample plan so the tab can be
-    // exercised end-to-end without an agent.
-    FReply OnLoadSamplePlan();
     FReply OnApprove();
     FReply OnReject();
 };

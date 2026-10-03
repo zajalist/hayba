@@ -120,14 +120,7 @@ TSharedRef<SWidget> SHaybaMCPPlanPanel::BuildEmptyState()
                 .ColorAndOpacity(FSlateColor(ColorMuted))
                 .AutoWrapText(true)
                 .Text(LOCTEXT("EmptyHint",
-                    "No plan proposed yet. The agent will call hayba_propose_plan with a steps[] array; you'll see those steps here and can Approve or Reject before any destructive op runs.\n\nWant to see what it looks like? Load a sample plan."))
-            ]
-            + SVerticalBox::Slot().AutoHeight().Padding(0.f, 12.f, 0.f, 0.f).HAlign(HAlign_Left)
-            [
-                SNew(SButton)
-                .ContentPadding(FMargin(12.f, 4.f))
-                .Text(LOCTEXT("LoadSample", "Load sample plan"))
-                .OnClicked(this, &SHaybaMCPPlanPanel::OnLoadSamplePlan)
+                    "No plan pending. When an external agent proposes a plan, its steps appear here for your review before destructive actions run."))
             ]
         ];
 }
@@ -190,10 +183,10 @@ TSharedRef<SWidget> SHaybaMCPPlanPanel::BuildActionBar()
     return SNew(SHorizontalBox)
         + SHorizontalBox::Slot().AutoWidth()
         [
-            SNew(SButton)
+            SAssignNew(ApproveButton, SButton)
             .ButtonStyle(FAppStyle::Get(), "PrimaryButton")
             .ContentPadding(FMargin(14.f, 5.f))
-            .IsEnabled_Lambda([this]() { return Steps.Num() > 0 && !bApproved; })
+            .IsEnabled(false)
             .ToolTipText(LOCTEXT("ApproveTT",
                 "Approve the proposed plan. Destructive tools blocked by Plan Mode will be allowed to run."))
             .OnClicked(this, &SHaybaMCPPlanPanel::OnApprove)
@@ -251,6 +244,7 @@ void SHaybaMCPPlanPanel::LoadPlan(const TArray<FHaybaPlanStep>& InSteps, int32 I
     AwaitSeconds = InAwait;
     LoadedAt = FDateTime::Now();
     bApproved = false;
+    if (ApproveButton.IsValid()) ApproveButton->SetEnabled(!Steps.IsEmpty());
     RebuildSteps();
 }
 
@@ -273,48 +267,16 @@ void SHaybaMCPPlanPanel::Clear()
     Steps.Reset();
     bApproved = false;
     AwaitSeconds = 0;
+    if (ApproveButton.IsValid()) ApproveButton->SetEnabled(false);
     RebuildSteps();
-}
-
-FReply SHaybaMCPPlanPanel::OnLoadSamplePlan()
-{
-    TArray<FHaybaPlanStep> Sample;
-    {
-        FHaybaPlanStep S; S.Index = 0;
-        S.Title       = TEXT("Spawn a directional light at the origin");
-        S.Description = TEXT("Adds a key light pointing south-east, 45° down.");
-        S.Tool        = TEXT("actor_spawn");
-        Sample.Add(S);
-    }
-    {
-        FHaybaPlanStep S; S.Index = 1;
-        S.Title       = TEXT("Generate Voronoi PCG graph for a 3x3 km region");
-        S.Description = TEXT("Builds a PCGEx graph with bMarkHull, prunes out-of-bounds points.");
-        S.Tool        = TEXT("hayba_create_pcg_graph");
-        Sample.Add(S);
-    }
-    {
-        FHaybaPlanStep S; S.Index = 2;
-        S.Title       = TEXT("Execute the graph and import as a static mesh");
-        S.Description = TEXT("Runs the PCGEx graph and bakes its output points into an ISM actor.");
-        S.Tool        = TEXT("hayba_execute_pcg_graph");
-        Sample.Add(S);
-    }
-    {
-        FHaybaPlanStep S; S.Index = 3;
-        S.Title       = TEXT("Validate physics across the new placements");
-        S.Description = TEXT("Runs scene_validate_physics to catch floating or interpenetrating actors before the user looks at the result.");
-        S.Tool        = TEXT("scene_validate_physics");
-        Sample.Add(S);
-    }
-    LoadPlan(Sample, /*AwaitSecs=*/30);
-    return FReply::Handled();
 }
 
 FReply SHaybaMCPPlanPanel::OnApprove()
 {
+    if (Steps.IsEmpty()) return FReply::Handled();
     bApproved = true;
-    if (Steps.Num() > 0) Steps[0]->Status = FHaybaPlanStep::EStatus::Running;
+    if (ApproveButton.IsValid()) ApproveButton->SetEnabled(false);
+    Steps[0]->Status = FHaybaPlanStep::EStatus::Running;
     // Tell the destructive-op gate (Module->bPlanApproved) that this plan
     // is cleared to proceed. Gate consumes the flag per command.
     if (FHaybaMCPModule* M = FModuleManager::GetModulePtr<FHaybaMCPModule>("HaybaMCPToolkit"))

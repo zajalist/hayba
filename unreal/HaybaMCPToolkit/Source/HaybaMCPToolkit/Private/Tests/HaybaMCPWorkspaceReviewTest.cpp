@@ -17,11 +17,17 @@ bool FHaybaExternalProposalTest::RunTest(const FString&)
 {
     FHaybaMCPModule Module;
     TestFalse(TEXT("cannot approve without a proposal"), Module.ResolveExternalPlan(true));
-    Module.ProposeExternalPlan(TEXT("Spawn one blockout cube"));
+    FHaybaExternalPlanStep Step;
+    Step.Title = TEXT("Spawn one blockout cube");
+    Step.Tool = TEXT("actor_spawn");
+    Module.ProposeExternalPlan(TEXT("Spawn one blockout cube"), { Step });
     TestFalse(TEXT("proposal does not grant approval"), Module.bPlanApproved);
+    TestEqual(TEXT("structured step retained for review"), Module.PendingExternalSteps.Num(), 1);
+    TestFalse(TEXT("proposal ID assigned"), Module.PendingExternalPlanId.IsEmpty());
     TestTrue(TEXT("explicit approval succeeds"), Module.ResolveExternalPlan(true));
     TestTrue(TEXT("native gate receives approval"), Module.bPlanApproved);
     TestTrue(TEXT("resolved proposal cleared"), Module.PendingExternalPlan.IsEmpty());
+    TestTrue(TEXT("resolved review data cleared"), Module.PendingExternalSteps.IsEmpty() && Module.PendingExternalPlanId.IsEmpty());
     Module.ProposeExternalPlan(TEXT("Delete that cube"));
     TestFalse(TEXT("new proposal revokes old approval"), Module.bPlanApproved);
     TestTrue(TEXT("rejection resolves proposal"), Module.ResolveExternalPlan(false));
@@ -45,10 +51,24 @@ bool FHaybaWorkspaceVisualReview::RunTest(const FString&)
             .Title(FText::FromString(TEXT("Hayba workspace review")))
             .SupportsMaximize(false).SupportsMinimize(false)[ Panel ];
         FSlateApplication::Get().AddWindow(Window);
-        for (const FString View : { FString(TEXT("Agent")), FString(TEXT("Proposal")), FString(TEXT("World")), FString(TEXT("Settings")) })
+        for (const FString View : { FString(TEXT("Agent")), FString(TEXT("Proposal")),
+            FString(TEXT("World")), FString(TEXT("Activity")), FString(TEXT("Rules")),
+            FString(TEXT("Library")), FString(TEXT("Settings")) })
         {
-            if (View == TEXT("Proposal")) Module.ProposeExternalPlan(TEXT("1. Place three blockout volumes in the selected room.\n2. Check player clearances before saving."));
+            if (View == TEXT("Proposal"))
+            {
+                FHaybaExternalPlanStep Place;
+                Place.Title = TEXT("Place three blockout volumes in the selected room");
+                Place.Tool = TEXT("actor_spawn");
+                FHaybaExternalPlanStep Check;
+                Check.Title = TEXT("Check player clearances before saving");
+                Check.Tool = TEXT("actor_get_bounds");
+                Module.ProposeExternalPlan(TEXT("Place blockout volumes and check clearances"), { Place, Check });
+            }
             if (View == TEXT("World")) Panel->ShowPanel(EHaybaPanel::World);
+            if (View == TEXT("Activity")) Panel->ShowPanel(EHaybaPanel::Activity);
+            if (View == TEXT("Rules")) Panel->ShowPanel(EHaybaPanel::Rules);
+            if (View == TEXT("Library")) Panel->ShowPanel(EHaybaPanel::Library);
             if (View == TEXT("Settings")) Panel->ShowPanel(EHaybaPanel::Settings);
             FSlateApplication::Get().Tick();
             FSlateApplication::Get().ForceRedrawWindow(Window);

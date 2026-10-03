@@ -59,3 +59,12 @@ bool HaybaWorldDepth::TraceMatchesDepth(double DepthCm, double RasterRayDistance
     const double ToleranceCm = FMath::Clamp(DepthCm * 0.001, 2.0, MaxAttributionErrorCm);
     return FMath::Abs(RasterRayDistanceCm - TraceDistanceCm) <= ToleranceCm;
 }
+
+bool HaybaWorldDepth::SceneColorToDisplay(const FLinearColor& Pixel, FColor& OutColor)
+{
+    if (!FMath::IsFinite(Pixel.R) || !FMath::IsFinite(Pixel.G) ||
+        !FMath::IsFinite(Pixel.B) || Pixel.R < 0.f || Pixel.G < 0.f || Pixel.B < 0.f)
+        return false;
+    OutColor = FLinearColor(Pixel.R, Pixel.G, Pixel.B, 1.f).ToFColor(true);
+    return true;
+}

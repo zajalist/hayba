@@ -10,6 +10,12 @@
 #include "Fonts/SlateFontInfo.h"
 #include "Styling/AppStyle.h"
 #include "Styling/CoreStyle.h"
+#include "Widgets/Layout/SBorder.h"
+#include "Widgets/Layout/SBox.h"
+#include "Widgets/SBoxPanel.h"
+#include "Widgets/Text/STextBlock.h"
+#include "Widgets/Images/SImage.h"
+#include "Widgets/Input/SButton.h"
 
 TSharedPtr<FSlateStyleSet> FHaybaMCPStyle::StyleInstance = nullptr;
 
@@ -50,7 +56,7 @@ const FSlateBrush* FHaybaMCPStyle::GetBrush(const FName& BrushName)
 
 FLinearColor FHaybaMCPStyle::Colour(const FName& Token)
 {
-    // Magenta rather than a plausible default: on cool dark chrome a missing
+    // Magenta rather than a plausible default: on dark chrome a missing
     // token returning black or white looks like a deliberate choice and can
     // ship unnoticed. If you are seeing magenta, the token name is wrong.
     static const FLinearColor Missing(1.f, 0.f, 1.f, 1.f);
@@ -70,6 +76,56 @@ FSlateFontInfo FHaybaMCPStyle::Font(int32 Size, bool bSemibold)
     return FSlateFontInfo(StyleInstance->RootToContentDir(
         bSemibold ? TEXT("Fonts/noto-sans-latin-600-normal.ttf")
                   : TEXT("Fonts/noto-sans-latin-400-normal.ttf")), Size);
+}
+
+TSharedRef<SWidget> FHaybaMCPStyle::PopupSurface(const TSharedRef<SWidget>& Content, float MinWidth)
+{
+    return SNew(SBorder)
+        .BorderImage(GetBrush(TEXT("Hayba.Brush.Popup")))
+        .Padding(FMargin(6.f))
+        [ SNew(SBox).MinDesiredWidth(MinWidth).MaxDesiredWidth(324.f) [ Content ] ];
+}
+
+TSharedRef<SWidget> FHaybaMCPStyle::PopupRow(const FText& Label, const FOnClicked& OnClicked,
+                                             bool bSelected, const FText& Detail, bool bEnabled)
+{
+    TSharedRef<SVerticalBox> Labels = SNew(SVerticalBox)
+        + SVerticalBox::Slot().AutoHeight()
+        [
+            SNew(STextBlock)
+            .TextStyle(&Get().GetWidgetStyle<FTextBlockStyle>("Hayba.Text.Body"))
+            .AutoWrapText(true)
+            .ToolTipText(Label)
+            .Text(Label)
+        ];
+    if (!Detail.IsEmpty())
+    {
+        Labels->AddSlot().AutoHeight().Padding(0.f, 2.f, 0.f, 0.f)
+        [
+            SNew(STextBlock)
+            .TextStyle(&Get().GetWidgetStyle<FTextBlockStyle>("Hayba.Text.Caption"))
+            .AutoWrapText(true)
+            .Text(Detail)
+        ];
+    }
+
+    return SNew(SButton)
+        .ButtonStyle(&Get().GetWidgetStyle<FButtonStyle>(
+            bSelected ? "Hayba.Button.Popup.Selected" : "Hayba.Button.Popup"))
+        .ContentPadding(FMargin(10.f, 7.f))
+        .IsEnabled(bEnabled)
+        .OnClicked(OnClicked)
+        [
+            SNew(SHorizontalBox)
+            + SHorizontalBox::Slot().FillWidth(1.f).VAlign(VAlign_Center) [ Labels ]
+            + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(12.f, 0.f, 2.f, 0.f)
+            [
+                SNew(SImage)
+                .Image(GetBrush("Hayba.Icon.Check"))
+                .ColorAndOpacity(FSlateColor(Colour(TEXT("Hayba.Color.Accent.Ochre"))))
+                .Visibility(bSelected ? EVisibility::Visible : EVisibility::Collapsed)
+            ]
+        ];
 }
 
 #define RootToContentDir StyleInstance->RootToContentDir
@@ -111,9 +167,12 @@ TSharedRef<FSlateStyleSet> FHaybaMCPStyle::Create()
     Style->Set("Hayba.Icon.Inspect",      new IMAGE_BRUSH_SVG(TEXT("Icons/inspect"),      FVector2D(18.f, 18.f)));
     Style->Set("Hayba.Icon.New",          new IMAGE_BRUSH_SVG(TEXT("Icons/new"),          FVector2D(18.f, 18.f)));
     Style->Set("Hayba.Icon.Copy",         new IMAGE_BRUSH_SVG(TEXT("Icons/copy"),         FVector2D(16.f, 16.f)));
+    Style->Set("Hayba.Icon.Chevron.Down", new IMAGE_BRUSH_SVG(TEXT("Icons/chevron-down"), FVector2D(14.f, 14.f)));
+    Style->Set("Hayba.Icon.Chevron.Up",   new IMAGE_BRUSH_SVG(TEXT("Icons/chevron-up"),   FVector2D(14.f, 14.f)));
+    Style->Set("Hayba.Icon.Check",        new IMAGE_BRUSH_SVG(TEXT("Icons/check"),        FVector2D(14.f, 14.f)));
 
     // ── Design tokens ────────────────────────────────────────────────────────
-    // Warm neutral charcoal is shared with cognitive-map/index.html. Ochre
+    // Neutral Slate ground is shared with cognitive-map/index.html. Ochre
     // carries interaction meaning and the logo remains unretinted.
     {
         // Named Tok, not Colour: a local named Colour would hide the static
@@ -127,20 +186,20 @@ TSharedRef<FSlateStyleSet> FHaybaMCPStyle::Create()
         };
 
         // Surfaces
-        Tok(TEXT("Hayba.Color.Surface.Panel"),  FLinearColor::FromSRGBColor(FColor(0x21, 0x1F, 0x1D)));
-        Tok(TEXT("Hayba.Color.Surface.Raised"), FLinearColor::FromSRGBColor(FColor(0x2B, 0x28, 0x25)));
-        Tok(TEXT("Hayba.Color.Surface.Sunken"), FLinearColor::FromSRGBColor(FColor(0x19, 0x18, 0x16)));
-        Tok(TEXT("Hayba.Color.Surface.Canvas"), FLinearColor::FromSRGBColor(FColor(0x21, 0x1F, 0x1D)));
-        Tok(TEXT("Hayba.Color.Surface.Hover"),  FLinearColor::FromSRGBColor(FColor(0x38, 0x33, 0x2E)));
+        Tok(TEXT("Hayba.Color.Surface.Panel"),  FLinearColor::FromSRGBColor(FColor(0x1D, 0x1B, 0x19)));
+        Tok(TEXT("Hayba.Color.Surface.Raised"), FLinearColor::FromSRGBColor(FColor(0x29, 0x26, 0x23)));
+        Tok(TEXT("Hayba.Color.Surface.Sunken"), FLinearColor::FromSRGBColor(FColor(0x17, 0x16, 0x15)));
+        Tok(TEXT("Hayba.Color.Surface.Canvas"), FLinearColor::FromSRGBColor(FColor(0x1B, 0x1A, 0x18)));
+        Tok(TEXT("Hayba.Color.Surface.Hover"),  FLinearColor::FromSRGBColor(FColor(0x34, 0x30, 0x2B)));
 
         // Lines
-        Tok(TEXT("Hayba.Color.Border.Subtle"),  FLinearColor::FromSRGBColor(FColor(0x4A, 0x44, 0x3D)));
-        Tok(TEXT("Hayba.Color.Border.Strong"),  FLinearColor::FromSRGBColor(FColor(0x68, 0x5E, 0x53)));
+        Tok(TEXT("Hayba.Color.Border.Subtle"),  FLinearColor::FromSRGBColor(FColor(0x3D, 0x38, 0x33)));
+        Tok(TEXT("Hayba.Color.Border.Strong"),  FLinearColor::FromSRGBColor(FColor(0x5E, 0x55, 0x4D)));
 
         // Text
-        Tok(TEXT("Hayba.Color.Text.Primary"),   FLinearColor::FromSRGBColor(FColor(0xF1, 0xED, 0xE6)));
-        Tok(TEXT("Hayba.Color.Text.Secondary"), FLinearColor::FromSRGBColor(FColor(0xC9, 0xBF, 0xB2)));
-        Tok(TEXT("Hayba.Color.Text.Muted"),     FLinearColor::FromSRGBColor(FColor(0xA9, 0x9D, 0x90)));
+        Tok(TEXT("Hayba.Color.Text.Primary"),   FLinearColor::FromSRGBColor(FColor(0xEA, 0xE6, 0xE1)));
+        Tok(TEXT("Hayba.Color.Text.Secondary"), FLinearColor::FromSRGBColor(FColor(0xBC, 0xB4, 0xAB)));
+        Tok(TEXT("Hayba.Color.Text.Muted"),     FLinearColor::FromSRGBColor(FColor(0x9B, 0x91, 0x87)));
 
         // Semantic accent. #C47A28 is a legibility-tuned relative of the logo's
         // #B56A1D -- lifted so a thin stroke holds against dark chrome. The
@@ -153,21 +212,10 @@ TSharedRef<FSlateStyleSet> FHaybaMCPStyle::Create()
         // pass and fail must not shout over it.
         Tok(TEXT("Hayba.Color.Status.Pass"),    FLinearColor::FromSRGBColor(FColor(0x7E, 0xA5, 0x8A)));
         Tok(TEXT("Hayba.Color.Status.Fail"),    FLinearColor::FromSRGBColor(FColor(0xC4, 0x6E, 0x68)));
-        // Severity is its own axis: how much a finding matters, as opposed to
-        // Cat.* which says what it is about.
-        //
-        // These carry the Validation panel's ORIGINAL literals unchanged
-        // (1.0,0.85,0.2 amber and 0.55,0.7,1.0 blue), so adding them moved the
-        // colours into the token system without altering a single pixel. An
-        // earlier revision retuned them to sit beside Pass and Fail, which was
-        // a real improvement and also a visible change nobody had approved --
-        // and palette curation is not a call to make on someone's behalf.
-        //
-        // Retuning is now a two-line edit here, with nothing else to change:
-        //     Warn -> FColor(0xC9, 0xA2, 0x5E)   (muted amber)
-        //     Info -> FColor(0x7E, 0x9C, 0xC4)   (muted blue)
-        Tok(TEXT("Hayba.Color.Status.Warn"),    FLinearColor(1.0f, 0.85f, 0.2f));
-        Tok(TEXT("Hayba.Color.Status.Info"),    FLinearColor(0.55f, 0.7f, 1.0f));
+        // Severity remains distinct from category, with quieter chroma on the
+        // warm charcoal shell. The accent stays reserved for decisions.
+        Tok(TEXT("Hayba.Color.Status.Warn"),    FLinearColor::FromSRGBColor(FColor(0xD0, 0xAA, 0x73)));
+        Tok(TEXT("Hayba.Color.Status.Info"),    FLinearColor::FromSRGBColor(FColor(0xA3, 0xB0, 0xBA)));
 
         // Categorical palette — for telling *kinds* apart, not for status.
         //
@@ -246,6 +294,7 @@ TSharedRef<FSlateStyleSet> FHaybaMCPStyle::Create()
         Style->Set("Hayba.Brush.EmptyMark", new FSlateRoundedBoxBrush(Raised, CardRadius, Border, 1.f));
         Style->Set("Hayba.Brush.Nav.Active", new FSlateRoundedBoxBrush(Raised, ControlRadius));
         Style->Set("Hayba.Brush.Nav.Inactive", new FSlateRoundedBoxBrush(FLinearColor::Transparent, ControlRadius));
+        Style->Set("Hayba.Brush.Popup", new FSlateRoundedBoxBrush(Raised, CardRadius, StrongBorder, 1.f));
 
         const FSlateRoundedBoxBrush Clear(FLinearColor::Transparent, ControlRadius);
         const FSlateRoundedBoxBrush HoverBrush(Hover, ControlRadius);
@@ -268,10 +317,28 @@ TSharedRef<FSlateStyleSet> FHaybaMCPStyle::Create()
             .SetDisabled(RaisedBrush);
         Style->Set("Hayba.Button.Switcher", SwitcherButton);
 
+        const FLinearColor Approval = Style->GetColor("Hayba.Color.Accent.Ochre");
+        FButtonStyle ReviewPrimary = IconButton;
+        ReviewPrimary.SetNormal(FSlateRoundedBoxBrush(Approval, ControlRadius))
+            .SetHovered(FSlateRoundedBoxBrush(Approval * 1.12f, ControlRadius))
+            .SetPressed(FSlateRoundedBoxBrush(Approval * 0.84f, ControlRadius))
+            .SetDisabled(RaisedBrush);
+        Style->Set("Hayba.Button.Review.Primary", ReviewPrimary);
+
         FButtonStyle SendButton = IconButton;
         SendButton.SetNormal(RaisedHover).SetHovered(FSlateRoundedBoxBrush(Hover, ControlRadius, Style->GetColor("Hayba.Color.Text.Muted"), 1.f))
             .SetPressed(PressedBrush).SetDisabled(RaisedBrush);
         Style->Set("Hayba.Button.Send", SendButton);
+
+        FButtonStyle PopupButton = IconButton;
+        PopupButton.SetNormal(Clear).SetHovered(HoverBrush).SetPressed(PressedBrush)
+            .SetDisabled(Clear);
+        Style->Set("Hayba.Button.Popup", PopupButton);
+
+        FButtonStyle SelectedPopupButton = PopupButton;
+        SelectedPopupButton.SetNormal(FSlateRoundedBoxBrush(Raised, ControlRadius,
+            Style->GetColor("Hayba.Color.Accent.Ochre"), 1.f));
+        Style->Set("Hayba.Button.Popup.Selected", SelectedPopupButton);
 
         FEditableTextBoxStyle ComposerText = FAppStyle::Get().GetWidgetStyle<FEditableTextBoxStyle>("NormalEditableTextBox");
         const FSlateColorBrush TransparentInput(FLinearColor::Transparent);
@@ -282,6 +349,18 @@ TSharedRef<FSlateStyleSet> FHaybaMCPStyle::Create()
             .SetForegroundColor(Style->GetColor("Hayba.Color.Text.Primary"))
             .SetFocusedForegroundColor(Style->GetColor("Hayba.Color.Text.Primary"));
         Style->Set("Hayba.Input.Composer", ComposerText);
+
+        FEditableTextBoxStyle SettingsText = FAppStyle::Get().GetWidgetStyle<FEditableTextBoxStyle>("NormalEditableTextBox");
+        SettingsText.SetBackgroundImageNormal(FSlateRoundedBoxBrush(Sunken, ControlRadius, Border, 1.f))
+            .SetBackgroundImageHovered(FSlateRoundedBoxBrush(Sunken, ControlRadius, StrongBorder, 1.f))
+            .SetBackgroundImageFocused(FSlateRoundedBoxBrush(Sunken, ControlRadius,
+                Style->GetColor("Hayba.Color.Accent.Ochre"), 1.f))
+            .SetBackgroundImageReadOnly(FSlateRoundedBoxBrush(Raised, ControlRadius, Border, 1.f))
+            .SetPadding(FMargin(11.f, 8.f))
+            .SetFont(FHaybaMCPStyle::Font(13))
+            .SetForegroundColor(Style->GetColor("Hayba.Color.Text.Primary"))
+            .SetFocusedForegroundColor(Style->GetColor("Hayba.Color.Text.Primary"));
+        Style->Set("Hayba.Input.Settings", SettingsText);
     }
 
     // Typography. Sizes match the published ramp; colours come from the tokens

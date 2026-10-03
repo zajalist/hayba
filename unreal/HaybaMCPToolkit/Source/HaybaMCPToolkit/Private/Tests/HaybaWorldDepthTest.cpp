@@ -52,6 +52,13 @@ bool FHaybaWorldDepthProjectionTest::RunTest(const FString& Parameters)
         HaybaWorldDepth::TraceMatchesDepth(100000.0, 100000.0, 100100.0));
     TestFalse(TEXT("invalid trace distance is never evidence"),
         HaybaWorldDepth::TraceMatchesDepth(1000.0, 1000.0, NaN));
+    FColor DisplayColor = FColor::Black;
+    TestTrue(TEXT("aligned scene RGB can be displayed"),
+        HaybaWorldDepth::SceneColorToDisplay(FLinearColor(1.f, 0.f, 0.f, 1000.f), DisplayColor));
+    TestTrue(TEXT("depth alpha never tints the rendered RGB"),
+        DisplayColor.R == 255 && DisplayColor.G == 0 && DisplayColor.B == 0);
+    TestFalse(TEXT("nonfinite scene color is unobserved"),
+        HaybaWorldDepth::SceneColorToDisplay(FLinearColor(static_cast<float>(NaN), 0.f, 0.f, 1000.f), DisplayColor));
     // Two adjacent coplanar meshes can fall in one 16x16 depth cell. Only
     // the actual ray pixel may inherit the hit actor's identity.
     TestTrue(TEXT("anchor pixel can carry a ray-verified source"),

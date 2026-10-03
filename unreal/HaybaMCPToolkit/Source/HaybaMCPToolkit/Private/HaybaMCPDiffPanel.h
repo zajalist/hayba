@@ -16,7 +16,6 @@ struct FHaybaDiffEntry
     FString LevelPackage;     // optional — used for source control lookup
     FDateTime Timestamp = FDateTime::Now();
     bool bAccepted = false;
-    bool bReverted = false;
 };
 
 /**
@@ -54,9 +53,7 @@ private:
 
     void OnSearchChanged(const FText& InText);
     FReply OnAcceptEntry(int32 Index);
-    FReply OnRevertEntry(int32 Index);
     FReply OnCheckOutAll();
-    FReply OnRevertAll();
     FReply OnSubmit();
 
     bool   IsSourceControlEnabled() const;

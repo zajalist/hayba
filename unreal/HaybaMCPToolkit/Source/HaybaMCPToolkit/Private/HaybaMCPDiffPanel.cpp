@@ -148,16 +148,6 @@ TSharedRef<SWidget> SHaybaMCPDiffPanel::BuildFooter()
         + SHorizontalBox::Slot().AutoWidth().Padding(6.f, 0.f, 0.f, 0.f)
         [
             SNew(SButton)
-            .ContentPadding(FMargin(12.f, 4.f))
-            .ToolTipText(LOCTEXT("RevertAllTT",
-                "Revert every recorded AI mutation, restoring each property to its Before value."))
-            .IsEnabled_Lambda([this]() { return Entries.Num() > 0; })
-            .OnClicked(this, &SHaybaMCPDiffPanel::OnRevertAll)
-            [ SNew(STextBlock).Text(LOCTEXT("RevertAll", "Revert All")) ]
-        ]
-        + SHorizontalBox::Slot().AutoWidth().Padding(6.f, 0.f, 0.f, 0.f)
-        [
-            SNew(SButton)
             .ButtonStyle(FAppStyle::Get(), "PrimaryButton")
             .ContentPadding(FMargin(12.f, 4.f))
             .ToolTipText(LOCTEXT("SubmitTT",
@@ -231,7 +221,7 @@ TSharedRef<SWidget> SHaybaMCPDiffPanel::BuildActorCard(const FString& ActorLabel
         ];
 }
 
-// ── Per-entry row (Property: Before → After + Accept / Revert) ────────────
+// ── Per-entry row (Property: Before → After + review action) ──────────────
 
 TSharedRef<SWidget> SHaybaMCPDiffPanel::BuildEntryRow(int32 EntryIndex)
 {
@@ -270,17 +260,12 @@ TSharedRef<SWidget> SHaybaMCPDiffPanel::BuildEntryRow(int32 EntryIndex)
         [
             SNew(SButton)
             .ContentPadding(FMargin(8.f, 2.f))
-            .ToolTipText(LOCTEXT("AcceptTT", "Accept this change — mark it reviewed."))
+            .ToolTipText(LOCTEXT("MarkReviewedTT", "Mark this change reviewed. This does not modify editor content."))
+            .IsEnabled(!E.bAccepted)
             .OnClicked(this, &SHaybaMCPDiffPanel::OnAcceptEntry, EntryIndex)
-            [ SNew(STextBlock).Text(LOCTEXT("Accept", "Accept")) ]
-        ]
-        + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
-        [
-            SNew(SButton)
-            .ContentPadding(FMargin(8.f, 2.f))
-            .ToolTipText(LOCTEXT("RevertTT", "Restore the Before value via UE's undo system."))
-            .OnClicked(this, &SHaybaMCPDiffPanel::OnRevertEntry, EntryIndex)
-            [ SNew(STextBlock).Text(LOCTEXT("Revert", "Revert")) ]
+            [ SNew(STextBlock).Text(E.bAccepted
+                ? LOCTEXT("Reviewed", "Reviewed")
+                : LOCTEXT("MarkReviewed", "Mark reviewed")) ]
         ];
 }
 
@@ -403,20 +388,6 @@ FReply SHaybaMCPDiffPanel::OnAcceptEntry(int32 Index)
     return FReply::Handled();
 }
 
-FReply SHaybaMCPDiffPanel::OnRevertEntry(int32 Index)
-{
-    // We don't directly write the Before value back — instead trigger UE's
-    // undo system (Initiative #1 transactions wrap every mutating op, so
-    // a single Undo step rolls back the corresponding edit).
-    if (GEditor)
-    {
-        GEditor->UndoTransaction();
-        Toast(LOCTEXT("Reverted", "Undone the most recent AI mutation."));
-    }
-    if (Entries.IsValidIndex(Index)) { Entries[Index]->bReverted = true; RebuildList(); }
-    return FReply::Handled();
-}
-
 // ── Source control bulk actions ───────────────────────────────────────────
 
 FReply SHaybaMCPDiffPanel::OnCheckOutAll()
@@ -433,18 +404,6 @@ FReply SHaybaMCPDiffPanel::OnCheckOutAll()
     const ECommandResult::Type Result = Provider.Execute(ISourceControlOperation::Create<FCheckOut>(), Files);
     Toast(FText::FromString(FString::Printf(TEXT("Check Out: %s (%d files)"),
         Result == ECommandResult::Succeeded ? TEXT("ok") : TEXT("failed"), Files.Num())));
-    return FReply::Handled();
-}
-
-FReply SHaybaMCPDiffPanel::OnRevertAll()
-{
-    if (GEditor)
-    {
-        // Repeated undo unwinds every transaction we wrapped this session.
-        for (int32 i = 0; i < Entries.Num(); ++i) GEditor->UndoTransaction();
-    }
-    Toast(LOCTEXT("RevertAllDone", "Reverted all AI mutations via undo stack."));
-    Clear();
     return FReply::Handled();
 }
 

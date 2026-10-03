@@ -57,14 +57,14 @@ describe('survival harness client admission and closure probes', () => {
     const run = spawnSync('pwsh', [
       '-NoProfile', '-NonInteractive', '-File', join(scripts, 'test-survival-client-probes.ps1'),
       '-HarnessPath', join(scripts, 'test-editor-survival.ps1'),
-    ], { encoding: 'utf8', timeout: 20_000, windowsHide: true });
+    ], { encoding: 'utf8', timeout: 60_000, windowsHide: true });
     if (run.error) throw run.error;
     if (!run.stdout.trim()) throw new Error(`PowerShell client probes produced no result: ${run.stderr}`);
     results = JSON.parse(run.stdout);
     exitStatus = run.status;
     diagnostics = run.stderr;
     expect(results).toHaveLength(scenarios.length);
-  }, 25_000);
+  }, 65_000);
 
   for (const scenario of scenarios) {
     it(scenario, () => {

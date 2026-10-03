@@ -56,4 +56,8 @@ int32 PixelAtOrdinal(int32 Ordinal);
 /** Collision is corroborating evidence only; large depth mismatches stay unknown. */
 bool TraceMatchesDepth(double DepthCm, double RasterRayDistanceCm,
     double TraceDistanceCm);
+
+/** RGB is the rendered scene color at the same pixel as alpha SceneDepth.
+ * This is visible appearance, including lighting, not texture base color. */
+bool SceneColorToDisplay(const FLinearColor& Pixel, FColor& OutColor);
 }

@@ -28,11 +28,12 @@ describe('Hayba skill catalog', () => {
     expect(`${JSON.stringify(catalog, null, 2)}\n`).toBe(readFileSync(join(workflows, 'catalog.json'), 'utf8'));
   });
 
+  // Fixture filesystem I/O can be delayed by the parallel UE test workload.
   it('rejects an unsupported command even when written as ordinary prose', () => {
     const dir = fixture('Call fake_missing_hayba_tool to finish.');
     const { errors } = buildCatalog(dir, new Set(['scene_export']));
     expect(errors).toContain('hayba-fixture: unknown concrete tool fake_missing_hayba_tool');
-  });
+  }, 30_000);
 
   it('does not admit a documented but non-callable legacy command', () => {
     expect(knownToolNames(packageRoot).has('level_get_spatial_index')).toBe(false);

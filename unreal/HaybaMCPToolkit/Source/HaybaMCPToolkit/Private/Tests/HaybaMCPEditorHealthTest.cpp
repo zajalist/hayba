@@ -346,7 +346,7 @@ bool FHaybaHealthAllowlistDriftTest::RunTest(const FString&)
 	TestEqual(TEXT("12 status commands"), StatusOnlyCommands().Num(), 12);
 	TestEqual(TEXT("20 control-plane commands"), ControlPlaneCommands().Num(), 20);
 	TestEqual(TEXT("10 PIE observation commands"), PieObservationCommands().Num(), 10);
-	TestEqual(TEXT("73 read commands"), ReadCommands().Num(), 73);
+	TestEqual(TEXT("75 read commands"), ReadCommands().Num(), 75);
 	TestEqual(TEXT("5 router-inline commands"), RouterInlineCommands().Num(), 5);
 	TestEqual(TEXT("3 unsafe control-plane commands"), UnsafeControlPlaneCommands().Num(), 3);
 	TestEqual(TEXT("27 unsafe reads"), UnsafeReads().Num(), 27);

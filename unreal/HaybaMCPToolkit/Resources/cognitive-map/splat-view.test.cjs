@@ -84,6 +84,8 @@ window.haybaAppendDepthSplats(1, [[150, 0, 0, 1, 0, 0, 70, 160, 190, -1, -1, -1]
   [300, 0, 0, 1, 0, 0, 90, 200, 220, 99, 2, -1]]);
 assert.equal(state.count, 5, 'depth surfaces keep unknown labels and reject invalid references');
 assert.equal(state.depthPointCount, 2, 'depth provenance stays distinct from CPU mesh sample count');
+assert.ok(Math.abs(state.chunks[3].data[6] - 70 / 255) < 1e-6,
+  'visible scene RGB reaches the cloud without warm palette desaturation');
 assert.equal(state.chunks[3].data[9], -1, 'unknown depth source stays unknown');
 assert.equal(state.chunks[3].data[13 + 10], 2, 'attributed depth source uses global node index');
 assert.equal(state.worldBounds.max[0], 200, 'depth-only visible surfaces extend fitted bounds');

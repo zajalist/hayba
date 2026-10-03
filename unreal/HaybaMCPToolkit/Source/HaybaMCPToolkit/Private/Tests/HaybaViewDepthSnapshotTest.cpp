@@ -29,6 +29,8 @@ bool FHaybaViewDepthSnapshotTest::RunTest(const FString&)
     Matched.PixelX = 8;
     Matched.PixelY = 8;
     Matched.DepthCm = 900.0;
+    Matched.DisplayColor = FColor(205, 70, 32);
+    Matched.bColorObserved = true;
     Matched.SourceActorPath = TEXT("/Scratch/Actor");
     Matched.SourceActorLabel = TEXT("Observed collision actor");
     Snapshot.AddPoint(MoveTemp(Matched));
@@ -44,11 +46,19 @@ bool FHaybaViewDepthSnapshotTest::RunTest(const FString&)
     TestEqual(TEXT("unknown point declares unknown attribution"),
         Rows[0]->AsObject()->GetStringField(TEXT("source_attribution")), FString(TEXT("unknown")));
     TestFalse(TEXT("unknown point has no actor label"), Rows[0]->AsObject()->HasField(TEXT("source_actor_label")));
+    TestEqual(TEXT("unobserved color is labelled"),
+        Rows[0]->AsObject()->GetStringField(TEXT("color_provenance")), FString(TEXT("unobserved")));
+    TestFalse(TEXT("unobserved point has no sampled RGB"), Rows[0]->AsObject()->HasField(TEXT("display_rgb")));
     TestEqual(TEXT("matched ray carries a source label"),
         Rows[1]->AsObject()->GetStringField(TEXT("source_actor_label")),
         FString(TEXT("Observed collision actor")));
     TestFalse(TEXT("depth page has no mesh-local index"), Rows[1]->AsObject()->HasField(TEXT("node_index")));
     TestFalse(TEXT("depth page has no inferred mesh asset"), Rows[1]->AsObject()->HasField(TEXT("mesh_asset")));
+    TestEqual(TEXT("observed RGB has rendered-scene provenance"),
+        Rows[1]->AsObject()->GetStringField(TEXT("color_provenance")),
+        FString(TEXT("rendered_scene_color_visible_surface")));
+    TestEqual(TEXT("observed RGB is paged with the depth point"),
+        static_cast<int32>(Rows[1]->AsObject()->GetArrayField(TEXT("display_rgb"))[0]->AsNumber()), 205);
     const TSharedRef<FJsonObject> Filtered = BuildPage(Snapshot, TEXT("points"), 0, 32, TEXT("cell:-1:0:0"));
     TestEqual(TEXT("spatial group filter returns its one point"),
         Filtered->GetArrayField(TEXT("items")).Num(), 1);

@@ -27,7 +27,6 @@
 #include "Widgets/Text/STextBlock.h"
 #include "Widgets/Input/SButton.h"
 #include "Widgets/Input/SComboButton.h"
-#include "Framework/MultiBox/MultiBoxBuilder.h"
 #include "Styling/AppStyle.h"
 #include "Styling/CoreStyle.h"
 
@@ -68,41 +67,42 @@ namespace
         switch (S)
         {
             case EHaybaSection::Chat:       return NSLOCTEXT("Hayba", "Sec.Chat",       "Chat");
-            case EHaybaSection::MCP:        return NSLOCTEXT("Hayba", "Sec.MCP",        "Tools");
+            case EHaybaSection::MCP:        return NSLOCTEXT("Hayba", "Sec.MCP",        "Tool permissions");
             case EHaybaSection::Slivers:    return NSLOCTEXT("Hayba", "Sec.Recipes",    "Recipes");
             case EHaybaSection::ToolStream: return NSLOCTEXT("Hayba", "Sec.Stream",     "Live");
             case EHaybaSection::SceneMap:   return NSLOCTEXT("Hayba", "Sec.SceneMap",   "Map");
             case EHaybaSection::Plan:       return NSLOCTEXT("Hayba", "Sec.Plan",       "Plans");
             case EHaybaSection::Diff:       return NSLOCTEXT("Hayba", "Sec.Diff",       "Changes");
-            case EHaybaSection::Validation: return NSLOCTEXT("Hayba", "Sec.Validation", "Verdicts");
+            case EHaybaSection::Validation: return NSLOCTEXT("Hayba", "Sec.Validation", "Checks");
             case EHaybaSection::Memory:     return NSLOCTEXT("Hayba", "Sec.Profiles",   "Profiles");
             case EHaybaSection::Lessons:    return NSLOCTEXT("Hayba", "Sec.Lessons",    "Lessons");
-            case EHaybaSection::Settings:   return NSLOCTEXT("Hayba", "Sec.Settings",   "Connection");
+            case EHaybaSection::Settings:   return NSLOCTEXT("Hayba", "Sec.Settings",   "Settings");
         }
         return FText::GetEmpty();
     }
 }
 
-// Which views each destination owns. Every one of the eleven sections appears
-// exactly once, so this moves navigation without hiding anything: the three
-// "what is the agent doing" tabs become Activity's views, the two "what must be
-// true" tabs become Rules', and so on.
+// The primary navigation exposes active workflows. The legacy Plan and Lessons
+// widgets remain addressable by direct callers without adding empty destinations.
 TArray<EHaybaSection> SHaybaMCPMainPanel::SectionsFor(EHaybaPanel Panel)
 {
     switch (Panel)
     {
         case EHaybaPanel::World:    return { EHaybaSection::SceneMap };
         case EHaybaPanel::Library:  return { EHaybaSection::Memory, EHaybaSection::Slivers };
-        case EHaybaPanel::Rules:    return { EHaybaSection::Validation, EHaybaSection::Lessons };
-        case EHaybaPanel::Activity: return { EHaybaSection::ToolStream, EHaybaSection::Plan, EHaybaSection::Diff };
+        case EHaybaPanel::Rules:    return { EHaybaSection::Validation };
+        case EHaybaPanel::Activity: return { EHaybaSection::ToolStream, EHaybaSection::Diff };
         case EHaybaPanel::Chat:     return { EHaybaSection::Chat };
-        case EHaybaPanel::Settings: return { EHaybaSection::Settings, EHaybaSection::MCP };
+        case EHaybaPanel::Settings: return { EHaybaSection::Settings };
     }
     return {};
 }
 
 EHaybaPanel SHaybaMCPMainPanel::PanelForSection(EHaybaSection Section)
 {
+    if (Section == EHaybaSection::Plan) return EHaybaPanel::Activity;
+    if (Section == EHaybaSection::Lessons) return EHaybaPanel::Rules;
+    if (Section == EHaybaSection::MCP) return EHaybaPanel::Settings;
     for (EHaybaPanel P : { EHaybaPanel::Chat, EHaybaPanel::World,
                            EHaybaPanel::Activity, EHaybaPanel::Rules,
                            EHaybaPanel::Library, EHaybaPanel::Settings })
@@ -186,7 +186,31 @@ TSharedRef<SWidget> SHaybaMCPMainPanel::BuildHeader()
                 [ SNew(SImage).Image(FHaybaMCPStyle::GetBrush(TEXT("Hayba.Logo.Small"))) ]
             ]
             + SHorizontalBox::Slot().FillWidth(1.f).VAlign(VAlign_Center).Padding(9.f, 0.f, 5.f, 0.f)
-            [ ChatPanel->BuildTaskSwitcher() ]
+            [
+                SNew(SOverlay)
+                + SOverlay::Slot()
+                .HAlign(HAlign_Fill)
+                [
+                    SNew(SBox)
+                    .Visibility_Lambda([this]() { return CurrentPanel == EHaybaPanel::Chat
+                        ? EVisibility::Visible : EVisibility::Collapsed; })
+                    [ ChatPanel->BuildTaskSwitcher() ]
+                ]
+                + SOverlay::Slot()
+                .VAlign(VAlign_Center)
+                [
+                    SNew(STextBlock)
+                    .TextStyle(&FHaybaMCPStyle::Get().GetWidgetStyle<FTextBlockStyle>("Hayba.Text.Heading"))
+                    .Text_Lambda([this]()
+                    {
+                        return CurrentSection == EHaybaSection::MCP
+                            ? NSLOCTEXT("Hayba", "Header.ToolPermissions", "Tool permissions")
+                            : PanelLabel(CurrentPanel);
+                    })
+                    .Visibility_Lambda([this]() { return CurrentPanel == EHaybaPanel::Chat
+                        ? EVisibility::Collapsed : EVisibility::Visible; })
+                ]
+            ]
             + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
             [
                 SNew(SButton)
@@ -203,6 +227,8 @@ TSharedRef<SWidget> SHaybaMCPMainPanel::BuildHeader()
                 .ButtonStyle(&FHaybaMCPStyle::Get().GetWidgetStyle<FButtonStyle>("Hayba.Button.Icon"))
                 .ContentPadding(FMargin(6.f))
                 .ToolTipText(NSLOCTEXT("Hayba", "GoToWorld", "World"))
+                .Visibility_Lambda([this]() { return CurrentPanel == EHaybaPanel::Chat
+                    ? EVisibility::Visible : EVisibility::Collapsed; })
                 .OnClicked(this, &SHaybaMCPMainPanel::OnSidebarClick, EHaybaPanel::World)
                 [ SNew(SImage).Image(PanelIcon(EHaybaPanel::World))
                     .ColorAndOpacity_Lambda([this]() { return FSlateColor(FHaybaMCPStyle::Colour(
@@ -214,6 +240,8 @@ TSharedRef<SWidget> SHaybaMCPMainPanel::BuildHeader()
                 .ButtonStyle(&FHaybaMCPStyle::Get().GetWidgetStyle<FButtonStyle>("Hayba.Button.Icon"))
                 .ContentPadding(FMargin(6.f))
                 .ToolTipText(NSLOCTEXT("Hayba", "NewTask", "New conversation"))
+                .Visibility_Lambda([this]() { return CurrentPanel == EHaybaPanel::Chat
+                    ? EVisibility::Visible : EVisibility::Collapsed; })
                 .OnClicked_Lambda([this]()
                 {
                     if (ChatPanel.IsValid()) ChatPanel->OnNewConversation();
@@ -224,7 +252,7 @@ TSharedRef<SWidget> SHaybaMCPMainPanel::BuildHeader()
             ]
             + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
             [
-                SNew(SComboButton)
+                SAssignNew(MoreButton, SComboButton)
                 .ButtonStyle(&FHaybaMCPStyle::Get().GetWidgetStyle<FButtonStyle>("Hayba.Button.Icon"))
                 .HasDownArrow(false)
                 .ContentPadding(FMargin(6.f))
@@ -238,31 +266,24 @@ TSharedRef<SWidget> SHaybaMCPMainPanel::BuildHeader()
 
 TSharedRef<SWidget> SHaybaMCPMainPanel::BuildMoreMenu()
 {
-    FMenuBuilder Menu(true, nullptr);
-    auto Add = [this, &Menu](EHaybaSection Section, const FText& Label)
+    TSharedRef<SVerticalBox> Items = SNew(SVerticalBox);
+    auto Add = [this, &Items](EHaybaPanel Panel, const FText& Label)
     {
-        Menu.AddMenuEntry(Label, FText::GetEmpty(), FSlateIcon(),
-            FUIAction(FExecuteAction::CreateSP(this, &SHaybaMCPMainPanel::ShowSection, Section)));
+        Items->AddSlot().AutoHeight()
+        [
+            FHaybaMCPStyle::PopupRow(Label, FOnClicked::CreateLambda([this, Panel]()
+            {
+                if (MoreButton.IsValid()) MoreButton->SetIsOpen(false);
+                ShowPanel(Panel);
+                return FReply::Handled();
+            }), CurrentPanel == Panel)
+        ];
     };
-    Menu.AddMenuEntry(NSLOCTEXT("Hayba", "More.InspectWorld", "Inspect loaded world in chat"), FText::GetEmpty(), FSlateIcon(),
-        FUIAction(FExecuteAction::CreateLambda([this]()
-        {
-            if (ChatPanel.IsValid()) ChatPanel->OnInspectWorld();
-            ShowPanel(EHaybaPanel::Chat);
-        })));
-    Menu.AddMenuSeparator();
-    Add(EHaybaSection::ToolStream, NSLOCTEXT("Hayba", "More.AgentActivity", "Agent activity"));
-    Add(EHaybaSection::Plan, NSLOCTEXT("Hayba", "More.Plans", "Plans and approvals"));
-    Add(EHaybaSection::Diff, NSLOCTEXT("Hayba", "More.Changes", "Changed objects"));
-    Add(EHaybaSection::Validation, NSLOCTEXT("Hayba", "More.Checks", "Checks and warnings"));
-    Menu.AddMenuSeparator();
-    Add(EHaybaSection::Memory, NSLOCTEXT("Hayba", "More.Profiles", "Asset profiles"));
-    Add(EHaybaSection::Slivers, NSLOCTEXT("Hayba", "More.Recipes", "Recipes"));
-    Add(EHaybaSection::Lessons, NSLOCTEXT("Hayba", "More.Lessons", "Learned constraints"));
-    Menu.AddMenuSeparator();
-    Add(EHaybaSection::MCP, NSLOCTEXT("Hayba", "More.ToolPermissions", "Tool permissions"));
-    Add(EHaybaSection::Settings, NSLOCTEXT("Hayba", "More.Settings", "Settings"));
-    return Menu.MakeWidget();
+    Add(EHaybaPanel::Activity, NSLOCTEXT("Hayba", "More.Activity", "Activity"));
+    Add(EHaybaPanel::Rules, NSLOCTEXT("Hayba", "More.Checks", "Checks"));
+    Add(EHaybaPanel::Library, NSLOCTEXT("Hayba", "More.Library", "Library"));
+    Add(EHaybaPanel::Settings, NSLOCTEXT("Hayba", "More.Settings", "Settings"));
+    return FHaybaMCPStyle::PopupSurface(Items, 210.f);
 }
 
 TSharedRef<SWidget> SHaybaMCPMainPanel::BuildSidebar()
@@ -358,13 +379,14 @@ void SHaybaMCPMainPanel::ShowPanel(EHaybaPanel Panel)
         ? *Remembered : Sections[0];
     // Re-selecting the open view must not restart an in-progress World scan.
     // World has an explicit refresh control when the user wants a new scan.
-    if (CurrentPanel == Panel && CurrentSection == Target && PanelCache.Contains(Target)) return;
+    if (!bShowingOnboarding && CurrentPanel == Panel && CurrentSection == Target && PanelCache.Contains(Target)) return;
     CurrentPanel = Panel;
     ShowSection(Target);
 }
 
 void SHaybaMCPMainPanel::ShowSection(EHaybaSection Section)
 {
+    bShowingOnboarding = false;
     CurrentSection = Section;
     CurrentPanel = PanelForSection(Section);
     LastSectionByPanel.Add(CurrentPanel, Section);
@@ -389,8 +411,7 @@ void SHaybaMCPMainPanel::ShowSection(EHaybaSection Section)
 
 TSharedPtr<SHaybaMCPPlanPanel> SHaybaMCPMainPanel::PreparePlanReview()
 {
-    // Plan is normally built only when the user opens Activity > Plans. Build
-    // and cache it now so the first Chat proposal has a real review surface.
+    // Preserve the legacy Plan review widget for direct callers and tests.
     if (!PanelCache.Contains(EHaybaSection::Plan))
     {
         PanelCache.Add(EHaybaSection::Plan, BuildPanelContent(EHaybaSection::Plan));
@@ -410,11 +431,10 @@ TSharedRef<SWidget> SHaybaMCPMainPanel::BuildSectionTabs(EHaybaPanel Panel)
     TSharedRef<SHorizontalBox> Row = SNew(SHorizontalBox);
     for (EHaybaSection S : SectionsFor(Panel))
     {
-        const bool bActive = (S == CurrentSection);
         Row->AddSlot().AutoWidth().Padding(FMargin(0.f, 0.f, 6.f, 0.f))
         [
             SNew(SButton)
-            .ButtonStyle(FAppStyle::Get(), "SimpleButton")
+            .ButtonStyle(&FHaybaMCPStyle::Get().GetWidgetStyle<FButtonStyle>("Hayba.Button.Task"))
             .OnClicked(this, &SHaybaMCPMainPanel::OnSectionClick, S)
             .ContentPadding(FMargin(10.f, 4.f))
             [
@@ -423,8 +443,8 @@ TSharedRef<SWidget> SHaybaMCPMainPanel::BuildSectionTabs(EHaybaPanel Panel)
                 .TextStyle(&FHaybaMCPStyle::Get().GetWidgetStyle<FTextBlockStyle>("Hayba.Text.TabLabel"))
                 // Ochre marks the active view, which is one of the four things
                 // that token is reserved for.
-                .ColorAndOpacity(FSlateColor(FHaybaMCPStyle::Colour(
-                    bActive ? "Hayba.Color.Accent.Ochre" : "Hayba.Color.Text.Muted")))
+                .ColorAndOpacity_Lambda([this, S]() { return FSlateColor(FHaybaMCPStyle::Colour(
+                    S == CurrentSection ? "Hayba.Color.Accent.Ochre" : "Hayba.Color.Text.Muted")); })
             ]
         ];
     }
@@ -438,30 +458,12 @@ void SHaybaMCPMainPanel::ShowOnboardingFromSplash()
 {
     if (!ContentArea.IsValid()) return;
     TSharedRef<SDockTab> DummyOwner = SNew(SDockTab).TabRole(ETabRole::PanelTab);
+    bShowingOnboarding = true;
     ContentArea->SetContent(SNew(SHaybaMCPOnboardingWidget, DummyOwner));
 }
 
 TSharedRef<SWidget> SHaybaMCPMainPanel::BuildPanelContent(EHaybaSection Section)
 {
-    auto Heading = [this, Section](const FText& Sub)
-    {
-        // Compact, single-row heading: panel name + muted subtitle inline.
-        // Sized to match Details / Outliner section headers.
-        return SNew(SHorizontalBox)
-            + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
-            [
-                SNew(STextBlock)
-                .TextStyle(&FAppStyle::Get().GetWidgetStyle<FTextBlockStyle>("DetailsView.CategoryTextStyle"))
-                .Text(SectionLabel(Section))
-            ]
-            + SHorizontalBox::Slot().FillWidth(1.f).VAlign(VAlign_Center).Padding(10.f, 0.f, 0.f, 0.f)
-            [
-                SNew(STextBlock)
-                .ColorAndOpacity(FSlateColor(FHaybaMCPStyle::Colour("Hayba.Color.Text.Muted")))
-                .Text(Sub)
-            ];
-    };
-
     TSharedPtr<SWidget> Body;
     FText Subtitle;
     switch (Section)
@@ -524,8 +526,7 @@ TSharedRef<SWidget> SHaybaMCPMainPanel::BuildPanelContent(EHaybaSection Section)
         }
         case EHaybaSection::Validation:
         {
-            Subtitle = NSLOCTEXT("Hayba", "Val.Sub",
-                "Runtime validator: post-condition findings and AI-floppy hints. Findings persist in .scratch/validator-history.jsonl.");
+            Subtitle = NSLOCTEXT("Hayba", "Val.Sub", "Review checks and unresolved findings.");
             auto Panel2 = SNew(SHaybaValidatorPanel);
             // Re-shown from cache → re-read the JSONL file.
             PanelRefreshHook.Add(EHaybaSection::Validation, [Panel2]() { Panel2->Refresh(); });
@@ -534,7 +535,7 @@ TSharedRef<SWidget> SHaybaMCPMainPanel::BuildPanelContent(EHaybaSection Section)
         }
         case EHaybaSection::Memory:
         {
-            Subtitle = NSLOCTEXT("Hayba", "Lib.Sub", "Semantic Library — every profiled asset, its masks/constraints, and Open-in-Studio.");
+            Subtitle = NSLOCTEXT("Hayba", "Lib.Sub", "Profiles and reusable recipes.");
             auto Panel2 = SNew(SHaybaMCPMemoryPanel);
             if (Module) Module->MemoryPanel = Panel2;
             Body = Panel2;
@@ -554,15 +555,35 @@ TSharedRef<SWidget> SHaybaMCPMainPanel::BuildPanelContent(EHaybaSection Section)
         }
     }
 
-    if ((Section == EHaybaSection::Chat || Section == EHaybaSection::SceneMap ||
-         Section == EHaybaSection::Settings) && Body.IsValid())
+    if ((Section == EHaybaSection::Chat || Section == EHaybaSection::SceneMap) && Body.IsValid())
     {
         return Body.ToSharedRef();
     }
 
+    const EHaybaPanel Owner = PanelForSection(Section);
+    TSharedRef<SWidget> SectionNavigation = SNullWidget::NullWidget;
+    if (Section == EHaybaSection::MCP)
+    {
+        SectionNavigation = SNew(SBorder)
+            .BorderImage(FHaybaMCPStyle::GetBrush("Hayba.Brush.Dock"))
+            .Padding(FMargin(12.f, 7.f))
+            [ SNew(SButton)
+                .ButtonStyle(&FHaybaMCPStyle::Get().GetWidgetStyle<FButtonStyle>("Hayba.Button.Task"))
+                .Text(NSLOCTEXT("Hayba", "Permissions.BackToSettings", "Back to Settings"))
+                .OnClicked_Lambda([this]()
+                {
+                    ShowSection(EHaybaSection::Settings);
+                    return FReply::Handled();
+                }) ];
+    }
+    else if (SectionsFor(Owner).Num() > 1)
+    {
+        SectionNavigation = BuildSectionTabs(Owner);
+    }
+    SectionNavigation->SetToolTipText(Subtitle);
     return SNew(SVerticalBox)
         + SVerticalBox::Slot().AutoHeight()
-        [ Heading(Subtitle) ]
+        [ SectionNavigation ]
         + SVerticalBox::Slot().FillHeight(1.f)
         [ Body.IsValid() ? Body.ToSharedRef() : SNullWidget::NullWidget ];
 }

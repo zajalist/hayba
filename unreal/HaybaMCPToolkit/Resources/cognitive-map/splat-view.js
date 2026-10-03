@@ -1405,7 +1405,9 @@
       const start = chunk.count;
       for (let i = 0; i < take; i++) {
         const row = valid[cursor + i], at = (start + i) * STRIDE;
-        const color = warmColor(row, true);
+        // Depth RGB comes from the same rendered pixel as its SceneDepth.
+        // Preserve source appearance; only selected/hovered overlays use Hayba color.
+        const color = [6, 7, 8].map(field => clamp(row[field] / 255, 0, 1));
         for (let j = 0; j < ROW_FIELDS; j++) chunk.data[at + j] =
           j >= 6 && j <= 8 ? color[j - 6] : row[j];
         for (let axis = 0; axis < 3; axis++) {

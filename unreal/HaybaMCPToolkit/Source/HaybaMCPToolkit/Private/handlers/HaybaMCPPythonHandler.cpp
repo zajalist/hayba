@@ -47,6 +47,15 @@ namespace
         static const TArray<FFatalPythonRule> Rules = {
             { TEXT("set_lod_build_settings"), TEXT("HCR-STATICMESH-001"), TEXT("is a known static-mesh editor crash"), TEXT("use GeometryScript and copy_mesh_to_static_mesh") },
             { TEXT("build_scale3d"), TEXT("HCR-STATICMESH-001"), TEXT("is a known static-mesh editor crash"), TEXT("use GeometryScript transform_mesh and rebuild geometry") },
+            // Match these only against executable, controller-qualified references below.
+            // A LevelSequence may also expose set_frame_rate, so a bare method ban is too broad.
+            { TEXT("animationdatacontroller.set_frame_rate("), TEXT("HCR-ANIM-001"), TEXT("can leave AnimSequence frame data and compression out of sync and trigger a native editor assertion"), TEXT("use a safe named animation timing tool when available, or manually set a validated frame rate and frame count outside python_run") },
+            { TEXT("animationdatacontroller.set_number_of_frames("), TEXT("HCR-ANIM-001"), TEXT("can leave AnimSequence frame data and compression out of sync and trigger a native editor assertion"), TEXT("use a safe named animation timing tool when available, or manually set a validated frame rate and frame count outside python_run") },
+            { TEXT("animationdatacontroller.set_play_length("), TEXT("HCR-ANIM-001"), TEXT("can leave AnimSequence frame data and compression out of sync and trigger a native editor assertion"), TEXT("use a safe named animation timing tool when available, or manually set a validated frame rate and frame count outside python_run") },
+            { TEXT("animationdatacontroller.resize_number_of_frames("), TEXT("HCR-ANIM-001"), TEXT("can leave AnimSequence frame data and compression out of sync and trigger a native editor assertion"), TEXT("use a safe named animation timing tool when available, or manually set a validated frame rate and frame count outside python_run") },
+            { TEXT("animationdatacontroller.resize_play_length("), TEXT("HCR-ANIM-001"), TEXT("can leave AnimSequence frame data and compression out of sync and trigger a native editor assertion"), TEXT("use a safe named animation timing tool when available, or manually set a validated frame rate and frame count outside python_run") },
+            { TEXT("animationdatacontroller.resize_in_frames("), TEXT("HCR-ANIM-001"), TEXT("can leave AnimSequence frame data and compression out of sync and trigger a native editor assertion"), TEXT("use a safe named animation timing tool when available, or manually set a validated frame rate and frame count outside python_run") },
+            { TEXT("animationdatacontroller.resize("), TEXT("HCR-ANIM-001"), TEXT("can leave AnimSequence frame data and compression out of sync and trigger a native editor assertion"), TEXT("use a safe named animation timing tool when available, or manually set a validated frame rate and frame count outside python_run") },
             { TEXT("new_blank_map"), TEXT("HCR-WORLD-001"), TEXT("switches GWorld during the MCP command tick"), TEXT("use a deferred typed editor map command outside python_run") },
             { TEXT("new_map_from_template"), TEXT("HCR-WORLD-001"), TEXT("switches GWorld during the MCP command tick"), TEXT("use a deferred typed editor map command outside python_run") },
             { TEXT("editorloadingandsavingutils.load_map"), TEXT("HCR-WORLD-001"), TEXT("switches GWorld during the MCP command tick"), TEXT("use a deferred typed editor map command outside python_run") },
@@ -1007,6 +1016,190 @@ namespace
         return Expanded;
     }
 
+    bool IsAnimationControllerGetter(const FString& Name)
+    {
+        return Name.EndsWith(TEXT(".get_controller"))
+            || Name.EndsWith(TEXT(".get_data_controller"))
+            || Name.EndsWith(TEXT(".get_animation_data_controller"));
+    }
+
+    bool IsAnimationControllerTimingMethod(const FString& Name)
+    {
+        return Name == TEXT("set_frame_rate")
+            || Name == TEXT("set_number_of_frames")
+            || Name == TEXT("set_play_length")
+            || Name == TEXT("resize_number_of_frames")
+            || Name == TEXT("resize_play_length")
+            || Name == TEXT("resize_in_frames")
+            || Name == TEXT("resize");
+    }
+
+    bool NeedsAnimationReceiverEvidence(const FString& Method)
+    {
+        // These names also occur on unrelated editor objects. The frame-count
+        // and frame-specific resize names are specific to animation timing.
+        return Method == TEXT("set_frame_rate") || Method == TEXT("resize");
+    }
+
+    bool HasAnimationSequenceReceiverName(const FString& Path)
+    {
+        int32 LastDot = INDEX_NONE;
+        const FString Receiver = Path.FindLastChar(TEXT('.'), LastDot)
+            ? Path.Mid(LastDot + 1) : Path;
+        return Receiver == TEXT("anim")
+            || Receiver == TEXT("animation")
+            || Receiver == TEXT("asset")
+            || Receiver == TEXT("anim_sequence")
+            || Receiver == TEXT("animation_sequence")
+            || Receiver == TEXT("animsequence")
+            || Receiver == TEXT("animationsequence")
+            || Receiver == TEXT("anim_seq")
+            || Receiver == TEXT("sequence");
+    }
+
+    void SkipPythonPolicyNewlines(const TArray<FPythonPolicyToken>& Tokens, int32& At)
+    {
+        while (Tokens.IsValidIndex(At)
+            && Tokens[At].Kind == EPythonPolicyTokenKind::Newline) ++At;
+    }
+
+    bool ConsumeZeroArgPythonCall(const TArray<FPythonPolicyToken>& Tokens, int32& At)
+    {
+        if (!Tokens.IsValidIndex(At)
+            || Tokens[At].Kind != EPythonPolicyTokenKind::OpenParen) return false;
+        ++At;
+        SkipPythonPolicyNewlines(Tokens, At);
+        if (!Tokens.IsValidIndex(At)
+            || Tokens[At].Kind != EPythonPolicyTokenKind::CloseParen) return false;
+        ++At;
+        return true;
+    }
+
+    bool IsControllerResultExpression(
+        const TArray<FPythonPolicyToken>& Tokens,
+        int32 At,
+        const TMap<FString, bool>& ControllerNames,
+        bool& bOutAnimationEvidence)
+    {
+        bOutAnimationEvidence = false;
+        int32 WrapperParens = 0;
+        while (Tokens.IsValidIndex(At)
+            && Tokens[At].Kind == EPythonPolicyTokenKind::OpenParen)
+        {
+            ++WrapperParens;
+            ++At;
+            SkipPythonPolicyNewlines(Tokens, At);
+        }
+        FString Path;
+        if (!ReadDottedPythonNameBounded(Tokens, At, Path, nullptr)) return false;
+        const bool* AliasEvidence = ControllerNames.Find(Path);
+        const bool bGetterOrClass = IsAnimationControllerGetter(Path)
+            || Path == TEXT("animationdatacontroller")
+            || Path.EndsWith(TEXT(".animationdatacontroller"));
+        if (!AliasEvidence && !bGetterOrClass) return false;
+        if (bGetterOrClass && !ConsumeZeroArgPythonCall(Tokens, At)) return false;
+        if (AliasEvidence) bOutAnimationEvidence = *AliasEvidence;
+        else if (IsAnimationControllerGetter(Path))
+        {
+            int32 GetterDot = INDEX_NONE;
+            Path.FindLastChar(TEXT('.'), GetterDot);
+            bOutAnimationEvidence = Path.EndsWith(TEXT(".get_animation_data_controller"))
+                || HasAnimationSequenceReceiverName(Path.Left(GetterDot));
+        }
+        else bOutAnimationEvidence = true;
+        while (WrapperParens-- > 0)
+        {
+            SkipPythonPolicyNewlines(Tokens, At);
+            if (!Tokens.IsValidIndex(At)
+                || Tokens[At].Kind != EPythonPolicyTokenKind::CloseParen) return false;
+            ++At;
+        }
+        return !Tokens.IsValidIndex(At)
+            || Tokens[At].Kind == EPythonPolicyTokenKind::Newline
+            || Tokens[At].Kind == EPythonPolicyTokenKind::Semicolon;
+    }
+
+    /**
+     * Add canonical references only when lexical syntax identifies an animation
+     * data controller. This follows the common `controller = asset.get_controller()`
+     * form and simple local aliases. Generic resize and set_frame_rate require
+     * an animation-named, asset, or explicit animation-controller receiver;
+     * frame-count-specific calls remain guarded
+     * through any get_controller() result. Strings and comments are skipped
+     * by the same bounded lexer used for the other fatal Python rules.
+     */
+    TSet<FString> FindAnimationControllerTimingReferences(const FString& Code)
+    {
+        const TArray<FPythonPolicyToken> Tokens = LexPythonPolicySource(Code);
+        TMap<FString, bool> ControllerNames;
+        TSet<FString> TimingReferences;
+        for (int32 Index = 0; Index < Tokens.Num(); ++Index)
+        {
+            if (!TokenIsIdentifier(Tokens, Index)) continue;
+
+            const bool bStatementStart = Index == 0
+                || Tokens[Index - 1].Kind == EPythonPolicyTokenKind::Newline
+                || Tokens[Index - 1].Kind == EPythonPolicyTokenKind::Semicolon
+                || Tokens[Index - 1].Kind == EPythonPolicyTokenKind::Colon;
+            if (bStatementStart
+                && Tokens.IsValidIndex(Index + 2)
+                && Tokens[Index + 1].Kind == EPythonPolicyTokenKind::Equal
+                && Tokens[Index + 2].Kind != EPythonPolicyTokenKind::Equal)
+            {
+                bool bAnimationEvidence = false;
+                if (IsControllerResultExpression(
+                    Tokens, Index + 2, ControllerNames, bAnimationEvidence))
+                    ControllerNames.Add(Tokens[Index].Text, bAnimationEvidence);
+                else ControllerNames.Remove(Tokens[Index].Text);
+            }
+
+            // `asset.get_controller().set_number_of_frames(...)` does not bind
+            // a local name; recognize this immediate, zero-argument chain.
+            int32 AfterGetter = Index + 1;
+            if (Index > 0
+                && Tokens[Index - 1].Kind == EPythonPolicyTokenKind::Dot
+                && (Tokens[Index].Text == TEXT("get_controller")
+                    || Tokens[Index].Text == TEXT("get_data_controller")
+                    || Tokens[Index].Text == TEXT("get_animation_data_controller"))
+                && ConsumeZeroArgPythonCall(Tokens, AfterGetter))
+            {
+                SkipPythonPolicyNewlines(Tokens, AfterGetter);
+                if (Tokens.IsValidIndex(AfterGetter + 2)
+                    && Tokens[AfterGetter].Kind == EPythonPolicyTokenKind::Dot
+                    && TokenIsIdentifier(Tokens, AfterGetter + 1)
+                    && IsAnimationControllerTimingMethod(Tokens[AfterGetter + 1].Text)
+                    && (!NeedsAnimationReceiverEvidence(Tokens[AfterGetter + 1].Text)
+                        || Tokens[Index].Text == TEXT("get_animation_data_controller")
+                        || (Index >= 2
+                            && HasAnimationSequenceReceiverName(Tokens[Index - 2].Text)))
+                    && Tokens[AfterGetter + 2].Kind == EPythonPolicyTokenKind::OpenParen)
+                {
+                    TimingReferences.Add(TEXT("animationdatacontroller.")
+                        + Tokens[AfterGetter + 1].Text + TEXT("("));
+                }
+            }
+
+            if (Index > 0 && Tokens[Index - 1].Kind == EPythonPolicyTokenKind::Dot) continue;
+            int32 AfterPath = Index;
+            FString Path;
+            if (!ReadDottedPythonNameBounded(Tokens, AfterPath, Path, nullptr)) continue;
+            int32 LastDot = INDEX_NONE;
+            if (!Path.FindLastChar(TEXT('.'), LastDot)) continue;
+            const FString Receiver = Path.Left(LastDot);
+            const FString Method = Path.Mid(LastDot + 1);
+            const bool* AnimationEvidence = ControllerNames.Find(Receiver);
+            if (IsAnimationControllerTimingMethod(Method)
+                && AnimationEvidence
+                && (!NeedsAnimationReceiverEvidence(Method) || *AnimationEvidence))
+            {
+                // Treat a method reference as a call, as the existing alias
+                // matcher does: `fn = controller.resize; fn(...)` is hazardous.
+                TimingReferences.Add(TEXT("animationdatacontroller.") + Method + TEXT("("));
+            }
+        }
+        return TimingReferences;
+    }
+
     bool FindReservedPythonRuntimeAccess(
         const FString& Code,
         const FString& AliasExpandedCalls,
@@ -1718,18 +1911,38 @@ namespace
             return true;
         }
 
+        const TSet<FString> AnimationTimingReferences =
+            FindAnimationControllerTimingReferences(Code);
         for (const FFatalPythonRule& Rule : FatalPythonRules())
         {
+            const bool bAnimationRule = FCString::Strcmp(Rule.PolicyCode, TEXT("HCR-ANIM-001")) == 0;
+            bool bAnimationMatch = false;
+            if (bAnimationRule)
+            {
+                const FString Canonical(Rule.Pattern);
+                bAnimationMatch = AnimationTimingReferences.Contains(Canonical);
+                for (const FString& Reference : ExactExpandedCalls)
+                {
+                    if (Reference == Canonical
+                        || Reference.EndsWith(FString(TEXT(".")) + Canonical))
+                    {
+                        bAnimationMatch = true;
+                        break;
+                    }
+                }
+            }
             // Deadline-tampering rules are lexical-only. The compact stream
             // intentionally retains strings for property-name policies, so
             // using it here would reject print("sys.settrace(None)") even
             // though no instrumentation access is executable.
             const bool bDeadlineRule = FCString::Strcmp(Rule.PolicyCode, TEXT("HCR-TIME-001")) == 0;
             const bool bLexicalOnlyDynamicImport = FCString::Strcmp(Rule.Pattern, TEXT("importlib.")) == 0;
-            if ((!bDeadlineRule && !bLexicalOnlyDynamicImport
-                    && CompactContainsPolicyPattern(Compact, Rule.Pattern))
-                || CompactContainsPolicyPattern(AliasExpandedCalls, Rule.Pattern)
-                || (bLexicalOnlyDynamicImport && HasExecutableImportlibAttribute(Code)))
+            if (bAnimationMatch
+                || (!bAnimationRule
+                    && ((!bDeadlineRule && !bLexicalOnlyDynamicImport
+                            && CompactContainsPolicyPattern(Compact, Rule.Pattern))
+                        || CompactContainsPolicyPattern(AliasExpandedCalls, Rule.Pattern)
+                        || (bLexicalOnlyDynamicImport && HasExecutableImportlibAttribute(Code)))))
             {
                 OutPattern = Rule.Pattern;
                 OutPolicyCode = Rule.PolicyCode;

@@ -216,6 +216,43 @@ describe('chat server Pro loop', () => {
     await s.frames;
   });
 
+  it('returns the last task choices with saved history without persisting its key', async () => {
+    const brain = new FakeBrain();
+    start(brainConnector(brain));
+    const sessionId = 'task_choices_chat';
+    await post('/chat/config', { session_id: sessionId, provider: 'openrouter', model: 'first', api_key: 'synthetic-byok-key' });
+    const turn = await stream({ session_id: sessionId, prompt: 'inspect the room',
+      mode: 'draft', loop: 'pro', llm: 'byok', model: 'second' });
+    await waitFor(() => brain.sentTypes().includes('turn'));
+    brain.finishTurn('a1');
+    await turn.frames;
+    const response = await fetch(`${base}/chat/sessions/${sessionId}`);
+    expect(response.status).toBe(200);
+    const raw = await response.text();
+    expect(raw).not.toContain('synthetic-byok-key');
+    expect(JSON.parse(raw)).toMatchObject({ turnSettings: {
+      provider: 'openrouter', model: 'second', mode: 'draft', loop: 'pro',
+    } });
+  });
+
+  it('opens a new BYOK brain session when the next turn selects another model', async () => {
+    const brain = new FakeBrain();
+    start(brainConnector(brain));
+    await post('/chat/config', { session_id: 'model_switch_chat', provider: 'openrouter', model: 'first', api_key: 'sk-or-key' });
+    const first = await stream({ session_id: 'model_switch_chat', prompt: 'first', loop: 'pro', llm: 'byok' });
+    await waitFor(() => brain.sentTypes().includes('turn'));
+    expect(brain.sock.sent[0].llm).toMatchObject({ model: 'first' });
+    brain.finishTurn('a1');
+    await first.frames;
+
+    const second = await stream({ session_id: 'model_switch_chat', prompt: 'second', loop: 'pro', llm: 'byok', model: 'second' });
+    await waitFor(() => brain.sockets.length === 2 && brain.sentTypes().includes('turn'));
+    expect(brain.sock.sent[0].llm).toMatchObject({ model: 'second' });
+    expect(brain.sockets[0].readyState).toBe(3);
+    brain.finishTurn('a2');
+    await second.frames;
+  });
+
   it('sends DeepSeek BYOK to the Brain without a client-chosen endpoint', async () => {
     const brain = new FakeBrain();
     start(brainConnector(brain));
@@ -235,6 +272,15 @@ describe('chat server Pro loop', () => {
     const res = await post('/chat/stream', { prompt: 'hi', loop: 'turbo' });
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({ error: 'invalid loop' });
+  });
+
+  it('rejects Pro effort before opening a brain session', async () => {
+    const brain = new FakeBrain();
+    start(brainConnector(brain));
+    const response = await post('/chat/stream', { prompt: 'hi', loop: 'pro', reasoning_effort: 'high' });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: 'Hayba Pro does not support per-turn reasoning effort' });
+    expect(brain.sockets).toHaveLength(0);
   });
 
   it('approve resumes the remote session instead of starting a new turn', async () => {

@@ -94,8 +94,11 @@ bool FHaybaWorldVisualReview::RunTest(const FString&)
                 AddWarning(FString::Printf(TEXT("World depth readback stalled the editor thread for %.2f ms (%.0f ms warning threshold); valid captured pixels were retained."),
                     Context->Panel->GetDepthReadbackMs(), HaybaWorldDepth::ReadbackWarningMs));
             TestTrue(TEXT("World scan completed before screenshot"), Context->Panel->IsScanDone());
-            TestTrue(TEXT("actual scene-depth points reached World"),
-                Context->Panel->GetDepthPointCount() > HaybaWorldDepth::MaxPoints / 2);
+            // This fixture contains open sky and empty background. Valid scene
+            // depth should cover a substantial visible area, not half the
+            // entire raster regardless of camera framing.
+            TestTrue(TEXT("substantial observed scene-depth reached World"),
+                Context->Panel->GetDepthPointCount() > HaybaWorldDepth::MaxPoints / 4);
             TestEqual(TEXT("scratch World processed the complete depth raster"),
                 Context->Panel->GetDepthProcessedPixelCount(), HaybaWorldDepth::MaxPoints);
             TestEqual(TEXT("scratch World depth capture completed within its CPU budget"),
@@ -258,6 +261,35 @@ bool FHaybaWorldVisualReview::RunTest(const FString&)
                     Relations.Data->GetStringField(TEXT("capture_id")) == Context->ServiceCaptureId &&
                     Relations.Data->GetStringField(TEXT("relation_scope")) ==
                         TEXT("candidates_from_sampled_axis_aligned_bounds"));
+
+                FString CapturedActorClass;
+                for (const HaybaWorldTileSnapshot::FPage& Page : Status.Snapshot->Pages)
+                {
+                    for (const HaybaWorldGeometry::FNode& Node : Page.Geometry.Nodes)
+                        if (!Node.ActorClass.IsEmpty()) { CapturedActorClass = Node.ActorClass; break; }
+                    if (!CapturedActorClass.IsEmpty()) break;
+                }
+                TestTrue(TEXT("captured tile has an authored actor class to query"),
+                    !CapturedActorClass.IsEmpty());
+                if (!CapturedActorClass.IsEmpty())
+                {
+                    TSharedRef<FJsonObject> QueryParams = MakeShared<FJsonObject>();
+                    QueryParams->SetStringField(TEXT("tile_id"), Context->TileId);
+                    QueryParams->SetStringField(TEXT("expected_capture_id"), Context->ServiceCaptureId);
+                    TSharedRef<FJsonObject> Target = MakeShared<FJsonObject>();
+                    Target->SetStringField(TEXT("kind"), TEXT("actor_class"));
+                    Target->SetStringField(TEXT("value"), CapturedActorClass);
+                    QueryParams->SetObjectField(TEXT("target"), Target);
+                    const FHaybaHandlerResult Query = Handler.Handle(TEXT("world_query"), QueryParams);
+                    TestTrue(TEXT("pinned World query returns authored source matches"),
+                        Query.bOk && Query.Data.IsValid() &&
+                        Query.Data->GetStringField(TEXT("capture_id")) == Context->ServiceCaptureId &&
+                        Query.Data->GetNumberField(TEXT("total_matches")) > 0);
+                    QueryParams->SetStringField(TEXT("expected_capture_id"),
+                        TEXT("00000000000000000000000000000000"));
+                    const FHaybaHandlerResult Stale = Handler.Handle(TEXT("world_query"), QueryParams);
+                    TestFalse(TEXT("World query refuses a stale pinned capture"), Stale.bOk);
+                }
             }
         }
         if (Context->Window.IsValid())

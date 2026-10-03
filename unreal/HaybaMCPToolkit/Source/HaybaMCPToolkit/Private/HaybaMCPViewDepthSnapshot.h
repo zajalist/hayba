@@ -18,6 +18,8 @@ struct FPoint
     int32 PixelX = 0;
     int32 PixelY = 0;
     double DepthCm = 0.0;
+    FColor DisplayColor = FColor::Black;
+    bool bColorObserved = false;
     // Set only on the exact pixel checked by a depth-matched physics ray.
     FString SourceActorPath;
     FString SourceActorLabel;

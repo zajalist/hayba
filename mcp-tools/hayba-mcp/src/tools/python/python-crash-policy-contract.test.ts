@@ -312,13 +312,14 @@ describe('python_run native/TS crash policy contract', () => {
     );
     expect(runtimeSettings).not.toContain('bAllowUnsafePython');
     expect(runtimeSettingsHeader).not.toContain('bAllowUnsafePython');
-    expect(settingsPanel).toContain(
-      'legacy allow_unsafe request field and old saved setting are accepted for compatibility but are ineffective',
+    expect(cpp).toContain('P->TryGetBoolField(TEXT("allow_unsafe"), bAllowUnsafeRequested);');
+    expect(cppTest).toContain('DeveloperSettings->bAllowUnsafePython = true;');
+    expect(cppTest).toMatch(
+      /TestTrue\(TEXT\("legacy persisted Tier-3 grant remains ineffective"\),\s*Handler\.IsTier3PolicyBlockedForTests\(Tier3Scripts\[0\],\s*DeveloperSettings->bAllowUnsafePython, true\)\)/,
     );
     expect(settingsPanel).not.toContain(
       'BuildToggle(\n                                NSLOCTEXT("Hayba", "S.UnsafePython"',
     );
-    expect(settingsPanel).toContain('does not claim arbitrary in-process Python safety (#392/#414)');
     expect(capabilitiesPanel).toContain(
       'Constrained embedded Unreal Python; Tier-3 host I/O is always refused. This is not process isolation (#392/#414).',
     );

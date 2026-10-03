@@ -7,13 +7,13 @@ class FHaybaMCPModule;
 class SBox;
 class SVerticalBox;
 class SHorizontalBox;
+class SComboButton;
 class SHaybaMCPPlanPanel;
 class SHaybaMCPChatPanel;
 
 /**
- * A view. These are the eleven surfaces that used to be sidebar tabs in their
- * own right, and they still build the same bodies -- only the navigation above
- * them changed.
+ * A view. Plan and Lessons remain for legacy direct callers, while current
+ * navigation lists the sections used by active workflows.
  */
 enum class EHaybaSection : uint8
 {
@@ -21,15 +21,8 @@ enum class EHaybaSection : uint8
 };
 
 /**
- * A destination. Chat and World are primary; the other sections remain
- * reachable through the compact overflow menu and direct task links.
- *
- * The eleven sections answered six questions between them: three tabs competed
- * to answer "what is the agent doing", two to answer "what must be true", two
- * "what can I use", and two "configure". A user with one question had to know
- * which tab held the answer. Sections did not go away -- they became the views
- * inside the destination that owns them, so nothing is unreachable and the
- * sidebar stops being a list of implementation names.
+ * A destination. Chat and World are primary; Activity, Checks, Library, and
+ * Settings are available through More, with section tabs where useful.
  */
 enum class EHaybaPanel : uint8
 {
@@ -65,13 +58,20 @@ public:
     static TArray<EHaybaPanel> RailDestinations();
 
 private:
+    friend class FHaybaWorkspaceNavigationTest;
+
     FHaybaMCPModule* Module = nullptr;
     EHaybaPanel CurrentPanel = EHaybaPanel::Chat;
     EHaybaSection CurrentSection = EHaybaSection::Chat;
+    // Onboarding temporarily replaces ContentArea without becoming a section.
+    // A later Settings click must restore its cached section, even if the
+    // remembered panel and section still say Settings.
+    bool bShowingOnboarding = false;
 
     TSharedPtr<SBox> ContentArea;
     TSharedPtr<SHaybaMCPChatPanel> ChatPanel;
     TSharedPtr<SVerticalBox> Sidebar;
+    TSharedPtr<SComboButton> MoreButton;
 
     // Per-section widget cache — built lazily on first show, reused on every
     // subsequent click so CEF browsers / heavy widgets don't reinitialize.

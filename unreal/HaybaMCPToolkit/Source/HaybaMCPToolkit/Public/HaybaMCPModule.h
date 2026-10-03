@@ -21,6 +21,13 @@ struct FHaybaToolCallRecord
     FDateTime Timestamp;
 };
 
+struct FHaybaExternalPlanStep
+{
+    FString Title;
+    FString Description;
+    FString Tool;
+};
+
 class FHaybaMCPModule : public IModuleInterface
 {
 public:
@@ -85,16 +92,23 @@ public:
     // External MCP proposals survive navigation and tab recreation. Chat has
     // its own exact-call approval protocol; never broadcast chat approval here.
     FString PendingExternalPlan;
-    void ProposeExternalPlan(const FString& Summary)
+    FString PendingExternalPlanId;
+    TArray<FHaybaExternalPlanStep> PendingExternalSteps;
+    void ProposeExternalPlan(const FString& Summary,
+        TArray<FHaybaExternalPlanStep> Steps = {})
     {
         bPlanApproved = false;
         PendingExternalPlan = Summary;
+        PendingExternalPlanId = FGuid::NewGuid().ToString(EGuidFormats::Digits);
+        PendingExternalSteps = MoveTemp(Steps);
     }
     bool ResolveExternalPlan(bool bApprove)
     {
         if (PendingExternalPlan.IsEmpty()) return false;
         bPlanApproved = bApprove;
         PendingExternalPlan.Empty();
+        PendingExternalPlanId.Empty();
+        PendingExternalSteps.Empty();
         return true;
     }
 

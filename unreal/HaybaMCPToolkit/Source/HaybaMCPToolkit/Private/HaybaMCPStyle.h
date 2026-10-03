@@ -2,6 +2,7 @@
 #include "CoreMinimal.h"
 #include "Styling/SlateStyle.h"
 #include "Fonts/SlateFontInfo.h"
+#include "Widgets/Input/SButton.h"
 
 /**
  * The plugin's style set: brushes, text styles, and the design tokens panels
@@ -39,6 +40,12 @@ public:
 
     /** The same licensed Noto Sans family used by the embedded World view. */
     static FSlateFontInfo Font(int32 Size, bool bSemibold = false);
+
+    /** Shared popup chrome and rows for the dock's menus and settings choices. */
+    static TSharedRef<SWidget> PopupSurface(const TSharedRef<SWidget>& Content, float MinWidth = 220.f);
+    static TSharedRef<SWidget> PopupRow(const FText& Label, const FOnClicked& OnClicked,
+                                       bool bSelected = false, const FText& Detail = FText::GetEmpty(),
+                                       bool bEnabled = true);
 
 private:
     static TSharedPtr<FSlateStyleSet> StyleInstance;

@@ -5,6 +5,7 @@
 #include "HaybaMCPWorldTileSnapshot.h"
 #include "HaybaMCPWorldTileCapture.h"
 #include "HaybaMCPWorldRelations.h"
+#include "HaybaMCPWorldQuery.h"
 #include "Editor.h"
 #include "EngineUtils.h"
 #include "GameFramework/Actor.h"
@@ -78,6 +79,7 @@ TArray<FString> FHaybaMCPSceneGraphHandler::GetCommands() const
         TEXT("scene_export"),
         TEXT("world_semantic_snapshot"),
         TEXT("world_tile_capture"),
+        TEXT("world_query"),
         TEXT("scene_validate_physics"),
         TEXT("scene_get_actor_relations"),
     };
@@ -88,6 +90,7 @@ FHaybaHandlerResult FHaybaMCPSceneGraphHandler::Handle(const FString& Cmd, const
     if (Cmd == TEXT("scene_export"))              return Export(Params);
     if (Cmd == TEXT("world_semantic_snapshot"))   return WorldSemanticSnapshot(Params);
     if (Cmd == TEXT("world_tile_capture"))        return WorldTileCapture(Params);
+    if (Cmd == TEXT("world_query"))               return WorldQuery(Params);
     if (Cmd == TEXT("scene_validate_physics"))    return ValidatePhysics(Params);
     if (Cmd == TEXT("scene_get_actor_relations")) return GetActorRelations(Params);
 
@@ -888,6 +891,92 @@ FHaybaHandlerResult FHaybaMCPSceneGraphHandler::WorldTileSnapshot(
             Section == TEXT("overview") ? TEXT("summary") : Section, PageId, Offset, Limit);
     Out->SetStringField(TEXT("section"), Section);
     return FHaybaHandlerResult::Ok(Out);
+}
+
+FHaybaHandlerResult FHaybaMCPSceneGraphHandler::WorldQuery(const TSharedPtr<FJsonObject>& P)
+{
+    if (!P.IsValid())
+        return FHaybaHandlerResult::Err(TEXT("world_query: parameters must be an object"));
+    UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
+    if (!World)
+        return FHaybaHandlerResult::Err(TEXT("world_query: no editor world"));
+
+    FString TileId, CaptureId;
+    if (!P->TryGetStringField(TEXT("tile_id"), TileId) ||
+        !P->TryGetStringField(TEXT("expected_capture_id"), CaptureId))
+        return FHaybaHandlerResult::Err(TEXT("world_query: tile_id and expected_capture_id are required"));
+    TArray<FString> Parts;
+    TileId.ParseIntoArray(Parts, TEXT(":"), false);
+    if (TileId.Len() > 96 || Parts.Num() != 5 || Parts[0] != TEXT("tile") ||
+        (Parts[1] != TEXT("0") && Parts[1] != TEXT("1") && Parts[1] != TEXT("2")) ||
+        CaptureId.Len() != 32)
+        return FHaybaHandlerResult::Err(TEXT("world_query: malformed tile or capture ID"));
+    for (int32 Index = 2; Index < Parts.Num(); ++Index)
+    {
+        const FString& Part = Parts[Index];
+        const int32 FirstDigit = Part.StartsWith(TEXT("-")) ? 1 : 0;
+        if (Part.Len() <= FirstDigit || Part.Len() > 12)
+            return FHaybaHandlerResult::Err(TEXT("world_query: malformed tile ID"));
+        for (int32 CharIndex = FirstDigit; CharIndex < Part.Len(); ++CharIndex)
+            if (!FChar::IsDigit(Part[CharIndex]))
+                return FHaybaHandlerResult::Err(TEXT("world_query: malformed tile ID"));
+    }
+    for (const TCHAR Digit : CaptureId)
+        if (!FChar::IsHexDigit(Digit))
+            return FHaybaHandlerResult::Err(TEXT("world_query: malformed capture ID"));
+
+    auto ReadFact = [](const TSharedPtr<FJsonObject>& Parent, const TCHAR* Name,
+        HaybaWorldQuery::FFact& Out, bool bRequired) -> bool
+    {
+        const TSharedPtr<FJsonObject>* Fact = nullptr;
+        if (!Parent->TryGetObjectField(Name, Fact) || !Fact || !Fact->IsValid())
+            return !bRequired && !Parent->HasField(Name);
+        return (*Fact)->TryGetStringField(TEXT("kind"), Out.Kind) &&
+            (*Fact)->TryGetStringField(TEXT("value"), Out.Value);
+    };
+    HaybaWorldQuery::FRequest Request;
+    if (!ReadFact(P, TEXT("target"), Request.Target, true) ||
+        !ReadFact(P, TEXT("reference"), Request.Reference, false))
+        return FHaybaHandlerResult::Err(TEXT("world_query: malformed authored fact"));
+    if (P->HasField(TEXT("reference_source_node_id")) &&
+        !P->TryGetStringField(TEXT("reference_source_node_id"), Request.ReferenceSourceNodeId))
+        return FHaybaHandlerResult::Err(TEXT("world_query: malformed reference source"));
+    if (P->HasField(TEXT("relation_kind")) &&
+        !P->TryGetStringField(TEXT("relation_kind"), Request.RelationKind))
+        return FHaybaHandlerResult::Err(TEXT("world_query: malformed relation"));
+    auto ReadNumber = [&P](const TCHAR* Name, double& Out) -> bool
+    {
+        return !P->HasField(Name) || P->TryGetNumberField(Name, Out);
+    };
+    if (!ReadNumber(TEXT("near_threshold_cm"), Request.NearThresholdCm) ||
+        !ReadNumber(TEXT("above_minimum_gap_cm"), Request.AboveMinimumGapCm) ||
+        !ReadNumber(TEXT("above_maximum_gap_cm"), Request.AboveMaximumGapCm))
+        return FHaybaHandlerResult::Err(TEXT("world_query: malformed threshold"));
+    FString Error;
+    if (!HaybaWorldQuery::ValidateRequest(Request, Error))
+        return FHaybaHandlerResult::Err(TEXT("world_query: ") + Error);
+    auto ReadPageNumber = [&P](const TCHAR* Name, int32 Default, int32 Max, int32& Out) -> bool
+    {
+        Out = Default;
+        if (!P->HasField(Name)) return true;
+        double Number = 0.0;
+        if (!P->TryGetNumberField(Name, Number) || !FMath::IsFinite(Number) ||
+            Number < 0.0 || Number > Max || FMath::FloorToDouble(Number) != Number)
+            return false;
+        Out = static_cast<int32>(Number);
+        return true;
+    };
+    int32 Offset = 0, Limit = 32;
+    if (!ReadPageNumber(TEXT("offset"), 0, 100000, Offset) ||
+        !ReadPageNumber(TEXT("limit"), 32, 32, Limit) || Limit == 0)
+        return FHaybaHandlerResult::Err(TEXT("world_query: invalid pagination"));
+    const TSharedPtr<const HaybaWorldTileSnapshot::FTile> Snapshot =
+        HaybaWorldTileSnapshot::GetForWorld(World, TileId, CaptureId);
+    if (!Snapshot.IsValid() ||
+        !CaptureId.Equals(Snapshot->CaptureId, ESearchCase::IgnoreCase))
+        return FHaybaHandlerResult::Err(TEXT("world_query: pinned capture is unavailable; recapture the tile"));
+    return FHaybaHandlerResult::Ok(HaybaWorldQuery::BuildPage(
+        HaybaWorldQuery::Build(*Snapshot, Request), Offset, Limit));
 }
 
 // ---------------------------------------------------------------------------

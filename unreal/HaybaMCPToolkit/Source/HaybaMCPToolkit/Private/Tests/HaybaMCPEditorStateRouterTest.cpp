@@ -665,7 +665,9 @@ bool FHaybaMCPStatePieSafeDriftTest::RunTest(const FString& Parameters)
 		TEXT("editor_pie_capture_start"), TEXT("editor_pie_capture_get"),
 		TEXT("docs_search"), TEXT("docs_lookup_api"), TEXT("docs_lookup_class"), TEXT("asset_search"), TEXT("asset_registry_query"),
 		TEXT("asset_get_info"), TEXT("asset_get_dependencies"), TEXT("asset_get_referencers"), TEXT("asset_get_references"), TEXT("asset_browse"),
-		TEXT("actor_list"), TEXT("world_budget_snapshot"), TEXT("world_semantic_snapshot"), TEXT("actor_get_properties"), TEXT("actor_get_components"), TEXT("object_get_property"),
+		// Tile capture is non-mutating. Its native service explicitly refuses to
+		// start against PIE or a queued Play request, despite this read routing.
+		TEXT("actor_list"), TEXT("world_budget_snapshot"), TEXT("world_semantic_snapshot"), TEXT("world_tile_capture"), TEXT("world_query"), TEXT("actor_get_properties"), TEXT("actor_get_components"), TEXT("object_get_property"),
 		TEXT("blueprint_get_info"), TEXT("blueprint_inspect_graph"), TEXT("anim_blueprint_get_info"), TEXT("bt_get_info"),
 		TEXT("material_get_info"), TEXT("material_list"), TEXT("data_get"), TEXT("level_get_info"), TEXT("level_list"),
 		TEXT("level_get_spatial_index"), TEXT("scene_get_actor_relations"), TEXT("spline_get_info"), TEXT("texture_get_info"),

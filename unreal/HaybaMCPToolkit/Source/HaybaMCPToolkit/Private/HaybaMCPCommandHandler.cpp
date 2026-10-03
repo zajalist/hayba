@@ -1042,8 +1042,13 @@ static void PushDiffEntries(const FString& Cmd, const TSharedPtr<FJsonObject>& P
 static FString HandleProposePlan(const FString& Id, const TSharedPtr<FJsonObject>& Params)
 {
     TArray<FHaybaPlanStep> Steps;
+    TArray<FHaybaExternalPlanStep> ReviewSteps;
     const TArray<TSharedPtr<FJsonValue>>* StepsArr = nullptr;
-    if (Params.IsValid() && Params->TryGetArrayField(TEXT("steps"), StepsArr))
+    if (!Params.IsValid() || !Params->TryGetArrayField(TEXT("steps"), StepsArr) ||
+        !StepsArr || StepsArr->IsEmpty() || StepsArr->Num() > 16)
+        return FHaybaMCPCommandHandler::MakeErrorResponse(Id,
+            TEXT("A plan needs 1–16 concrete steps."), TEXT("hayba_propose_plan"), false, true);
+    if (StepsArr)
     {
         for (int32 i = 0; i < StepsArr->Num(); i++)
         {
@@ -1064,7 +1069,18 @@ static FString HandleProposePlan(const FString& Id, const TSharedPtr<FJsonObject
             {
                 S.Title = Val->AsString();
             }
+            S.Title.TrimStartAndEndInline();
+            if (S.Title.IsEmpty() || S.Title.Len() > 300 ||
+                S.Description.Len() > 600 || S.Tool.Len() > 80)
+                return FHaybaMCPCommandHandler::MakeErrorResponse(Id,
+                    TEXT("Each plan step needs a title within the review limits."),
+                    TEXT("hayba_propose_plan"), false, true);
             Steps.Add(S);
+            FHaybaExternalPlanStep Review;
+            Review.Title = S.Title;
+            Review.Description = S.Description;
+            Review.Tool = S.Tool;
+            ReviewSteps.Add(MoveTemp(Review));
         }
     }
     int32 AwaitSecs = 30;
@@ -1088,13 +1104,15 @@ static FString HandleProposePlan(const FString& Id, const TSharedPtr<FJsonObject
                 Step.Tool.IsEmpty() ? TEXT("") : TEXT(" — "), *Step.Tool,
                 Step.Description.IsEmpty() ? TEXT("") : TEXT("\n"), *Step.Description));
         }
-        M->ProposeExternalPlan(FString::Join(Summary, TEXT("\n\n")));
+        M->ProposeExternalPlan(FString::Join(Summary, TEXT("\n\n")), MoveTemp(ReviewSteps));
     }
 
     auto Data = MakeShared<FJsonObject>();
     Data->SetBoolField(TEXT("received"), true);
     Data->SetNumberField(TEXT("step_count"), Steps.Num());
     Data->SetStringField(TEXT("plan_owner"), Proposer);
+    if (const FHaybaMCPModule* M = FModuleManager::GetModulePtr<FHaybaMCPModule>("HaybaMCPToolkit"))
+        Data->SetStringField(TEXT("plan_id"), M->PendingExternalPlanId);
     return FHaybaMCPCommandHandler::MakeOkResponse(Id, Data, TEXT("hayba_propose_plan"));
 }
 
@@ -2207,6 +2225,7 @@ FString FHaybaMCPCommandHandler::ProcessCommandInContext(const FString& CommandJ
             Limits.MaxArrayItems = 200;
         }
         else if (Cmd == TEXT("world_semantic_snapshot")
+            || Cmd == TEXT("world_query")
             || Cmd == TEXT("editor_pie_actor_list")
             || Cmd == TEXT("editor_pie_actor_inspect")
             || Cmd == TEXT("editor_pie_project_world")
@@ -2220,7 +2239,7 @@ FString FHaybaMCPCommandHandler::ProcessCommandInContext(const FString& CommandJ
             // 2048 in both TS and native parsing; matching that ceiling here
             // preserves round-trip identity while keeping the frame bounded.
             Limits.MaxStringChars = 2048;
-            if (Cmd == TEXT("world_semantic_snapshot"))
+            if (Cmd == TEXT("world_semantic_snapshot") || Cmd == TEXT("world_query"))
             {
                 // Captured tile pages include provenance, coverage, paging and
                 // capture identity together. The generic 20-field limit drops

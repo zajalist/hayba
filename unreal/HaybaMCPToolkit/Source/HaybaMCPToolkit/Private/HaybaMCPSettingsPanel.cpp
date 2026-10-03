@@ -1,17 +1,22 @@
 #include "HaybaMCPSettingsPanel.h"
 #include "HaybaMCPMainPanel.h"
 #include "HaybaMCPSettings.h"
+#include "HaybaMCPDeveloperSettings.h"
 #include "HaybaMCPStyle.h"
 #include "Widgets/Layout/SBox.h"
 #include "Widgets/Layout/SBorder.h"
 #include "Widgets/Layout/SScrollBox.h"
 #include "Widgets/Layout/SSeparator.h"
+#include "Widgets/SOverlay.h"
 #include "Widgets/SBoxPanel.h"
 #include "Widgets/Text/STextBlock.h"
+#include "Widgets/Images/SImage.h"
 #include "Widgets/Input/SButton.h"
 #include "Widgets/Input/SCheckBox.h"
 #include "Widgets/Input/SEditableTextBox.h"
 #include "Widgets/Input/SComboBox.h"
+#include "Widgets/Input/SComboButton.h"
+#include "Framework/Application/SlateApplication.h"
 #include "Styling/AppStyle.h"
 #include "HttpModule.h"
 #include "Interfaces/IHttpRequest.h"
@@ -24,6 +29,47 @@ namespace
 {
     // DPAPI vault id for the Hayba Pro refresh token (never shown, never logged).
     const TCHAR* const BrainVaultId = TEXT("hayba-brain");
+
+    FText ProviderLabel(const TSharedPtr<FString>& Id)
+    {
+        const FHaybaProviderInfo* Info = Id.IsValid() ? FHaybaMCPSettings::FindProvider(*Id) : nullptr;
+        return FText::FromString(Info ? FString(Info->Label) : (Id.IsValid() ? *Id : FString()));
+    }
+
+    FText BrainLlmModeLabel(const TSharedPtr<FString>& Mode)
+    {
+        return (Mode.IsValid() && *Mode == TEXT("byok"))
+            ? NSLOCTEXT("Hayba", "S.Pro.Llm.Byok", "Your provider key")
+            : NSLOCTEXT("Hayba", "S.Pro.Llm.Subscription", "Hayba models");
+    }
+
+    FText LeaseModeLabel(EHaybaMCPLeaseEnforcement Mode)
+    {
+        switch (Mode)
+        {
+        case EHaybaMCPLeaseEnforcement::Off: return NSLOCTEXT("Hayba", "S.Lease.Off", "Ignore conflicts");
+        case EHaybaMCPLeaseEnforcement::Advisory: return NSLOCTEXT("Hayba", "S.Lease.Advisory", "Warn about conflicts");
+        case EHaybaMCPLeaseEnforcement::Enforced: return NSLOCTEXT("Hayba", "S.Lease.Enforced", "Block conflicts for edits and reads");
+        case EHaybaMCPLeaseEnforcement::EnforcedForWrites:
+        default: return NSLOCTEXT("Hayba", "S.Lease.Writes", "Block conflicting edits");
+        }
+    }
+
+    FText LeaseModeDetail(EHaybaMCPLeaseEnforcement Mode)
+    {
+        switch (Mode)
+        {
+        case EHaybaMCPLeaseEnforcement::Off:
+            return NSLOCTEXT("Hayba", "S.Lease.Off.Detail", "Edits and reads continue without conflict checks.");
+        case EHaybaMCPLeaseEnforcement::Advisory:
+            return NSLOCTEXT("Hayba", "S.Lease.Advisory.Detail", "Edits and reads continue; conflicts show warnings.");
+        case EHaybaMCPLeaseEnforcement::Enforced:
+            return NSLOCTEXT("Hayba", "S.Lease.Enforced.Detail", "Block conflicting edits and reads after a lease expires.");
+        case EHaybaMCPLeaseEnforcement::EnforcedForWrites:
+        default:
+            return NSLOCTEXT("Hayba", "S.Lease.Writes.Detail", "Block conflicting edits; allow reads.");
+        }
+    }
 
     FString BrainJsonToString(const TSharedRef<FJsonObject>& Root)
     {
@@ -47,6 +93,7 @@ namespace
 
 SHaybaMCPSettingsPanel::~SHaybaMCPSettingsPanel()
 {
+    if (ModelDiscoveryClient.IsValid()) ModelDiscoveryClient->Cancel();
     StopBrainSignInPoll();
 }
 
@@ -54,30 +101,43 @@ void SHaybaMCPSettingsPanel::Construct(const FArguments& InArgs)
 {
     MainPanel = InArgs._MainPanel;
     auto& S = FHaybaMCPSettings::Get();
+    ModelDiscoveryClient = MakeShared<FHaybaMCPModelDiscoveryClient>();
 
     // OnTextChanged fires on every keystroke — that's the right granularity for
     // "the user has touched the form, surface a Save button".
     auto OnDirty = [this](const FText&){ MarkDirty(); };
 
     SAssignNew(CapTokenBox,    SEditableTextBox)
+        .Style(&FHaybaMCPStyle::Get().GetWidgetStyle<FEditableTextBoxStyle>("Hayba.Input.Settings"))
         .Text(FText::FromString(S.CapabilityToken)).IsPassword(true)
         .OnTextChanged_Lambda(OnDirty);
     SAssignNew(SidecarUrlBox,  SEditableTextBox)
+        .Style(&FHaybaMCPStyle::Get().GetWidgetStyle<FEditableTextBoxStyle>("Hayba.Input.Settings"))
         .Text(FText::FromString(S.SidecarURL))
         .OnTextChanged_Lambda(OnDirty);
     SAssignNew(LlmModelBox,    SEditableTextBox)
+        .Style(&FHaybaMCPStyle::Get().GetWidgetStyle<FEditableTextBoxStyle>("Hayba.Input.Settings"))
         .Text(FText::FromString(S.Model))
+        .HintText(NSLOCTEXT("Hayba", "S.Model.ExactIdHint", "Exact model ID"))
         .OnTextChanged_Lambda([this](const FText&){ if (!bApplyingProviderDefaults) bModelEdited = true; MarkDirty(); });
     SAssignNew(LlmBaseUrlBox,  SEditableTextBox)
+        .Style(&FHaybaMCPStyle::Get().GetWidgetStyle<FEditableTextBoxStyle>("Hayba.Input.Settings"))
         .Text(FText::FromString(S.BaseURL))
         .OnTextChanged_Lambda([this](const FText&){ if (!bApplyingProviderDefaults) bUrlEdited = true; MarkDirty(); });
     // Key box starts EMPTY — we never populate it with the stored secret. The
     // last-4 status label (RefreshKeyStatus) is the only readback. Typing here
     // marks the key as edited so OnSave writes the new value through the vault.
     SAssignNew(LlmApiKeyBox,   SEditableTextBox)
+        .Style(&FHaybaMCPStyle::Get().GetWidgetStyle<FEditableTextBoxStyle>("Hayba.Input.Settings"))
         .IsPassword(true)
         .HintText(NSLOCTEXT("Hayba", "S.Backend.KeyHint", "enter to replace stored key"))
-        .OnTextChanged_Lambda([this](const FText&){ bKeyEdited = true; bKeyDiscardedOnProviderChange = false; MarkDirty(); });
+        .OnTextChanged_Lambda([this](const FText&)
+        {
+            bKeyEdited = true;
+            bKeyDiscardedOnProviderChange = false;
+            MarkDirty();
+            RefreshKeyStatus();
+        });
 
     // Provider dropdown — options mirror the catalog (providers.ts).
     ProviderOptions.Reset();
@@ -91,34 +151,54 @@ void SHaybaMCPSettingsPanel::Construct(const FArguments& InArgs)
     if (!SelectedProvider.IsValid() && ProviderOptions.Num() > 0)
         SelectedProvider = ProviderOptions[0];
 
-    auto MakeProviderLabel = [](TSharedPtr<FString> Id) -> FText
-    {
-        const FHaybaProviderInfo* Info = Id.IsValid() ? FHaybaMCPSettings::FindProvider(*Id) : nullptr;
-        return FText::FromString(Info ? FString(Info->Label) : (Id.IsValid() ? *Id : FString()));
-    };
-
-    SAssignNew(ProviderCombo, SComboBox<TSharedPtr<FString>>)
-        .OptionsSource(&ProviderOptions)
-        .InitiallySelectedItem(SelectedProvider)
-        .OnGenerateWidget_Lambda([MakeProviderLabel](TSharedPtr<FString> Id)
-        {
-            return SNew(STextBlock).Text(MakeProviderLabel(Id));
-        })
-        .OnSelectionChanged(this, &SHaybaMCPSettingsPanel::OnProviderChanged)
+    SAssignNew(ProviderCombo, SComboButton)
+        .ButtonStyle(&FHaybaMCPStyle::Get().GetWidgetStyle<FButtonStyle>("Hayba.Button.Switcher"))
+        .HasDownArrow(false)
+        .ContentPadding(FMargin(10.f, 6.f))
+        .OnGetMenuContent(this, &SHaybaMCPSettingsPanel::BuildProviderMenu)
+        .ButtonContent()
         [
-            SNew(STextBlock)
-            .Text_Lambda([this, MakeProviderLabel]()
-            {
-                return MakeProviderLabel(SelectedProvider);
-            })
+            SNew(SHorizontalBox)
+            + SHorizontalBox::Slot().FillWidth(1.f)
+            [ SNew(STextBlock).Text_Lambda([this]() { return ProviderLabel(SelectedProvider); }) ]
+            + SHorizontalBox::Slot().AutoWidth().Padding(10.f, 0.f, 0.f, 0.f)
+            [ SNew(SImage).Image(FHaybaMCPStyle::GetBrush("Hayba.Icon.Chevron.Down"))
+                .ColorAndOpacity(FSlateColor(FHaybaMCPStyle::Colour("Hayba.Color.Text.Secondary"))) ]
+        ];
+
+    SAssignNew(ModelCombo, SComboButton)
+        .ButtonStyle(&FHaybaMCPStyle::Get().GetWidgetStyle<FButtonStyle>("Hayba.Button.Switcher"))
+        .HasDownArrow(false)
+        .ContentPadding(FMargin(10.f, 6.f))
+        .ToolTipText_Lambda([this]() { return LlmModelBox.IsValid() ? LlmModelBox->GetText() : FText::GetEmpty(); })
+        .OnGetMenuContent(this, &SHaybaMCPSettingsPanel::BuildModelMenu)
+        .ButtonContent()
+        [
+            SNew(SHorizontalBox)
+            + SHorizontalBox::Slot().FillWidth(1.f).VAlign(VAlign_Center)
+            [ SNew(STextBlock)
+                .TextStyle(&FHaybaMCPStyle::Get().GetWidgetStyle<FTextBlockStyle>("Hayba.Text.Body"))
+                .OverflowPolicy(ETextOverflowPolicy::Ellipsis)
+                .Text_Lambda([this]()
+                {
+                    return LlmModelBox.IsValid() && !LlmModelBox->GetText().IsEmpty()
+                        ? LlmModelBox->GetText()
+                        : NSLOCTEXT("Hayba", "S.Model.Choose", "Choose a model");
+                }) ]
+            + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(10.f, 0.f, 0.f, 0.f)
+            [ SNew(SImage).Image(FHaybaMCPStyle::GetBrush("Hayba.Icon.Chevron.Down"))
+                .ColorAndOpacity(FSlateColor(FHaybaMCPStyle::Colour("Hayba.Color.Text.Secondary"))) ]
         ];
 
     SAssignNew(KeyStatusText, STextBlock)
-        .TextStyle(&FAppStyle::Get().GetWidgetStyle<FTextBlockStyle>("SmallText"));
+        .TextStyle(&FAppStyle::Get().GetWidgetStyle<FTextBlockStyle>("SmallText"))
+        .AutoWrapText(true);
     SAssignNew(RateLimitBox,   SEditableTextBox)
+        .Style(&FHaybaMCPStyle::Get().GetWidgetStyle<FEditableTextBoxStyle>("Hayba.Input.Settings"))
         .Text(FText::AsNumber(S.RateLimitPerMinute))
         .OnTextChanged_Lambda(OnDirty);
     SAssignNew(CacheTtlBox,    SEditableTextBox)
+        .Style(&FHaybaMCPStyle::Get().GetWidgetStyle<FEditableTextBoxStyle>("Hayba.Input.Settings"))
         .Text(FText::AsNumber(S.ToolCacheTTLSeconds))
         .OnTextChanged_Lambda(OnDirty);
 
@@ -139,55 +219,63 @@ void SHaybaMCPSettingsPanel::Construct(const FArguments& InArgs)
     {
         SelectedAdvisoryVerbosity = AdvisoryVerbosityOptions[1];
     }
-    SAssignNew(AdvisoryVerbosityCombo, SComboBox<TSharedPtr<EHaybaMCPAdvisoryVerbosity>>)
-        .OptionsSource(&AdvisoryVerbosityOptions)
-        .InitiallySelectedItem(SelectedAdvisoryVerbosity)
-        .OnGenerateWidget_Lambda([](TSharedPtr<EHaybaMCPAdvisoryVerbosity> Value)
-        {
-            return SNew(STextBlock).Text(Value.IsValid()
-                ? AdvisoryVerbosityLabel(*Value)
-                : FText::GetEmpty());
-        })
-        .OnSelectionChanged(this, &SHaybaMCPSettingsPanel::OnAdvisoryVerbosityChanged)
+    SAssignNew(AdvisoryVerbosityCombo, SComboButton)
+        .ButtonStyle(&FHaybaMCPStyle::Get().GetWidgetStyle<FButtonStyle>("Hayba.Button.Switcher"))
+        .HasDownArrow(false)
+        .ContentPadding(FMargin(10.f, 6.f))
+        .OnGetMenuContent(this, &SHaybaMCPSettingsPanel::BuildAdvisoryVerbosityMenu)
+        .ButtonContent()
         [
-            SNew(STextBlock)
-            .Text_Lambda([this]()
-            {
-                return SelectedAdvisoryVerbosity.IsValid()
-                    ? AdvisoryVerbosityLabel(*SelectedAdvisoryVerbosity)
-                    : FText::GetEmpty();
-            })
+            SNew(SHorizontalBox)
+            + SHorizontalBox::Slot().FillWidth(1.f)
+            [
+                SNew(STextBlock).Text_Lambda([this]()
+                {
+                    return SelectedAdvisoryVerbosity.IsValid()
+                        ? AdvisoryVerbosityLabel(*SelectedAdvisoryVerbosity) : FText::GetEmpty();
+                })
+            ]
+            + SHorizontalBox::Slot().AutoWidth().Padding(10.f, 0.f, 0.f, 0.f)
+            [ SNew(SImage).Image(FHaybaMCPStyle::GetBrush("Hayba.Icon.Chevron.Down"))
+                .ColorAndOpacity(FSlateColor(FHaybaMCPStyle::Colour("Hayba.Color.Text.Secondary"))) ]
         ];
 
     // Hayba Pro model source: "subscription" (Hayba-provided) or "byok".
     BrainLlmModeOptions = { MakeShared<FString>(TEXT("subscription")), MakeShared<FString>(TEXT("byok")) };
     SelectedBrainLlmMode = S.BrainLlmMode == TEXT("byok") ? BrainLlmModeOptions[1] : BrainLlmModeOptions[0];
-    auto MakeBrainLlmModeLabel = [](TSharedPtr<FString> Mode) -> FText
-    {
-        return (Mode.IsValid() && *Mode == TEXT("byok"))
-            ? NSLOCTEXT("Hayba", "S.Pro.Llm.Byok", "Your provider key (BYOK)")
-            : NSLOCTEXT("Hayba", "S.Pro.Llm.Subscription", "Hayba models (subscription)");
-    };
-    SAssignNew(BrainLlmModeCombo, SComboBox<TSharedPtr<FString>>)
-        .OptionsSource(&BrainLlmModeOptions)
-        .InitiallySelectedItem(SelectedBrainLlmMode)
-        .OnGenerateWidget_Lambda([MakeBrainLlmModeLabel](TSharedPtr<FString> Mode)
-        {
-            return SNew(STextBlock).Text(MakeBrainLlmModeLabel(Mode));
-        })
-        .OnSelectionChanged_Lambda([this](TSharedPtr<FString> NewMode, ESelectInfo::Type)
-        {
-            if (!NewMode.IsValid()) return;
-            SelectedBrainLlmMode = NewMode;
-            FHaybaMCPSettings::Get().BrainLlmMode = *NewMode;
-            MarkDirty();
-        })
+    SAssignNew(BrainLlmModeCombo, SComboButton)
+        .ButtonStyle(&FHaybaMCPStyle::Get().GetWidgetStyle<FButtonStyle>("Hayba.Button.Switcher"))
+        .HasDownArrow(false)
+        .ContentPadding(FMargin(10.f, 6.f))
+        .OnGetMenuContent(this, &SHaybaMCPSettingsPanel::BuildBrainLlmModeMenu)
+        .ButtonContent()
         [
-            SNew(STextBlock)
-            .Text_Lambda([this, MakeBrainLlmModeLabel]()
-            {
-                return MakeBrainLlmModeLabel(SelectedBrainLlmMode);
-            })
+            SNew(SHorizontalBox)
+            + SHorizontalBox::Slot().FillWidth(1.f)
+            [ SNew(STextBlock).Text_Lambda([this]() { return BrainLlmModeLabel(SelectedBrainLlmMode); }) ]
+            + SHorizontalBox::Slot().AutoWidth().Padding(10.f, 0.f, 0.f, 0.f)
+            [ SNew(SImage).Image(FHaybaMCPStyle::GetBrush("Hayba.Icon.Chevron.Down"))
+                .ColorAndOpacity(FSlateColor(FHaybaMCPStyle::Colour("Hayba.Color.Text.Secondary"))) ]
+        ];
+    SAssignNew(LeaseEnforcementCombo, SComboButton)
+        .ButtonStyle(&FHaybaMCPStyle::Get().GetWidgetStyle<FButtonStyle>("Hayba.Button.Switcher"))
+        .HasDownArrow(false)
+        .ContentPadding(FMargin(10.f, 6.f))
+        .OnGetMenuContent(this, &SHaybaMCPSettingsPanel::BuildLeaseEnforcementMenu)
+        .ButtonContent()
+        [
+            SNew(SHorizontalBox)
+            + SHorizontalBox::Slot().FillWidth(1.f)
+            [
+                SNew(STextBlock).Text_Lambda([]()
+                {
+                    const UHaybaMCPDeveloperSettings* Dev = GetDefault<UHaybaMCPDeveloperSettings>();
+                    return LeaseModeLabel(Dev ? Dev->LeaseEnforcement : EHaybaMCPLeaseEnforcement::EnforcedForWrites);
+                })
+            ]
+            + SHorizontalBox::Slot().AutoWidth().Padding(10.f, 0.f, 0.f, 0.f)
+            [ SNew(SImage).Image(FHaybaMCPStyle::GetBrush("Hayba.Icon.Chevron.Down"))
+                .ColorAndOpacity(FSlateColor(FHaybaMCPStyle::Colour("Hayba.Color.Text.Secondary"))) ]
         ];
     SAssignNew(BrainStatusText, STextBlock)
         .TextStyle(&FAppStyle::Get().GetWidgetStyle<FTextBlockStyle>("SmallText"))
@@ -199,106 +287,28 @@ void SHaybaMCPSettingsPanel::Construct(const FArguments& InArgs)
         .BorderImage(FHaybaMCPStyle::GetBrush("Hayba.Brush.Dock"))
         .Padding(FMargin(0))
         [
-            SNew(SVerticalBox)
-            // Action bar — only the Save button. Redo Setup now lives at the bottom of the form.
-            + SVerticalBox::Slot().AutoHeight()
-            [
-                SNew(SBorder)
-                .BorderImage(FHaybaMCPStyle::GetBrush("Hayba.Brush.Dock"))
-                .Padding(FMargin(12.f, 8.f))
-                [
-                    SNew(SHorizontalBox)
-                    + SHorizontalBox::Slot().FillWidth(1.f).VAlign(VAlign_Center)
-                    [
-                        SNew(STextBlock)
-                        .TextStyle(&FAppStyle::Get().GetWidgetStyle<FTextBlockStyle>("SmallText"))
-                        // Only surface state when the user has an unsaved change.
-                        .Text_Lambda([this]()
-                        {
-                            return bIsDirty
-                                ? NSLOCTEXT("Hayba", "Settings.Hint.Dirty", "You have unsaved changes.")
-                                : FText::GetEmpty();
-                        })
-                        .ColorAndOpacity_Lambda([this]()
-                        {
-                            return bIsDirty
-                                ? FSlateColor(FLinearColor(1.0f, 0.78f, 0.30f))   // amber
-                                : FSlateColor(FLinearColor(0.65f, 0.65f, 0.7f));  // muted
-                        })
-                    ]
-                    + SHorizontalBox::Slot().AutoWidth()
-                    [
-                        SNew(SButton)
-                        .ButtonStyle(FAppStyle::Get(), "PrimaryButton")
-                        .Text(NSLOCTEXT("Hayba", "Settings.Save", "Save"))
-                        .ContentPadding(FMargin(18.f, 6.f))
-                        .IsEnabled_Lambda([this](){ return bIsDirty; })
-                        .OnClicked(this, &SHaybaMCPSettingsPanel::OnSave)
-                    ]
-                ]
-            ]
-            + SVerticalBox::Slot().FillHeight(1.f)
+            SNew(SOverlay)
+            + SOverlay::Slot()
             [
                 SNew(SScrollBox)
-                + SScrollBox::Slot().Padding(FMargin(12.f, 10.f))
+                + SScrollBox::Slot().HAlign(HAlign_Center).Padding(FMargin(12.f, 10.f, 12.f, 70.f))
                 [
-                    SNew(SVerticalBox)
+                    // SBox's max desired width only caps a child's natural width;
+                    // it does not expand the narrow form in a wide dock.
+                    SNew(SBox).WidthOverride_Lambda([this]()
+                    {
+                        const float DockWidth = GetCachedGeometry().GetLocalSize().X;
+                        return FOptionalSize(DockWidth > 0.f
+                            ? FMath::Min(600.f, FMath::Max(0.f, DockWidth - 36.f))
+                            : 600.f);
+                    })
+                    [ SNew(SVerticalBox)
                     + SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 8.f)
                     [
                         BuildSection(
-                            NSLOCTEXT("Hayba", "Settings.Sec.Connection", "Connection & Security"),
-                            NSLOCTEXT("Hayba", "Settings.Sec.Connection.TT",
-                                "How the MCP server authenticates incoming tool calls and what gets logged."),
-                            SNew(SVerticalBox)
-                            + SVerticalBox::Slot().AutoHeight().Padding(0.f, 2.f)
-                            [ BuildLabeledRow(
-                                NSLOCTEXT("Hayba", "S.CapToken", "Capability Token"),
-                                NSLOCTEXT("Hayba", "S.CapToken.TT",
-                                    "Optional shared secret required on every TCP command.\n"
-                                    "When set, every incoming command must include matching `auth` — useful when running the editor on a multi-user box or exposing the MCP port beyond localhost.\n\n"
-                                    "Leave blank for local-only development.\n\n"
-                                    "Default: empty."),
-                                CapTokenBox.ToSharedRef()) ]
-                            + SVerticalBox::Slot().AutoHeight().Padding(0.f, 2.f)
-                            [ BuildToggle(
-                                NSLOCTEXT("Hayba", "S.Journal", "Enable execution journal (Saved/hayba-execution.log)"),
-                                NSLOCTEXT("Hayba", "S.Journal.TT",
-                                    "Append-only log of every tool call: timestamp, command, hashed params, duration, ok/error, and message.\n\n"
-                                    "Useful for post-mortem on what the agent did, and for compliance audits. Hashes are SHA-256 so no PII leaks in.\n\n"
-                                    "Default: on."),
-                                [](){ return FHaybaMCPSettings::Get().bEnableExecutionJournal; },
-                                [](bool b){ FHaybaMCPSettings::Get().bEnableExecutionJournal = b; }) ]
-                        )
-                    ]
-
-                    + SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 8.f)
-                    [
-                        BuildSection(
-                            NSLOCTEXT("Hayba", "Settings.Sec.PlanMode", "External MCP safety"),
-                            NSLOCTEXT("Hayba", "Settings.Sec.PlanMode.TT",
-                                "Require a reviewed plan for external MCP clients before they change the project. "
-                                "Review incoming proposals in Agent. Built-in chat keeps its own action approvals "
-                                "and Explore / Draft / Production modes."),
-                            SNew(SVerticalBox)
-                            + SVerticalBox::Slot().AutoHeight().Padding(0.f, 2.f)
-                            [ BuildToggle(
-                                NSLOCTEXT("Hayba", "S.Plan", "Require a plan before external MCP changes"),
-                                NSLOCTEXT("Hayba", "S.Plan.TT",
-                                    "Applies to the native command gate used by external MCP hosts. "
-                                    "Turning this off allows their write commands without this plan review. "
-                                    "Built-in chat approvals remain enabled. Default: on."),
-                                [](){ return FHaybaMCPSettings::Get().bPlanModeEnabled; },
-                                [](bool b){ FHaybaMCPSettings::Get().bPlanModeEnabled = b; }) ]
-                        )
-                    ]
-
-                    + SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 8.f)
-                    [
-                        BuildSection(
-                            NSLOCTEXT("Hayba", "Settings.Sec.LLM", "AI / LLM Backend"),
+                            NSLOCTEXT("Hayba", "Settings.Sec.LLM", "Chat model"),
                             NSLOCTEXT("Hayba", "Settings.Sec.LLM.TT",
-                                "Configures the AI used by the Chat tab.\n\n"
-                                "External MCP hosts (Claude Desktop / Code / Cursor) ignore these fields — the host application drives the model choice there."),
+                                "Provider, model, and key for Hayba's built-in chat. External MCP hosts use their own model settings."),
                             SNew(SVerticalBox)
                             + SVerticalBox::Slot().AutoHeight().Padding(0.f, 2.f)
                             [ BuildLabeledRow(
@@ -308,16 +318,6 @@ void SHaybaMCPSettingsPanel::Construct(const FArguments& InArgs)
                                     "default Model unless you have edited those fields. Local providers "
                                     "(Ollama, LM Studio) and Mock need no API key."),
                                 ProviderCombo.ToSharedRef()) ]
-                            + SVerticalBox::Slot().AutoHeight().Padding(0.f, 2.f)
-                            [ BuildLabeledRow(
-                                NSLOCTEXT("Hayba", "S.Backend.Url",  "Base URL"),
-                                FText::GetEmpty(),
-                                LlmBaseUrlBox.ToSharedRef()) ]
-                            + SVerticalBox::Slot().AutoHeight().Padding(0.f, 2.f)
-                            [ BuildLabeledRow(
-                                NSLOCTEXT("Hayba", "S.Backend.Model","Model"),
-                                FText::GetEmpty(),
-                                LlmModelBox.ToSharedRef()) ]
                             + SVerticalBox::Slot().AutoHeight().Padding(0.f, 2.f)
                             [ BuildLabeledRow(
                                 NSLOCTEXT("Hayba", "S.Backend.Key",  "API Key"),
@@ -349,23 +349,146 @@ void SHaybaMCPSettingsPanel::Construct(const FArguments& InArgs)
                                 })
                             ]
                             + SVerticalBox::Slot().AutoHeight().Padding(0.f, 2.f)
-                            [ BuildToggle(
-                                NSLOCTEXT("Hayba", "S.CodeMode", "Code Mode (meta-tools)"),
-                                NSLOCTEXT("Hayba", "S.CodeMode.TT",
-                                    "When on, the MCP server advertises only 3 meta-tools to the agent:\n"
-                                    "  • list_tool_categories — domain overview\n"
-                                    "  • get_tool_signature — schema for a specific tool\n"
-                                    "  • python_run — escape hatch via UE Python\n\n"
-                                    "The full 100+ tool catalog stays loaded server-side; the agent discovers them on demand. This reduces the initial tool-list payload by ~92%, freeing up the context window for actual reasoning.\n\n"
-                                    "Default: on. Turn off only if your agent host has trouble with progressive tool discovery."),
-                                [](){ return FHaybaMCPSettings::Get().bCodeModeEnabled; },
-                                [](bool b){ FHaybaMCPSettings::Get().bCodeModeEnabled = b; }) ]
-                        )
+                            [
+                                SNew(SVerticalBox)
+                                + SVerticalBox::Slot().AutoHeight()
+                                [ BuildLabeledRow(
+                                    NSLOCTEXT("Hayba", "S.Backend.Model", "Model"),
+                                    NSLOCTEXT("Hayba", "S.Backend.Model.TT", "Select an available model or enter an exact model ID."),
+                                    ModelCombo.ToSharedRef()) ]
+                                + SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 8.f)
+                                [ SNew(SBox)
+                                    .Visibility_Lambda([this]() { return bManualModelEntry ? EVisibility::Visible : EVisibility::Collapsed; })
+                                    [ LlmModelBox.ToSharedRef() ] ]
+                            ]
+                        , false)
                     ]
 
                     + SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 8.f)
                     [
                         BuildSection(
+                            NSLOCTEXT("Hayba", "Settings.Sec.PlanMode", "Editor safety"),
+                            NSLOCTEXT("Hayba", "Settings.Sec.PlanMode.TT",
+                                "Require a reviewed plan for external MCP clients before they change the project. "
+                                "Review incoming proposals in Agent. Built-in chat keeps its own action approvals "
+                                "and Explore / Draft / Production modes."),
+                            SNew(SVerticalBox)
+                            + SVerticalBox::Slot().AutoHeight().Padding(0.f, 2.f)
+                            [ BuildLabeledRow(
+                                NSLOCTEXT("Hayba", "S.Lease.Label", "When agents edit the same item"),
+                                NSLOCTEXT("Hayba", "S.Lease.TT",
+                                    "Lease enforcement controls what happens when agents work on the same resource. "
+                                    "Enforced for writes is the default: conflicting writes are blocked, while reads continue. "
+                                    "Changes take effect immediately and are saved to Project Settings."),
+                                LeaseEnforcementCombo.ToSharedRef()) ]
+                            + SVerticalBox::Slot().AutoHeight().Padding(0.f, 2.f, 0.f, 6.f)
+                            [
+                                SNew(STextBlock)
+                                .TextStyle(&FHaybaMCPStyle::Get().GetWidgetStyle<FTextBlockStyle>("Hayba.Text.Caption"))
+                                .AutoWrapText(true)
+                                .Text_Lambda([]()
+                                {
+                                    const UHaybaMCPDeveloperSettings* Dev = GetDefault<UHaybaMCPDeveloperSettings>();
+                                    return LeaseModeDetail(Dev ? Dev->LeaseEnforcement
+                                        : EHaybaMCPLeaseEnforcement::EnforcedForWrites);
+                                })
+                            ]
+                            + SVerticalBox::Slot().AutoHeight().Padding(0.f, 2.f)
+                            [ BuildToggle(
+                                NSLOCTEXT("Hayba", "S.Plan", "Require a plan for changes from other apps"),
+                                NSLOCTEXT("Hayba", "S.Plan.TT",
+                                    "Applies to the native command gate used by external MCP hosts. "
+                                    "Turning this off allows their write commands without this plan review. "
+                                    "Built-in chat approvals remain enabled. Default: on."),
+                                [](){ return FHaybaMCPSettings::Get().bPlanModeEnabled; },
+                                [](bool b){ FHaybaMCPSettings::Get().bPlanModeEnabled = b; }) ]
+                        , false)
+                    ]
+
+                    + SVerticalBox::Slot().AutoHeight().Padding(0.f, 3.f, 0.f, 8.f)
+                    [
+                        SNew(SButton)
+                        .ButtonStyle(&FHaybaMCPStyle::Get().GetWidgetStyle<FButtonStyle>("Hayba.Button.Task"))
+                        .ContentPadding(FMargin(0.f, 9.f))
+                        .OnClicked_Lambda([this]()
+                        {
+                            bAdvancedExpanded = !bAdvancedExpanded;
+                            Invalidate(EInvalidateWidgetReason::Layout);
+                            return FReply::Handled();
+                        })
+                        [
+                            SNew(SHorizontalBox)
+                            + SHorizontalBox::Slot().FillWidth(1.f)
+                            [ SNew(STextBlock)
+                                .TextStyle(&FHaybaMCPStyle::Get().GetWidgetStyle<FTextBlockStyle>("Hayba.Text.Heading"))
+                                .Text(NSLOCTEXT("Hayba", "Settings.Advanced", "Advanced")) ]
+                            + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(8.f, 0.f, 2.f, 0.f)
+                            [ SNew(SImage)
+                                .Image_Lambda([this]() { return FHaybaMCPStyle::GetBrush(
+                                    bAdvancedExpanded ? "Hayba.Icon.Chevron.Up" : "Hayba.Icon.Chevron.Down"); })
+                                .ColorAndOpacity(FSlateColor(FHaybaMCPStyle::Colour("Hayba.Color.Text.Secondary"))) ]
+                        ]
+                    ]
+
+                    + SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 12.f)
+                    [
+                        SNew(SBox).Visibility_Lambda([this]() { return bAdvancedExpanded ? EVisibility::Visible : EVisibility::Collapsed; })
+                        [ SNew(SButton)
+                            .ButtonStyle(&FHaybaMCPStyle::Get().GetWidgetStyle<FButtonStyle>("Hayba.Button.Switcher"))
+                            .Text(NSLOCTEXT("Hayba", "Settings.ToolPermissions", "Tool permissions"))
+                            .ContentPadding(FMargin(12.f, 8.f))
+                            .OnClicked_Lambda([this]()
+                            {
+                                if (MainPanel) MainPanel->ShowSection(EHaybaSection::MCP);
+                                return FReply::Handled();
+                            }) ]
+                    ]
+
+                    + SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 8.f)
+                    [
+                        SNew(SBox).Visibility_Lambda([this]() { return bAdvancedExpanded ? EVisibility::Visible : EVisibility::Collapsed; })
+                        [ BuildSection(
+                            NSLOCTEXT("Hayba", "Settings.Sec.Connection", "Advanced connection"),
+                            NSLOCTEXT("Hayba", "Settings.Sec.Connection.TT",
+                                "How the MCP server authenticates incoming tool calls and what gets logged."),
+                            SNew(SVerticalBox)
+                            + SVerticalBox::Slot().AutoHeight().Padding(0.f, 2.f)
+                            [ BuildLabeledRow(
+                                NSLOCTEXT("Hayba", "S.Backend.Url", "Custom endpoint"),
+                                NSLOCTEXT("Hayba", "S.Backend.Url.TT", "Edit only when your provider uses a custom API endpoint."),
+                                LlmBaseUrlBox.ToSharedRef()) ]
+                            + SVerticalBox::Slot().AutoHeight().Padding(0.f, 2.f)
+                            [ BuildLabeledRow(
+                                NSLOCTEXT("Hayba", "S.CapToken", "Capability Token"),
+                                NSLOCTEXT("Hayba", "S.CapToken.TT",
+                                    "Optional shared secret required on every TCP command.\n"
+                                    "When set, every incoming command must include matching `auth` — useful when running the editor on a multi-user box or exposing the MCP port beyond localhost.\n\n"
+                                    "Leave blank for local-only development.\n\n"
+                                    "Default: empty."),
+                                CapTokenBox.ToSharedRef()) ]
+                            + SVerticalBox::Slot().AutoHeight().Padding(0.f, 2.f)
+                            [ BuildToggle(
+                                NSLOCTEXT("Hayba", "S.Journal", "Enable execution journal (Saved/hayba-execution.log)"),
+                                NSLOCTEXT("Hayba", "S.Journal.TT",
+                                    "Append-only log of every tool call: timestamp, command, hashed params, duration, ok/error, and message.\n\n"
+                                    "Useful for post-mortem on what the agent did, and for compliance audits. Hashes are SHA-256 so no PII leaks in.\n\n"
+                                    "Default: on."),
+                                [](){ return FHaybaMCPSettings::Get().bEnableExecutionJournal; },
+                                [](bool b){ FHaybaMCPSettings::Get().bEnableExecutionJournal = b; }) ]
+                            + SVerticalBox::Slot().AutoHeight().Padding(0.f, 2.f)
+                            [ BuildToggle(
+                                NSLOCTEXT("Hayba", "S.CodeMode", "Progressive tool discovery"),
+                                NSLOCTEXT("Hayba", "S.CodeMode.TT",
+                                    "Advertise a small set of discovery tools to external agents. The full catalog remains available on demand. Default: on."),
+                                [](){ return FHaybaMCPSettings::Get().bCodeModeEnabled; },
+                                [](bool b){ FHaybaMCPSettings::Get().bCodeModeEnabled = b; }) ]
+                        ) ]
+                    ]
+
+                    + SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 8.f)
+                    [
+                        SNew(SBox).Visibility_Lambda([this]() { return bAdvancedExpanded ? EVisibility::Visible : EVisibility::Collapsed; })
+                        [ BuildSection(
                             NSLOCTEXT("Hayba", "Settings.Sec.Pro", "Hayba Pro"),
                             NSLOCTEXT("Hayba", "Settings.Sec.Pro.TT",
                                 "Route chats through the hosted Hayba Pro agent instead of the local Community loop.\n\n"
@@ -416,12 +539,13 @@ void SHaybaMCPSettingsPanel::Construct(const FArguments& InArgs)
                                     .OnClicked(this, &SHaybaMCPSettingsPanel::OnBrainSignOut)
                                 ]
                             ]
-                        )
+                        ) ]
                     ]
 
                     + SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 8.f)
                     [
-                        BuildSection(
+                        SNew(SBox).Visibility_Lambda([this]() { return bAdvancedExpanded ? EVisibility::Visible : EVisibility::Collapsed; })
+                        [ BuildSection(
                             NSLOCTEXT("Hayba", "Settings.Sec.Guidance", "AI Response Guidance"),
                             NSLOCTEXT("Hayba", "Settings.Sec.Guidance.TT",
                                 "Choose how much optional guidance Hayba adds to tool replies. Errors and safety-required recovery instructions can never be hidden."),
@@ -435,12 +559,13 @@ void SHaybaMCPSettingsPanel::Construct(const FArguments& InArgs)
                                     "Errors, warnings, and AI tips — include concise next-step guidance.\n\n"
                                     "Errors, session-health failures, and mandatory recovery instructions are always returned."),
                                 AdvisoryVerbosityCombo.ToSharedRef()) ]
-                        )
+                        ) ]
                     ]
 
                     + SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 8.f)
                     [
-                        BuildSection(
+                        SNew(SBox).Visibility_Lambda([this]() { return bAdvancedExpanded ? EVisibility::Visible : EVisibility::Collapsed; })
+                        [ BuildSection(
                             NSLOCTEXT("Hayba", "Settings.Sec.Visual", "Visual Sidecar"),
                             NSLOCTEXT("Hayba", "Settings.Sec.Visual.TT",
                                 "External Python service (FastAPI + CLIP / SpatialCLIP / OWL-ViT) that the toolkit calls for image embeddings and grounding.\n\n"
@@ -478,12 +603,13 @@ void SHaybaMCPSettingsPanel::Construct(const FArguments& InArgs)
                                     "Default: off."),
                                 [](){ return FHaybaMCPSettings::Get().bEnableContinuousCapture; },
                                 [](bool b){ FHaybaMCPSettings::Get().bEnableContinuousCapture = b; }) ]
-                        )
+                        ) ]
                     ]
 
                     + SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 8.f)
                     [
-                        BuildSection(
+                        SNew(SBox).Visibility_Lambda([this]() { return bAdvancedExpanded ? EVisibility::Visible : EVisibility::Collapsed; })
+                        [ BuildSection(
                             NSLOCTEXT("Hayba", "Settings.Sec.Perf", "Performance"),
                             NSLOCTEXT("Hayba", "Settings.Sec.Perf.TT",
                                 "Throughput and caching knobs for the MCP server. Defaults are tuned for solo iterative use; bump these on multi-agent swarm setups."),
@@ -504,33 +630,14 @@ void SHaybaMCPSettingsPanel::Construct(const FArguments& InArgs)
                                     "Write tools (spawn / delete / set_property) invalidate the cache automatically.\n\n"
                                     "Default: 2.0s. Increase to 10-30s if your scene is static; set to 0 to disable caching."),
                                 CacheTtlBox.ToSharedRef()) ]
-                        )
-                    ]
-
-                    + SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 8.f)
-                    [
-                        BuildSection(
-                            NSLOCTEXT("Hayba", "Settings.Sec.Python", "Python"),
-                            NSLOCTEXT("Hayba", "Settings.Sec.Python.TT",
-                                "python_run is an Unreal-only embedded scripting principal.\n\n"
-                                "Tier 1: bounded Unreal editor scripting.\n"
-                                "Tier 2: Unreal mutations guarded by the normal MCP policy.\n"
-                                "Tier 3: host filesystem, subprocess, and network access is always refused."),
-                            SNew(STextBlock)
-                                .TextStyle(&FAppStyle::Get().GetWidgetStyle<FTextBlockStyle>("NormalText"))
-                                .AutoWrapText(true)
-                                .Text(NSLOCTEXT("Hayba", "S.PythonBoundary",
-                                    "Host access from embedded python_run is permanently disabled. "
-                                    "The legacy allow_unsafe request field and old saved setting are accepted for compatibility but are ineffective. "
-                                    "Use a typed brokered MCP tool (#412/#415) for supported host operations. "
-                                    "This boundary reduces exposure; it does not claim arbitrary in-process Python safety (#392/#414)."))
-                        )
+                        ) ]
                     ]
 
                     // ── Danger zone — Redo Setup lives at the very bottom on its own. ─────────
                     + SVerticalBox::Slot().AutoHeight().Padding(0.f, 24.f, 0.f, 0.f)
                     [
-                        BuildSection(
+                        SNew(SBox).Visibility_Lambda([this]() { return bAdvancedExpanded ? EVisibility::Visible : EVisibility::Collapsed; })
+                        [ BuildSection(
                             NSLOCTEXT("Hayba", "Settings.Sec.Redo", "Onboarding"),
                             NSLOCTEXT("Hayba", "Settings.Sec.Redo.TT",
                                 "Re-runs the first-time setup wizard. Your saved settings above are kept; this just re-shows the screens that configure the MCP server location."),
@@ -550,8 +657,29 @@ void SHaybaMCPSettingsPanel::Construct(const FArguments& InArgs)
                                 .ContentPadding(FMargin(18.f, 8.f))
                                 .OnClicked(this, &SHaybaMCPSettingsPanel::OnRedoSetup)
                             ]
-                        )
+                        ) ]
                     ]
+                    ]
+                ]
+            ]
+            + SOverlay::Slot().HAlign(HAlign_Right).VAlign(VAlign_Bottom).Padding(FMargin(12.f))
+            [
+                SNew(SBorder)
+                .BorderImage(FHaybaMCPStyle::GetBrush("Hayba.Brush.Popup"))
+                .Visibility_Lambda([this]() { return bIsDirty ? EVisibility::Visible : EVisibility::Collapsed; })
+                .Padding(FMargin(10.f, 6.f))
+                [
+                    SNew(SHorizontalBox)
+                    + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(2.f, 0.f, 12.f, 0.f)
+                    [ SNew(STextBlock)
+                        .TextStyle(&FHaybaMCPStyle::Get().GetWidgetStyle<FTextBlockStyle>("Hayba.Text.Caption"))
+                        .Text(NSLOCTEXT("Hayba", "Settings.Hint.Dirty", "Unsaved changes")) ]
+                    + SHorizontalBox::Slot().AutoWidth()
+                    [ SNew(SButton)
+                        .ButtonStyle(&FHaybaMCPStyle::Get().GetWidgetStyle<FButtonStyle>("Hayba.Button.Switcher"))
+                        .Text(NSLOCTEXT("Hayba", "Settings.Save", "Save"))
+                        .ContentPadding(FMargin(16.f, 6.f))
+                        .OnClicked(this, &SHaybaMCPSettingsPanel::OnSave) ]
                 ]
             ]
         ]
@@ -567,42 +695,331 @@ void SHaybaMCPSettingsPanel::Construct(const FArguments& InArgs)
     RefreshBrainStatus();
 }
 
-TSharedRef<SWidget> SHaybaMCPSettingsPanel::BuildSection(const FText& Heading, const FText& Tooltip, const TSharedRef<SWidget>& Body)
+TSharedRef<SWidget> SHaybaMCPSettingsPanel::BuildProviderMenu()
 {
-    return SNew(SBorder)
-        .BorderImage(FHaybaMCPStyle::GetBrush("Hayba.Brush.Settings.Section"))
-        .ToolTipText(Tooltip)
-        .Padding(FMargin(10.f, 8.f))
+    TSharedRef<SVerticalBox> Items = SNew(SVerticalBox);
+    for (const TSharedPtr<FString>& Option : ProviderOptions)
+    {
+        const FHaybaProviderInfo* Info = Option.IsValid() ? FHaybaMCPSettings::FindProvider(*Option) : nullptr;
+        Items->AddSlot().AutoHeight()
         [
-            SNew(SVerticalBox)
-            + SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 8.f)
+            FHaybaMCPStyle::PopupRow(ProviderLabel(Option), FOnClicked::CreateLambda([this, Option]()
+            {
+                if (ProviderCombo.IsValid()) ProviderCombo->SetIsOpen(false);
+                OnProviderChanged(Option, ESelectInfo::OnMouseClick);
+                return FReply::Handled();
+            }), SelectedProvider == Option,
+                Info && Info->bNeedsKey
+                    ? NSLOCTEXT("Hayba", "S.Provider.NeedsKey", "API key required")
+                    : NSLOCTEXT("Hayba", "S.Provider.Keyless", "No API key needed"))
+        ];
+    }
+    return FHaybaMCPStyle::PopupSurface(Items, 240.f);
+}
+
+TSharedRef<SWidget> SHaybaMCPSettingsPanel::BuildModelMenu()
+{
+    ModelSearch.Empty();
+    ModelPendingConfirmationId.Empty();
+    SAssignNew(ModelMenuItems, SVerticalBox);
+    DiscoveredModels.Reset();
+    bModelDiscoveryLoading = false;
+    ModelDiscoveryMessage = bIsDirty
+        ? TEXT("Save your changes to browse this provider's models.")
+        : TEXT("Checking available models...");
+    RefreshModelMenuItems();
+
+    if (!bIsDirty && ModelDiscoveryClient.IsValid())
+    {
+        bModelDiscoveryLoading = true;
+        TWeakPtr<SHaybaMCPSettingsPanel> WeakSelf = StaticCastSharedRef<SHaybaMCPSettingsPanel>(AsShared());
+        ModelDiscoveryClient->DiscoverSavedSettings(/*bRefresh=*/true,
+            [WeakSelf](FHaybaMCPModelDiscoveryResult Result)
+            {
+                TSharedPtr<SHaybaMCPSettingsPanel> Self = WeakSelf.Pin();
+                if (!Self.IsValid()) return;
+                Self->bModelDiscoveryLoading = false;
+                Self->DiscoveredModels = MoveTemp(Result);
+                Self->RefreshModelMenuItems();
+            });
+    }
+
+    return FHaybaMCPStyle::PopupSurface(
+        SNew(SVerticalBox)
+        + SVerticalBox::Slot().AutoHeight().Padding(4.f, 4.f, 4.f, 8.f)
+        [
+            SNew(SEditableTextBox)
+            .Style(&FHaybaMCPStyle::Get().GetWidgetStyle<FEditableTextBoxStyle>("Hayba.Input.Settings"))
+            .HintText(NSLOCTEXT("Hayba", "S.Model.Search", "Search models"))
+            .OnTextChanged_Lambda([this](const FText& Text)
+            {
+                ModelSearch = Text.ToString();
+                RefreshModelMenuItems();
+            })
+        ]
+        + SVerticalBox::Slot().AutoHeight()
+        [
+            SNew(SBox).MaxDesiredHeight(330.f)
+            [ SNew(SScrollBox)
+                + SScrollBox::Slot()
+                [ ModelMenuItems.ToSharedRef() ] ]
+        ]
+        + SVerticalBox::Slot().AutoHeight().Padding(0.f, 6.f, 0.f, 0.f)
+        [
+            FHaybaMCPStyle::PopupRow(
+                NSLOCTEXT("Hayba", "S.Model.EnterExactId", "Enter exact model ID"),
+                FOnClicked::CreateLambda([this]()
+                {
+                    if (ModelCombo.IsValid()) ModelCombo->SetIsOpen(false);
+                    bManualModelEntry = true;
+                    Invalidate(EInvalidateWidgetReason::Layout);
+                    if (LlmModelBox.IsValid())
+                        FSlateApplication::Get().SetKeyboardFocus(LlmModelBox.ToSharedRef(), EFocusCause::SetDirectly);
+                    return FReply::Handled();
+                }), bManualModelEntry)
+        ], 300.f);
+}
+
+void SHaybaMCPSettingsPanel::RefreshModelMenuItems()
+{
+    if (!ModelMenuItems.IsValid()) return;
+    ModelMenuItems->ClearChildren();
+    auto AddNote = [this](const FText& Note)
+    {
+        ModelMenuItems->AddSlot().AutoHeight().Padding(8.f, 4.f, 8.f, 8.f)
+        [ SNew(STextBlock)
+            .TextStyle(&FHaybaMCPStyle::Get().GetWidgetStyle<FTextBlockStyle>("Hayba.Text.Caption"))
+            .AutoWrapText(true).Text(Note) ];
+    };
+
+    if (bIsDirty || bModelDiscoveryLoading || !DiscoveredModels.IsSet())
+    {
+        AddNote(FText::FromString(ModelDiscoveryMessage));
+        return;
+    }
+
+    const FHaybaMCPModelDiscoveryResult& Result = DiscoveredModels.GetValue();
+    if (!Result.Error.IsEmpty())
+    {
+        AddNote(FText::FromString(Result.Error));
+        return;
+    }
+    if (Result.Status == EHaybaMCPModelDiscoveryStatus::NoKey)
+    {
+        AddNote(NSLOCTEXT("Hayba", "S.Model.NoKey", "Add an API key and save to list available models."));
+        return;
+    }
+    if (Result.Status == EHaybaMCPModelDiscoveryStatus::Manual)
+    {
+        AddNote(NSLOCTEXT("Hayba", "S.Model.Manual", "Enter the exact model ID for this endpoint."));
+        return;
+    }
+    if (Result.bStale || Result.Status == EHaybaMCPModelDiscoveryStatus::Unavailable)
+        AddNote(NSLOCTEXT("Hayba", "S.Model.Stale", "Current availability could not be verified. This list may be stale."));
+    else if (Result.bPartial)
+        AddNote(NSLOCTEXT("Hayba", "S.Model.Partial", "Only part of this provider's model list was verified."));
+
+    int32 Shown = 0;
+    int32 Matches = 0;
+    for (const FHaybaMCPDiscoveredModel& Model : Result.Models)
+    {
+        if (!ModelSearch.IsEmpty() && !Model.Id.Contains(ModelSearch, ESearchCase::IgnoreCase) &&
+            !Model.Name.Contains(ModelSearch, ESearchCase::IgnoreCase)) continue;
+        ++Matches;
+        if (Shown++ >= 40) continue;
+        const bool bImpossible = Model.ChatCapability == EHaybaMCPModelChatCapability::No ||
+            Model.ToolUse == EHaybaMCPModelToolUse::No;
+        const bool bVerified = Model.ChatCapability == EHaybaMCPModelChatCapability::Yes &&
+            (Model.ToolUse == EHaybaMCPModelToolUse::Yes ||
+             Model.ToolUse == EHaybaMCPModelToolUse::Trained);
+        FText Detail = Model.Name == Model.Id ? FText::GetEmpty() : FText::FromString(Model.Name);
+        if (bImpossible) Detail = NSLOCTEXT("Hayba", "S.Model.NoTools", "Not suitable for Hayba chat tools");
+        else if (!bVerified)
+            Detail = ModelPendingConfirmationId == Model.Id
+                ? NSLOCTEXT("Hayba", "S.Model.Confirm", "Tool support unverified. Select again to use this model.")
+                : NSLOCTEXT("Hayba", "S.Model.UnknownTools", "Tool support unverified. Confirmation required.");
+        ModelMenuItems->AddSlot().AutoHeight()
+        [
+            FHaybaMCPStyle::PopupRow(FText::FromString(Model.Id), FOnClicked::CreateLambda([this, Id = Model.Id, bVerified]()
+            {
+                if (!bVerified && ModelPendingConfirmationId != Id)
+                {
+                    ModelPendingConfirmationId = Id;
+                    RefreshModelMenuItems();
+                    return FReply::Handled();
+                }
+                if (ModelCombo.IsValid()) ModelCombo->SetIsOpen(false);
+                bManualModelEntry = false;
+                Invalidate(EInvalidateWidgetReason::Layout);
+                if (LlmModelBox.IsValid()) LlmModelBox->SetText(FText::FromString(Id));
+                return FReply::Handled();
+            }), LlmModelBox.IsValid() && LlmModelBox->GetText().ToString() == Model.Id,
+                Detail, !bImpossible)
+        ];
+    }
+    if (Matches == 0)
+        AddNote(NSLOCTEXT("Hayba", "S.Model.NoMatches", "No matching models. You can enter an exact ID manually."));
+    else if (Matches > 40)
+        AddNote(NSLOCTEXT("Hayba", "S.Model.More", "More models match. Narrow your search to find one."));
+}
+
+TSharedRef<SWidget> SHaybaMCPSettingsPanel::BuildAdvisoryVerbosityMenu()
+{
+    TSharedRef<SVerticalBox> Items = SNew(SVerticalBox);
+    for (const TSharedPtr<EHaybaMCPAdvisoryVerbosity>& Option : AdvisoryVerbosityOptions)
+    {
+        if (!Option.IsValid()) continue;
+        Items->AddSlot().AutoHeight()
+        [
+            FHaybaMCPStyle::PopupRow(AdvisoryVerbosityLabel(*Option), FOnClicked::CreateLambda([this, Option]()
+            {
+                if (AdvisoryVerbosityCombo.IsValid()) AdvisoryVerbosityCombo->SetIsOpen(false);
+                OnAdvisoryVerbosityChanged(Option, ESelectInfo::OnMouseClick);
+                return FReply::Handled();
+            }), SelectedAdvisoryVerbosity == Option)
+        ];
+    }
+    return FHaybaMCPStyle::PopupSurface(Items, 240.f);
+}
+
+TSharedRef<SWidget> SHaybaMCPSettingsPanel::BuildBrainLlmModeMenu()
+{
+    TSharedRef<SVerticalBox> Items = SNew(SVerticalBox);
+    for (const TSharedPtr<FString>& Option : BrainLlmModeOptions)
+    {
+        if (!Option.IsValid()) continue;
+        Items->AddSlot().AutoHeight()
+        [
+            FHaybaMCPStyle::PopupRow(BrainLlmModeLabel(Option), FOnClicked::CreateLambda([this, Option]()
+            {
+                if (BrainLlmModeCombo.IsValid()) BrainLlmModeCombo->SetIsOpen(false);
+                if (SelectedBrainLlmMode != Option)
+                {
+                    SelectedBrainLlmMode = Option;
+                    MarkDirty();
+                }
+                return FReply::Handled();
+            }), SelectedBrainLlmMode == Option,
+                *Option == TEXT("byok")
+                    ? NSLOCTEXT("Hayba", "S.Pro.Llm.Byok.Detail", "Use your configured provider key.")
+                    : NSLOCTEXT("Hayba", "S.Pro.Llm.Subscription.Detail", "Use Hayba-provided models."))
+        ];
+    }
+    return FHaybaMCPStyle::PopupSurface(Items, 240.f);
+}
+
+TSharedRef<SWidget> SHaybaMCPSettingsPanel::BuildLeaseEnforcementMenu()
+{
+    TSharedRef<SVerticalBox> Items = SNew(SVerticalBox);
+    const UHaybaMCPDeveloperSettings* Dev = GetDefault<UHaybaMCPDeveloperSettings>();
+    const EHaybaMCPLeaseEnforcement Selected = Dev
+        ? Dev->LeaseEnforcement : EHaybaMCPLeaseEnforcement::EnforcedForWrites;
+    for (const EHaybaMCPLeaseEnforcement Mode : {
+        EHaybaMCPLeaseEnforcement::EnforcedForWrites,
+        EHaybaMCPLeaseEnforcement::Enforced,
+        EHaybaMCPLeaseEnforcement::Advisory,
+        EHaybaMCPLeaseEnforcement::Off })
+    {
+        Items->AddSlot().AutoHeight()
+        [
+            FHaybaMCPStyle::PopupRow(LeaseModeLabel(Mode), FOnClicked::CreateLambda([this, Mode]()
+            {
+                if (LeaseEnforcementCombo.IsValid()) LeaseEnforcementCombo->SetIsOpen(false);
+                UHaybaMCPDeveloperSettings* MutableDev = GetMutableDefault<UHaybaMCPDeveloperSettings>();
+                if (MutableDev && MutableDev->LeaseEnforcement != Mode)
+                {
+                    MutableDev->LeaseEnforcement = Mode;
+                    MutableDev->SaveConfig();
+                }
+                return FReply::Handled();
+            }), Mode == Selected, LeaseModeDetail(Mode))
+        ];
+    }
+    return FHaybaMCPStyle::PopupSurface(Items, 260.f);
+}
+
+TSharedRef<SWidget> SHaybaMCPSettingsPanel::BuildSection(const FText& Heading, const FText& Tooltip,
+                                                          const TSharedRef<SWidget>& Body, bool bCollapsible)
+{
+    if (!bCollapsible)
+    {
+        return SNew(SVerticalBox)
+            + SVerticalBox::Slot().AutoHeight().Padding(0.f, 9.f, 0.f, 12.f)
             [
                 SNew(STextBlock)
-                .TextStyle(&FHaybaMCPStyle::Get().GetWidgetStyle<FTextBlockStyle>("Hayba.Text.TabLabel"))
+                .TextStyle(&FHaybaMCPStyle::Get().GetWidgetStyle<FTextBlockStyle>("Hayba.Text.Heading"))
                 .Text(Heading)
                 .ToolTipText(Tooltip)
             ]
-            + SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 0.f)
+            + SVerticalBox::Slot().AutoHeight().Padding(0.f, 3.f, 0.f, 12.f)
             [ Body ]
+            + SVerticalBox::Slot().AutoHeight()
+            [
+                SNew(SSeparator)
+                .Thickness(1.f)
+                .ColorAndOpacity(FSlateColor(FHaybaMCPStyle::Colour("Hayba.Color.Border.Subtle")))
+            ];
+    }
+
+    TSharedRef<bool> bExpanded = MakeShared<bool>(false);
+    return SNew(SVerticalBox)
+        + SVerticalBox::Slot().AutoHeight()
+        [
+            SNew(SButton)
+            .ButtonStyle(&FHaybaMCPStyle::Get().GetWidgetStyle<FButtonStyle>("Hayba.Button.Task"))
+            .ContentPadding(FMargin(0.f, 9.f))
+            .ToolTipText(Tooltip)
+            .OnClicked_Lambda([this, bExpanded]()
+            {
+                *bExpanded = !*bExpanded;
+                Invalidate(EInvalidateWidgetReason::Layout);
+                return FReply::Handled();
+            })
+            [
+                SNew(SHorizontalBox)
+                + SHorizontalBox::Slot().FillWidth(1.f).VAlign(VAlign_Center)
+                [
+                    SNew(STextBlock)
+                    .TextStyle(&FHaybaMCPStyle::Get().GetWidgetStyle<FTextBlockStyle>("Hayba.Text.Heading"))
+                    .Text(Heading)
+                ]
+                + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(8.f, 0.f, 2.f, 0.f)
+                [
+                    SNew(SImage)
+                    .Image_Lambda([bExpanded]() { return FHaybaMCPStyle::GetBrush(
+                        *bExpanded ? "Hayba.Icon.Chevron.Up" : "Hayba.Icon.Chevron.Down"); })
+                    .ColorAndOpacity(FSlateColor(FHaybaMCPStyle::Colour("Hayba.Color.Text.Secondary")))
+                ]
+            ]
+        ]
+        + SVerticalBox::Slot().AutoHeight().Padding(0.f, 3.f, 0.f, 12.f)
+        [ SNew(SBox).Visibility_Lambda([bExpanded]() { return *bExpanded ? EVisibility::Visible : EVisibility::Collapsed; }) [ Body ] ]
+        + SVerticalBox::Slot().AutoHeight()
+        [
+            SNew(SSeparator)
+            .Thickness(1.f)
+            .ColorAndOpacity(FSlateColor(FHaybaMCPStyle::Colour("Hayba.Color.Border.Subtle")))
         ];
 }
 
 TSharedRef<SWidget> SHaybaMCPSettingsPanel::BuildLabeledRow(const FText& Label, const FText& Tooltip, const TSharedRef<SWidget>& Right)
 {
-    // No visible help badge — tooltip is the only affordance and triggers on
-    // the standard Slate hover delay. The label, the input, and the row
-    // wrapper all carry the tooltip so hovering anywhere reveals it.
+    // Put the field below its label so narrow editor docks retain the whole
+    // control instead of squeezing it beside a long setting name.
     return SNew(SBox).ToolTipText(Tooltip)
     [
-        SNew(SHorizontalBox)
-        + SHorizontalBox::Slot().FillWidth(0.42f).VAlign(VAlign_Center)
+        SNew(SVerticalBox)
+        + SVerticalBox::Slot().AutoHeight()
         [
             SNew(STextBlock)
-            .TextStyle(&FHaybaMCPStyle::Get().GetWidgetStyle<FTextBlockStyle>("Hayba.Text.Body"))
+            .TextStyle(&FHaybaMCPStyle::Get().GetWidgetStyle<FTextBlockStyle>("Hayba.Text.TabLabel"))
             .Text(Label)
+            .AutoWrapText(true)
+            .Visibility(Label.IsEmpty() ? EVisibility::Collapsed : EVisibility::Visible)
             .ToolTipText(Tooltip)
         ]
-        + SHorizontalBox::Slot().FillWidth(0.58f).VAlign(VAlign_Center) [ Right ]
+        + SVerticalBox::Slot().AutoHeight().Padding(0.f, Label.IsEmpty() ? 0.f : 6.f, 0.f, 8.f)
+        [ Right ]
     ];
 }
 
@@ -639,10 +1056,16 @@ TSharedRef<SWidget> SHaybaMCPSettingsPanel::BuildToggle(const FText& Label, cons
 
 void SHaybaMCPSettingsPanel::MarkDirty()
 {
+    if (ModelDiscoveryClient.IsValid()) ModelDiscoveryClient->Cancel();
+    DiscoveredModels.Reset();
+    ModelPendingConfirmationId.Empty();
+    bModelDiscoveryLoading = false;
+    ModelDiscoveryMessage = TEXT("Save your changes to browse this provider's models.");
+    RefreshModelMenuItems();
     if (!bIsDirty)
     {
         bIsDirty = true;
-        Invalidate(EInvalidateWidgetReason::Paint);
+        Invalidate(EInvalidateWidgetReason::Layout);
     }
 }
 
@@ -668,6 +1091,7 @@ FReply SHaybaMCPSettingsPanel::OnSave()
     // it under the right id.
     if (SelectedProvider.IsValid()) S.SelectedProviderId = *SelectedProvider;
     if (SelectedAdvisoryVerbosity.IsValid()) S.AdvisoryVerbosity = *SelectedAdvisoryVerbosity;
+    if (SelectedBrainLlmMode.IsValid()) S.BrainLlmMode = *SelectedBrainLlmMode;
 
     // Only touch the vault when the user actually typed a new key this session.
     // An empty-but-untouched box must NOT wipe the stored key.
@@ -697,7 +1121,9 @@ FReply SHaybaMCPSettingsPanel::OnSave()
     bIsDirty = false;
     bKeyDiscardedOnProviderChange = false;
     DiscardedKeyProviderLabel.Empty();
-    Invalidate(EInvalidateWidgetReason::Paint);
+    DiscoveredModels.Reset();
+    ModelDiscoveryMessage = TEXT("Checking available models...");
+    Invalidate(EInvalidateWidgetReason::Layout);
     return FReply::Handled();
 }
 
@@ -755,22 +1181,34 @@ void SHaybaMCPSettingsPanel::RefreshKeyStatus()
 
     if (Info && !Info->bNeedsKey)
     {
-        KeyStatusText->SetText(NSLOCTEXT("Hayba", "S.Key.Keyless",
-            "Keyless provider — no API key needed."));
+        KeyStatusText->SetText(NSLOCTEXT("Hayba", "S.Key.Keyless", "No API key needed."));
         KeyStatusText->SetColorAndOpacity(FSlateColor(FLinearColor(0.45f, 0.8f, 0.5f))); // green
         return;
     }
 
     // NEVER display the full key — last-4 only.
     const FString Last4 = FHaybaMCPSettings::GetProviderKeyLast4(Id);
+    if (bKeyEdited && LlmApiKeyBox.IsValid())
+    {
+        const bool bHasPendingKey = !LlmApiKeyBox->GetText().IsEmpty();
+        KeyStatusText->SetText(bHasPendingKey
+            ? (Last4.IsEmpty()
+                ? NSLOCTEXT("Hayba", "S.Key.PendingNew", "Key entered. Save to use it.")
+                : NSLOCTEXT("Hayba", "S.Key.PendingReplace", "New key entered. Save to replace the stored key."))
+            : (Last4.IsEmpty()
+                ? NSLOCTEXT("Hayba", "S.Key.None", "No key saved")
+                : NSLOCTEXT("Hayba", "S.Key.PendingClear", "Key cleared here. Save to remove the stored key.")));
+        KeyStatusText->SetColorAndOpacity(FSlateColor(FHaybaMCPStyle::Colour("Hayba.Color.Status.Warn")));
+        return;
+    }
     if (Last4.IsEmpty())
     {
-        KeyStatusText->SetText(NSLOCTEXT("Hayba", "S.Key.None", "No key stored for this provider."));
+        KeyStatusText->SetText(NSLOCTEXT("Hayba", "S.Key.None", "No key saved"));
         KeyStatusText->SetColorAndOpacity(FSlateColor(FLinearColor(0.85f, 0.55f, 0.35f))); // amber
     }
     else
     {
-        KeyStatusText->SetText(FText::FromString(FString::Printf(TEXT("Stored (DPAPI): ••••%s"), *Last4)));
+        KeyStatusText->SetText(FText::FromString(FString::Printf(TEXT("Key saved: ••••%s"), *Last4)));
         KeyStatusText->SetColorAndOpacity(FSlateColor(FLinearColor(0.65f, 0.65f, 0.7f))); // muted
     }
 }

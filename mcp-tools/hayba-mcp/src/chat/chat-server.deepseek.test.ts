@@ -36,7 +36,7 @@ describe('DeepSeek Community chat', () => {
     })()) } } };
   }
 
-  it('accepts the preset and passes its own configured key to the Community client', async () => {
+  it('passes the chosen model, effort, and configured key to the Community client', async () => {
     const configs: LLMClientConfig[] = [];
     const client: LLMClient = {
       provider: 'deepseek', model: 'deepseek-flash', protocol: 'openai',
@@ -67,11 +67,12 @@ describe('DeepSeek Community chat', () => {
 
     const streamed = await fetch(`${base}/chat/stream`, {
       method: 'POST', headers,
-      body: JSON.stringify({ prompt: 'hello', loop: 'community' }),
+      body: JSON.stringify({ prompt: 'hello', loop: 'community', model: 'deepseek-selected', reasoning_effort: 'low' }),
     });
     const sse = await streamed.text();
     expect(sse).toContain('event: done');
-    expect(configs).toEqual([{ provider: 'deepseek', model: undefined, baseURL: undefined, apiKey: 'synthetic-deepseek-key' }]);
+    expect(configs).toEqual([{ provider: 'deepseek', model: 'deepseek-selected',
+      reasoningEffort: 'low', baseURL: undefined, apiKey: 'synthetic-deepseek-key' }]);
     expect(sse).not.toContain('synthetic-deepseek-key');
   });
 

@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { MAX_PYTHON_SCRIPT_CHARS, PYTHON_CRASH_RULES } from '../guards/known-crashers.js';
+import { nativeFailureFacts, pythonRunHandler } from './python-run.js';
 
 // Installed on the ToolExecutor seam rather than mocking the tcp-client module
 // — same (cmd, params, timeoutMs) signature, so the assertions are unchanged.
@@ -11,7 +12,6 @@ import { setDefaultSender } from '../tool-executor.js';
 
 describe('python_run crash guard + bounded inline output', () => {
   it('refuses a known-crasher script without contacting UE', async () => {
-    const { pythonRunHandler } = await import('./python-run.js');
     send.mockClear();
     setDefaultSender(send);
     const r = await pythonRunHandler({ script: 'm.build_scale3d(v)' }, {} as never);
@@ -22,7 +22,6 @@ describe('python_run crash guard + bounded inline output', () => {
   });
 
   it('does not let allow_unsafe bypass an editor-crash guard', async () => {
-    const { pythonRunHandler } = await import('./python-run.js');
     send.mockClear();
     setDefaultSender(send);
     const r = await pythonRunHandler({ script: 'm.build_scale3d(v)', allow_unsafe: true }, {} as never);
@@ -32,7 +31,6 @@ describe('python_run crash guard + bounded inline output', () => {
   });
 
   it('normalizes case and whitespace before the early crash check', async () => {
-    const { pythonRunHandler } = await import('./python-run.js');
     send.mockClear();
     setDefaultSender(send);
     const r = await pythonRunHandler(
@@ -48,7 +46,6 @@ describe('python_run crash guard + bounded inline output', () => {
   });
 
   it('rejects wildcard imports before UE with the stable dynamic-policy code', async () => {
-    const { pythonRunHandler } = await import('./python-run.js');
     send.mockClear();
     setDefaultSender(send);
     const r = await pythonRunHandler({ script: 'from math import *', allow_unsafe: true }, {} as never);
@@ -60,7 +57,6 @@ describe('python_run crash guard + bounded inline output', () => {
   });
 
   it('rejects every fatal rule before UE, including with allow_unsafe', async () => {
-    const { pythonRunHandler } = await import('./python-run.js');
     send.mockClear();
     setDefaultSender(send);
 
@@ -77,7 +73,6 @@ describe('python_run crash guard + bounded inline output', () => {
   });
 
   it('rejects oversized scripts before UE with a stable non-retryable code', async () => {
-    const { pythonRunHandler } = await import('./python-run.js');
     send.mockClear();
     setDefaultSender(send);
     const r = await pythonRunHandler(
@@ -92,7 +87,6 @@ describe('python_run crash guard + bounded inline output', () => {
   });
 
   it('refuses direct Tier-3 source before UE even with legacy allow_unsafe', async () => {
-    const { pythonRunHandler } = await import('./python-run.js');
     send.mockClear();
     setDefaultSender(send);
     const r = await pythonRunHandler({ script: 'open("C:/Temp/hayba.txt", "w")', allow_unsafe: true }, {} as never);
@@ -109,7 +103,6 @@ describe('python_run crash guard + bounded inline output', () => {
   });
 
   it('accepts but strips allow_unsafe from a non-Tier-3 compatibility request', async () => {
-    const { pythonRunHandler } = await import('./python-run.js');
     send.mockClear();
     setDefaultSender(send);
     send.mockResolvedValueOnce({ ok: true, data: { ok: true, stdout: 'bounded' } });
@@ -123,7 +116,6 @@ describe('python_run crash guard + bounded inline output', () => {
   });
 
   it('forwards deadline_s, world_partition and transaction to the native handler', async () => {
-    const { pythonRunHandler } = await import('./python-run.js');
     send.mockClear();
     setDefaultSender(send);
     send.mockResolvedValueOnce({ ok: true, data: { ok: true, stdout: '' } });
@@ -140,7 +132,6 @@ describe('python_run crash guard + bounded inline output', () => {
   });
 
   it('rejects a deadline_s outside 5..60 before UE', async () => {
-    const { pythonRunHandler } = await import('./python-run.js');
     send.mockClear();
     setDefaultSender(send);
     const r = await pythonRunHandler({ script: 'print(1)', deadline_s: 600 }, {} as never);
@@ -149,7 +140,6 @@ describe('python_run crash guard + bounded inline output', () => {
   });
 
   it('preserves an authoritative native policy code and recovery response', async () => {
-    const { pythonRunHandler } = await import('./python-run.js');
     send.mockClear();
     setDefaultSender(send);
     const nativeMessage =
@@ -170,7 +160,6 @@ describe('python_run crash guard + bounded inline output', () => {
   });
 
   it('preserves non-bypassable runtime deadline codes from native UE', async () => {
-    const { pythonRunHandler } = await import('./python-run.js');
     send.mockClear();
     setDefaultSender(send);
     const nativeMessage =
@@ -185,7 +174,6 @@ describe('python_run crash guard + bounded inline output', () => {
   });
 
   it('bounds >12K output truthfully in memory and has no raw filesystem spill path', async () => {
-    const { pythonRunHandler } = await import('./python-run.js');
     send.mockClear();
     setDefaultSender(send);
     const sentinel = 'HAYBA_SENTINEL_RAW_TEMP_SPILL_383';
@@ -234,7 +222,6 @@ describe('python_run crash guard + bounded inline output', () => {
   });
 
   it('preserves native 64KiB capture loss separately from the bounded MCP view', async () => {
-    const { pythonRunHandler } = await import('./python-run.js');
     send.mockClear();
     setDefaultSender(send);
     send.mockResolvedValueOnce({
@@ -266,7 +253,6 @@ describe('python_run crash guard + bounded inline output', () => {
   });
 
   it('returns small output inline', async () => {
-    const { pythonRunHandler } = await import('./python-run.js');
     send.mockClear();
     setDefaultSender(send);
     send.mockResolvedValueOnce({ ok: true, data: { ok: true, stdout: 'small' } });
@@ -292,7 +278,6 @@ describe('python_run native fault facts (ADR-0011)', () => {
   ] as const;
 
   it.each(rules)('maps %s to an unknown outcome that forbids retry', async (rule, executionPhase) => {
-    const { pythonRunHandler } = await import('./python-run.js');
     send.mockClear();
     setDefaultSender(send);
     send.mockResolvedValueOnce({
@@ -331,7 +316,6 @@ describe('python_run native fault facts (ADR-0011)', () => {
   });
 
   it('overrides a stale plugin that labelled a post-execution fault not_started', async () => {
-    const { pythonRunHandler } = await import('./python-run.js');
     send.mockClear();
     setDefaultSender(send);
     send.mockResolvedValueOnce({
@@ -353,7 +337,6 @@ describe('python_run native fault facts (ADR-0011)', () => {
   });
 
   it('reports a refusal after an earlier fault as not started, retry forbidden until restart', async () => {
-    const { pythonRunHandler } = await import('./python-run.js');
     send.mockClear();
     setDefaultSender(send);
     send.mockResolvedValueOnce({
@@ -375,7 +358,6 @@ describe('python_run native fault facts (ADR-0011)', () => {
   });
 
   it('keeps pre-execution policy codes not_started, but never claims it for the post-execution deadline', async () => {
-    const { nativeFailureFacts } = await import('./python-run.js');
     expect(nativeFailureFacts({}, 'python_run policy_blocked [HCR-WORLD-001]: x', false)).toMatchObject({
       policy_code: 'HCR-WORLD-001',
       retry_unchanged: 'forbidden',

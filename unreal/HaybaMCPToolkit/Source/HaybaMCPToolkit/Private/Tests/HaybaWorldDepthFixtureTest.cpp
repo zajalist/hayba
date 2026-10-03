@@ -101,7 +101,7 @@ bool FHaybaWorldDepthFixtureTest::RunTest(const FString&)
     if (!TestNotNull(TEXT("scene-depth capture"), Capture)) return false;
     Capture->bCaptureEveryFrame = false;
     Capture->bCaptureOnMovement = false;
-    Capture->CaptureSource = ESceneCaptureSource::SCS_SceneDepth;
+    Capture->CaptureSource = ESceneCaptureSource::SCS_SceneColorSceneDepth;
     Capture->FOVAngle = 90.0f;
     Capture->TextureTarget = Target;
     Capture->RegisterComponentWithWorld(World.Get());
@@ -119,12 +119,16 @@ bool FHaybaWorldDepthFixtureTest::RunTest(const FString&)
 
     const int32 CenterX = HaybaWorldDepth::Width / 2;
     const int32 CenterY = HaybaWorldDepth::Height / 2;
-    const double DepthCm = static_cast<double>(Pixels[CenterY * HaybaWorldDepth::Width + CenterX].R);
-    AddInfo(FString::Printf(TEXT("Synthetic cube face: expected %.2f cm, scene-depth R %.2f cm"),
+    const FLinearColor& Center = Pixels[CenterY * HaybaWorldDepth::Width + CenterX];
+    const double DepthCm = static_cast<double>(Center.A);
+    AddInfo(FString::Printf(TEXT("Synthetic cube face: expected %.2f cm, aligned SceneDepth A %.2f cm"),
         ExpectedDepthCm, DepthCm));
     if (!TestTrue(TEXT("scene depth is a linear forward distance in centimeters"),
         FMath::IsFinite(DepthCm) && FMath::Abs(DepthCm - ExpectedDepthCm) <= 5.0))
         return false;
+    FColor DisplayColor = FColor::Black;
+    TestTrue(TEXT("center pixel has finite rendered scene RGB"),
+        HaybaWorldDepth::SceneColorToDisplay(Center, DisplayColor));
 
     const HaybaWorldDepth::FProjection Projection = HaybaWorldDepth::MakeProjection(
         FVector::ZeroVector, FRotator::ZeroRotator, 90.0);

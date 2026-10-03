@@ -557,7 +557,9 @@ void SHaybaMCPSceneMapWebPanel::BeginDepthCapture()
     DepthTarget->UpdateResourceImmediate(true);
     DepthCapture->bCaptureEveryFrame = false;
     DepthCapture->bCaptureOnMovement = false;
-    DepthCapture->CaptureSource = ESceneCaptureSource::SCS_SceneDepth;
+    // One aligned render provides the visible surface's RGB and linear depth.
+    // Offscreen/occluded mesh points keep their unknown-color presentation.
+    DepthCapture->CaptureSource = ESceneCaptureSource::SCS_SceneColorSceneDepth;
     DepthCapture->FOVAngle = static_cast<float>(DepthFov);
     DepthCapture->TextureTarget = DepthTarget.Get();
     DepthCapture->RegisterComponentWithWorld(World);
@@ -598,7 +600,7 @@ void SHaybaMCPSceneMapWebPanel::ProcessDepthPixels(UWorld* World)
         const int32 Anchor = DepthAnchorCursor++;
         const int32 X = (Anchor % AnchorsPerAxis) * CellSize + CellSize / 2;
         const int32 Y = (Anchor / AnchorsPerAxis) * CellSize + CellSize / 2;
-        const double DepthCm = DepthPixels[Y * HaybaWorldDepth::Width + X].R;
+        const double DepthCm = DepthPixels[Y * HaybaWorldDepth::Width + X].A;
         FDepthAnchor& Label = DepthAnchors[Anchor];
         Label.DepthCm = DepthCm;
         FVector Point;
@@ -631,7 +633,8 @@ void SHaybaMCPSceneMapWebPanel::ProcessDepthPixels(UWorld* World)
         const int32 Pixel = HaybaWorldDepth::PixelAtOrdinal(DepthPixelCursor++);
         const int32 X = Pixel % HaybaWorldDepth::Width;
         const int32 Y = Pixel / HaybaWorldDepth::Width;
-        const double DepthCm = DepthPixels[Pixel].R;
+        const FLinearColor& ColorDepth = DepthPixels[Pixel];
+        const double DepthCm = ColorDepth.A;
         FVector Point;
         if (!Projection.Unproject(X, Y, DepthCm, Point)) continue;
         const int32 Cell = (Y / CellSize) * AnchorsPerAxis + X / CellSize;
@@ -650,9 +653,11 @@ void SHaybaMCPSceneMapWebPanel::ProcessDepthPixels(UWorld* World)
         HaybaWorldGeometry::FSplat Splat;
         Splat.PositionCm = Point - Geometry.OriginCm;
         Splat.Normal = (DepthCameraCm - Point).GetSafeNormal();
-        Splat.R = bAttributed ? 191 : 145;
-        Splat.G = bAttributed ? 154 : 138;
-        Splat.B = bAttributed ? 105 : 129;
+        FColor DisplayColor = FColor::Black;
+        const bool bColorObserved = HaybaWorldDepth::SceneColorToDisplay(ColorDepth, DisplayColor);
+        Splat.R = bColorObserved ? DisplayColor.R : 145;
+        Splat.G = bColorObserved ? DisplayColor.G : 138;
+        Splat.B = bColorObserved ? DisplayColor.B : 129;
         Splat.ActorIndex = bAttributed ? Anchor.Actor : INDEX_NONE;
         Splat.NodeIndex = bAttributed ? Anchor.Node : INDEX_NONE;
         HaybaViewDepthSnapshot::FPoint ObservedPoint;
@@ -660,6 +665,8 @@ void SHaybaMCPSceneMapWebPanel::ProcessDepthPixels(UWorld* World)
         ObservedPoint.PixelX = X;
         ObservedPoint.PixelY = Y;
         ObservedPoint.DepthCm = DepthCm;
+        ObservedPoint.DisplayColor = DisplayColor;
+        ObservedPoint.bColorObserved = bColorObserved;
         if (bMatchedRayPixel)
         {
             ObservedPoint.SourceActorPath = Anchor.SourceActorPath;
@@ -743,7 +750,7 @@ void SHaybaMCPSceneMapWebPanel::FinishScan()
     Depth->SetNumberField(TEXT("readbackWarningMs"), HaybaWorldDepth::ReadbackWarningMs);
     Depth->SetStringField(TEXT("attribution"), TEXT("anchor_pixel_physics_ray_verified_or_unknown"));
     Depth->SetStringField(TEXT("normalProvenance"), TEXT("view_facing_estimate"));
-    Depth->SetStringField(TEXT("pointColorProvenance"), TEXT("depth_overlay_palette_not_material_color"));
+    Depth->SetStringField(TEXT("pointColorProvenance"), TEXT("rendered_scene_color_visible_surface_or_unobserved"));
     Depth->SetStringField(TEXT("visibility"), TEXT("first_depth_surface_from_one_editor_view"));
     TArray<TSharedPtr<FJsonValue>> CameraValues;
     CameraValues.Add(MakeShared<FJsonValueNumber>(DepthCameraCm.X));

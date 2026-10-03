@@ -1,50 +1,43 @@
 // Plugins/HaybaMCPToolkit/Source/HaybaMCPToolkit/Private/HaybaMCPCapabilitiesPanel.cpp
 #include "HaybaMCPCapabilitiesPanel.h"
 #include "HaybaMCPSettings.h"
-#include "HaybaMCPModule.h"
+#include "HaybaMCPStyle.h"
 
 #include "Widgets/SBoxPanel.h"
 #include "Widgets/Layout/SBorder.h"
+#include "Widgets/Layout/SBox.h"
 #include "Widgets/Layout/SScrollBox.h"
 #include "Widgets/Layout/SSeparator.h"
-#include "Widgets/Layout/SExpandableArea.h"
 #include "Widgets/Text/STextBlock.h"
+#include "Widgets/Images/SImage.h"
 #include "Widgets/Input/SButton.h"
-#include "Widgets/Input/SCheckBox.h"
-#include "Widgets/Input/SSearchBox.h"
-#include "Styling/AppStyle.h"
+#include "Widgets/Input/SEditableTextBox.h"
+#include "Styling/CoreStyle.h"
 
 #define LOCTEXT_NAMESPACE "HaybaMCPCapabilities"
 
 void SHaybaMCPCapabilitiesPanel::Construct(const FArguments& InArgs)
 {
-    Module = InArgs._Module;
+    (void)InArgs;
     BuildCatalog();
 
     ChildSlot
     [
-        SNew(SVerticalBox)
-        // Heading and explainer copy.
-        + SVerticalBox::Slot().AutoHeight().Padding(12.f, 12.f, 12.f, 6.f)
-        [ BuildHeader() ]
-
-        // Live status strip: online + agent count.
-        + SVerticalBox::Slot().AutoHeight().Padding(12.f, 0.f, 12.f, 8.f)
-        [ BuildStatusStrip() ]
-
-        + SVerticalBox::Slot().AutoHeight().Padding(12.f, 0.f)
-        [ SNew(SSeparator).Thickness(1.f) ]
-
-        // Search + bulk actions.
-        + SVerticalBox::Slot().AutoHeight().Padding(12.f, 8.f)
-        [ BuildToolbar() ]
-
-        // Scrollable categorized list.
-        + SVerticalBox::Slot().FillHeight(1.f).Padding(8.f, 0.f, 8.f, 8.f)
+        SNew(SBorder)
+        .BorderImage(FHaybaMCPStyle::GetBrush("Hayba.Brush.Dock"))
+        .Padding(FMargin(0.f))
         [
-            SNew(SScrollBox)
-            + SScrollBox::Slot()
-            [ SAssignNew(CategoryList, SVerticalBox) ]
+            SNew(SVerticalBox)
+            + SVerticalBox::Slot().AutoHeight().Padding(12.f, 12.f, 12.f, 8.f)
+            [ BuildHeader() ]
+            + SVerticalBox::Slot().AutoHeight().Padding(12.f, 0.f, 12.f, 10.f)
+            [ BuildToolbar() ]
+            + SVerticalBox::Slot().FillHeight(1.f).Padding(8.f, 0.f, 8.f, 8.f)
+            [
+                SNew(SScrollBox)
+                + SScrollBox::Slot()
+                [ SAssignNew(CategoryList, SVerticalBox) ]
+            ]
         ]
     ];
 
@@ -56,110 +49,20 @@ void SHaybaMCPCapabilitiesPanel::Construct(const FArguments& InArgs)
 TSharedRef<SWidget> SHaybaMCPCapabilitiesPanel::BuildHeader()
 {
     return SNew(SVerticalBox)
-        + SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 4.f)
+        + SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 5.f)
         [
             SNew(STextBlock)
-            .TextStyle(&FAppStyle::Get().GetWidgetStyle<FTextBlockStyle>("DetailsView.CategoryTextStyle"))
-            .Text(LOCTEXT("HeaderTitle", "Model Context Protocol"))
-        ]
-        + SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 2.f)
-        [
-            SNew(STextBlock)
-            .ColorAndOpacity(FSlateColor(FLinearColor(0.78f, 0.80f, 0.88f)))
-            .AutoWrapText(true)
-            .Text_Lambda([this]()
-            {
-                return FText::FromString(FString::Printf(
-                    TEXT("Hayba exposes %d tools across %d domains to your AI agent. Toggle individual tools or whole categories off to limit what the remote agent can see and call."),
-                    TotalTools(), Categories.Num()));
-            })
+            .TextStyle(&FHaybaMCPStyle::Get().GetWidgetStyle<FTextBlockStyle>("Hayba.Text.Heading"))
+            .Text(LOCTEXT("HeaderTitle", "Tool permissions"))
         ]
         + SVerticalBox::Slot().AutoHeight()
         [
             SNew(STextBlock)
-            .ColorAndOpacity(FSlateColor(FLinearColor(0.55f, 0.57f, 0.65f)))
-            .Text_Lambda([this]()
-            {
-                return FText::FromString(FString::Printf(
-                    TEXT("Currently exposing %d / %d tools."), TotalEnabledTools(), TotalTools()));
-            })
-        ];
-}
-
-// ── Status strip (online + agent count, live via lambdas) ────────────────
-
-TSharedRef<SWidget> SHaybaMCPCapabilitiesPanel::BuildStatusStrip()
-{
-    // Two-line status: top = live status (dot + state + agent count),
-    // bottom = static transport (TCP port + protocol). Avoids the right-side
-    // crowding when the panel is narrow.
-    const FLinearColor ColorOnline (0.40f, 0.95f, 0.55f);
-    const FLinearColor ColorOffline(1.00f, 0.40f, 0.40f);
-    const FLinearColor ColorMuted  (0.55f, 0.57f, 0.65f);
-
-    return SNew(SBorder)
-        .BorderImage(FAppStyle::GetBrush("Brushes.Panel"))
-        .Padding(FMargin(10.f, 6.f))
-        [
-            SNew(SVerticalBox)
-            // Top row: live state.
-            + SVerticalBox::Slot().AutoHeight()
-            [
-                SNew(SHorizontalBox)
-                + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0.f, 0.f, 6.f, 0.f)
-                [
-                    SNew(STextBlock)
-                    .Text(FText::FromString(TEXT("●")))
-                    .ColorAndOpacity_Lambda([this, ColorOnline, ColorOffline]() -> FSlateColor
-                    {
-                        const bool bUp = Module && Module->IsTcpServerRunning();
-                        return FSlateColor(bUp ? ColorOnline : ColorOffline);
-                    })
-                ]
-                + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
-                [
-                    SNew(STextBlock)
-                    .TextStyle(&FAppStyle::Get().GetWidgetStyle<FTextBlockStyle>("NormalText"))
-                    .Text_Lambda([this]()
-                    {
-                        const bool bUp = Module && Module->IsTcpServerRunning();
-                        return bUp
-                            ? NSLOCTEXT("HaybaMCP", "Status.Online", "MCP server online")
-                            : NSLOCTEXT("HaybaMCP", "Status.Offline", "MCP server offline");
-                    })
-                    .ColorAndOpacity_Lambda([this, ColorOnline, ColorOffline]() -> FSlateColor
-                    {
-                        const bool bUp = Module && Module->IsTcpServerRunning();
-                        return FSlateColor(bUp ? ColorOnline : ColorOffline);
-                    })
-                ]
-                + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(8.f, 0.f, 8.f, 0.f)
-                [
-                    SNew(STextBlock)
-                    .Text(FText::FromString(TEXT("·")))
-                    .ColorAndOpacity(FSlateColor(ColorMuted))
-                ]
-                + SHorizontalBox::Slot().FillWidth(1.f).VAlign(VAlign_Center)
-                [
-                    SNew(STextBlock)
-                    .TextStyle(&FAppStyle::Get().GetWidgetStyle<FTextBlockStyle>("NormalText"))
-                    .ColorAndOpacity(FSlateColor(ColorMuted))
-                    .Text_Lambda([this]()
-                    {
-                        const int32 N = Module ? Module->GetTcpClientCount() : 0;
-                        return FText::FromString(FString::Printf(TEXT("%d agent%s connected"),
-                            N, N == 1 ? TEXT("") : TEXT("s")));
-                    })
-                ]
-            ]
-            // Bottom row: transport info, muted.
-            + SVerticalBox::Slot().AutoHeight().Padding(0.f, 2.f, 0.f, 0.f)
-            [
-                SNew(STextBlock)
-                .TextStyle(&FAppStyle::Get().GetWidgetStyle<FTextBlockStyle>("SmallText"))
-                .ColorAndOpacity(FSlateColor(ColorMuted))
-                .Text(NSLOCTEXT("HaybaMCP", "Status.Port", "Transport: TCP :52342 · stdio"))
-            ]
+            .TextStyle(&FHaybaMCPStyle::Get().GetWidgetStyle<FTextBlockStyle>("Hayba.Text.Body"))
+            .ColorAndOpacity(FSlateColor(FHaybaMCPStyle::Colour("Hayba.Color.Text.Secondary")))
+            .AutoWrapText(true)
+            .Text(LOCTEXT("PermissionConsequence",
+                "Changes save immediately. Turning off a listed tool hides it from agents and rejects direct calls. Earlier changes remain."))
         ];
 }
 
@@ -167,31 +70,35 @@ TSharedRef<SWidget> SHaybaMCPCapabilitiesPanel::BuildStatusStrip()
 
 TSharedRef<SWidget> SHaybaMCPCapabilitiesPanel::BuildToolbar()
 {
-    // Stock UE5 button (not SimpleButton) so Enable/Disable read as buttons
-    // rather than text links. Short search hint so it doesn't truncate at
-    // narrow panel widths.
-    return SNew(SHorizontalBox)
-        + SHorizontalBox::Slot().FillWidth(1.f).VAlign(VAlign_Center)
+    return SNew(SVerticalBox)
+        + SVerticalBox::Slot().AutoHeight()
         [
-            SNew(SSearchBox)
-            .HintText(LOCTEXT("MCPSearchHint", "Search..."))
+            SNew(SEditableTextBox)
+            .Style(&FHaybaMCPStyle::Get().GetWidgetStyle<FEditableTextBoxStyle>("Hayba.Input.Settings"))
+            .HintText(LOCTEXT("MCPSearchHint", "Search tools or categories"))
             .OnTextChanged(this, &SHaybaMCPCapabilitiesPanel::OnSearchChanged)
         ]
-        + SHorizontalBox::Slot().AutoWidth().Padding(8.f, 0.f, 0.f, 0.f)
+        + SVerticalBox::Slot().AutoHeight().Padding(0.f, 8.f, 0.f, 0.f)
         [
-            SNew(SButton)
-            .ContentPadding(FMargin(10.f, 3.f))
-            .ToolTipText(LOCTEXT("EnableAllTT", "Re-enable every tool"))
-            .OnClicked(this, &SHaybaMCPCapabilitiesPanel::OnEnableAll)
-            [ SNew(STextBlock).Text(LOCTEXT("EnableAll", "Enable all")) ]
-        ]
-        + SHorizontalBox::Slot().AutoWidth().Padding(4.f, 0.f, 0.f, 0.f)
-        [
-            SNew(SButton)
-            .ContentPadding(FMargin(10.f, 3.f))
-            .ToolTipText(LOCTEXT("DisableAllTT", "Hide every tool from the agent"))
-            .OnClicked(this, &SHaybaMCPCapabilitiesPanel::OnDisableAll)
-            [ SNew(STextBlock).Text(LOCTEXT("DisableAll", "Disable all")) ]
+            SNew(SHorizontalBox)
+            + SHorizontalBox::Slot().AutoWidth()
+            [
+                SNew(SButton)
+                .ButtonStyle(&FHaybaMCPStyle::Get().GetWidgetStyle<FButtonStyle>("Hayba.Button.Switcher"))
+                .ContentPadding(FMargin(10.f, 5.f))
+                .ToolTipText(LOCTEXT("EnableAllTT", "Enable every tool managed on this page, including tools hidden by search"))
+                .OnClicked(this, &SHaybaMCPCapabilitiesPanel::OnEnableAll)
+                .Text(LOCTEXT("EnableAll", "Enable managed tools"))
+            ]
+            + SHorizontalBox::Slot().AutoWidth().Padding(6.f, 0.f, 0.f, 0.f)
+            [
+                SNew(SButton)
+                .ButtonStyle(&FHaybaMCPStyle::Get().GetWidgetStyle<FButtonStyle>("Hayba.Button.Switcher"))
+                .ContentPadding(FMargin(10.f, 5.f))
+                .ToolTipText(LOCTEXT("DisableAllTT", "Disable every tool managed on this page, including tools hidden by search"))
+                .OnClicked(this, &SHaybaMCPCapabilitiesPanel::OnDisableAll)
+                .Text(LOCTEXT("DisableAll", "Disable managed tools"))
+            ]
         ];
 }
 
@@ -217,7 +124,7 @@ void SHaybaMCPCapabilitiesPanel::BuildCatalog()
     };
 
     AddCategory(LOCTEXT("Cat.Meta", "Code Mode (meta-tools)"),
-        TEXT("The three meta-tools the agent always sees first. Disabling these is rarely useful."),
+        TEXT("Tool discovery and constrained Python access. Disabling discovery can prevent agents from finding other tools."),
         {
             { TEXT("list_tool_categories"), TEXT("Domain overview the agent calls first.") },
             { TEXT("get_tool_signature"),   TEXT("Returns the JSON schema for a specific tool.") },
@@ -320,23 +227,9 @@ int32 SHaybaMCPCapabilitiesPanel::EnabledCountInCategory(const FCategoryEntry& C
     return N;
 }
 
-int32 SHaybaMCPCapabilitiesPanel::TotalToolsInCategory(const FCategoryEntry& Cat) const
+bool SHaybaMCPCapabilitiesPanel::IsCategoryOpen(const FCategoryEntry& Cat) const
 {
-    return Cat.Tools.Num();
-}
-
-int32 SHaybaMCPCapabilitiesPanel::TotalEnabledTools() const
-{
-    int32 N = 0;
-    for (const FCategoryEntry& Cat : Categories) N += EnabledCountInCategory(Cat);
-    return N;
-}
-
-int32 SHaybaMCPCapabilitiesPanel::TotalTools() const
-{
-    int32 N = 0;
-    for (const FCategoryEntry& Cat : Categories) N += Cat.Tools.Num();
-    return N;
+    return FilterQuery.IsEmpty() ? Cat.bExpanded : !Cat.bSearchCollapsed;
 }
 
 bool SHaybaMCPCapabilitiesPanel::ToolMatchesFilter(const FToolEntry& Tool) const
@@ -349,7 +242,8 @@ bool SHaybaMCPCapabilitiesPanel::ToolMatchesFilter(const FToolEntry& Tool) const
 bool SHaybaMCPCapabilitiesPanel::CategoryMatchesFilter(const FCategoryEntry& Cat) const
 {
     if (FilterQuery.IsEmpty()) return true;
-    if (Cat.Title.ToString().Contains(FilterQuery, ESearchCase::IgnoreCase)) return true;
+    if (Cat.Title.ToString().Contains(FilterQuery, ESearchCase::IgnoreCase) ||
+        Cat.Description.Contains(FilterQuery, ESearchCase::IgnoreCase)) return true;
     for (const FToolEntry& Tool : Cat.Tools) if (ToolMatchesFilter(Tool)) return true;
     return false;
 }
@@ -359,12 +253,15 @@ bool SHaybaMCPCapabilitiesPanel::CategoryMatchesFilter(const FCategoryEntry& Cat
 void SHaybaMCPCapabilitiesPanel::OnSearchChanged(const FText& InText)
 {
     FilterQuery = InText.ToString().TrimStartAndEnd();
+    for (FCategoryEntry& Cat : Categories) Cat.bSearchCollapsed = false;
     RebuildCategoryList();
 }
 
 FReply SHaybaMCPCapabilitiesPanel::OnEnableAll()
 {
-    FHaybaMCPSettings::Get().DisabledTools.Empty();
+    for (const FCategoryEntry& Cat : Categories)
+        for (const FToolEntry& Tool : Cat.Tools)
+            SetToolEnabled(Tool.Name, true);
     PersistAndNotify();
     return FReply::Handled();
 }
@@ -382,7 +279,9 @@ FReply SHaybaMCPCapabilitiesPanel::OnDisableAll()
 void SHaybaMCPCapabilitiesPanel::PersistAndNotify()
 {
     FHaybaMCPSettings::Get().Save();   // also writes Saved/HaybaMCP/disabled-tools.json
-    RebuildCategoryList();
+    // Row labels read the setting directly. Keep the focused permission control
+    // and the user's expanded categories in place after a toggle.
+    Invalidate(EInvalidateWidgetReason::Layout);
 }
 
 // ── List rebuild ──────────────────────────────────────────────────────────
@@ -392,93 +291,115 @@ void SHaybaMCPCapabilitiesPanel::RebuildCategoryList()
     if (!CategoryList.IsValid()) return;
     CategoryList->ClearChildren();
 
+    int32 Matches = 0;
     for (int32 i = 0; i < Categories.Num(); ++i)
     {
         const FCategoryEntry& Cat = Categories[i];
         if (!CategoryMatchesFilter(Cat)) continue;
+        ++Matches;
 
-        CategoryList->AddSlot().AutoHeight().Padding(4.f, 3.f)
+        CategoryList->AddSlot().AutoHeight().Padding(4.f, 0.f, 4.f, 8.f)
         [ BuildCategoryRow(i) ];
     }
+    if (Matches == 0)
+        CategoryList->AddSlot().AutoHeight().Padding(8.f, 12.f)
+        [ SNew(STextBlock)
+            .TextStyle(&FHaybaMCPStyle::Get().GetWidgetStyle<FTextBlockStyle>("Hayba.Text.Caption"))
+            .Text(LOCTEXT("NoMatchingTools", "No matching tools or categories.")) ];
 }
 
 TSharedRef<SWidget> SHaybaMCPCapabilitiesPanel::BuildCategoryRow(int32 CategoryIndex)
 {
     if (!Categories.IsValidIndex(CategoryIndex)) return SNullWidget::NullWidget;
     const FCategoryEntry& Cat = Categories[CategoryIndex];
+    const bool bCategoryTextMatches = !FilterQuery.IsEmpty() &&
+        (Cat.Title.ToString().Contains(FilterQuery, ESearchCase::IgnoreCase) ||
+         Cat.Description.Contains(FilterQuery, ESearchCase::IgnoreCase));
 
     TSharedRef<SVerticalBox> Body = SNew(SVerticalBox);
     for (int32 t = 0; t < Cat.Tools.Num(); ++t)
     {
-        if (!ToolMatchesFilter(Cat.Tools[t])) continue;
-        Body->AddSlot().AutoHeight().Padding(0.f, 1.f)
+        if (!bCategoryTextMatches && !ToolMatchesFilter(Cat.Tools[t])) continue;
+        Body->AddSlot().AutoHeight()
         [ BuildToolRow(CategoryIndex, t) ];
     }
 
-    // Category checkbox state: checked when all enabled, unchecked when all
-    // disabled, undetermined when partial.
-    auto GetCategoryState = [this, CategoryIndex]()
-    {
-        const FCategoryEntry& C = Categories[CategoryIndex];
-        const int32 En = EnabledCountInCategory(C);
-        if (En == 0) return ECheckBoxState::Unchecked;
-        if (En == C.Tools.Num()) return ECheckBoxState::Checked;
-        return ECheckBoxState::Undetermined;
-    };
-
     return SNew(SBorder)
-        .BorderImage(FAppStyle::GetBrush("Brushes.Panel"))
-        .Padding(FMargin(8.f, 6.f))
+        .BorderImage(FHaybaMCPStyle::GetBrush("Hayba.Brush.Settings.Section"))
+        .Padding(FMargin(11.f, 8.f))
         [
-            SNew(SExpandableArea)
-            .InitiallyCollapsed(true)
-            .HeaderContent()
+            SNew(SVerticalBox)
+            + SVerticalBox::Slot().AutoHeight()
             [
                 SNew(SHorizontalBox)
-                + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0.f, 0.f, 8.f, 0.f)
-                [
-                    SNew(SCheckBox)
-                    .IsChecked_Lambda(GetCategoryState)
-                    .OnCheckStateChanged_Lambda([this, CategoryIndex](ECheckBoxState NewState)
-                    {
-                        const bool bOn = (NewState != ECheckBoxState::Unchecked);
-                        SetCategoryEnabled(Categories[CategoryIndex], bOn);
-                        PersistAndNotify();
-                    })
-                ]
                 + SHorizontalBox::Slot().FillWidth(1.f).VAlign(VAlign_Center)
                 [
-                    SNew(STextBlock)
-                    .TextStyle(&FAppStyle::Get().GetWidgetStyle<FTextBlockStyle>("DetailsView.CategoryTextStyle"))
-                    .Text(Cat.Title)
+                    SNew(SButton)
+                    .ButtonStyle(&FHaybaMCPStyle::Get().GetWidgetStyle<FButtonStyle>("Hayba.Button.Task"))
+                    .ContentPadding(FMargin(0.f, 5.f))
+                    .ToolTipText(LOCTEXT("CategoryDisclosureTT", "Show or hide tools in this category"))
+                    .OnClicked_Lambda([this, CategoryIndex]()
+                    {
+                        FCategoryEntry& Current = Categories[CategoryIndex];
+                        if (FilterQuery.IsEmpty()) Current.bExpanded = !Current.bExpanded;
+                        else Current.bSearchCollapsed = !Current.bSearchCollapsed;
+                        Invalidate(EInvalidateWidgetReason::Layout);
+                        return FReply::Handled();
+                    })
+                    [
+                        SNew(SHorizontalBox)
+                        + SHorizontalBox::Slot().FillWidth(1.f).VAlign(VAlign_Center)
+                        [ SNew(STextBlock)
+                            .Font(FHaybaMCPStyle::Font(13, true))
+                            .ColorAndOpacity(FSlateColor(FHaybaMCPStyle::Colour("Hayba.Color.Text.Primary")))
+                            .AutoWrapText(true)
+                            .Text(Cat.Title) ]
+                        + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(7.f, 0.f, 2.f, 0.f)
+                        [ SNew(SImage)
+                            .Image_Lambda([this, CategoryIndex]() { return FHaybaMCPStyle::GetBrush(
+                                IsCategoryOpen(Categories[CategoryIndex]) ? "Hayba.Icon.Chevron.Up" : "Hayba.Icon.Chevron.Down"); })
+                            .ColorAndOpacity(FSlateColor(FHaybaMCPStyle::Colour("Hayba.Color.Text.Secondary"))) ]
+                    ]
                 ]
                 + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(8.f, 0.f, 0.f, 0.f)
                 [
-                    SNew(STextBlock)
-                    .ColorAndOpacity(FSlateColor(FLinearColor(0.55f, 0.57f, 0.65f)))
+                    SNew(SButton)
+                    .ButtonStyle(&FHaybaMCPStyle::Get().GetWidgetStyle<FButtonStyle>("Hayba.Button.Switcher"))
+                    .ContentPadding(FMargin(8.f, 5.f))
+                    .ToolTipText(LOCTEXT("CategoryPermissionTT", "Applies to every tool in this category, including tools hidden by search"))
                     .Text_Lambda([this, CategoryIndex]()
                     {
-                        const FCategoryEntry& C = Categories[CategoryIndex];
-                        return FText::FromString(FString::Printf(TEXT("%d / %d"),
-                            EnabledCountInCategory(C), TotalToolsInCategory(C)));
+                        const FCategoryEntry& Current = Categories[CategoryIndex];
+                        return EnabledCountInCategory(Current) == Current.Tools.Num()
+                            ? LOCTEXT("DisableGroup", "Disable group") : LOCTEXT("EnableGroup", "Enable group");
+                    })
+                    .OnClicked_Lambda([this, CategoryIndex]()
+                    {
+                        const FCategoryEntry& Current = Categories[CategoryIndex];
+                        SetCategoryEnabled(Current, EnabledCountInCategory(Current) != Current.Tools.Num());
+                        PersistAndNotify();
+                        return FReply::Handled();
                     })
                 ]
             ]
-            .BodyContent()
+            + SVerticalBox::Slot().AutoHeight()
             [
-                SNew(SVerticalBox)
-                // Category description: small, italic-styled, muted. Less
-                // visual competition with the tool list below.
-                + SVerticalBox::Slot().AutoHeight().Padding(30.f, 4.f, 8.f, 8.f)
+                SNew(SBox)
+                .Visibility_Lambda([this, CategoryIndex]()
+                { return IsCategoryOpen(Categories[CategoryIndex]) ? EVisibility::Visible : EVisibility::Collapsed; })
                 [
-                    SNew(STextBlock)
-                    .TextStyle(&FAppStyle::Get().GetWidgetStyle<FTextBlockStyle>("SmallText"))
-                    .Text(FText::FromString(Cat.Description))
-                    .ColorAndOpacity(FSlateColor(FLinearColor(0.50f, 0.52f, 0.60f)))
-                    .AutoWrapText(true)
+                    SNew(SVerticalBox)
+                    + SVerticalBox::Slot().AutoHeight().Padding(0.f, 8.f, 0.f, 7.f)
+                    [ SNew(STextBlock)
+                        .TextStyle(&FHaybaMCPStyle::Get().GetWidgetStyle<FTextBlockStyle>("Hayba.Text.Caption"))
+                        .AutoWrapText(true)
+                        .Text(FText::FromString(Cat.Description)) ]
+                    + SVerticalBox::Slot().AutoHeight()
+                    [ SNew(SSeparator).Thickness(1.f)
+                        .ColorAndOpacity(FSlateColor(FHaybaMCPStyle::Colour("Hayba.Color.Border.Subtle"))) ]
+                    + SVerticalBox::Slot().AutoHeight()
+                    [ Body ]
                 ]
-                + SVerticalBox::Slot().AutoHeight().Padding(0.f, 2.f, 0.f, 4.f)
-                [ Body ]
             ]
         ];
 }
@@ -491,43 +412,54 @@ TSharedRef<SWidget> SHaybaMCPCapabilitiesPanel::BuildToolRow(int32 CategoryIndex
     const FString ToolName = Cat.Tools[ToolIndex].Name;
     const FString ToolDesc = Cat.Tools[ToolIndex].Description;
 
-    // Use a mono font for the tool identifier so it reads as a callable name.
-    const FSlateFontInfo MonoFont = FCoreStyle::GetDefaultFontStyle("Mono", 9);
-
-    return SNew(SHorizontalBox)
-        + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Top).Padding(8.f, 4.f, 10.f, 0.f)
+    return SNew(SVerticalBox)
+        + SVerticalBox::Slot().AutoHeight().Padding(0.f, 8.f, 0.f, 0.f)
         [
-            SNew(SCheckBox)
-            .IsChecked_Lambda([this, ToolName]()
-            {
-                return IsToolEnabled(ToolName) ? ECheckBoxState::Checked : ECheckBoxState::Unchecked;
-            })
-            .OnCheckStateChanged_Lambda([this, ToolName](ECheckBoxState NewState)
-            {
-                SetToolEnabled(ToolName, NewState == ECheckBoxState::Checked);
-                PersistAndNotify();
-            })
-        ]
-        + SHorizontalBox::Slot().FillWidth(1.f).VAlign(VAlign_Center).Padding(0.f, 3.f, 0.f, 3.f)
-        [
-            SNew(SVerticalBox)
-            // Tool identifier on top — primary visual weight.
-            + SVerticalBox::Slot().AutoHeight()
+            SNew(SHorizontalBox)
+            + SHorizontalBox::Slot().FillWidth(1.f).VAlign(VAlign_Center)
             [
                 SNew(STextBlock)
-                .Font(MonoFont)
+                .Font(FCoreStyle::GetDefaultFontStyle("Mono", 10))
                 .Text(FText::FromString(ToolName))
-                .ColorAndOpacity(FSlateColor(FLinearColor(0.92f, 0.93f, 0.96f)))
-            ]
-            // Description below — supporting text, muted, wraps cleanly.
-            + SVerticalBox::Slot().AutoHeight().Padding(0.f, 1.f, 0.f, 0.f)
-            [
-                SNew(STextBlock)
-                .TextStyle(&FAppStyle::Get().GetWidgetStyle<FTextBlockStyle>("SmallText"))
-                .Text(FText::FromString(ToolDesc))
-                .ColorAndOpacity(FSlateColor(FLinearColor(0.55f, 0.57f, 0.65f)))
+                .ColorAndOpacity(FSlateColor(FHaybaMCPStyle::Colour("Hayba.Color.Text.Primary")))
                 .AutoWrapText(true)
+                .WrappingPolicy(ETextWrappingPolicy::AllowPerCharacterWrapping)
             ]
+            + SHorizontalBox::Slot().AutoWidth().Padding(8.f, 0.f, 0.f, 0.f)
+            [
+                SNew(SButton)
+                .ButtonStyle(&FHaybaMCPStyle::Get().GetWidgetStyle<FButtonStyle>("Hayba.Button.Switcher"))
+                .ContentPadding(FMargin(8.f, 4.f))
+                .ToolTipText_Lambda([this, ToolName]()
+                {
+                    return IsToolEnabled(ToolName)
+                        ? FText::Format(LOCTEXT("DisableToolTT", "Disable {0}; agents will no longer see or call it"), FText::FromString(ToolName))
+                        : FText::Format(LOCTEXT("EnableToolTT", "Enable {0} for agents"), FText::FromString(ToolName));
+                })
+                .OnClicked_Lambda([this, ToolName]()
+                {
+                    SetToolEnabled(ToolName, !IsToolEnabled(ToolName));
+                    PersistAndNotify();
+                    return FReply::Handled();
+                })
+                [ SNew(STextBlock)
+                    .Text_Lambda([this, ToolName]()
+                    { return IsToolEnabled(ToolName) ? LOCTEXT("ToolEnabled", "Enabled") : LOCTEXT("ToolDisabled", "Disabled"); })
+                    .ColorAndOpacity_Lambda([this, ToolName]() -> FSlateColor
+                    { return FSlateColor(FHaybaMCPStyle::Colour(IsToolEnabled(ToolName)
+                        ? "Hayba.Color.Text.Primary" : "Hayba.Color.Text.Secondary")); }) ]
+            ]
+        ]
+        + SVerticalBox::Slot().AutoHeight().Padding(0.f, 2.f, 0.f, 8.f)
+        [
+            SNew(STextBlock)
+            .TextStyle(&FHaybaMCPStyle::Get().GetWidgetStyle<FTextBlockStyle>("Hayba.Text.Caption"))
+            .Text(FText::FromString(ToolDesc))
+            .AutoWrapText(true)
+        ]
+        + SVerticalBox::Slot().AutoHeight()
+        [ SNew(SSeparator).Thickness(1.f)
+            .ColorAndOpacity(FSlateColor(FHaybaMCPStyle::Colour("Hayba.Color.Border.Subtle")))
         ];
 }
 

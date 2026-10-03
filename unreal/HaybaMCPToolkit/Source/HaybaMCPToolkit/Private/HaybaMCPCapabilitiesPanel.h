@@ -29,8 +29,6 @@ public:
     void Construct(const FArguments& InArgs);
 
 private:
-    FHaybaMCPModule* Module = nullptr;
-
     struct FToolEntry
     {
         FString Name;
@@ -42,6 +40,7 @@ private:
         FString Description;
         TArray<FToolEntry> Tools;
         bool bExpanded = false;
+        bool bSearchCollapsed = false;
     };
 
     TArray<FCategoryEntry> Categories;
@@ -51,19 +50,16 @@ private:
     void BuildCatalog();
     void RebuildCategoryList();
     TSharedRef<SWidget> BuildHeader();
-    TSharedRef<SWidget> BuildStatusStrip();
     TSharedRef<SWidget> BuildToolbar();
     TSharedRef<SWidget> BuildCategoryRow(int32 CategoryIndex);
     TSharedRef<SWidget> BuildToolRow(int32 CategoryIndex, int32 ToolIndex);
 
-    // Selection helpers — drive checkbox state and toolbar counters.
+    // Selection helpers — changes persist without replacing focused rows.
     int32  EnabledCountInCategory(const FCategoryEntry& Cat) const;
-    int32  TotalToolsInCategory(const FCategoryEntry& Cat) const;
     bool   IsToolEnabled(const FString& ToolName) const;
     void   SetToolEnabled(const FString& ToolName, bool bEnabled);
     void   SetCategoryEnabled(const FCategoryEntry& Cat, bool bEnabled);
-    int32  TotalEnabledTools() const;
-    int32  TotalTools() const;
+    bool   IsCategoryOpen(const FCategoryEntry& Cat) const;
 
     // Toolbar handlers.
     void   OnSearchChanged(const FText& InText);

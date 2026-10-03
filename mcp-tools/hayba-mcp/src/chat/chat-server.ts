@@ -33,6 +33,8 @@
  *                         the provider + key for a session IN MEMORY only. The
  *                         key is NEVER persisted, echoed, or logged.
  *   GET  /chat/config   — masked read (provider, model, key_last4) only.
+ *   DELETE /chat/config?session_id=ue_settings_<guid> — revoke a temporary
+ *                         Settings discovery config. Live chat config is kept.
  *   GET  /chat/models   — read-only live model catalog for the configured
  *                         provider; never returns a key or makes an inference call.
  *
@@ -106,6 +108,38 @@ interface SessionConfig {
 
 const DEFAULT_CONFIG_KEY = '__default__';
 const configStore = new Map<string, SessionConfig>();
+const SETTINGS_CONFIG_PREFIX = 'ue_settings_';
+const SETTINGS_CONFIG_TTL_MS = 120_000;
+const settingsConfigId = /^ue_settings_[0-9a-f]{32}$/i;
+type SettingsConfigLifetime = { expiresAt: number; timer: ReturnType<typeof setTimeout>; revoked: boolean };
+const settingsConfigLifetimes = new Map<string, SettingsConfigLifetime>();
+
+function isSettingsConfigNamespace(id: string): boolean {
+  return id.startsWith(SETTINGS_CONFIG_PREFIX);
+}
+
+function retireSettingsConfig(id: string, revoked: boolean): void {
+  const previous = settingsConfigLifetimes.get(id);
+  if (previous) clearTimeout(previous.timer);
+  configStore.delete(id);
+  const expiresAt = Date.now() + SETTINGS_CONFIG_TTL_MS;
+  const timer = setTimeout(() => {
+    configStore.delete(id);
+    settingsConfigLifetimes.delete(id);
+  }, SETTINGS_CONFIG_TTL_MS);
+  timer.unref();
+  settingsConfigLifetimes.set(id, { expiresAt, timer, revoked });
+}
+
+function activeSettingsConfig(id: string): boolean {
+  const lifetime = settingsConfigLifetimes.get(id);
+  if (!lifetime || lifetime.revoked) return false;
+  if (Date.now() < lifetime.expiresAt) return true;
+  clearTimeout(lifetime.timer);
+  settingsConfigLifetimes.delete(id);
+  configStore.delete(id);
+  return false;
+}
 
 function last4(key: string | undefined): string | null {
   if (!key) return null;
@@ -113,6 +147,10 @@ function last4(key: string | undefined): string | null {
 }
 
 function resolveSessionConfig(sessionId: string | undefined): SessionConfig | undefined {
+  // A missing/expired Settings slot must not inherit the user's live default key.
+  if (sessionId && isSettingsConfigNamespace(sessionId)) {
+    return activeSettingsConfig(sessionId) ? configStore.get(sessionId) : undefined;
+  }
   if (sessionId && configStore.has(sessionId)) return configStore.get(sessionId);
   return configStore.get(DEFAULT_CONFIG_KEY);
 }
@@ -142,7 +180,13 @@ export function getConfigEntry(sessionId?: string): SessionConfig | undefined {
 
 /** Write (or replace) the config entry for a session/default slot. */
 export function setConfigEntry(sessionId: string | undefined, cfg: SessionConfig): void {
-  configStore.set(sessionId || DEFAULT_CONFIG_KEY, cfg);
+  const key = sessionId || DEFAULT_CONFIG_KEY;
+  if (isSettingsConfigNamespace(key)) {
+    if (!settingsConfigId.test(key)) throw new Error('invalid temporary Settings session ID');
+    if (settingsConfigLifetimes.get(key)?.revoked) throw new Error('temporary Settings session is revoked');
+    retireSettingsConfig(key, false);
+  }
+  configStore.set(key, cfg);
 }
 
 /** Clear only the API key on a config entry, leaving provider/model/baseURL intact. */
@@ -223,6 +267,8 @@ interface ChatSession {
   lastDone?: BufferedFrame;
   /** Hayba Pro: the live remote brain session carrying this chat's Pro turns. */
   brain?: BrainSession;
+  /** Digest of the Pro hello LLM mode, so BYOK changes reopen the session. */
+  brainLlmFingerprint?: string;
   /**
    * Hayba Pro: true while the brain holds a turn PARKED at an approval request
    * (no `done` yet). Resolved either by an approve-resume or by a `cancel`.
@@ -306,6 +352,7 @@ function evictSession(session: ChatSession): void {
 function dropBrain(session: ChatSession): Promise<void> {
   const closing = session.brain?.close() ?? Promise.resolve();
   session.brain = undefined;
+  session.brainLlmFingerprint = undefined;
   session.brainTurnParked = false;
   return closing;
 }
@@ -483,6 +530,7 @@ function requestFingerprint(body: {
   prompt?: unknown;
   provider?: unknown;
   model?: unknown;
+  reasoning_effort?: unknown;
   archetype?: unknown;
   archetype_filter?: unknown;
   mode?: unknown;
@@ -490,7 +538,7 @@ function requestFingerprint(body: {
   llm?: unknown;
   permissions?: unknown;
 }): string {
-  const request = [body.messages, body.prompt, body.provider, body.model, body.archetype,
+  const request = [body.messages, body.prompt, body.provider, body.model, body.reasoning_effort, body.archetype,
     body.archetype_filter, body.mode, body.loop, body.llm, body.permissions];
   return createHash('sha256').update(JSON.stringify(request)).digest('hex');
 }
@@ -639,8 +687,17 @@ export function registerChatRoutes(app: Express, options: ChatRoutesOptions = {}
     if (!getProvider(body.provider)) {
       return res.status(400).json({ error: `unknown provider: ${body.provider}` });
     }
+    if (body.session_id !== undefined && typeof body.session_id !== 'string') {
+      return res.status(400).json({ error: 'invalid session_id' });
+    }
     const key = body.session_id || DEFAULT_CONFIG_KEY;
-    configStore.set(key, {
+    if (isSettingsConfigNamespace(key)) {
+      if (!settingsConfigId.test(key)) return res.status(400).json({ error: 'invalid temporary Settings session_id' });
+      if (settingsConfigLifetimes.get(key)?.revoked) {
+        return res.status(410).json({ error: 'temporary Settings session was revoked' });
+      }
+    }
+    setConfigEntry(key, {
       provider: body.provider,
       model: body.model,
       baseURL: body.base_url,
@@ -653,6 +710,20 @@ export function registerChatRoutes(app: Express, options: ChatRoutesOptions = {}
       model: body.model ?? getProvider(body.provider)?.defaultModel ?? null,
       key_last4: last4(body.api_key),
     });
+  });
+
+  // Settings discovery uses a separate ephemeral config, never a live chat
+  // session. Revocation is idempotent and leaves a short tombstone so a delayed
+  // POST cannot recreate the secret after the client cancels its request.
+  app.delete('/chat/config', (req: Request, res: Response) => {
+    if (!requireLoopback(req, res)) return;
+    const parsed = stringQuery(req.query.session_id, 'session_id');
+    if (!parsed.ok || !parsed.value) return res.status(400).json({ error: 'session_id is required exactly once' });
+    if (!settingsConfigId.test(parsed.value)) {
+      return res.status(403).json({ error: 'only temporary Settings config can be revoked here' });
+    }
+    retireSettingsConfig(parsed.value, true);
+    return res.status(204).end();
   });
 
   // ── GET /chat/config ─────────────────────────────────────────────────────
@@ -684,6 +755,10 @@ export function registerChatRoutes(app: Express, options: ChatRoutesOptions = {}
     if (!provider || !getProvider(provider)) return res.status(400).json({ error: 'known provider is required' });
     if (refreshQuery.value !== undefined && refreshQuery.value !== '1') {
       return res.status(400).json({ error: 'refresh must be 1' });
+    }
+    if (sessionQuery.value && isSettingsConfigNamespace(sessionQuery.value) &&
+        !activeSettingsConfig(sessionQuery.value)) {
+      return res.status(410).json({ error: 'temporary Settings config expired or was revoked' });
     }
     const cfg = resolveSessionConfig(sessionQuery.value);
     const matches = cfg?.provider === provider;
@@ -750,6 +825,7 @@ export function registerChatRoutes(app: Express, options: ChatRoutesOptions = {}
       prompt?: string;
       provider?: string;
       model?: string;
+      reasoning_effort?: string;
       archetype?: string;
       archetype_filter?: string[];
       mode?: AgentWorkMode;
@@ -763,6 +839,14 @@ export function registerChatRoutes(app: Express, options: ChatRoutesOptions = {}
     }
     if (body.mode !== undefined && !isAgentWorkMode(body.mode)) {
       return res.status(400).json({ error: 'invalid agent mode' });
+    }
+    if (body.reasoning_effort !== undefined &&
+        (typeof body.reasoning_effort !== 'string' || body.reasoning_effort.length > 32 ||
+         !/^[a-z]+$/.test(body.reasoning_effort))) {
+      return res.status(400).json({ error: 'invalid reasoning effort' });
+    }
+    if (body.reasoning_effort && body.loop === 'pro') {
+      return res.status(400).json({ error: 'Hayba Pro does not support per-turn reasoning effort' });
     }
     if (body.loop !== undefined && !(LOOPS as readonly unknown[]).includes(body.loop)) {
       return res.status(400).json({ error: 'invalid loop' });
@@ -906,7 +990,15 @@ export function registerChatRoutes(app: Express, options: ChatRoutesOptions = {}
       // An explicit client transcript is authoritative, including edits and
       // deletions. Prompt-only callers already include restored history above.
       // Replace the text snapshot so an older divergent suffix cannot survive.
-      sessionStore.replaceMessages(sessionId, messages);
+      const turnConfig = resolveSessionConfig(sessionId);
+      const turnModel = body.model ?? turnConfig?.model;
+      sessionStore.replaceMessages(sessionId, messages, {
+        mode,
+        loop: body.loop ?? 'community',
+        ...(turnConfig?.provider ? { provider: turnConfig.provider } : {}),
+        ...(turnModel && turnModel.length <= 256 ? { model: turnModel } : {}),
+        ...(body.reasoning_effort ? { reasoningEffort: body.reasoning_effort } : {}),
+      });
     } catch {
       emit(session, 'error', { error: 'Unable to save session history', kind: 'persistence' });
       finalize(session, 'error');
@@ -920,15 +1012,32 @@ export function registerChatRoutes(app: Express, options: ChatRoutesOptions = {}
       const catalog = options.tools ?? buildToolCatalog();
       // A session that was closed or gave up can never carry another turn.
       if (session.brain && !session.brain.isAlive()) void dropBrain(session);
+      const configured = resolveSessionConfig(sessionId);
+      const llm = proLlmMode(body.llm,
+        configured && body.model ? { ...configured, model: body.model } : configured);
+      if (!llm.ok) {
+        emit(session, 'error', { error: llm.message, kind: 'brain_unavailable', reason: llm.reason });
+        finalize(session, 'brain_unavailable');
+        cleanup();
+        return;
+      }
+      const llmFingerprint = createHash('sha256').update(JSON.stringify(llm.mode)).digest('hex');
+      if (session.brain && session.brainLlmFingerprint !== llmFingerprint) {
+        await dropBrain(session).catch(() => undefined);
+        session.approvedCall = undefined;
+        session.pendingPlanCall = undefined;
+      }
       if (!session.brain) {
-        const llm = proLlmMode(body.llm, resolveSessionConfig(sessionId));
-        const opened = !llm.ok ? llm : await withProOpenSlot(async () => {
+        const opened = await withProOpenSlot(async () => {
           await makeRoomForProSession(session);
           const r = options.brain
             ? await options.brain.openSession(sessionId, llm.mode, buildHandsManifest(catalog), permissions)
             : { ok: false as const, reason: 'not_configured', message: 'Hayba Pro is not configured on this machine.' };
           // Counted as open before the next opener takes the slot.
-          if (r.ok) session.brain = r.session;
+          if (r.ok) {
+            session.brain = r.session;
+            session.brainLlmFingerprint = llmFingerprint;
+          }
           return r;
         });
         if (!opened.ok) {
@@ -1025,6 +1134,7 @@ export function registerChatRoutes(app: Express, options: ChatRoutesOptions = {}
       client = makeClient({
         provider,
         model,
+        reasoningEffort: body.reasoning_effort,
         baseURL: cfg?.baseURL,
         apiKey: resolvedApiKey, // key follows the resolved provider (see above)
       });
@@ -1396,6 +1506,8 @@ function forwardEvent(
 export function __resetChatState(): void {
   for (const session of sessions.values()) void dropBrain(session);
   sessions.clear();
+  for (const lifetime of settingsConfigLifetimes.values()) clearTimeout(lifetime.timer);
+  settingsConfigLifetimes.clear();
   configStore.clear();
   sessionCounter = 0;
   proOpenQueue = Promise.resolve();

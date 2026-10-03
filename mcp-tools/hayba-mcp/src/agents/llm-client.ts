@@ -170,6 +170,8 @@ export interface LLMClientDeps {
 export interface LLMClientConfig {
   provider: string;
   model?: string;
+  /** Exact effort selected for this turn; omitted uses the model default. */
+  reasoningEffort?: string;
   baseURL?: string;
   apiKey?: string;
   /** Optional SDK request deadline. Primarily useful for local OpenAI-compatible providers. */
@@ -192,6 +194,7 @@ interface ResolvedConfig {
   provider: string;
   protocol: ProviderProtocol;
   model: string;
+  reasoningEffort?: string;
   baseURL: string;
   apiKey: string;
   timeoutMs?: number;
@@ -246,6 +249,15 @@ export function resolveConfig(config: LLMClientConfig): ResolvedConfig {
   const apiKey = config.apiKey ?? (envKey ? (process.env[envKey] ?? '') : '');
   const rawBaseURL = config.baseURL ?? entry.baseURLDefault;
   const baseURL = entry.protocol === 'openai' ? normalizeOpenAIBaseURL(rawBaseURL, entry.label) : rawBaseURL;
+  const supportedEfforts: Record<string, readonly string[]> = {
+    anthropic: ['low', 'medium', 'high', 'xhigh', 'max'],
+    openai: ['none', 'minimal', 'low', 'medium', 'high', 'xhigh'],
+    deepseek: ['low', 'high', 'max'],
+    openrouter: ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'],
+  };
+  if (config.reasoningEffort && !supportedEfforts[entry.id]?.includes(config.reasoningEffort)) {
+    throw new LLMError('api', `${entry.label} does not support the selected reasoning effort`);
+  }
   if (
     config.timeoutMs !== undefined &&
     (!Number.isInteger(config.timeoutMs) || config.timeoutMs < 1 || config.timeoutMs > 10 * 60_000)
@@ -256,6 +268,7 @@ export function resolveConfig(config: LLMClientConfig): ResolvedConfig {
     provider: entry.id,
     protocol: entry.protocol,
     model: config.model ?? entry.defaultModel,
+    ...(config.reasoningEffort ? { reasoningEffort: config.reasoningEffort } : {}),
     baseURL,
     apiKey,
     ...(config.timeoutMs !== undefined ? { timeoutMs: config.timeoutMs } : {}),
@@ -432,6 +445,7 @@ export function buildAnthropicRequest(cfg: ResolvedConfig, params: LLMCompletePa
     // Block arrays map 1:1 to Anthropic content blocks; strings pass through.
     messages: params.messages.map((m) => ({ role: m.role, content: m.content })),
   };
+  if (cfg.reasoningEffort) req.output_config = { effort: cfg.reasoningEffort };
   if (params.tools && params.tools.length > 0) {
     const tools = toAnthropicTools(params.tools);
     // One breakpoint on the LAST tool caches the whole preceding tool list as
@@ -748,6 +762,7 @@ function buildOpenAIRequest(cfg: ResolvedConfig, params: LLMCompleteParams, stre
     max_tokens: params.maxTokens ?? 4096,
     messages,
   };
+  if (cfg.reasoningEffort) req.reasoning_effort = cfg.reasoningEffort;
   if (params.tools && params.tools.length > 0) {
     req.tools = toOpenAITools(params.tools);
   }

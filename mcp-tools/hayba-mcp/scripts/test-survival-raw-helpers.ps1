@@ -114,10 +114,7 @@ foreach ($scenario in @('fragmented_read', 'early_eof', 'stalled_deadline', 'inv
         $peer = $accept.GetAwaiter().GetResult()
         $writer = $peer.GetStream()
         $writer.Write([byte[]]@(0x41), 0, 1)
-        if ($behavior -ceq 'fragmented_read') {
-            $writeRest = [HaybaSurvivalRawFixture]::WriteRestAsync($writer)
-        }
-        elseif ($behavior -ceq 'early_eof') {
+        if ($behavior -ceq 'early_eof') {
             $peer.Client.Shutdown([Net.Sockets.SocketShutdown]::Send)
         }
         [byte[]]$buffer = if ($isInvoker) { [byte[]]@(238,0,0,0,0,238) } else { [byte[]]::new(4) }
@@ -125,6 +122,11 @@ foreach ($scenario in @('fragmented_read', 'early_eof', 'stalled_deadline', 'inv
         $MaxCaseMs = $timeoutMs; $CaseClock = [Diagnostics.Stopwatch]::StartNew()
         $Clock = [Diagnostics.Stopwatch]::StartNew()
         $caseTimer = [Diagnostics.Stopwatch]::StartNew()
+        # Start the delayed fragment after the measurement begins. Scheduling
+        # during setup must not consume the delay before the read is timed.
+        if ($behavior -ceq 'fragmented_read') {
+            $writeRest = [HaybaSurvivalRawFixture]::WriteRestAsync($writer)
+        }
         try {
             if ($isInvoker) { Read-ExactAsync $client.GetStream() $buffer 1 4 $scenario }
             else { Read-BoundedExact $client.GetStream() $buffer 4 $scenario }

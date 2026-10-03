@@ -1,0 +1,37 @@
+# Agent interface audit for the Unreal dock
+
+Status: implementation audit, 2026-10-03. This compares documented product patterns with the current Hayba integration branch. A visible control is not counted as a complete feature until the native and sidecar behavior is verified in a scratch editor. The [production chat brief](production-chat-brief.md) remains the release contract.
+
+| Pattern | Reference | Hayba now | Required next behavior |
+| --- | --- | --- | --- |
+| One task with modes | [Aura](https://www.tryaura.dev/documentation) has Ask, Plan, and Agent; [Claude Code Desktop](https://code.claude.com/docs/en/desktop) exposes permission mode beside the composer. | Inspect, Draft, and Production are selectable in Chat. | Enforce each mode across every native and indirect write path, and show the effective mode on each run. |
+| Model and reasoning choice | [Claude Code Desktop](https://code.claude.com/docs/en/desktop) changes models beside Send; [Aura](https://www.tryaura.dev/documentation) shows model choice and relative cost. | The composer has a model picker, provider discovery, and capability-dependent effort. | Verify real provider requests, stale catalogs, unsupported effort, per-task restoration, and cost information when it is known. |
+| Grounded context | [Aura](https://www.tryaura.dev/documentation) supports `@` search and image/document attachments; [Claude Code Desktop](https://code.claude.com/docs/en/desktop) supports file mentions and attachments. | Editor asset drag/drop adds a path to the prompt; World can inspect loaded geometry. | Add explicit actor/asset/region chips, bounded attachments, observation coverage, and redacted egress preview. A path in prose is not a context snapshot. |
+| Live agent work | [Aura](https://www.tryaura.dev/documentation/blueprints/) shows Blueprint edits in Chat; [Claude Code Desktop](https://code.claude.com/docs/en/desktop) supports steering during a running turn. | Chat streams text and typed tool activity, with Stop and recent conversations. | Make reconnect, interruption, retry, draft preservation, and long activity timelines reliable in the scratch editor. |
+| Proposal review | [Aura](https://www.tryaura.dev/documentation) lets the user refine a plan before Agent mode; [Claude Code Desktop](https://code.claude.com/docs/en/desktop) can show a diff for individual edits. | Internal chat tool approval is call-bound. External MCP `hayba_propose_plan` is owner-scoped Plan Mode approval, with configurable one-command or persistent scope. The card now shows structured steps and the actual scope. | Bind external approval to an immutable native operation set and target fingerprint before calling it exact. Show changed targets, save effects, unsupported steps, and a real diff when one exists. Changed targets invalidate approval. |
+| Verification and recovery | [Aura](https://www.tryaura.dev/) describes build, playtest, verification, and editor-crash recovery; [Codex](https://developers.openai.com/blog/run-long-horizon-tasks-with-codex) documents milestone verification. | Hayba has safety gates, tests, tool history, and validation findings in separate surfaces. | Put measured checks and unresolved warnings in the originating task, with passed/failed/not-run states and evidence. Recovery must not repeat a write. |
+| Parallel continuity | [Aura](https://www.tryaura.dev/documentation) offers multiple chat threads; [Claude Code Desktop](https://code.claude.com/docs/en/desktop) shows parallel sessions and side questions; [Codex](https://developers.openai.com/blog/mastering-codex-remote-for-engineering) links review and concurrent work. | Native leases and asset-busy guards prevent conflicting edits; external host activity is recorded separately. | Correlate only Hayba-observed external events by task and verified source. Show owner/lease conflicts and handoffs inline; do not invent an external host transcript. |
+
+The priority is to complete the task loop rather than replicate every button in those products: **prompt → observed context → plan or exact proposal → safe execution → measured verification → recoverable task history**. Chat leads; World and native Unreal editors open the same targets. Activity, Checks, and Library retain any unique operations until the integrated task flow replaces them. This audit does not change the safety train's manual gates.
+
+## Capability-by-capability release audit
+
+This is the comparison checklist for the editor, not a list of features already shipped. Each row needs a real scratch-editor demonstration before it can be marked complete.
+
+| Interaction | Mature agent-app pattern | Hayba release requirement |
+| --- | --- | --- |
+| Start and resume work | Named, searchable tasks and reliable history | Restore task, draft, model, access, pending decision, and ordered events after restart. |
+| Select context | `@` mentions, attachments, selected code or assets | Search actors, assets, regions, skills, and tools; show exactly what is sent and how it was observed. |
+| Choose capability | Model and permission controls at the composer | Verified provider catalog, effective model and effort per run, Inspect/Draft/Production enforced beyond the UI. |
+| Stream and steer | Incremental answer, grouped work, Stop, follow-up | Never complete a blank reply; cancellation and reconnect cannot repeat a native write. |
+| Plan | Inspectable steps with room to revise | One artifact in Chat; external host plans carry source and scope; revisions invalidate old approval. |
+| Approve | Target-specific review with visible consequence | Frozen operations, target fingerprints, save effects, expiry, and one-use native authorization. Current external Plan Mode is broader and must say so. |
+| Inspect changes | Clickable diffs, target navigation, partial state | Native actor/asset links, real before/after where available, failed and partial operations in the originating task. |
+| Verify | Build/test evidence near the result | Pass/fail/not-run with method, coverage, time, and unresolved warnings; no inferred clean bill of health. |
+| Parallel work | Child tasks and conflict-aware handoff | Source-labeled Hayba-observed events, owner/lease/asset-busy status, and no invented external transcript. |
+| Spatial work | Selection and visual artifact stay linked to task | World opens the same actor/region/proposal; dense LOD, provenance, coverage, and semantic grouping are measured in real scenes. |
+| Recovery | Retry from the failed step without duplicated effects | Persistent event IDs, replay, idempotent requests, and explicit recovery after provider/editor failure. |
+
+The first implemented review step replaces the old raw-text external proposal card with bounded structured steps and a truthful description of its current approval scope. It does **not** satisfy frozen-operation approval or unified task history yet. The next implementation slice must make that native contract real before removing the separate review surfaces.
+
+Current measured warning: the synthetic scratch World's 256×256 color/depth readback blocked an editor frame for 57.04 ms and 105.94 ms in two runs on 2026-10-03, above the 50 ms warning threshold. Valid points and source-query results were retained. World still needs an asynchronous or otherwise budgeted readback before its dense-scene interaction can pass the production UI gate. This warning belongs beside the World artifact and its verification record in the future task timeline; a passing functional test must not erase it.

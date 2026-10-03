@@ -67,6 +67,7 @@ TSharedRef<FJsonObject> HaybaViewDepthSnapshot::BuildPage(const FSnapshot& Snaps
     Out->SetBoolField(TEXT("group_ids_capture_local"), true);
     Out->SetNumberField(TEXT("spatial_cell_size_cm"), SpatialCellSizeCm);
     Out->SetStringField(TEXT("spatial_grouping"), TEXT("fixed_world_space_grid"));
+    Out->SetStringField(TEXT("color_provenance"), TEXT("rendered_scene_color_visible_surface"));
     Out->SetBoolField(TEXT("spatial_group_ids_match_world_preview"), false);
     Out->SetNumberField(TEXT("resolution_x"), HaybaWorldDepth::Width);
     Out->SetNumberField(TEXT("resolution_y"), HaybaWorldDepth::Height);
@@ -134,6 +135,13 @@ TSharedRef<FJsonObject> HaybaViewDepthSnapshot::BuildPage(const FSnapshot& Snaps
                 Row->SetArrayField(TEXT("pixel"), { MakeShared<FJsonValueNumber>(Point.PixelX),
                     MakeShared<FJsonValueNumber>(Point.PixelY) });
                 Row->SetNumberField(TEXT("depth_cm"), Point.DepthCm);
+                Row->SetStringField(TEXT("color_provenance"), Point.bColorObserved
+                    ? TEXT("rendered_scene_color_visible_surface") : TEXT("unobserved"));
+                if (Point.bColorObserved)
+                    Row->SetArrayField(TEXT("display_rgb"), {
+                        MakeShared<FJsonValueNumber>(Point.DisplayColor.R),
+                        MakeShared<FJsonValueNumber>(Point.DisplayColor.G),
+                        MakeShared<FJsonValueNumber>(Point.DisplayColor.B) });
                 Row->SetStringField(TEXT("spatial_group_id"), GroupIdFor(Point.SpatialCell));
                 const bool bMatched = !Point.SourceActorPath.IsEmpty();
                 Row->SetStringField(TEXT("source_attribution"), bMatched ? TEXT("depth_matched_physics_ray") : TEXT("unknown"));

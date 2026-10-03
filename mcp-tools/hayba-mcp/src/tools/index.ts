@@ -33,6 +33,7 @@ import { actorListHandler, meta as actorListMeta } from './actor/actor-list.js';
 import { worldBudgetSnapshotHandler, meta as worldBudgetSnapshotMeta } from './world/world-budget-snapshot.js';
 import { worldSemanticSnapshotHandler, schema as worldSemanticSnapshotSchema, meta as worldSemanticSnapshotMeta } from './world/world-semantic-snapshot.js';
 import { worldTileCaptureHandler, schema as worldTileCaptureSchema, meta as worldTileCaptureMeta } from './world/world-tile-capture.js';
+import { worldQueryHandler, schema as worldQuerySchema, meta as worldQueryMeta } from './world/world-query.js';
 import { worldCompareSnapshotsHandler, meta as worldCompareSnapshotsMeta, schema as worldCompareSnapshotsSchema } from './world/world-compare-snapshots.js';
 import { actorDeleteHandler, meta as actorDeleteMeta } from './actor/actor-delete.js';
 import { actorTransformHandler, meta as actorTransformMeta } from './actor/actor-transform.js';
@@ -1099,7 +1100,7 @@ export const PCG_DESCRIPTORS: ToolDescriptor[] = [
   defineTool({
     name: 'hayba_propose_plan',
     description:
-      'Propose a step-by-step plan to the user before performing destructive operations. Required when Plan Mode is on. Steps may be strings or {title, description, tool} objects.',
+      'Propose a concrete, reviewable plan before destructive operations. Required when Plan Mode is on. Approval follows the configured per-plan or per-command scope; it is not an exact operation approval. Steps may be strings or {title, description, tool} objects.',
     meta: {
       cost: 'low',
       effects: ['modifies_plan_state'],
@@ -1110,14 +1111,16 @@ export const PCG_DESCRIPTORS: ToolDescriptor[] = [
       steps: z
         .array(
           z.union([
-            z.string(),
+            z.string().trim().min(1).max(300),
             z.object({
-              title: z.string(),
-              description: z.string().optional(),
-              tool: z.string().optional(),
+              title: z.string().trim().min(1).max(300),
+              description: z.string().max(600).optional(),
+              tool: z.string().max(80).optional(),
             }),
           ]),
         )
+        .min(1)
+        .max(16)
         .describe('Ordered list of plan steps'),
       await_seconds: z
         .number()
@@ -1881,6 +1884,15 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
     cost: 'medium',
     returns: '{action,status,tile_id,capture_id,scanned_actor_slots,eligible_actor_count,processed_actor_count,point_count,page_count,gaps,deduplicated?,reason?,captured_at_utc?}',
     schema: worldTileCaptureSchema.shape,
+  },
+  {
+    name: 'world_query',
+    description: 'Find loaded Unreal source objects in one exact captured mesh tile by an authored tag, folder, actor class, or mesh asset. Optionally compare each match to one reference source ID or authored fact using a typed candidate relation from sampled point bounds. First use world_tile_capture, then pass its tile_id and capture_id as expected_capture_id here. Returns canonical actor/component/instance provenance, point evidence, and coverage gaps. A partial capture cannot prove absence; this does not infer visual labels, collision, visibility, gameplay quality, or a production budget verdict.',
+    meta: worldQueryMeta,
+    handler: worldQueryHandler,
+    cost: 'medium',
+    returns: '{status,capture_id,tile_id,captured_at_utc,partial,gaps,relation_scope,observed_point_count,indexed_source_count,matched_target_count,matched_reference_count,evaluated_pair_count,total_items,offset,limit,next_offset,items}',
+    schema: worldQuerySchema.shape,
   },
   {
     name: 'world_compare_snapshots',
