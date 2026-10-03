@@ -46,7 +46,7 @@
 
 import type { Express, Request, Response } from 'express';
 import type { AddressInfo } from 'node:net';
-import { createHash, createHmac, randomBytes } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import { createLLMClient, type LLMMessage } from '../agents/llm-client.js';
 import { getProvider } from '../agents/providers.js';
 import { discoverModels } from '../agents/model-discovery.js';
@@ -108,6 +108,10 @@ interface SessionConfig {
 
 const DEFAULT_CONFIG_KEY = '__default__';
 const configStore = new Map<string, SessionConfig>();
+// Opaque revision numbers track configuration replacement without deriving a
+// stable digest from a BYOK secret. They stay in memory and are never sent.
+const configRevisions = new Map<string, number>();
+let nextConfigRevision = 0;
 const SETTINGS_CONFIG_PREFIX = 'ue_settings_';
 const SETTINGS_CONFIG_TTL_MS = 120_000;
 const settingsConfigId = /^ue_settings_[0-9a-f]{32}$/i;
@@ -122,9 +126,11 @@ function retireSettingsConfig(id: string, revoked: boolean): void {
   const previous = settingsConfigLifetimes.get(id);
   if (previous) clearTimeout(previous.timer);
   configStore.delete(id);
+  configRevisions.delete(id);
   const expiresAt = Date.now() + SETTINGS_CONFIG_TTL_MS;
   const timer = setTimeout(() => {
     configStore.delete(id);
+    configRevisions.delete(id);
     settingsConfigLifetimes.delete(id);
   }, SETTINGS_CONFIG_TTL_MS);
   timer.unref();
@@ -138,6 +144,7 @@ function activeSettingsConfig(id: string): boolean {
   clearTimeout(lifetime.timer);
   settingsConfigLifetimes.delete(id);
   configStore.delete(id);
+  configRevisions.delete(id);
   return false;
 }
 
@@ -153,6 +160,13 @@ function resolveSessionConfig(sessionId: string | undefined): SessionConfig | un
   }
   if (sessionId && configStore.has(sessionId)) return configStore.get(sessionId);
   return configStore.get(DEFAULT_CONFIG_KEY);
+}
+
+function resolvedConfigRevision(sessionId: string | undefined): number {
+  if (sessionId && isSettingsConfigNamespace(sessionId))
+    return activeSettingsConfig(sessionId) ? configRevisions.get(sessionId) ?? 0 : 0;
+  if (sessionId && configStore.has(sessionId)) return configRevisions.get(sessionId) ?? 0;
+  return configRevisions.get(DEFAULT_CONFIG_KEY) ?? 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -187,13 +201,17 @@ export function setConfigEntry(sessionId: string | undefined, cfg: SessionConfig
     retireSettingsConfig(key, false);
   }
   configStore.set(key, cfg);
+  configRevisions.set(key, ++nextConfigRevision);
 }
 
 /** Clear only the API key on a config entry, leaving provider/model/baseURL intact. */
 export function clearConfigKey(sessionId?: string): void {
   const key = sessionId || DEFAULT_CONFIG_KEY;
   const existing = configStore.get(key);
-  if (existing) configStore.set(key, { ...existing, apiKey: undefined });
+  if (existing) {
+    configStore.set(key, { ...existing, apiKey: undefined });
+    configRevisions.set(key, ++nextConfigRevision);
+  }
 }
 
 /** True once `registerChatRoutes` has wired the /chat/* routes onto the sidecar app. */
@@ -543,8 +561,6 @@ function requestFingerprint(body: {
   return createHash('sha256').update(JSON.stringify(request)).digest('hex');
 }
 
-const proLlmFingerprintKey = randomBytes(32);
-
 const DEFAULT_SYSTEM =
   'You are the Hayba in-editor copilot. You help build Unreal Engine worlds by ' +
   'calling Hayba tools. Prefer reads before writes; respect Plan Mode.';
@@ -665,6 +681,7 @@ export function registerChatRoutes(app: Express, options: ChatRoutesOptions = {}
       if (!sessionStore.remove(id)) return res.status(404).json({ error: 'unknown session' });
       if (active) evictSession(active);
       configStore.delete(id);
+      configRevisions.delete(id);
       return res.status(204).end();
     } catch {
       return res.status(500).json({ error: 'Unable to delete session' });
@@ -1023,10 +1040,13 @@ export function registerChatRoutes(app: Express, options: ChatRoutesOptions = {}
         cleanup();
         return;
       }
-      // The mode can contain a BYOK API key. A process-local HMAC keeps key
-      // rotation detectable without retaining or exposing a plain key hash.
-      const llmFingerprint = createHmac('sha256', proLlmFingerprintKey)
-        .update(JSON.stringify(llm.mode)).digest('hex');
+      // Track the public mode and an opaque config revision. No digest or
+      // fingerprint is ever derived from the BYOK API key itself.
+      const publicLlmMode = llm.mode.mode === 'byok'
+        ? { mode: 'byok', provider: llm.mode.provider, model: llm.mode.model }
+        : { mode: 'subscription' };
+      const llmFingerprint = JSON.stringify([publicLlmMode,
+        llm.mode.mode === 'byok' ? resolvedConfigRevision(sessionId) : 0]);
       if (session.brain && session.brainLlmFingerprint !== llmFingerprint) {
         await dropBrain(session).catch(() => undefined);
         session.approvedCall = undefined;
@@ -1514,6 +1534,8 @@ export function __resetChatState(): void {
   for (const lifetime of settingsConfigLifetimes.values()) clearTimeout(lifetime.timer);
   settingsConfigLifetimes.clear();
   configStore.clear();
+  configRevisions.clear();
+  nextConfigRevision = 0;
   sessionCounter = 0;
   proOpenQueue = Promise.resolve();
   chatRoutesRegistered = false;
