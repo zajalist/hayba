@@ -65,7 +65,7 @@ namespace
             if (Object.IsValid())
             {
                 TArray<FString> Keys;
-                for (const auto& Pair : Object->Values) Keys.Add(Pair.Key);
+                for (const auto& Pair : Object->Values) Keys.Add(FString(*Pair.Key));
                 Keys.Sort();
                 for (const FString& Key : Keys)
                 {
