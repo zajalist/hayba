@@ -40,6 +40,9 @@ export function registerApiRoutes(app: Express): void {
     const client = getUEClient();
     res.json({
       status: 'ok',
+      service: 'hayba-mcp',
+      version: HAYBA_VERSION,
+      chatProtocol: 'hayba-chat-2026-10-03',
       uptime: process.uptime(),
       nodeVersion: process.version,
       port: config.dashboardPort,

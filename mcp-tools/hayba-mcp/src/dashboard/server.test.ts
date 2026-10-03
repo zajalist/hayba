@@ -7,6 +7,7 @@ import type { AddressInfo } from 'node:net';
 import type { Express } from 'express';
 import { createDashboardApp, startDashboard } from './server.js';
 import { jsonObjectBody, stringQuery } from '../http/express-boundary.js';
+import { HAYBA_VERSION } from '../version.js';
 
 const servers = new Set<Server>();
 const tempDirs = new Set<string>();
@@ -47,6 +48,25 @@ afterEach(async () => {
 });
 
 describe('Express 5 dashboard boundary', () => {
+  it('identifies the service and chat protocol without exposing additional health fields', async () => {
+    const app = createDashboardApp({ staticDir: null, rateLimit: false });
+    const { url } = await listen(app);
+
+    const response = await fetch(`${url}/api/health`);
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as Record<string, unknown>;
+    expect(body).toMatchObject({
+      status: 'ok',
+      service: 'hayba-mcp',
+      version: HAYBA_VERSION,
+      chatProtocol: 'hayba-chat-2026-10-03',
+    });
+    expect(Object.keys(body).sort()).toEqual([
+      'chatProtocol', 'nodeVersion', 'port', 'service', 'status', 'ueConnected',
+      'ueTcpTarget', 'uptime', 'version',
+    ]);
+  });
+
   it('registers the named SPA wildcard and serves root plus nested navigation', async () => {
     const staticDir = staticFixture();
     const app = createDashboardApp({ staticDir, registerRoutes: () => undefined });
