@@ -10,6 +10,7 @@
 #include "Widgets/SCompoundWidget.h"
 #include "HaybaMCPWorldGeometry.h"
 #include "HaybaMCPViewDepthSnapshot.h"
+#include "HaybaMCPWorldObservationFusion.h"
 #include "HaybaMCPWorldTileSnapshot.h"
 #include "UObject/StrongObjectPtr.h"
 #include "Components/SceneCaptureComponent2D.h"
@@ -48,6 +49,15 @@ public:
     double GetDepthProcessingCpuMs() const { return DepthCpuMs; }
     double GetDepthMaxTickCpuMs() const { return DepthMaxTickCpuMs; }
     int32 GetDepthProcessedPixelCount() const { return DepthPixelCursor; }
+    int32 GetFusedObservedPointCount() const { return ObservationFusion.Num(); }
+    int32 GetFusedCaptureCount() const { return ObservationFusion.CaptureCount(); }
+    int64 GetFusedDeduplicatedCount() const { return ObservationFusion.DuplicateCount(); }
+    uint64 GetFusedAllocatedBytes() const { return ObservationFusion.AllocatedBytes(); }
+    double GetFusionInsertionMaxTickMs() const { return FusionInsertionMaxTickMs; }
+    double GetFusionReplayMaxTickMs() const { return FusionReplayMaxTickMs; }
+    double GetFusionReplayBuildMaxTickMs() const { return FusionReplayBuildMaxTickMs; }
+    double GetFusionReplayEncodeMaxTickMs() const { return FusionReplayEncodeMaxTickMs; }
+    double GetFusionReplayInjectionMaxTickMs() const { return FusionReplayInjectionMaxTickMs; }
     virtual void Tick(const FGeometry& AllottedGeometry, const double InCurrentTime,
         const float InDeltaTime) override;
 
@@ -63,6 +73,8 @@ private:
     double                   PageLoadStartedAt = 0.0;
     int32                    ScanGeneration = 0;
     TWeakObjectPtr<UWorld>   ScannedWorld;
+    uint32                   ScannedSceneFingerprint = 0;
+    bool                     bInvalidatedForPie = false;
     TArray<TWeakObjectPtr<ULevel>> LoadedLevels;
     TArray<int32> LevelActorCounts;
     TArray<TWeakObjectPtr<AActor>> DeferredActors;
@@ -118,6 +130,17 @@ private:
     enum class EDepthPhase : uint8 { NotStarted, AwaitReadback, Processing, Complete };
     EDepthPhase DepthPhase = EDepthPhase::NotStarted;
     HaybaViewDepthSnapshot::FSnapshot ObservedDepth;
+    HaybaWorldObservationFusion::FStore ObservationFusion;
+    uint32 FusionCaptureOrdinal = 0;
+    bool bFusionReplayStarted = false;
+    bool bFusionReadySent = false;
+    int32 FusionReplayCursor = 0;
+    int32 FusionReplayLimit = 0;
+    double FusionInsertionMaxTickMs = 0.0;
+    double FusionReplayMaxTickMs = 0.0;
+    double FusionReplayBuildMaxTickMs = 0.0;
+    double FusionReplayEncodeMaxTickMs = 0.0;
+    double FusionReplayInjectionMaxTickMs = 0.0;
     bool bDepthSnapshotPublished = false;
     bool bScanDone = false;
     bool bScanPartial = false;
@@ -147,6 +170,19 @@ private:
         bool bGatherComplete = false;
         bool bPartial = false;
     };
+    struct FObservedTileRequest
+    {
+        FTileAddress Address;
+        int32 Generation = 0;
+        FVector OriginCm = FVector::ZeroVector;
+        bool bCounting = true;
+        int32 Cursor = 0;
+        int32 Matching = 0;
+        int32 MatchingSeen = 0;
+        int32 SampleOrdinal = 0;
+        int32 SampleLimit = 0;
+    };
+    TOptional<FObservedTileRequest> ActiveObservedTile;
     TArray<FTileAddress> TileQueue;
     TOptional<FTileRequest> ActiveTile;
     TMap<FString, TMap<int32, TArray<HaybaWorldGeometry::FActor>>> TilePageActors;
@@ -162,11 +198,14 @@ private:
     void BeginDepthCapture();
     void BeginBaseColorCapture(UWorld* World);
     void ProcessDepthPixels(UWorld* World);
+    void SendFusionPointChunk();
     void ReleaseBaseColorCapture();
     void ReleaseDepthCapture();
     void Run(const FString& Js);
     void SelectLoadedActor(int32 Generation, int32 ActorIndex);
     void QueueTile(int32 Generation, int32 LOD, int32 X, int32 Y, int32 Z);
+    void QueueObservedTile(int32 Generation, int32 LOD, int32 X, int32 Y, int32 Z);
+    void ProcessObservedTile(UWorld* World);
     void ProcessTile(UWorld* World);
     void FinishTile();
     void SelectLoadedTileActor(int32 Generation, int32 LOD, int32 X, int32 Y,

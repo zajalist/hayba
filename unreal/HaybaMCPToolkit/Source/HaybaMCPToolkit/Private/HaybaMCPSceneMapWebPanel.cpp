@@ -65,6 +65,7 @@ void SHaybaMCPSceneMapWebPanel::Construct(const FArguments& InArgs)
             static const FString RefreshPrefix = TEXT("hayba-scene-map://refresh/");
             static const FString OpenLevelPrefix = TEXT("hayba-scene-map://open-level/");
             static const FString RefinePrefix = TEXT("hayba-scene-map://refine/");
+            static const FString RefineObservedPrefix = TEXT("hayba-scene-map://refine-observed/");
             static const FString SelectTilePrefix = TEXT("hayba-scene-map://select-tile/");
             auto ParseRoute = [&TargetUrl](const FString& Prefix, int32 Expected, TArray<int32>& Values)
             {
@@ -87,6 +88,17 @@ void SHaybaMCPSceneMapWebPanel::Construct(const FArguments& InArgs)
                 {
                     if (TSharedPtr<SHaybaMCPSceneMapWebPanel> Panel = WeakPanel.Pin())
                         Panel->QueueTile(Values[0], Values[1], Values[2], Values[3], Values[4]);
+                });
+                return true;
+            }
+            if (TargetUrl.StartsWith(RefineObservedPrefix))
+            {
+                TArray<int32> Values;
+                if (!Request.bIsMainFrame || !ParseRoute(RefineObservedPrefix, 5, Values)) return true;
+                AsyncTask(ENamedThreads::GameThread, [WeakPanel, Values]()
+                {
+                    if (TSharedPtr<SHaybaMCPSceneMapWebPanel> Panel = WeakPanel.Pin())
+                        Panel->QueueObservedTile(Values[0], Values[1], Values[2], Values[3], Values[4]);
                 });
                 return true;
             }
@@ -233,9 +245,15 @@ void SHaybaMCPSceneMapWebPanel::Refresh()
     ObservedDepth = HaybaViewDepthSnapshot::FSnapshot();
     bDepthSnapshotPublished = false;
     UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
+    const uint32 CurrentFingerprint = HaybaWorldObservationFusion::SceneFingerprint(World);
+    if (ScannedSceneFingerprint != 0 && ScannedSceneFingerprint != CurrentFingerprint)
+        ObservationFusion.Reset();
+    ScannedSceneFingerprint = CurrentFingerprint;
+    ObservationFusion.BindWorld(World, World ? FVector(World->OriginLocation) : FVector::ZeroVector);
     ScannedWorld = World;
     Geometry = HaybaWorldGeometry::FSnapshot();
-    TileQueue.Reset(); ActiveTile.Reset(); TilePageActors.Reset(); TileSelectionCacheOrder.Reset();
+    TileQueue.Reset(); ActiveTile.Reset(); ActiveObservedTile.Reset();
+    TilePageActors.Reset(); TileSelectionCacheOrder.Reset();
     Geometry.OriginCm = World ? FVector(World->OriginLocation) : FVector::ZeroVector;
     PendingGeometry = HaybaWorldGeometry::FSnapshot();
     PendingPointCursor = TotalPoints = ScannedActorSlots = TotalActorSlots = 0;
@@ -250,10 +268,17 @@ void SHaybaMCPSceneMapWebPanel::Refresh()
     DepthCpuMs = DepthMaxTickCpuMs = 0.0;
     bDepthReadbackBudgetExceeded = false;
     DepthCaptureId.Reset();
+    FusionCaptureOrdinal = 0;
+    bFusionReplayStarted = false;
+    bFusionReadySent = false;
+    FusionReplayCursor = FusionReplayLimit = 0;
+    FusionInsertionMaxTickMs = FusionReplayMaxTickMs = 0.0;
+    FusionReplayBuildMaxTickMs = FusionReplayEncodeMaxTickMs = FusionReplayInjectionMaxTickMs = 0.0;
     DepthPhase = EDepthPhase::NotStarted; DepthStatus = TEXT("not_attempted");
     LevelCursor = ActorCursor = 0;
     LoadedLevels.Reset(); LevelActorCounts.Reset(); DeferredActors.Reset(); DeferredAttempts.Reset(); ScanGaps.Reset();
     bScanDone = !World;
+    bInvalidatedForPie = false;
     bScanPartial = false;
     if (World)
     {
@@ -321,16 +346,36 @@ void SHaybaMCPSceneMapWebPanel::Tick(const FGeometry& AllottedGeometry,
         return;
     }
     UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
+    const bool bPieActive = GEditor && (GEditor->PlayWorld || GEditor->IsPlaySessionRequestQueued());
+    if (bPieActive)
+    {
+        if (!bInvalidatedForPie)
+        {
+            ObservationFusion.Reset(); ActiveObservedTile.Reset(); TileQueue.Reset(); ActiveTile.Reset();
+            bFusionReadySent = false;
+            ReleaseDepthCapture(); HaybaViewDepthSnapshot::Invalidate();
+            ++ScanGeneration;
+            Run(FString::Printf(TEXT("window.haybaInvalidateWorld && window.haybaInvalidateWorld(%d,'pie');"), ScanGeneration));
+            bInvalidatedForPie = true;
+        }
+        return;
+    }
+    if (bInvalidatedForPie) { Refresh(); return; }
     if (ActiveTile.IsSet() || !TileQueue.IsEmpty()) ProcessTile(World);
+    if (ActiveObservedTile.IsSet()) ProcessObservedTile(World);
     if (bScanDone)
     {
         // A completed preview belongs to its observed world, never the level
         // opened afterward. Interrupted scans keep their explicit Retry state.
-        if (ScannedWorld.Get() != World && !ScanGaps.Contains(TEXT("editor_world_changed"))) Refresh();
+        if ((ScannedWorld.Get() != World ||
+             (IsValid(World) && !ObservationFusion.Matches(World, FVector(World->OriginLocation)))) &&
+            !ScanGaps.Contains(TEXT("editor_world_changed"))) Refresh();
         return;
     }
     if (!IsValid(World) || ScannedWorld.Get() != World)
     {
+        ObservationFusion.Reset();
+        ActiveObservedTile.Reset();
         bScanPartial = true; ScanGaps.AddUnique(TEXT("editor_world_changed"));
         if (DepthPhase == EDepthPhase::AwaitReadback || DepthPhase == EDepthPhase::Processing)
         {
@@ -346,6 +391,18 @@ void SHaybaMCPSceneMapWebPanel::Tick(const FGeometry& AllottedGeometry,
         DepthStatus = TEXT("pie_started_during_capture"); DepthPhase = EDepthPhase::Complete;
         if (BaseColorStatus == TEXT("capture_queued")) BaseColorStatus = TEXT("pie_started_during_capture");
         DepthPixels.Reset(); DepthAnchors.Reset(); ReleaseDepthCapture(); FinishScan(); return;
+    }
+    if (bPieActive)
+    {
+        DepthStatus = TEXT("pie_active_or_queued"); DepthPhase = EDepthPhase::Complete;
+        bScanPartial = true; ScanGaps.AddUnique(TEXT("pie_active_or_queued"));
+        FinishScan(); return;
+    }
+    if (!ObservationFusion.Matches(World, FVector(World->OriginLocation)))
+    {
+        // Rebasing makes old world-space observations ambiguous. Reset and
+        // recapture under the new origin instead of mixing coordinate frames.
+        Refresh(); return;
     }
     if (DepthPhase == EDepthPhase::AwaitReadback)
     {
@@ -392,6 +449,8 @@ void SHaybaMCPSceneMapWebPanel::Tick(const FGeometry& AllottedGeometry,
         return;
     }
     if (DepthPhase == EDepthPhase::Processing) { ProcessDepthPixels(World); return; }
+    if (bFusionReplayStarted && FusionReplayCursor < FusionReplayLimit)
+    { SendFusionPointChunk(); return; }
     if (PendingPointCursor < PendingGeometry.Splats.Num())
     {
         SendPendingPointChunk();
@@ -595,6 +654,8 @@ void SHaybaMCPSceneMapWebPanel::BeginDepthCapture()
     ObservedDepth.CameraRotationDegrees = DepthRotation;
     ObservedDepth.HorizontalFovDegrees = DepthFov;
     ObservedDepth.bCameraValid = true;
+    FusionCaptureOrdinal = ObservationFusion.BeginCapture(DepthCaptureId,
+        ObservedDepth.CapturedAtUtc, DepthCameraCm, DepthRotation);
     DepthTarget.Reset(NewObject<UTextureRenderTarget2D>(World, NAME_None, RF_Transient));
     DepthCapture.Reset(NewObject<USceneCaptureComponent2D>(World, NAME_None, RF_Transient));
     if (!DepthTarget.IsValid() || !DepthCapture.IsValid())
@@ -710,9 +771,9 @@ void SHaybaMCPSceneMapWebPanel::ProcessDepthPixels(UWorld* World)
             if (const int32* NodeIndex = NodeIndexByPath.Find(Component->GetPathName())) Label.Node = *NodeIndex;
     }
     if (DepthAnchorCursor < AnchorCount) { AccountCpuTime(); return; }
-    TArray<TSharedPtr<FJsonValue>> Rows;
-    Rows.Reserve(HaybaWorldDepth::PointsPerTick);
-    while (DepthPixelCursor < DepthPixels.Num() && Rows.Num() < HaybaWorldDepth::PointsPerTick &&
+    int32 AcceptedThisTick = 0;
+    double FusionInsertThisTickMs = 0.0;
+    while (DepthPixelCursor < DepthPixels.Num() && AcceptedThisTick < HaybaWorldDepth::PointsPerTick &&
         DepthPointCount < HaybaWorldDepth::MaxPoints && FPlatformTime::Seconds() - Start < SliceSeconds)
     {
         // Coarse-to-fine image order makes a time-budgeted partial capture
@@ -766,17 +827,15 @@ void SHaybaMCPSceneMapWebPanel::ProcessDepthPixels(UWorld* World)
             ObservedPoint.SourceActorLabel = Anchor.SourceActorLabel;
         }
         ObservedDepth.AddPoint(MoveTemp(ObservedPoint));
-        Rows.Add(HaybaWorldGeometry::SplatToJson(Splat));
+        const double FusionStart = FPlatformTime::Seconds();
+        ObservationFusion.Add(FusionCaptureOrdinal, Point, Splat.Normal, DisplayColor, ColorSource,
+            Splat.ActorIndex, Splat.NodeIndex, ScanGeneration);
+        FusionInsertThisTickMs += (FPlatformTime::Seconds() - FusionStart) * 1000.0;
+        ++AcceptedThisTick;
         ++DepthPointCount;
         if (bAttributed) ++DepthAttributedCount;
     }
-    if (!Rows.IsEmpty())
-    {
-        FString Json;
-        const TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&Json);
-        FJsonSerializer::Serialize(Rows, Writer);
-        Run(FString::Printf(TEXT("window.haybaAppendDepthSplats(%d,%s);"), ScanGeneration, *Json));
-    }
+    FusionInsertionMaxTickMs = FMath::Max(FusionInsertionMaxTickMs, FusionInsertThisTickMs);
     if (DepthPixelCursor < DepthPixels.Num() && DepthPointCount < HaybaWorldDepth::MaxPoints)
     { AccountCpuTime(); return; }
     AccountCpuTime();
@@ -784,6 +843,60 @@ void SHaybaMCPSceneMapWebPanel::ProcessDepthPixels(UWorld* World)
     DepthStatus = DepthPointCount > 0 ? TEXT("complete_visible_subset") : TEXT("no_valid_depth");
     DepthPixels.Reset(); BaseColorPixels.Reset(); DepthAnchors.Reset();
     ReleaseDepthCapture(); FinishScan();
+}
+
+void SHaybaMCPSceneMapWebPanel::SendFusionPointChunk()
+{
+    if (FusionReplayLimit <= 0) return;
+    const double Started = FPlatformTime::Seconds();
+    TArray<TSharedPtr<FJsonValue>> Rows;
+    TArray<TSharedPtr<FJsonValue>> CaptureIds;
+    constexpr int32 RowsPerTick = 256;
+    Rows.Reserve(RowsPerTick);
+    CaptureIds.Reserve(RowsPerTick);
+    while (FusionReplayCursor < FusionReplayLimit && Rows.Num() < RowsPerTick &&
+        FPlatformTime::Seconds() - Started < 0.002)
+    {
+        // Deterministic even sampling is the browser LOD. The native store
+        // retains up to 2M deduplicated observations independently of CPU mesh.
+        const int32 Index = static_cast<int32>(
+            static_cast<int64>(FusionReplayCursor++) * ObservationFusion.Num() / FusionReplayLimit);
+        const HaybaWorldObservationFusion::FPoint& Point = ObservationFusion.PointAt(Index);
+        HaybaWorldGeometry::FSplat Splat;
+        Splat.PositionCm = Point.PositionCm - Geometry.OriginCm;
+        Splat.Normal = Point.Normal;
+        Splat.R = Point.Color.R;
+        Splat.G = Point.Color.G;
+        Splat.B = Point.Color.B;
+        Splat.ActorIndex = Point.AttributionGeneration == ScanGeneration ? Point.VerifiedActorIndex : INDEX_NONE;
+        Splat.NodeIndex = Point.AttributionGeneration == ScanGeneration ? Point.VerifiedNodeIndex : INDEX_NONE;
+        Rows.Add(HaybaWorldGeometry::SplatToJson(Splat));
+        const HaybaWorldObservationFusion::FCapture* Capture =
+            ObservationFusion.CaptureFor(Point.CaptureOrdinal);
+        CaptureIds.Add(MakeShared<FJsonValueString>(Capture ? Capture->Id : FString()));
+    }
+    if (!Rows.IsEmpty())
+    {
+        const double BuiltAt = FPlatformTime::Seconds();
+        FString RowJson, IdJson;
+        FJsonSerializer::Serialize(Rows, TJsonWriterFactory<>::Create(&RowJson));
+        FJsonSerializer::Serialize(CaptureIds, TJsonWriterFactory<>::Create(&IdJson));
+        const double EncodedAt = FPlatformTime::Seconds();
+        Run(FString::Printf(TEXT("window.haybaAppendDepthSplats(%d,%s,%s);"),
+            ScanGeneration, *RowJson, *IdJson));
+        const double InjectedAt = FPlatformTime::Seconds();
+        FusionReplayBuildMaxTickMs = FMath::Max(FusionReplayBuildMaxTickMs, (BuiltAt - Started) * 1000.0);
+        FusionReplayEncodeMaxTickMs = FMath::Max(FusionReplayEncodeMaxTickMs, (EncodedAt - BuiltAt) * 1000.0);
+        FusionReplayInjectionMaxTickMs = FMath::Max(FusionReplayInjectionMaxTickMs, (InjectedAt - EncodedAt) * 1000.0);
+        if (!bFusionReadySent)
+        {
+            bFusionReadySent = true;
+            Run(FString::Printf(TEXT("window.haybaFusionReady && window.haybaFusionReady(%d,%d,%d);"),
+                ScanGeneration, ObservationFusion.Num(), FusionReplayLimit));
+        }
+    }
+    FusionReplayMaxTickMs = FMath::Max(FusionReplayMaxTickMs,
+        (FPlatformTime::Seconds() - Started) * 1000.0);
 }
 
 void SHaybaMCPSceneMapWebPanel::FinishScan()
@@ -795,6 +908,15 @@ void SHaybaMCPSceneMapWebPanel::FinishScan()
         if (DepthPhase != EDepthPhase::Complete) return;
     }
     if (DepthPhase == EDepthPhase::AwaitReadback || DepthPhase == EDepthPhase::Processing) return;
+    if (!bFusionReplayStarted)
+    {
+        bFusionReplayStarted = true;
+        FusionReplayCursor = 0;
+        FusionReplayLimit = FMath::Min(ObservationFusion.Num(),
+            FMath::Max(0, HaybaWorldDepth::TotalPointBudget - TotalPoints));
+    }
+    if (FusionReplayCursor < FusionReplayLimit) return;
+    ObservationFusion.PruneEmptyCaptures();
     if (!bDepthSnapshotPublished && DepthPhase == EDepthPhase::Complete &&
         !ObservedDepth.CaptureId.IsEmpty())
     {
@@ -835,6 +957,24 @@ void SHaybaMCPSceneMapWebPanel::FinishScan()
     Completion->SetNumberField(TEXT("scannedActorSlots"), ScannedActorSlots);
     Completion->SetNumberField(TEXT("totalActorSlots"), TotalActorSlots);
     Completion->SetNumberField(TEXT("totalPointLimit"), HaybaWorldDepth::TotalPointBudget);
+    TSharedRef<FJsonObject> Fusion = MakeShared<FJsonObject>();
+    Fusion->SetStringField(TEXT("source"), TEXT("explicit_editor_view_depth_observations"));
+    Fusion->SetNumberField(TEXT("captureCount"), ObservationFusion.CaptureCount());
+    Fusion->SetNumberField(TEXT("residentPointCount"), ObservationFusion.Num());
+    Fusion->SetNumberField(TEXT("displayedPointCount"), FusionReplayLimit);
+    Fusion->SetNumberField(TEXT("residentLimit"), ObservationFusion.Limit());
+    Fusion->SetNumberField(TEXT("allocatedBytes"), static_cast<double>(ObservationFusion.AllocatedBytes()));
+    Fusion->SetNumberField(TEXT("voxelSizeCm"), HaybaWorldObservationFusion::VoxelSizeCm);
+    Fusion->SetNumberField(TEXT("deduplicatedCount"), ObservationFusion.DuplicateCount());
+    Fusion->SetNumberField(TEXT("evictedCount"), ObservationFusion.EvictionCount());
+    Fusion->SetNumberField(TEXT("maxReplayTickMs"), FusionReplayMaxTickMs);
+    Fusion->SetNumberField(TEXT("maxReplayBuildMs"), FusionReplayBuildMaxTickMs);
+    Fusion->SetNumberField(TEXT("maxReplayEncodeMs"), FusionReplayEncodeMaxTickMs);
+    Fusion->SetNumberField(TEXT("maxReplayInjectionMs"), FusionReplayInjectionMaxTickMs);
+    Fusion->SetBoolField(TEXT("wholeWorldCoverage"), false);
+    Fusion->SetBoolField(TEXT("historicalObservations"), true);
+    Fusion->SetStringField(TEXT("refreshSceneCheck"), TEXT("actor_component_transform_mesh_and_material_reference"));
+    Completion->SetObjectField(TEXT("observationFusion"), Fusion);
     TSharedRef<FJsonObject> Depth = MakeShared<FJsonObject>();
     Depth->SetStringField(TEXT("source"), TEXT("scene_depth_visible_surface"));
     if (!DepthCaptureId.IsEmpty()) Depth->SetStringField(TEXT("captureId"), DepthCaptureId);
@@ -951,6 +1091,90 @@ void SHaybaMCPSceneMapWebPanel::QueueTile(int32 Generation, int32 LOD, int32 X, 
         return;
     }
     TileQueue.Add(MoveTemp(Address));
+}
+
+void SHaybaMCPSceneMapWebPanel::QueueObservedTile(int32 Generation, int32 LOD, int32 X, int32 Y, int32 Z)
+{
+    UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
+    FBox Bounds(EForceInit::ForceInit);
+    if (FHaybaEditorHealth::IsUnsafe() || !GEditor || GEditor->PlayWorld ||
+        GEditor->IsPlaySessionRequestQueued() || Generation != ScanGeneration ||
+        !bFusionReadySent || !IsValid(World) ||
+        !ObservationFusion.Matches(World, FVector(World->OriginLocation)) ||
+        !HaybaWorldGeometry::TileBounds(LOD, X, Y, Z, Bounds)) return;
+    FObservedTileRequest Request;
+    Request.Address.LOD = LOD; Request.Address.X = X; Request.Address.Y = Y; Request.Address.Z = Z;
+    Request.Address.Id = HaybaWorldGeometry::TileId(LOD, X, Y, Z);
+    Request.Address.BoundsCm = Bounds; // absolute world centimetres, not browser-relative
+    Request.Generation = Generation;
+    Request.OriginCm = Geometry.OriginCm;
+    ActiveObservedTile = MoveTemp(Request);
+}
+
+void SHaybaMCPSceneMapWebPanel::ProcessObservedTile(UWorld* World)
+{
+    if (!ActiveObservedTile.IsSet()) return;
+    FObservedTileRequest& Request = ActiveObservedTile.GetValue();
+    if (!bFusionReadySent || Request.Generation != ScanGeneration || !IsValid(World) ||
+        !ObservationFusion.Matches(World, Request.OriginCm) || Geometry.OriginCm != Request.OriginCm)
+    { ActiveObservedTile.Reset(); return; }
+    const double Started = FPlatformTime::Seconds();
+    constexpr double SliceSeconds = 0.002;
+    constexpr int32 ScanItemsPerTick = 50000;
+    constexpr int32 RowsPerTick = 256;
+    constexpr int32 TilePointLimit = 8192;
+    const auto InBounds = [&Request](const FVector& Position)
+    {
+        const FBox& Box = Request.Address.BoundsCm;
+        return Position.X >= Box.Min.X && Position.X < Box.Max.X &&
+            Position.Y >= Box.Min.Y && Position.Y < Box.Max.Y &&
+            Position.Z >= Box.Min.Z && Position.Z < Box.Max.Z;
+    };
+    if (Request.bCounting)
+    {
+        int32 Scanned = 0;
+        while (Request.Cursor < ObservationFusion.Num() && Scanned++ < ScanItemsPerTick &&
+            FPlatformTime::Seconds() - Started < SliceSeconds)
+            if (InBounds(ObservationFusion.PointAt(Request.Cursor++).PositionCm)) ++Request.Matching;
+        if (Request.Cursor < ObservationFusion.Num()) return;
+        Request.SampleLimit = FMath::Min(Request.Matching, TilePointLimit);
+        Request.bCounting = false;
+        Request.Cursor = 0;
+    }
+    TArray<TSharedPtr<FJsonValue>> Rows;
+    TArray<TSharedPtr<FJsonValue>> CaptureIds;
+    Rows.Reserve(RowsPerTick); CaptureIds.Reserve(RowsPerTick);
+    int32 Scanned = 0;
+    while (Request.Cursor < ObservationFusion.Num() && Scanned++ < ScanItemsPerTick &&
+        Rows.Num() < RowsPerTick && FPlatformTime::Seconds() - Started < SliceSeconds)
+    {
+        const HaybaWorldObservationFusion::FPoint& Point = ObservationFusion.PointAt(Request.Cursor++);
+        if (!InBounds(Point.PositionCm)) continue;
+        const int32 MatchIndex = Request.MatchingSeen++;
+        if (Request.SampleOrdinal >= Request.SampleLimit ||
+            MatchIndex != static_cast<int32>(static_cast<int64>(Request.SampleOrdinal) *
+                Request.Matching / Request.SampleLimit)) continue;
+        ++Request.SampleOrdinal;
+        HaybaWorldGeometry::FSplat Splat;
+        Splat.PositionCm = Point.PositionCm - Request.OriginCm;
+        Splat.Normal = Point.Normal;
+        Splat.R = Point.Color.R; Splat.G = Point.Color.G; Splat.B = Point.Color.B;
+        Splat.ActorIndex = Point.AttributionGeneration == ScanGeneration ? Point.VerifiedActorIndex : INDEX_NONE;
+        Splat.NodeIndex = Point.AttributionGeneration == ScanGeneration ? Point.VerifiedNodeIndex : INDEX_NONE;
+        Rows.Add(HaybaWorldGeometry::SplatToJson(Splat));
+        const HaybaWorldObservationFusion::FCapture* Capture = ObservationFusion.CaptureFor(Point.CaptureOrdinal);
+        CaptureIds.Add(MakeShared<FJsonValueString>(Capture ? Capture->Id : FString()));
+    }
+    const bool bDone = Request.Cursor >= ObservationFusion.Num();
+    if (!Rows.IsEmpty() || bDone)
+    {
+        FString RowJson, IdJson;
+        FJsonSerializer::Serialize(Rows, TJsonWriterFactory<>::Create(&RowJson));
+        FJsonSerializer::Serialize(CaptureIds, TJsonWriterFactory<>::Create(&IdJson));
+        Run(FString::Printf(TEXT("window.haybaAppendObservedTile(%d,'%s',%s,%s,%s);"),
+            Request.Generation, *Request.Address.Id, *RowJson, *IdJson, bDone ? TEXT("true") : TEXT("false")));
+    }
+    if (bDone) ActiveObservedTile.Reset();
 }
 
 void SHaybaMCPSceneMapWebPanel::ProcessTile(UWorld* World)

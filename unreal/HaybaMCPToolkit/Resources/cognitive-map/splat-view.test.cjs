@@ -81,12 +81,17 @@ window.haybaAppendDepthSplats(0, [[150, 0, 0, 1, 0, 0, 70, 160, 190, -1, -1, -1]
 assert.equal(state.count, 3, 'stale depth generations are ignored');
 window.haybaAppendDepthSplats(1, [[150, 0, 0, 1, 0, 0, 70, 160, 190, -1, -1, -1],
   [200, 0, 0, 1, 0, 0, 90, 200, 220, 1, 2, -1],
-  [300, 0, 0, 1, 0, 0, 90, 200, 220, 99, 2, -1]]);
+  [300, 0, 0, 1, 0, 0, 90, 200, 220, 99, 2, -1]],
+['view-a', 'view-b', 'invalid-view']);
 assert.equal(state.count, 5, 'depth surfaces keep unknown labels and reject invalid references');
 assert.equal(state.depthPointCount, 2, 'depth provenance stays distinct from CPU mesh sample count');
 assert.ok(Math.abs(state.chunks[3].data[6] - 70 / 255) < 1e-6,
   'visible scene RGB reaches the cloud without warm palette desaturation');
 assert.equal(state.chunks[3].data[9], -1, 'unknown depth source stays unknown');
+assert.equal(sourceForPoint(state.chunks[3], 0).captureId, 'view-a',
+  'fused depth retains its original capture provenance');
+assert.equal(sourceForPoint(state.chunks[3], 1).captureId, 'view-b',
+  'a second view retains distinct capture provenance');
 assert.equal(state.chunks[3].data[13 + 10], 2, 'attributed depth source uses global node index');
 assert.equal(state.worldBounds.max[0], 200, 'depth-only visible surfaces extend fitted bounds');
 window.haybaGeometryDone(1, { partial: true, gaps: ['loaded_level_changed'], scannedActorSlots: 2, totalActorSlots: 3 });
@@ -644,3 +649,49 @@ window.haybaGeometryDone(18, { worldState: 'complete' });
 assert.ok(state.selectionScopes.some(scope => scope.key.startsWith('cluster:')),
   'the same point gains derived spatial groups when the scan finishes');
 console.log('splat-view streaming depth selection provenance: passed');
+
+// Native keeps more observed voxels than the overview can ship. A focused
+// region asks for an absolute-world tile, then streams its own bounded depth
+// cache without assigning identity to unmatched raster pixels.
+state.completion.observationFusion = { residentPointCount: 200000, displayedPointCount: 100000 };
+state.userMoved = true; state.distance = 1200; state.target = [0, 0, 0];
+elements.get('scene').listeners.wheel({ deltaY: 1, preventDefault() {} });
+for (const [id, callback] of [...timers]) if (timers.has(id)) { timers.delete(id); callback(); }
+assert.match(window.location.href, /^hayba-scene-map:\/\/refine-observed\/18\/2\//,
+  'zoom requests regional observations in the current native generation');
+const observedId = state.observedInFlight;
+assert.ok(observedId);
+const observedRow = [20, 0, 0, 0, 0, 1, 30, 90, 180, -1, -1, -1];
+window.haybaAppendObservedTile(17, observedId, [observedRow], ['old'], true);
+assert.equal(state.observedTiles.size, 0, 'stale generations cannot add regional points');
+window.haybaAppendObservedTile(18, observedId, [observedRow], ['view-a'], false);
+window.haybaAppendObservedTile(18, observedId, [[40, 0, 0, 0, 0, 1, 40, 100, 200, -1, -1, -1]], ['view-b'], true);
+const observed = state.observedTiles.get(observedId).chunk;
+assert.equal(observed.count, 2);
+assert.equal(sourceForPoint(observed, 0).captureId, 'view-a');
+assert.equal(sourceForPoint(observed, 1).captureId, 'view-b');
+assert.equal(sourceForPoint(observed, 0).actor, undefined, 'unknown pixels stay unattributed');
+assert.equal(sourceForPoint(observed, 0).tileId, observedId);
+assert.ok(visibleRenderPlan(800, 600).some(item => item.chunk === observed),
+  'focused renderer can reach observed points beyond overview limit');
+window.haybaInvalidateWorld(19, 'pie');
+assert.equal(state.observedTiles.size, 0);
+assert.equal(state.chunks.length, 0);
+assert.equal(state.pointSelection, null);
+assert.equal(window.haybaGetSelectedWorldEvidence(), null, 'PIE removes pickable stale evidence');
+window.haybaAppendObservedTile(18, observedId, [observedRow], ['late'], true);
+assert.equal(state.observedTiles.size, 0, 'late native chunks are rejected after PIE');
+console.log('splat-view regional observed LOD and PIE invalidation: passed');
+
+window.haybaLoadGeometry({ generation: 20, originCm: [0, 0, 0], nativeSelection: true });
+window.haybaAppendDepthSplats(20, [observedRow], ['overview-first']);
+state.userMoved = true; state.distance = 1200; state.target = [0, 0, 0];
+window.haybaFusionReady(20, 200000, 163840);
+assert.equal(state.done, false, 'overview completion still waits for the remaining streamed points');
+const earlyRefineTimer = Math.max(...timers.keys());
+const earlyRefine = timers.get(earlyRefineTimer);
+timers.delete(earlyRefineTimer); earlyRefine();
+assert.match(window.location.href, /^hayba-scene-map:\/\/refine-observed\/20\/2\//,
+  'regional detail can start after the first overview batch, before full replay');
+assert.equal(state.refineInFlight, null, 'CPU mesh refinement still waits for completed geometry');
+console.log('splat-view early regional detail during bounded overview replay: passed');

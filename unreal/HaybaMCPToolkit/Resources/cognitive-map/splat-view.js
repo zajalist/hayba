@@ -34,14 +34,16 @@
   if (!gl) try { ctx = canvas.getContext('2d'); } catch { /* Show explicit unavailable state below. */ }
   const state = { generation: null, coverage: null, actors: [], nodes: [], clusters: [], chunks: [], tiles: new Map(),
     tileChunks: [], tilePointCount: 0, refineQueue: [], refineInFlight: null,
-    pendingTileSelect: null, count: 0, depthPointCount: 0, done: false, nativeSelection: false,
+    observedTiles: new Map(), observedQueue: [], observedInFlight: null,
+    pendingTileSelect: null, count: 0, depthPointCount: 0, done: false, fusionReady: false, nativeSelection: false,
     pending: null, completion: null, worldState: 'loading', viewState: 'loading', noticeDismissed: false,
     originCm: [0, 0, 0], inspectMode: 'spatial', inspectNode: -1, inspectCluster: -1,
     center: [0, 0, 0], radius: 100, target: [0, 0, 0], yaw: -.75, pitch: .36, distance: 300, fittedDistance: 300,
     focusFit: null, fitMode: 'focus',
     drag: null, userMoved: false, selectedIndex: -1, selectedNodeIndex: -1, highlightedNodeIndex: -1, selectedClusterIndex: -1,
     pointSelection: null, selectionScopes: [], selectionEvidence: null, scopeIndex: 0 };
-  let program, attributes, uniforms, framePending = false, refineTimer = null, refineTimeout = null;
+  let program, attributes, uniforms, framePending = false, refineTimer = null, refineTimeout = null,
+    observedTimeout = null;
 
   let stallTimer = null, rendererFailed = false;
   function retryScan() {
@@ -96,12 +98,14 @@
     if (gl && chunk.selectedBuffer) gl.deleteBuffer(chunk.selectedBuffer);
   }
   function clearTiles() {
-    window.clearTimeout(refineTimer); window.clearTimeout(refineTimeout);
-    refineTimer = refineTimeout = null;
+    window.clearTimeout(refineTimer); window.clearTimeout(refineTimeout); window.clearTimeout(observedTimeout);
+    refineTimer = refineTimeout = observedTimeout = null;
     for (const chunk of state.tileChunks) releaseChunk(chunk);
     for (const tile of state.tiles.values()) releaseChunk(tile.renderChunk);
     state.tiles.clear(); state.tileChunks = []; state.tilePointCount = 0;
     state.refineQueue = []; state.refineInFlight = null;
+    for (const tile of state.observedTiles.values()) releaseChunk(tile.chunk);
+    state.observedTiles.clear(); state.observedQueue = []; state.observedInFlight = null;
     state.pendingTileSelect = null;
     state.selectionEvidence = null;
   }
@@ -252,7 +256,7 @@
     if (canvas.width !== width || canvas.height !== height) { canvas.width = width; canvas.height = height; }
     if (gl && program) {
       gl.viewport(0, 0, width, height); gl.clearColor(33 / 255, 31 / 255, 29 / 255, 1); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-      if (!state.chunks.length && !state.tileChunks.length) return;
+      if (!state.chunks.length && !state.tileChunks.length && !state.observedTiles.size) return;
       gl.useProgram(program);
       gl.uniformMatrix4fv(uniforms.cameraMatrix, false, viewProjection(width / height));
       gl.uniform1f(uniforms.viewportHeight, height);
@@ -325,7 +329,8 @@
     });
   }
   function desiredTileLod() {
-    if (!state.done || !state.userMoved || state.worldState === 'failed' || state.worldState === 'no_world') return -1;
+    if ((!state.done && !state.fusionReady) || !state.userMoved ||
+      state.worldState === 'failed' || state.worldState === 'no_world') return -1;
     return state.distance <= 2500 ? 2 : state.distance <= 5500 ? 1 : state.distance <= 12000 ? 0 : -1;
   }
   function tileIdAt(lod, point) {
@@ -384,7 +389,11 @@
       }, 0);
       return distance2(a) - distance2(b);
     });
-    return tiles.map(tile => tile.renderChunk).filter(chunk => chunk.count > 0);
+    const observed = [...state.observedTiles.values()].filter(tile => tile.lod === lod && tile.chunk.count &&
+      tileOnScreen(tile, matrix, width, height));
+    observed.sort((a, b) => a.id.localeCompare(b.id));
+    return [...tiles.map(tile => tile.renderChunk), ...observed.map(tile => tile.chunk)]
+      .filter(chunk => chunk.count > 0);
   }
   function visibleRenderPlan(width = canvas.clientWidth, height = canvas.clientHeight) {
     const baseCounts = visibleChunkCounts();
@@ -603,8 +612,9 @@
     const actors = chunk.page?.actors || state.actors, nodes = chunk.page?.nodes || state.nodes;
     return { actorIndex: data[p + ACTOR], nodeIndex: data[p + NODE], clusterIndex: data[p + CLUSTER],
       actor: actors[data[p + ACTOR]], node: nodes[data[p + NODE]], actors, nodes,
-      provenance: chunk.isDepth ? 'view_depth' : 'cpu_render_lod', tileId: chunk.tile?.id || null,
-      captureId: chunk.tile?.captureId || null,
+      provenance: chunk.isDepth ? 'view_depth' : 'cpu_render_lod',
+      tileId: chunk.observedTileId || chunk.tile?.id || null,
+      captureId: chunk.captureIds?.[pointIndex] || chunk.tile?.captureId || null,
       pageId: chunk.page?.pageId ?? null, rowIndex: (chunk.rowOffset || 0) + pointIndex };
   }
   function semanticValue(source, kind) {
@@ -979,7 +989,7 @@
       state.generation = null; state.nativeSelection = false; state.actors = [];
       state.nodes = []; state.clusters = []; state.chunks = [];
       state.count = state.depthPointCount = 0; state.pending = null;
-      state.done = false; state.completion = null; state.worldBounds = null; state.focusFit = null;
+      state.done = false; state.fusionReady = false; state.completion = null; state.worldBounds = null; state.focusFit = null;
       state.spatialGrid = null; state.fitMode = 'focus';
       state.selectedIndex = state.selectedNodeIndex = state.highlightedNodeIndex = state.selectedClusterIndex = -1;
       state.inspectNode = state.inspectCluster = -1; selectedLabel.hidden = true;
@@ -1001,7 +1011,8 @@
     state.pending = null; state.completion = null; state.focusFit = null; state.spatialGrid = null; state.fitMode = 'focus';
     state.worldState = data.worldState === 'no_world' ? 'no_world' : 'loading'; state.noticeDismissed = false;
     state.originCm = data.originCm;
-    state.nativeSelection = data.nativeSelection === true; state.chunks = []; state.count = 0; state.depthPointCount = 0; state.done = false;
+    state.nativeSelection = data.nativeSelection === true; state.chunks = []; state.count = 0; state.depthPointCount = 0;
+    state.done = false; state.fusionReady = false;
     state.userMoved = false;
     state.selectedIndex = -1; state.selectedNodeIndex = -1; state.highlightedNodeIndex = -1; state.selectedClusterIndex = -1;
     state.inspectNode = -1; state.inspectCluster = -1;
@@ -1127,9 +1138,17 @@
     refineTimer = window.setTimeout(() => {
       refineTimer = null;
       if (!Number.isSafeInteger(state.generation)) return;
-      state.refineQueue = refinementCandidates().filter(id => !state.tiles.has(id) &&
-        id !== state.refineInFlight);
-      startNextRefinement();
+      if (state.done) {
+        state.refineQueue = refinementCandidates().filter(id => !state.tiles.has(id) &&
+          id !== state.refineInFlight);
+        startNextRefinement();
+      }
+      const fusion = state.completion?.observationFusion;
+      if (fusion && fusion.residentPointCount > fusion.displayedPointCount) {
+        state.observedQueue = refinementCandidates().slice(0, 8).filter(id =>
+          !state.observedTiles.has(id) && id !== state.observedInFlight);
+        startNextObservedRefinement();
+      }
     }, 100);
   }
   function startNextRefinement() {
@@ -1146,6 +1165,20 @@
       if (state.pendingTileSelect?.tileId === tileId && state.pendingTileSelect.retries)
         tileSelectionFailure('Tile refresh timed out.');
       startNextRefinement();
+    }, 20000);
+  }
+  function startNextObservedRefinement() {
+    if (state.observedInFlight || (!state.done && !state.fusionReady) || state.generation === null) return;
+    const tileId = state.observedQueue.shift();
+    if (!tileId) return;
+    state.observedInFlight = tileId;
+    const [, lod, x, y, z] = tileId.split(':');
+    window.location.href = `hayba-scene-map://refine-observed/${state.generation}/${lod}/${x}/${y}/${z}`;
+    window.clearTimeout(observedTimeout);
+    observedTimeout = window.setTimeout(() => {
+      if (state.observedInFlight !== tileId) return;
+      state.observedInFlight = null;
+      startNextObservedRefinement();
     }, 20000);
   }
   function tileSelectionUrl(pending) {
@@ -1393,12 +1426,15 @@
       updateHighlights(appended);
     else requestDraw();
   };
-  window.haybaAppendDepthSplats = function (generation, rows) {
+  window.haybaAppendDepthSplats = function (generation, rows, captureIds = null) {
     if (state.done || generation !== state.generation || !Array.isArray(rows) || (gl && !program) || (!gl && !ctx)) return;
+    if (captureIds !== null && (!Array.isArray(captureIds) || captureIds.length !== rows.length ||
+      !captureIds.every(id => typeof id === 'string' && id.length <= 128))) return;
     if (state.worldState === 'failed') { state.worldState = 'loading'; updateViewState(); }
     // These rows already carry global actor/node indices. -1 means the depth
     // surface had no trustworthy sparse-ray semantic attribution.
-    const valid = rows.slice(0, Math.min(rows.length, MAX_POINTS - state.count)).filter(r =>
+    const valid = rows.slice(0, Math.min(rows.length, MAX_POINTS - state.count))
+      .map((row, index) => ({ row, captureId: captureIds?.[index] || null })).filter(({ row: r }) =>
       Array.isArray(r) && r.length === ROW_FIELDS && r.every(Number.isFinite) &&
       Number.isSafeInteger(r[ACTOR]) && r[ACTOR] >= -1 && r[ACTOR] < state.actors.length &&
       Number.isSafeInteger(r[NODE]) && r[NODE] >= -1 && r[NODE] < state.nodes.length &&
@@ -1413,7 +1449,7 @@
       if (!chunk?.isDepth || chunk.count === DEPTH_CHUNK_POINTS) {
         const capacity = Math.min(DEPTH_CHUNK_POINTS, Math.max(512, valid.length - cursor));
         chunk = { buffer: gl ? gl.createBuffer() : null, data: new Float32Array(capacity * STRIDE),
-          capacity, count: 0, isDepth: true, selectedCount: 0 };
+          captureIds: [], capacity, count: 0, isDepth: true, selectedCount: 0 };
         state.chunks.push(chunk);
         if (gl) { gl.bindBuffer(gl.ARRAY_BUFFER, chunk.buffer); gl.bufferData(gl.ARRAY_BUFFER,
           chunk.data.byteLength, gl.DYNAMIC_DRAW); }
@@ -1430,7 +1466,8 @@
       }
       const start = chunk.count;
       for (let i = 0; i < take; i++) {
-        const row = valid[cursor + i], at = (start + i) * STRIDE;
+        const { row, captureId } = valid[cursor + i], at = (start + i) * STRIDE;
+        chunk.captureIds[start + i] = captureId;
         // Native capture aligns rendered material BaseColor (or scene-color
         // fallback) with the depth raster. Preserve those observed RGB values;
         // only selected/hovered overlays use Hayba color.
@@ -1453,6 +1490,81 @@
     if (state.selectionScopes.length || state.selectedIndex >= 0 || state.selectedClusterIndex >= 0 || state.highlightedNodeIndex >= 0)
       for (const chunk of changed) updateHighlights(chunk);
     else requestDraw();
+  };
+  window.haybaAppendObservedTile = function (generation, tileId, rows, captureIds, done) {
+    if (generation !== state.generation || (!state.done && !state.fusionReady) || state.worldState === 'failed' ||
+      !/^tile:[012]:-?\d+:-?\d+:-?\d+$/.test(tileId) || !Array.isArray(rows) ||
+      !Array.isArray(captureIds) || captureIds.length !== rows.length ||
+      !captureIds.every(id => typeof id === 'string' && id.length <= 128)) return;
+    let tile = state.observedTiles.get(tileId);
+    if (!tile) {
+      const [, lodText, ...coordinates] = tileId.split(':');
+      const lod = Number(lodText), coords = coordinates.map(Number);
+      if (coords.some(value => !Number.isSafeInteger(value) || Math.abs(value) > 10000000)) return;
+      const edge = 4000 / (1 << lod);
+      const min = coords.map(value => value * edge);
+      const chunk = { buffer: gl ? gl.createBuffer() : null, data: new Float32Array(8192 * STRIDE),
+        captureIds: [], count: 0, isDepth: true, observedTileId: tileId, selectedCount: 0 };
+      if (gl) { gl.bindBuffer(gl.ARRAY_BUFFER, chunk.buffer);
+        gl.bufferData(gl.ARRAY_BUFFER, chunk.data.byteLength, gl.DYNAMIC_DRAW); }
+      tile = { id: tileId, lod, boundsCm: { min, max: min.map(value => value + edge) }, chunk, done: false };
+      state.observedTiles.set(tileId, tile);
+      while (state.observedTiles.size > 8) {
+        const oldest = state.observedTiles.keys().next().value;
+        const evicted = state.observedTiles.get(oldest);
+        if (state.pointSelection?.chunk === evicted.chunk) { state.pointSelection = null; clearScopes(); }
+        releaseChunk(evicted.chunk); state.observedTiles.delete(oldest);
+      }
+    }
+    const valid = rows.map((row, index) => ({ row, captureId: captureIds[index] }))
+      .filter(({ row }) => Array.isArray(row) && row.length === ROW_FIELDS && row.every(Number.isFinite) &&
+        Number.isSafeInteger(row[ACTOR]) && row[ACTOR] >= -1 && row[ACTOR] < state.actors.length &&
+        Number.isSafeInteger(row[NODE]) && row[NODE] >= -1 && row[NODE] < state.nodes.length &&
+        row[CLUSTER] === -1).slice(0, 8192 - tile.chunk.count);
+    const start = tile.chunk.count;
+    for (let index = 0; index < valid.length; index++) {
+      const { row, captureId } = valid[index], at = (start + index) * STRIDE;
+      tile.chunk.captureIds[start + index] = captureId;
+      for (let field = 0; field < ROW_FIELDS; field++) tile.chunk.data[at + field] =
+        field >= 6 && field <= 8 ? clamp(row[field] / 255, 0, 1) : row[field];
+    }
+    tile.chunk.count += valid.length;
+    if (gl && valid.length) { gl.bindBuffer(gl.ARRAY_BUFFER, tile.chunk.buffer);
+      gl.bufferSubData(gl.ARRAY_BUFFER, start * STRIDE * 4,
+        tile.chunk.data.subarray(start * STRIDE, tile.chunk.count * STRIDE)); }
+    if (valid.length) {
+      if (state.selectionScopes.length || state.selectedIndex >= 0 || state.selectedClusterIndex >= 0)
+        updateHighlights(tile.chunk);
+      else requestDraw();
+    }
+    if (done === true) {
+      tile.done = true;
+      if (state.observedInFlight === tileId) {
+        window.clearTimeout(observedTimeout); observedTimeout = null;
+        state.observedInFlight = null; startNextObservedRefinement();
+      }
+    }
+  };
+  window.haybaFusionReady = function (generation, residentPointCount, plannedOverviewPointCount) {
+    if (generation !== state.generation || state.done || !Number.isSafeInteger(residentPointCount) ||
+      !Number.isSafeInteger(plannedOverviewPointCount) || residentPointCount < 0 ||
+      plannedOverviewPointCount < 0 || plannedOverviewPointCount > residentPointCount) return;
+    state.fusionReady = true;
+    state.completion = { observationFusion: {
+      residentPointCount, displayedPointCount: plannedOverviewPointCount } };
+    if (state.userMoved) scheduleRefinement();
+  };
+  window.haybaInvalidateWorld = function (generation, reason) {
+    if (!Number.isSafeInteger(generation) || generation < state.generation) return;
+    for (const chunk of state.chunks) releaseChunk(chunk);
+    clearTiles(); clearScopes();
+    state.generation = generation; state.chunks = []; state.count = state.depthPointCount = 0;
+    state.actors = []; state.nodes = []; state.clusters = []; state.pending = null;
+    state.pointSelection = null; state.selectionEvidence = null; state.done = false;
+    state.fusionReady = false; state.completion = null;
+    state.selectedIndex = state.selectedNodeIndex = state.highlightedNodeIndex = state.selectedClusterIndex = -1;
+    state.worldState = 'failed'; selectedLabel.hidden = true;
+    requestDraw(); updateViewState();
   };
   window.haybaGeometryDone = function (generation, completion) {
     if (generation !== state.generation) return;
@@ -1523,7 +1635,7 @@
     if (state.drag.moved) scheduleRefinement();
   });
   function pick(e) {
-    if (!state.chunks.length && !state.tileChunks.length) return;
+    if (!state.chunks.length && !state.tileChunks.length && !state.observedTiles.size) return;
     const bounds = canvas.getBoundingClientRect(), x = e.clientX - bounds.left, y = e.clientY - bounds.top;
     const m = viewProjection(bounds.width / Math.max(bounds.height, 1));
     let bestKnown = null, bestUnknown = null;
@@ -1557,7 +1669,7 @@
     state.selectionEvidence = { generation: state.generation, provenance: best.source.provenance,
       actorPath: best.source.actor?.path || null, nodeId: best.source.node?.id || null,
       tileId: best.source.tileId, pageId: best.source.pageId, rowIndex: best.source.rowIndex,
-      captureId: best.isDepth ? state.completion?.depthCapture?.captureId || null : best.source.captureId,
+      captureId: best.source.captureId || (best.isDepth ? state.completion?.depthCapture?.captureId || null : null),
       positionCm: [0, 1, 2].map(axis => best.chunk.data[pointAt + axis] + state.originCm[axis]) };
     if (!knownSurface) {
       // Unknown depth is real geometry, but cannot justify selecting an actor.
