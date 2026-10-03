@@ -73,6 +73,12 @@ export const ActivityEventSchema = z.discriminatedUnion('type', [
       argsHash: id,
       source: z.enum(['ts', 'ue']),
       hint: z.string().optional(),
+      // Present only for a UE-native exact proposal. The in-editor model
+      // requires all four fields together before it can authorize the retry.
+      nativeProposalId: id.max(128).optional(),
+      nativeOperationDigest: id.max(128).optional(),
+      nativeTargetRef: id.max(1024).optional(),
+      nativeTargetFingerprint: id.max(128).optional(),
     })
     .strict(),
   z.object({ type: z.literal('artifact_proposed'), ...identity, artifact: ResourceRefSchema }).strict(),

@@ -27,7 +27,9 @@ export type UeToolErrorCode =
   // A write named no owner while other agents are connected (EnforcedForWrites, T8).
   | 'owner_required'
   // An envelope claimed another connection's conn:<n> or local (T9).
-  | 'owner_reserved';
+  | 'owner_reserved'
+  // Exact native review could not freeze the target or complete parameter display.
+  | 'exact_approval_unavailable';
 
 export class UeToolError extends Error {
   readonly code: UeToolErrorCode;
@@ -52,6 +54,7 @@ const KNOWN_UE_CODES = new Set<UeToolErrorCode>([
   'package_read_only',
   'owner_required',
   'owner_reserved',
+  'exact_approval_unavailable',
 ]);
 function mapUeCode(raw: string | undefined): UeToolErrorCode {
   if (raw && KNOWN_UE_CODES.has(raw as UeToolErrorCode)) return raw as UeToolErrorCode;

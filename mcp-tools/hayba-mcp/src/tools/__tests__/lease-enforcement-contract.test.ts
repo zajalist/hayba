@@ -374,7 +374,13 @@ describe('lease enforcement contract (T9)', () => {
       ...new Set([...router.matchAll(/\b(?:R|Refusal)\.Code = TEXT\("([a-z_]+)"\);/g)].map((m) => m[1]!)),
     ].sort();
     // Fail closed: the scan must find the gates it is about, slot 0 included.
-    expect(codes).toEqual(['asset_busy', 'editor_unsafe_restart_required', 'owner_reserved', 'pie_active']);
+    expect(codes).toEqual([
+      'asset_busy',
+      'editor_unsafe_restart_required',
+      'exact_approval_unavailable',
+      'owner_reserved',
+      'pie_active',
+    ]);
     for (const code of codes) {
       const send: Sender = async () => ({ id: 'x', ok: false, code, error: `${code}: refused` });
       await expect(executeCommand('blueprint_add_node', {}, { sender: send })).rejects.toMatchObject({ code });

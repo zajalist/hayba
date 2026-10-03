@@ -130,6 +130,7 @@ private:
     TSharedPtr<SComboButton>                EffortButton;
     TSharedPtr<SVerticalBox>                ModelMenuItems;
     TSharedPtr<SVerticalBox>                ExternalPlanStepsBox;
+    TSharedPtr<SButton>                     ExternalDetailsButton;
     FString                                 DisplayedExternalPlanId;
     bool                                    bExternalDetailsExpanded = false;
     TSharedPtr<FHaybaMCPModelDiscoveryClient> ModelDiscoveryClient;
@@ -210,6 +211,10 @@ private:
     void            HandlePlanRejected();
     void            ApproveActivity(const FString& ActivityId);
     void            RejectActivity(const FString& ActivityId);
+    bool            IsNativeApprovalForCurrentActivity(const FString& ProposalId) const;
+    void            InvalidateCurrentChatNativeApproval();
+    FString         ActiveNativeProposalId;
+    FString         ActiveNativeOperationDigest;
 
     // ── Layout ─────────────────────────────────────────────────────────────
     TSharedRef<SWidget> BuildChatArea();

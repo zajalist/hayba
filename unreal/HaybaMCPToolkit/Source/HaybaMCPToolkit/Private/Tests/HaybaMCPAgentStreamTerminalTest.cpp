@@ -131,7 +131,27 @@ bool FHaybaAgentStreamTerminalTest::RunTest(const FString&)
         TestEqual(TEXT("approval receives only its server terminal frame"), DoneCount, bServerDone ? 1 : 0);
         if (bServerDone)
             TestEqual(TEXT("approval terminal reason is preserved"), Reason, FString(TEXT("plan_request")));
+        else
+        {
+            Client->Cancel();
+            TestEqual(TEXT("Stop finalizes an approval pause without done"), DoneCount, 1);
+            TestEqual(TEXT("parked Stop is a cancellation"), Reason, FString(TEXT("cancelled")));
+        }
         Model.MarkDisconnected(Id);
+    }
+
+    // A sidecar may send its final failure only in the terminal frame after
+    // partial text. Retain the bounded reason so Chat can show failure rather
+    // than presenting the partial answer as a completed turn.
+    {
+        auto Client = MakeShared<FHaybaMCPAgentClient>();
+        FHaybaChatDone Terminal;
+        Client->OnDone.AddLambda([&](const FHaybaChatDone& Done) { Terminal = Done; });
+        Client->DispatchFrame(TEXT("event: done\ndata: {\"reason\":\"error\",\"assistant_text\":\"Partial\",\"error\":{\"error\":\"Unable to save session history\"}}"));
+        TestEqual(TEXT("terminal error is not a successful end"), Terminal.Reason, FString(TEXT("error")));
+        TestEqual(TEXT("terminal error text is available for bounded display"), Terminal.Error,
+            FString(TEXT("Unable to save session history")));
+        TestEqual(TEXT("partial answer remains available"), Terminal.AssistantText, FString(TEXT("Partial")));
     }
     return true;
 }

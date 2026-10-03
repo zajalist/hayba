@@ -467,7 +467,9 @@ void SHaybaMCPChatPanel::Construct(const FArguments&, FHaybaMCPModule* InModule)
                 [ SNew(STextBlock).Text_Lambda([this]()
                     {
                         return Module && Module->PendingExternalPlanIsExact
-                            ? LOCTEXT("ExternalOperationTitle", "Review operation")
+                            ? (bAwaitingPlanApproval && !IsNativeApprovalForCurrentActivity(Module->PendingExternalPlanId)
+                                ? LOCTEXT("ExternalOtherOperationTitle", "External request")
+                                : LOCTEXT("ExternalOperationTitle", "Review operation"))
                             : LOCTEXT("ExternalPlanTitle", "Plan preview");
                     })
                     .Font(FHaybaMCPStyle::Font(15, true)) ]
@@ -479,7 +481,9 @@ void SHaybaMCPChatPanel::Construct(const FArguments&, FHaybaMCPModule* InModule)
                 [ SNew(STextBlock).Text_Lambda([this]()
                     {
                         return Module && Module->PendingExternalPlanIsExact
-                            ? LOCTEXT("ExternalExactScope", "Approval applies once to this operation while its target is unchanged.")
+                            ? (bAwaitingPlanApproval && !IsNativeApprovalForCurrentActivity(Module->PendingExternalPlanId)
+                                ? LOCTEXT("ExternalOtherScope", "This request is separate from the Chat action awaiting review.")
+                                : LOCTEXT("ExternalExactScope", "Approval applies once to this operation while its target is unchanged."))
                             : LOCTEXT("ExternalPreviewScope", "This outline cannot authorize an edit. The agent must submit a specific operation for review.");
                     })
                     .Font(FHaybaMCPStyle::Font(11)).AutoWrapText(true)
@@ -494,10 +498,29 @@ void SHaybaMCPChatPanel::Construct(const FArguments&, FHaybaMCPModule* InModule)
                         .Visibility_Lambda([this]() { return Module && Module->PendingExternalPlanIsExact
                             ? EVisibility::Visible : EVisibility::Collapsed; })
                         .IsEnabled_Lambda([this]() { return Module && Module->PendingExternalPlanIsExact &&
-                            DisplayedExternalPlanId == Module->PendingExternalPlanId; })
+                            DisplayedExternalPlanId == Module->PendingExternalPlanId &&
+                            (!IsNativeApprovalForCurrentActivity(DisplayedExternalPlanId) ||
+                                !AgentClient.IsValid() || !AgentClient->IsStreaming()); })
                         .OnClicked_Lambda([this]()
                         {
-                            if (Module && !Module->ResolveExternalPlan(DisplayedExternalPlanId, true))
+                            const FString Command = Module ? Module->PendingExternalOperation.Command : FString();
+                            const bool bResumesThisChat = IsNativeApprovalForCurrentActivity(DisplayedExternalPlanId);
+                            if (Module && Module->ResolveExternalPlan(DisplayedExternalPlanId, true))
+                            {
+                                if (bResumesThisChat) HandlePlanApproved();
+                                else
+                                {
+                                    FHaybaMCPChatMessage Status{};
+                                    Status.bToolResult = true;
+                                    Status.Text = FString::Printf(TEXT("Approved %s for one retry. No edit has been confirmed."), *Command);
+                                    const bool bPinned = IsScrolledNearBottom();
+                                    Session.Messages.Add(MoveTemp(Status));
+                                    if (!bPinned) ++UnseenWhileScrolledUp;
+                                    RebuildChat();
+                                    if (bPinned) ScrollToBottomIfPinned();
+                                }
+                            }
+                            else
                                 Toast(LOCTEXT("ExternalApprovalExpired", "Operation changed or expired. Review the latest request."));
                             return FReply::Handled();
                         })
@@ -510,7 +533,9 @@ void SHaybaMCPChatPanel::Construct(const FArguments&, FHaybaMCPModule* InModule)
                         .ContentPadding(FMargin(14.f, 7.f))
                         .OnClicked_Lambda([this]()
                         {
-                            if (Module) Module->ResolveExternalPlan(DisplayedExternalPlanId, false);
+                            const bool bRejectsThisChat = IsNativeApprovalForCurrentActivity(DisplayedExternalPlanId);
+                            if (Module && Module->ResolveExternalPlan(DisplayedExternalPlanId, false) && bRejectsThisChat)
+                                HandlePlanRejected();
                             return FReply::Handled();
                         })
                         [ SNew(STextBlock).Text_Lambda([this]() { return Module && Module->PendingExternalPlanIsExact
@@ -570,6 +595,7 @@ void SHaybaMCPChatPanel::RebuildExternalProposal()
 {
     if (!ExternalPlanStepsBox.IsValid()) return;
     ExternalPlanStepsBox->ClearChildren();
+    ExternalDetailsButton.Reset();
     if (DisplayedExternalPlanId != (Module ? Module->PendingExternalPlanId : FString()))
         bExternalDetailsExpanded = false;
     DisplayedExternalPlanId = Module ? Module->PendingExternalPlanId : FString();
@@ -592,13 +618,16 @@ void SHaybaMCPChatPanel::RebuildExternalProposal()
         if (!Operation.ReviewParamsJson.IsEmpty())
         {
             ExternalPlanStepsBox->AddSlot().AutoHeight().Padding(0.f, 6.f, 0.f, 0.f)
-            [ SNew(SButton)
+            [ SAssignNew(ExternalDetailsButton, SButton)
                 .ButtonStyle(&FHaybaMCPStyle::Get().GetWidgetStyle<FButtonStyle>("Hayba.Button.Switcher"))
                 .ContentPadding(FMargin(8.f, 4.f))
+                .ToolTipText(LOCTEXT("ExternalParamsTip", "Show or hide the exact parameters and target fingerprint for this approval."))
                 .OnClicked_Lambda([this]()
                 {
                     bExternalDetailsExpanded = !bExternalDetailsExpanded;
                     RebuildExternalProposal();
+                    if (ExternalDetailsButton.IsValid() && FSlateApplication::IsInitialized())
+                        FSlateApplication::Get().SetKeyboardFocus(ExternalDetailsButton);
                     return FReply::Handled();
                 })
                 [ SNew(STextBlock).Text_Lambda([this]() { return bExternalDetailsExpanded
@@ -651,6 +680,7 @@ void SHaybaMCPChatPanel::RebuildExternalProposal()
 
 SHaybaMCPChatPanel::~SHaybaMCPChatPanel()
 {
+    InvalidateCurrentChatNativeApproval();
     InspectGeneration.Invalidate();
     if (ModelDiscoveryClient.IsValid()) ModelDiscoveryClient->Cancel();
     // Tear down the streaming client: clear our delegate bindings so a late HTTP
@@ -1623,6 +1653,7 @@ FReply SHaybaMCPChatPanel::OnSendCurrentInput()
 
 void SHaybaMCPChatPanel::StopGeneration()
 {
+    InvalidateCurrentChatNativeApproval();
     // Cancel the in-flight stream: aborts the server-side loop, cancels the local
     // HTTP request, and fires OnDone{cancelled} which finalizes the bubble.
     if (AgentClient.IsValid()) AgentClient->Cancel();
@@ -1655,6 +1686,7 @@ bool SHaybaMCPChatPanel::CanSend() const
 
 FReply SHaybaMCPChatPanel::OnNewConversation()
 {
+    InvalidateCurrentChatNativeApproval();
     InspectGeneration.Invalidate();
     bInspectInFlight = false;
     PendingSessionId.Empty();
@@ -1899,6 +1931,9 @@ void SHaybaMCPChatPanel::HandleActivityEvent(const FJsonObject& Event)
     }
     if (Type == TEXT("approval_requested"))
     {
+        // A later approval belongs to a new operation. Retire any unused
+        // token from the previous Chat action before adopting its identity.
+        InvalidateCurrentChatNativeApproval();
         bAwaitingPlanApproval = true;
         PendingActivityId = ActivityId;
         Toast(LOCTEXT("AgentApproval", "Review the proposed action in this conversation."));
@@ -1916,12 +1951,74 @@ FReply SHaybaMCPChatPanel::OnSetWorkMode(FString NewMode)
     return FReply::Handled();
 }
 
+bool SHaybaMCPChatPanel::IsNativeApprovalForCurrentActivity(const FString& ProposalId) const
+{
+    if (!Module || !AgentClient.IsValid() || !bAwaitingPlanApproval || PendingActivityId.IsEmpty() ||
+        !Module->PendingExternalPlanIsExact || !Module->PendingExternalOperation.IsValid() ||
+        ProposalId.IsEmpty() || ProposalId != Module->PendingExternalOperation.ProposalId)
+        return false;
+    const FHaybaActivity* Activity = Module->GetActivityModel().FindActivity(PendingActivityId);
+    if (!Activity || !Activity->Approval.IsSet() ||
+        !Module->GetActivityModel().CanResolveApproval(PendingActivityId, Activity->Approval->ApprovalId)) return false;
+    const FHaybaActivityApproval& Approval = Activity->Approval.GetValue();
+    const FHaybaExactExternalApproval& Native = Module->PendingExternalOperation;
+    return Approval.Source == TEXT("ue") &&
+        Approval.Call.Name == Native.Command &&
+        Approval.NativeProposalId == Native.ProposalId &&
+        Approval.NativeOperationDigest == Native.OperationDigest &&
+        Approval.NativeTargetRef == Native.TargetRef &&
+        Approval.NativeTargetFingerprint == Native.TargetFingerprint;
+}
+
+void SHaybaMCPChatPanel::InvalidateCurrentChatNativeApproval()
+{
+    if (!Module) return;
+    FString PendingProposalId;
+    FString PendingDigest;
+    if (!PendingActivityId.IsEmpty())
+    {
+        const FHaybaActivity* Activity = Module->GetActivityModel().FindActivity(PendingActivityId);
+        if (Activity && Activity->Approval.IsSet() && Activity->Approval->Source == TEXT("ue"))
+        {
+            PendingProposalId = Activity->Approval->NativeProposalId;
+            PendingDigest = Activity->Approval->NativeOperationDigest;
+        }
+    }
+    auto MatchesCurrentToken = [this](const FString& Id, const FString& Digest)
+    {
+        return !Id.IsEmpty() && !Digest.IsEmpty() &&
+            ((Module->PendingExternalOperation.ProposalId == Id &&
+                Module->PendingExternalOperation.OperationDigest == Digest) ||
+             (Module->ApprovedExternalOperation.ProposalId == Id &&
+                Module->ApprovedExternalOperation.OperationDigest == Digest));
+    };
+    if (MatchesCurrentToken(ActiveNativeProposalId, ActiveNativeOperationDigest) ||
+        MatchesCurrentToken(PendingProposalId, PendingDigest))
+        Module->InvalidateExternalApproval();
+    ActiveNativeProposalId.Empty();
+    ActiveNativeOperationDigest.Empty();
+}
+
 void SHaybaMCPChatPanel::ApproveActivity(const FString& ActivityId)
 {
     if (!Module || !AgentClient.IsValid() || !bAwaitingPlanApproval || ActivityId != PendingActivityId) return;
+    if (AgentClient->IsStreaming())
+    {
+        Toast(LOCTEXT("ApprovalStreamClosing", "Wait for the review to finish, then approve."));
+        return;
+    }
     const FHaybaActivity* Activity = Module->GetActivityModel().FindActivity(ActivityId);
     if (!Activity || !Activity->Approval.IsSet() ||
         !Module->GetActivityModel().CanResolveApproval(ActivityId, Activity->Approval->ApprovalId)) return;
+    if (Activity->Approval->Source == TEXT("ue"))
+    {
+        const FString ProposalId = Activity->Approval->NativeProposalId;
+        if (!IsNativeApprovalForCurrentActivity(ProposalId) || !Module->ResolveExternalPlan(ProposalId, true))
+        {
+            Toast(LOCTEXT("NativeApprovalChanged", "Operation changed or expired. Review the latest request."));
+            return;
+        }
+    }
     HandlePlanApproved();
 }
 
@@ -1931,6 +2028,9 @@ void SHaybaMCPChatPanel::RejectActivity(const FString& ActivityId)
     const FHaybaActivity* Activity = Module->GetActivityModel().FindActivity(ActivityId);
     if (!Activity || !Activity->Approval.IsSet() ||
         !Module->GetActivityModel().CanResolveApproval(ActivityId, Activity->Approval->ApprovalId)) return;
+    if (Activity->Approval->Source == TEXT("ue") &&
+        IsNativeApprovalForCurrentActivity(Activity->Approval->NativeProposalId))
+        Module->ResolveExternalPlan(Activity->Approval->NativeProposalId, false);
     Module->GetActivityModel().MarkDisconnected(ActivityId);
     HandlePlanRejected();
     ++ActivitySerialById.FindOrAdd(ActivityId);
@@ -1941,10 +2041,22 @@ void SHaybaMCPChatPanel::HandlePlanApproved()
 {
     // Only act if WE are the panel waiting on a plan (avoids resuming on stray
     // approvals). One-shot: clear the flag before resuming.
-    if (!bAwaitingPlanApproval) return;
+    if (!bAwaitingPlanApproval || !AgentClient.IsValid() || AgentClient->IsStreaming()) return;
     bAwaitingPlanApproval = false;
 
-    if (!AgentClient.IsValid()) return;
+    FString NativeProposalId;
+    FString NativeOperationDigest;
+    if (Module)
+    {
+        const FHaybaActivity* Activity = Module->GetActivityModel().FindActivity(PendingActivityId);
+        if (Activity && Activity->Approval.IsSet() && Activity->Approval->Source == TEXT("ue"))
+        {
+            NativeProposalId = Activity->Approval->NativeProposalId;
+            NativeOperationDigest = Activity->Approval->NativeOperationDigest;
+        }
+    }
+    ActiveNativeProposalId = NativeProposalId;
+    ActiveNativeOperationDigest = NativeOperationDigest;
 
     // Continue in the same transcript row so the activity does not jump to the
     // end or duplicate its approval card after the resume.
@@ -1958,7 +2070,7 @@ void SHaybaMCPChatPanel::HandlePlanApproved()
     });
     if (InProgressMessageIndex == INDEX_NONE) BeginInProgressBubble();
     else InProgressAssistantText = Session.Messages[InProgressMessageIndex].Text;
-    AgentClient->ApproveAndResume();
+    AgentClient->ApproveAndResume(NativeProposalId, NativeOperationDigest);
 
 }
 
@@ -1967,6 +2079,7 @@ void SHaybaMCPChatPanel::HandlePlanRejected()
     // Only act if WE are the panel waiting on a plan (avoids cancelling on stray
     // rejections from an unrelated Plan-tab action). Disarm before cancelling.
     if (!bAwaitingPlanApproval) return;
+    InvalidateCurrentChatNativeApproval();
     bAwaitingPlanApproval = false;
     PendingActivityId.Empty();
 
@@ -1986,6 +2099,10 @@ void SHaybaMCPChatPanel::HandlePlanRejected()
 
 void SHaybaMCPChatPanel::HandleStreamDone(const FHaybaChatDone& Done)
 {
+    // A plan_request done leaves its exact native card available for review.
+    // Every other terminal outcome retires any still-unused native token.
+    if (!(bAwaitingPlanApproval && Done.Reason == TEXT("plan_request")))
+        InvalidateCurrentChatNativeApproval();
     Session.bWaitingForAI = false;
     bIsStreaming = false;
 
@@ -1997,10 +2114,20 @@ void SHaybaMCPChatPanel::HandleStreamDone(const FHaybaChatDone& Done)
     }
     const bool bHasActivity = Session.Messages.IsValidIndex(InProgressMessageIndex) &&
         !Session.Messages[InProgressMessageIndex].ActivityId.IsEmpty();
-    const bool bNoReply = !Done.bCancelled && !bAwaitingPlanApproval && !bTurnErrorShown && !bHasActivity &&
+    const bool bHadPartialText = !InProgressAssistantText.TrimStartAndEnd().IsEmpty();
+    const bool bFailedTerminal = Done.Reason == TEXT("error") || Done.Reason == TEXT("brain_unavailable");
+    const bool bNoReply = !Done.bCancelled && !bFailedTerminal && !bAwaitingPlanApproval && !bTurnErrorShown && !bHasActivity &&
         InProgressAssistantText.TrimStartAndEnd().IsEmpty() && Done.AssistantText.TrimStartAndEnd().IsEmpty();
     const FString DoneTag = Done.bCancelled ? TEXT("[stopped]") : TEXT("");
     FinalizeInProgressBubble(DoneTag);
+    if (bFailedTerminal && !bTurnErrorShown)
+    {
+        const FString Failure = Done.Error == TEXT("Unable to save session history")
+            ? Done.Error
+            : TEXT("The agent stopped before completing. Review any partial work before sending again.");
+        AddSystemError(Failure, !bHasActivity && !bHadPartialText ? LastPrompt : FString());
+        bTurnErrorShown = true;
+    }
     if (bNoReply)
         AddSystemError(TEXT("No reply received. Check the connection, then edit and resend your message."), LastPrompt);
     bTurnErrorShown = false;
@@ -2071,6 +2198,14 @@ void SHaybaMCPChatPanel::HandleStreamDone(const FHaybaChatDone& Done)
 
 void SHaybaMCPChatPanel::HandleStreamError(const FHaybaChatError& Error)
 {
+    InvalidateCurrentChatNativeApproval();
+    if (bAwaitingPlanApproval)
+    {
+        if (Module && !PendingActivityId.IsEmpty())
+            Module->GetActivityModel().MarkDisconnected(PendingActivityId);
+        bAwaitingPlanApproval = false;
+        PendingActivityId.Empty();
+    }
     bTurnErrorShown = true;
     Session.bWaitingForAI = false;
     bIsStreaming = false;

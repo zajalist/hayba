@@ -106,9 +106,23 @@ bool FHaybaActivityModel::ValidateEvent(const FJsonObject& Event)
     if (Type == TEXT("approval_requested"))
     {
         const FJsonObject* Pending = ObjectField(Event, TEXT("call"));
-        return Only(Event, { TEXT("type"), TEXT("activityId"), TEXT("approvalId"), TEXT("call"), TEXT("argsHash"), TEXT("source"), TEXT("hint") }) &&
+        FString Source;
+        if (!Event.TryGetStringField(TEXT("source"), Source)) return false;
+        const bool bNative = Source == TEXT("ue");
+        const bool bNativeIdentity = bNative
+            ? String(Event, TEXT("nativeProposalId")) && String(Event, TEXT("nativeOperationDigest")) &&
+                String(Event, TEXT("nativeTargetRef")) && String(Event, TEXT("nativeTargetFingerprint")) &&
+                Event.GetStringField(TEXT("nativeProposalId")).Len() <= 128 &&
+                Event.GetStringField(TEXT("nativeOperationDigest")).Len() <= 128 &&
+                Event.GetStringField(TEXT("nativeTargetRef")).Len() <= 1024 &&
+                Event.GetStringField(TEXT("nativeTargetFingerprint")).Len() <= 128
+            : !Event.HasField(TEXT("nativeProposalId")) && !Event.HasField(TEXT("nativeOperationDigest")) &&
+                !Event.HasField(TEXT("nativeTargetRef")) && !Event.HasField(TEXT("nativeTargetFingerprint"));
+        return Only(Event, { TEXT("type"), TEXT("activityId"), TEXT("approvalId"), TEXT("call"), TEXT("argsHash"), TEXT("source"), TEXT("hint"),
+            TEXT("nativeProposalId"), TEXT("nativeOperationDigest"), TEXT("nativeTargetRef"), TEXT("nativeTargetFingerprint") }) &&
             String(Event, TEXT("approvalId")) && String(Event, TEXT("argsHash")) && Enum(Event, TEXT("source"), { TEXT("ts"), TEXT("ue") }) &&
-            String(Event, TEXT("hint"), false, true) && Pending && Only(*Pending, { TEXT("id"), TEXT("name"), TEXT("input") }) && Call(*Pending);
+            bNativeIdentity && String(Event, TEXT("hint"), false, true) && Pending &&
+            Only(*Pending, { TEXT("id"), TEXT("name"), TEXT("input") }) && Call(*Pending);
     }
     if (Type == TEXT("artifact_proposed"))
     {
@@ -206,6 +220,10 @@ bool FHaybaActivityModel::ApplyEvent(const FJsonObject& Event)
             Approval.ArgsHash = Event.GetStringField(TEXT("argsHash"));
             Approval.Source = Event.GetStringField(TEXT("source"));
             Event.TryGetStringField(TEXT("hint"), Approval.Hint);
+            Event.TryGetStringField(TEXT("nativeProposalId"), Approval.NativeProposalId);
+            Event.TryGetStringField(TEXT("nativeOperationDigest"), Approval.NativeOperationDigest);
+            Event.TryGetStringField(TEXT("nativeTargetRef"), Approval.NativeTargetRef);
+            Event.TryGetStringField(TEXT("nativeTargetFingerprint"), Approval.NativeTargetFingerprint);
             Next.Approval = MoveTemp(Approval);
             Next.State = EHaybaActivityState::AwaitingApproval;
         }

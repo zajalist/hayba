@@ -80,6 +80,8 @@ struct FHaybaChatDone
 {
 	FString Reason;
 	FString AssistantText;
+	/** Bounded sidecar failure text when a terminal done has reason=error. */
+	FString Error;
 	/** Validated warning identifiers only (at most 64, each at most 80 ASCII chars). */
 	TArray<FString> PendingWarningIds;
 	bool bPendingWarningIdsTruncated = false;
@@ -138,7 +140,8 @@ public:
 	 * call this without an explicit human Approve — it is the resume half of the
 	 * plan_request handshake.
 	 */
-	void ApproveAndResume();
+	void ApproveAndResume(const FString& NativeProposalId = FString(),
+		const FString& NativeOperationDigest = FString());
 
 	/**
 	 * Abort the in-flight stream: tells the sidecar to abort the server-side loop
@@ -217,7 +220,7 @@ private:
 	void StartStream(const FString& UserPrompt);
 	/** Prepare callbacks/state separately from sending, so transport outcomes can be tested offline. */
 	TSharedRef<IHttpRequest, ESPMode::ThreadSafe> CreateStreamRequest(const FString& UserPrompt);
-	void PostApprove();
+	void PostApprove(const FString& NativeProposalId, const FString& NativeOperationDigest);
 
 	/** Fire-and-forget POST /chat/cancel with {session_id} (no-op if no session). */
 	void PostCancel();
@@ -237,6 +240,7 @@ private:
 	FString SessionId;
 	TSharedPtr<IHttpRequest, ESPMode::ThreadSafe> IdentityRequest;
 	TSharedPtr<IHttpRequest, ESPMode::ThreadSafe> ConfigRequest;
+	TSharedPtr<IHttpRequest, ESPMode::ThreadSafe> ApprovalRequest;
 	TSharedPtr<IHttpRequest, ESPMode::ThreadSafe> StreamRequest;
 	FHaybaMCPChatConfigGate ConfigGate;
 	bool bStreaming = false;
@@ -258,6 +262,12 @@ private:
 	/** Explicit composer mode, sent on every stream request (including resumes). */
 	FString WorkMode = TEXT("production");
 	FString TurnPrompt;
+	/** Frozen before identity preflight; every request in this turn uses this same listener. */
+	FString TurnSidecarURL;
+	FString TurnProviderId;
+	FString TurnBaseURL;
+	FString TurnFallbackModel;
+	FString TurnBrainLlmMode;
 	/** Frozen composer selection for the active turn and any approval resume. */
 	FString TurnModelId;
 	FString TurnReasoningEffort;
