@@ -86,6 +86,13 @@ export const NON_IDEMPOTENT = new Set<string>([
   'actor_duplicate',
   'actor_batch_spawn',
   'actor_spawn_from_asset',
+  // Actor edits may have landed even when the TCP reply is lost. Replaying
+  // them can duplicate editor transactions or report a false failure when
+  // the actor's state changed after the first call.
+  'actor_transform',
+  'actor_set_properties',
+  'actor_tag',
+  'actor_set_visibility',
   // Asset lifecycle
   'asset_delete',
   'asset_duplicate',

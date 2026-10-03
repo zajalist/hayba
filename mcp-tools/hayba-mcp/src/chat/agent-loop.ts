@@ -66,17 +66,17 @@ import { warningIdForFinding } from './warning-identity.js';
 // ---------------------------------------------------------------------------
 
 /**
- * Command names that are destructive but not already in NON_IDEMPOTENT (e.g.
- * idempotent-on-retry setters and the wildcard/exec escape hatches). Kept in
- * sync with the C++ DestructiveCommands set in HaybaMCPCommandHandler.cpp.
+ * Additional command names requiring a plan, including setters and wildcard
+ * escape hatches. Some also appear in NON_IDEMPOTENT because a lost TCP reply
+ * must not replay their editor mutation. Kept in sync with the C++
+ * DestructiveCommands set in HaybaMCPCommandHandler.cpp.
  */
 const EXTRA_DESTRUCTIVE = new Set<string>([
   // Arbitrary code / wildcard invocation
   'python_run',
   'actor_call_function',
   'editor_run_console_command',
-  // Setters / mutations that are safe to retry (so not in NON_IDEMPOTENT) but
-  // still mutate scene/asset state and must be plan-gated.
+  // Setters / mutations that change scene or asset state and must be plan-gated.
   'actor_transform',
   'actor_set_properties',
   'actor_set_visibility',
