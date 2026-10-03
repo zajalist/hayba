@@ -1167,9 +1167,10 @@ function Test-CommandRejection {
         [string]$Command,
         [hashtable]$Params,
         [string]$ErrorPattern,
-        [int]$MinDurationMs = 0
+        [int]$MinDurationMs = 0,
+        [int]$BudgetMs = $MaxCaseMs
     )
-    Start-CaseBudget
+    Start-CaseBudget -BudgetMs $BudgetMs
     $clock = $CaseClock
     $paramsHash = Get-SanitizedHash $Params
     try {
@@ -1206,9 +1207,10 @@ function Test-CommandSuccess {
         [int]$SettleMs = 0,
         [object]$ExpectedPrePieRunning = $null,
         [object]$ExpectedPieRunning = $null,
-        [scriptblock]$VerifyResponse = $null
+        [scriptblock]$VerifyResponse = $null,
+        [int]$BudgetMs = $MaxCaseMs
     )
-    Start-CaseBudget
+    Start-CaseBudget -BudgetMs $BudgetMs
     $clock = $CaseClock
     $paramsHash = Get-SanitizedHash $Params
     try {
@@ -1530,12 +1532,12 @@ function Invoke-SlowlorisDeadlineProbe {
     }
 }
 
-function Get-SlowlorisCaseBudgetMs {
-    # This probe must wait for the server's total-frame timeout while all
-    # admitted clients continue making progress. Keep complete preflight and
-    # postflight health proofs inside the same finite case deadline; the
-    # ordinary MaxCaseMs remains unchanged for every other hostile case.
-    return [Math]::Max($MaxCaseMs, ($FrameReadTimeoutMs + 12000))
+function Get-LongProbeCaseBudgetMs([ValidateRange(0, 60000)][int]$ExpectedWorkMs) {
+    # A deliberately long native deadline or settle period needs room for
+    # complete preflight and postflight health proofs. The 12s allowance covers
+    # both owned host queries plus bounded transport and evidence checks. Only
+    # named long probes opt in; ordinary cases retain MaxCaseMs.
+    return [Math]::Max($MaxCaseMs, ($ExpectedWorkMs + 12000))
 }
 
 function Test-RawCase {
@@ -1799,7 +1801,8 @@ function Stop-OwnedEditorWithEvidence {
     Test-CommandRejection -Name 'python_deadline_exhaustion' -Command 'python_run' -Params @{
         script = 'for _ in range(10**12): x=1'
         allow_unsafe = $true
-    } -ErrorPattern 'HCR-TIME-001|deadline|timed out' -MinDurationMs 4000
+    } -ErrorPattern 'HCR-TIME-001|deadline|timed out' -MinDurationMs 4000 `
+        -BudgetMs (Get-LongProbeCaseBudgetMs 5000) # Native DefaultPythonDeadlineSeconds is 5.0.
 
     # This script would write and remove a bounded project Saved/ file if it
     # ever reached Execute. Both compatibility shapes must refuse it first;
@@ -1908,7 +1911,7 @@ p.write_text('this line must never execute', encoding='utf-8')
 
     Test-RawCase 'slowloris_total_frame_deadline' {
         Invoke-SlowlorisDeadlineProbe
-    } -BudgetMs (Get-SlowlorisCaseBudgetMs)
+    } -BudgetMs (Get-LongProbeCaseBudgetMs $FrameReadTimeoutMs)
 
     Test-RawCase 'pipelined_request_limit' {
         $client = Open-BoundedClient
@@ -1949,9 +1952,10 @@ p.write_text('this line must never execute', encoding='utf-8')
     # crash corpus. Both requests are followed by the same PID/listener/ping/
     # crash/dirty checks as hostile inputs; the stop case also leaves the
     # disposable session in an editor-only state for deterministic teardown.
-    Test-CommandSuccess -Name 'pie_start_transition' -Command 'editor_start_pie' -SettleMs 750 -ExpectedPieRunning $true
+    Test-CommandSuccess -Name 'pie_start_transition' -Command 'editor_start_pie' -SettleMs 750 `
+        -ExpectedPieRunning $true -BudgetMs (Get-LongProbeCaseBudgetMs 750)
     Test-CommandSuccess -Name 'pie_stop_transition' -Command 'editor_stop_pie' -SettleMs 750 `
-        -ExpectedPrePieRunning $true -ExpectedPieRunning $false
+        -ExpectedPrePieRunning $true -ExpectedPieRunning $false -BudgetMs (Get-LongProbeCaseBudgetMs 750)
     }
 
     if (-not $CanaryKill) {

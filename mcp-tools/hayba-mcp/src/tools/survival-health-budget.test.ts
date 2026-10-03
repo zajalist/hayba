@@ -14,7 +14,7 @@ describe('survival health budget and owned host proof', () => {
     expect(result.stderr).toBe('');
     const cases = JSON.parse(result.stdout) as Array<{ name: string; passed: boolean; diagnostic?: string }>;
     expect(cases.map((item) => item.name)).toEqual([
-      'monotonic_remaining', 'slowloris_deadline_preserves_recovery',
+      'monotonic_remaining', 'long_probe_deadline_preserves_recovery',
       'expired_transport_not_invoked', 'late_transport_rejected',
       'slow_preflight_cannot_satisfy_command_minimum', 'long_command_has_separate_duration',
       'partial_identity_failure', 'partial_listener_failure', 'partial_evidence_failure',

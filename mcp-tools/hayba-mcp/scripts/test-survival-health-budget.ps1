@@ -1,6 +1,6 @@
 param([Parameter(Mandatory=$true)][string]$HarnessPath)
 $ErrorActionPreference='Stop'
-$names=@('monotonic_remaining','slowloris_deadline_preserves_recovery','expired_transport_not_invoked','late_transport_rejected',
+$names=@('monotonic_remaining','long_probe_deadline_preserves_recovery','expired_transport_not_invoked','late_transport_rejected',
  'slow_preflight_cannot_satisfy_command_minimum','long_command_has_separate_duration',
  'partial_identity_failure','partial_listener_failure','partial_evidence_failure',
  'unique_listener_owner','foreign_listener_rejected','ambiguous_listener_rejected',
@@ -22,7 +22,7 @@ $required=@('Get-SanitizedHash','New-DiagnosticDigest','Get-RemainingCaseMs','In
  'Assert-EditorIdentity','New-EditorIdentity','New-CaseClock','Start-CaseBudget','Invoke-CasePhase','Add-Result','Test-CommandRejection',
  'Assert-CaseTarget','Assert-EditorHealthy','Get-EditorState','Test-BenignPythonNonce',
  'Initialize-HostProofCapture','Start-HostProofProcess','Invoke-HostProofQuery','Get-ListenerOwner',
- 'Get-BigEndianHeader','New-RawCommandFrame','Get-SlowlorisCaseBudgetMs','Wait-EditorReady','Get-RemainingStartupMs',
+ 'Get-BigEndianHeader','New-RawCommandFrame','Get-LongProbeCaseBudgetMs','Wait-EditorReady','Get-RemainingStartupMs',
  'Get-EditorProcessRow','Wait-OwnedProcessExit','Stop-OwnedEditorWithEvidence')
 foreach($name in $required){
  $found=@($ast.FindAll({param($n)$n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq $name},$true))
@@ -73,10 +73,12 @@ try {
      Invoke-HaybaCommand ping|Out-Null
      Require ($Requests[0] -eq 8766) 'Transport did not receive exact remaining allowance'
     }
-    'slowloris_deadline_preserves_recovery' {
+    'long_probe_deadline_preserves_recovery' {
      $FrameReadTimeoutMs=5000
-     $budget=Get-SlowlorisCaseBudgetMs
-     Require ($budget -eq 17000) 'Slowloris budget did not reserve bounded proof time'
+     $budget=Get-LongProbeCaseBudgetMs $FrameReadTimeoutMs
+     Require ($budget -eq 17000) 'Frame-timeout budget did not reserve bounded proof time'
+     Require ((Get-LongProbeCaseBudgetMs 5000) -eq 17000) 'Native Python deadline lost recovery allowance'
+     Require ((Get-LongProbeCaseBudgetMs 750) -eq 12750) 'PIE settle lost recovery allowance'
      Start-CaseBudget -BudgetMs $budget
      $FakeClock.ElapsedMilliseconds=13000
      Require ((Get-RemainingCaseMs) -eq 4000) 'Slowloris recovery lost its reserved allowance'
