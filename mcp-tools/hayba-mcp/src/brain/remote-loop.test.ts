@@ -61,6 +61,33 @@ describe('runRemoteLoop', () => {
     expect(await run2).toEqual([{ type: 'activity_completed', activityId: 'b', outcome: 'succeeded', reason: 'end_turn' }]);
   });
 
+  it('does not publish a successful outcome until the wire done arrives', async () => {
+    const { session, sock } = await connected();
+    const gen = runRemoteLoop({ session, messages: [{ role: 'user', content: 'hi' }], mode: 'production', approvals: new LocalApprovals(), dispatchTool: vi.fn(), guard, signal: new AbortController().signal });
+    const next = gen.next();
+    await tick();
+    sock.push({ type: 'event', seq: 2, event: { type: 'activity_completed', activityId: 'a', outcome: 'succeeded', reason: 'end_turn' } });
+    let published = false;
+    void next.then(() => { published = true; });
+    await tick();
+    expect(published).toBe(false);
+    sock.push({ type: 'done', seq: 3, reason: 'end_turn' });
+    expect((await next).value).toMatchObject({ type: 'activity_completed', activityId: 'a' });
+    expect((await gen.next()).done).toBe(true);
+  });
+
+  it('reports premature EOF instead of publishing an unconfirmed success', async () => {
+    const { session, sock } = await connected();
+    const reasons: string[] = [];
+    const run = drain(runRemoteLoop({ session, messages: [{ role: 'user', content: 'hi' }], mode: 'production', approvals: new LocalApprovals(), dispatchTool: vi.fn(), guard, signal: new AbortController().signal, onUnavailable: (reason) => reasons.push(reason) }));
+    await tick();
+    sock.push({ type: 'event', seq: 2, event: { type: 'activity_completed', activityId: 'a', outcome: 'succeeded', reason: 'end_turn' } });
+    await tick();
+    void session.close();
+    expect(await run).toEqual([expect.objectContaining({ type: 'error', kind: 'brain_unavailable', activityId: 'a' })]);
+    expect(reasons).toEqual(['stream_ended']);
+  });
+
   it('yields a non-terminal busy error and still waits for done to end the turn', async () => {
     const { session, sock } = await connected();
     const run = drain(runRemoteLoop({ session, messages: [{ role: 'user', content: 'x' }], mode: 'production', approvals: new LocalApprovals(), dispatchTool: vi.fn(), guard, signal: new AbortController().signal }));

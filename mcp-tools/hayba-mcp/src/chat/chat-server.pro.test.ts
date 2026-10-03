@@ -217,6 +217,41 @@ describe('chat server Pro loop', () => {
     await s.frames;
   });
 
+  it('consumes each Pro wire done before a second turn on the same brain session', async () => {
+    const brain = new FakeBrain();
+    const connector = brainConnector(brain);
+    start(connector);
+    const first = await stream({ prompt: 'first', loop: 'pro' });
+    await waitFor(() => brain.sentTypes().includes('turn'));
+    brain.push({ type: 'event', event: { type: 'message_delta', activityId: 'a1', text: 'first reply' } });
+    brain.finishTurn('a1');
+    const firstFrames = await first.frames;
+    expect(firstFrames.filter((frame) => frame.event === 'text_delta').map((frame) => frame.data.text).join('')).toBe('first reply');
+
+    const second = await stream({ session_id: first.sessionId, prompt: 'second', loop: 'pro' });
+    await waitFor(() => brain.sentTypes().filter((type) => type === 'turn').length === 2);
+    brain.push({ type: 'event', event: { type: 'message_delta', activityId: 'a2', text: 'second reply' } });
+    brain.finishTurn('a2');
+    const secondFrames = await second.frames;
+    expect(secondFrames.filter((frame) => frame.event === 'text_delta').map((frame) => frame.data.text).join('')).toBe('second reply');
+    expect(secondFrames.at(-1)).toMatchObject({ event: 'done', data: { reason: 'end_turn', assistant_text: 'second reply' } });
+    expect(connector.opened).toHaveLength(1);
+  });
+
+  it('reports a Pro connection ending before wire done as unavailable', async () => {
+    const brain = new FakeBrain();
+    const connector = brainConnector(brain);
+    start(connector);
+    const turn = await stream({ prompt: 'hello', loop: 'pro' });
+    await waitFor(() => brain.sentTypes().includes('turn'));
+    brain.push({ type: 'event', event: { type: 'activity_completed', activityId: 'a1', outcome: 'succeeded', reason: 'end_turn' } });
+    await connector.opened[0].close();
+    const frames = await turn.frames;
+    expect(frames.some((frame) => frame.event === 'error' && frame.data.kind === 'brain_unavailable')).toBe(true);
+    expect(frames.at(-1)).toMatchObject({ event: 'done', data: { reason: 'brain_unavailable' } });
+    expect(frames.some((frame) => frame.event === 'activity_completed')).toBe(false);
+  });
+
   it('returns the last task choices with saved history without persisting its key', async () => {
     const brain = new FakeBrain();
     start(brainConnector(brain));
