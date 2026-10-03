@@ -507,7 +507,13 @@ bool FHaybaMCPModule::ResolveExternalPlan(const FString& ExpectedProposalId, boo
     TSharedPtr<FJsonObject> FrozenCall = MakeShared<FJsonObject>();
     FrozenCall->SetStringField(TEXT("cmd"), Candidate.Command);
     if (bParamsParsed) FrozenCall->SetObjectField(TEXT("params"), Params);
+    const HaybaMCPLease::FLease* LiveLease = Candidate.LeaseId.IsEmpty() ? nullptr :
+        FHaybaMCPLeaseManager::Get().Table().FindLease(Candidate.LeaseId);
+    const bool bLeaseStillValid = Candidate.LeaseId.IsEmpty() || (LiveLease &&
+        LiveLease->Owner == Candidate.Owner && !LiveLease->IsOrphaned() &&
+        (!LiveLease->bBindConnection || LiveLease->ConnId == Candidate.ConnectionId));
     const bool bStillCurrent = bParamsParsed &&
+        bLeaseStillValid &&
         FHaybaMCPSecurityManager::HashParams(FrozenCall) == Candidate.OperationDigest &&
         FHaybaMCPCommandHandler::CaptureExactApprovalTarget(Candidate.Command, Params, CurrentRef, CurrentFingerprint) &&
         CurrentRef == Candidate.TargetRef && CurrentFingerprint == Candidate.TargetFingerprint &&

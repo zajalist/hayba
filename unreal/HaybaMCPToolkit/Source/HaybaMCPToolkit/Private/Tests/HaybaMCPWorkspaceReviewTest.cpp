@@ -5,13 +5,19 @@
 #include "GameFramework/Actor.h"
 #include "Components/SceneComponent.h"
 #include "HaybaMCPMainPanel.h"
+#include "HaybaMCPLeaseManager.h"
+#include "HaybaMCPSettings.h"
+#include "Tests/HaybaMCPLeaseTestUtil.h"
 #include "Framework/Application/SlateApplication.h"
 #include "Widgets/SWindow.h"
 #include "ImageUtils.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
+#include "Misc/ScopeExit.h"
 #include "HAL/FileManager.h"
 #include "RHI.h"
+#include "Editor.h"
+#include "Engine/World.h"
 
 #if WITH_DEV_AUTOMATION_TESTS
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FHaybaExactActorFingerprintTest, "Hayba.MCP.Workspace.ExactActorFingerprint",
@@ -136,6 +142,113 @@ bool FHaybaExternalProposalTest::RunTest(const FString&)
     return true;
 }
 
+// The router test mutates only an explicitly identified scratch project. It
+// creates a disposable actor and never saves its level.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FHaybaExactApprovalRouterScratchTest,
+    "Hayba.MCP.Workspace.ExactApprovalRouterScratch",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FHaybaExactApprovalRouterScratchTest::RunTest(const FString&)
+{
+    FString ScratchDir = FPlatformMisc::GetEnvironmentVariable(TEXT("HAYBA_SCRATCH_HOST_DIR"));
+    FString ProjectDir = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir());
+    if (ScratchDir.IsEmpty())
+    {
+        AddInfo(TEXT("Exact approval router test skipped: scratch host is not identified."));
+        return true;
+    }
+    ScratchDir = FPaths::ConvertRelativePathToFull(ScratchDir);
+    FPaths::NormalizeDirectoryName(ScratchDir);
+    FPaths::NormalizeDirectoryName(ProjectDir);
+    if (!ScratchDir.Equals(ProjectDir, ESearchCase::IgnoreCase))
+    {
+        AddInfo(TEXT("Exact approval router test skipped outside the identified scratch project."));
+        return true;
+    }
+
+    using namespace HaybaMCPLeaseTest;
+    FHaybaMCPModule* Module = FModuleManager::GetModulePtr<FHaybaMCPModule>(TEXT("HaybaMCPToolkit"));
+    const TSharedPtr<FHaybaMCPCommandHandler> Router = Module ? Module->GetCommandHandler() : nullptr;
+    UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
+    if (!TestTrue(TEXT("scratch router and editor world available"), Router.IsValid() && World)) return false;
+    FHaybaMCPSettings& Settings = FHaybaMCPSettings::Get();
+    if (!Settings.CapabilityToken.IsEmpty())
+    {
+        AddInfo(TEXT("Exact approval router test skipped while native auth is configured."));
+        return true;
+    }
+    const bool bPlanWas = Settings.bPlanModeEnabled;
+    const FString Owner = UniqueOwner(TEXT("exact"));
+    constexpr int32 Conn = 900971;
+    double Advanced = 0.0;
+    AActor* Actor = World->SpawnActor<AActor>(FVector::ZeroVector, FRotator::ZeroRotator);
+    if (!TestNotNull(TEXT("scratch actor spawned"), Actor)) return false;
+    ON_SCOPE_EXIT
+    {
+        FHaybaMCPLeaseManager::Get().AdvanceClockForTests(-Advanced);
+        FHaybaMCPLeaseManager::Get().ForgetOwnerForTests(Owner);
+        Router->NotifyConnectionClosed(Conn);
+        Module->InvalidateExternalApproval();
+        Settings.bPlanModeEnabled = bPlanWas;
+        Settings.Save();
+        if (IsValid(Actor)) World->DestroyActor(Actor);
+    };
+    Settings.bPlanModeEnabled = true;
+    const FString ActorId = Actor->GetName();
+    auto TagParams = [&ActorId](const TCHAR* Tag)
+    {
+        TSharedPtr<FJsonObject> Params = MakeShared<FJsonObject>();
+        Params->SetStringField(TEXT("actor_id"), ActorId);
+        Params->SetArrayField(TEXT("add"), { MakeShared<FJsonValueString>(Tag) });
+        return Params;
+    };
+    const TSharedPtr<FJsonObject> First = TagParams(TEXT("approved-once"));
+    FString Status;
+    DataOf(Send(*Router, Conn, Owner, TEXT("actor_tag"), First))->TryGetStringField(TEXT("status"), Status);
+    TestEqual(TEXT("router requires exact review"), Status, FString(TEXT("plan_mode_required")));
+    const FString FirstId = Module->PendingExternalPlanId;
+    TestTrue(TEXT("native card is exact"), Module->PendingExternalPlanIsExact);
+    TestTrue(TEXT("first click approves frozen target"), Module->ResolveExternalPlan(FirstId, true));
+    TestFalse(TEXT("double approval click refused"), Module->ResolveExternalPlan(FirstId, true));
+    TestEqual(TEXT("approved command executes"), CodeOf(Send(*Router, Conn, Owner, TEXT("actor_tag"), First)), FString());
+    TestTrue(TEXT("approved command changed actor"), Actor->Tags.Contains(TEXT("approved-once")));
+    Status.Empty();
+    DataOf(Send(*Router, Conn, Owner, TEXT("actor_tag"), First))->TryGetStringField(TEXT("status"), Status);
+    TestEqual(TEXT("consumed command cannot replay"), Status, FString(TEXT("plan_mode_required")));
+    const FString StaleId = Module->PendingExternalPlanId;
+    Actor->Tags.Add(TEXT("outside-edit"));
+    TestFalse(TEXT("edited target refuses pending approval"), Module->ResolveExternalPlan(StaleId, true));
+    TestFalse(TEXT("stale token cannot be clicked twice"), Module->ResolveExternalPlan(StaleId, true));
+
+    TSharedPtr<FJsonObject> Conflicting = TagParams(TEXT("must-not-run"));
+    Conflicting->SetStringField(TEXT("actorId"), TEXT("DifferentActor"));
+    TestEqual(TEXT("conflicting actor alias refuses at router"),
+        CodeOf(Send(*Router, Conn, Owner, TEXT("actor_tag"), Conflicting)),
+        FString(TEXT("exact_approval_unavailable")));
+    TestFalse(TEXT("conflicting alias did not mutate actor"), Actor->Tags.Contains(TEXT("must-not-run")));
+
+    const FString LeaseId = AcquireId(*Router, Conn, Owner,
+        TEXT("{\"resources\":[\"global\"],\"ttl_s\":60,\"bind_connection\":false}"));
+    if (TestFalse(TEXT("scratch lease acquired"), LeaseId.IsEmpty()))
+    {
+        const TSharedPtr<FJsonObject> Leased = TagParams(TEXT("expired-lease-must-not-run"));
+        Status.Empty();
+        DataOf(Send(*Router, Conn, Owner, TEXT("actor_tag"), Leased, LeaseId))->TryGetStringField(TEXT("status"), Status);
+        TestEqual(TEXT("leased operation reaches exact review"), Status, FString(TEXT("plan_mode_required")));
+        const FString LeaseProposal = Module->PendingExternalPlanId;
+        FHaybaMCPLeaseManager::Get().AdvanceClockForTests(61.0);
+        Advanced += 61.0;
+        TestFalse(TEXT("expired lease invalidates approval at click"), Module->ResolveExternalPlan(LeaseProposal, true));
+        TestFalse(TEXT("expired lease operation did not run"), Actor->Tags.Contains(TEXT("expired-lease-must-not-run")));
+    }
+    Status.Empty();
+    DataOf(Send(*Router, Conn, Owner, TEXT("actor_tag"), TagParams(TEXT("disconnect-must-not-run"))))->TryGetStringField(TEXT("status"), Status);
+    TestEqual(TEXT("disconnect case reaches exact review"), Status, FString(TEXT("plan_mode_required")));
+    Router->NotifyConnectionClosed(Conn);
+    TestFalse(TEXT("connection close invalidates pending approval"), Module->PendingExternalPlanIsExact);
+    TestFalse(TEXT("disconnected operation did not run"), Actor->Tags.Contains(TEXT("disconnect-must-not-run")));
+    return true;
+}
+
 // Explicit visual review: real Slate renderer at both dock widths; no agent execution.
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FHaybaWorkspaceVisualReview, "Hayba.MCP.Workspace.VisualReview",
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
@@ -158,13 +271,20 @@ bool FHaybaWorkspaceVisualReview::RunTest(const FString&)
         {
             if (View == TEXT("Proposal"))
             {
-                FHaybaExternalPlanStep Place;
-                Place.Title = TEXT("Place three blockout volumes in the selected room");
-                Place.Tool = TEXT("actor_spawn");
-                FHaybaExternalPlanStep Check;
-                Check.Title = TEXT("Check player clearances before saving");
-                Check.Tool = TEXT("actor_get_bounds");
-                Module.ProposeExternalPlan(TEXT("Place blockout volumes and check clearances"), { Place, Check });
+                FHaybaExactExternalApproval Proposal;
+                Proposal.Command = TEXT("actor_transform");
+                Proposal.Owner = TEXT("external-test-client");
+                Proposal.Source = TEXT("External MCP client (connection 7)");
+                Proposal.SourceBinding = TEXT("visual-fixture-source");
+                Proposal.OperationDigest = TEXT("f22e5863a18f746e3d588d811560a45f");
+                Proposal.ReviewParamsJson = TEXT("{\"actor_id\":\"BlockoutMarker\",\"location\":[120,0,40]}");
+                Proposal.TargetRef = TEXT("/Scratch/Map.BlockoutMarker#sample");
+                Proposal.TargetFingerprint = TEXT("visual-fixture-version");
+                Proposal.LeaseBinding = TEXT("visual-fixture-lease");
+                Proposal.PolicyVersion = TEXT("native-exact-v1");
+                Proposal.Consequence = TEXT("Moves the blockout marker in the loaded editor world. Save is separate.");
+                Proposal.ExpiresAt = FDateTime::UtcNow() + FTimespan::FromMinutes(5);
+                Module.ProposeExactExternalOperation(MoveTemp(Proposal));
             }
             if (View == TEXT("World")) Panel->ShowPanel(EHaybaPanel::World);
             if (View == TEXT("Activity")) Panel->ShowPanel(EHaybaPanel::Activity);

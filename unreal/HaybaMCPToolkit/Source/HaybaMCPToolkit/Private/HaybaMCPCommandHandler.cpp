@@ -1538,6 +1538,12 @@ TArray<FString> FHaybaMCPCommandHandler::GetAllCommands() const
 void FHaybaMCPCommandHandler::NotifyConnectionClosed(int32 ConnId)
 {
     FHaybaMCPLeaseManager::Get().OnConnectionClosed(ConnId);
+    if (FHaybaMCPModule* M = FModuleManager::GetModulePtr<FHaybaMCPModule>("HaybaMCPToolkit"))
+    {
+        if ((M->PendingExternalOperation.IsValid() && M->PendingExternalOperation.ConnectionId == ConnId) ||
+            (M->ApprovedExternalOperation.IsValid() && M->ApprovedExternalOperation.ConnectionId == ConnId))
+            M->InvalidateExternalApproval();
+    }
 }
 
 FString FHaybaMCPCommandHandler::ProcessCommand(const FString& CommandJson)
@@ -2029,6 +2035,15 @@ FString FHaybaMCPCommandHandler::ProcessCommandInContext(const FString& CommandJ
             const bool bBatchCovered = GateContext && GateContext->bPlanPreApproved;
             if (!bBatchCovered)
             {
+                if (GateContext && !GateContext->LeaseToken.IsEmpty() &&
+                    GateContext->Caller.LeaseRef != ELeaseRef::Bound)
+                {
+                    if (M) M->InvalidateExternalApproval();
+                    FGateRefusal Refusal;
+                    Refusal.Code = TEXT("exact_approval_unavailable");
+                    Refusal.Message = FString::Printf(TEXT("%s was not run: its named lease is no longer valid for exact approval."), *Cmd);
+                    return MakeGateRefusal(Id, Cmd, Refusal);
+                }
                 FString TargetRef;
                 FString TargetFingerprint;
                 if (!M || !CaptureExactApprovalTarget(Cmd, Params, TargetRef, TargetFingerprint))
@@ -2083,6 +2098,8 @@ FString FHaybaMCPCommandHandler::ProcessCommandInContext(const FString& CommandJ
                     Proposal.TargetRef = TargetRef;
                     Proposal.TargetFingerprint = TargetFingerprint;
                     Proposal.LeaseBinding = LeaseBinding;
+                    Proposal.LeaseId = GateContext ? GateContext->LeaseToken : FString();
+                    Proposal.ConnectionId = GateContext ? GateContext->ConnId : 0;
                     Proposal.PolicyVersion = TEXT("native-exact-v1");
                     Proposal.Consequence = Cmd == TEXT("actor_delete")
                         ? TEXT("Deletes this actor from the loaded editor world. Save is separate; undo may be available while the actor remains valid.")

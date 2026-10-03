@@ -62,10 +62,10 @@ bool FHaybaMCPLeaseTouchOnUseTest::RunTest(const FString& Parameters)
 	const double ExpiresBefore = Leases.Table().FindLease(Kept)->ExpiresAt;
 	Advance(30.0);
 	Settings.bPlanModeEnabled = true;
-	FString Status;
-	DataOf(Send(*R, Conn, Owner, TEXT("blueprint_add_node"), Write))->TryGetStringField(TEXT("status"), Status);
+	const FString RefusalCode = CodeOf(Send(*R, Conn, Owner, TEXT("blueprint_add_node"), Write));
 	Settings.bPlanModeEnabled = false;
-	TestEqual(TEXT("the Plan gate refused the write"), Status, FString(TEXT("plan_mode_required")));
+	TestEqual(TEXT("the Plan gate refuses unsupported exact review"), RefusalCode,
+		FString(TEXT("exact_approval_unavailable")));
 	TestEqual(TEXT("a refused write leaves the expiry"), Leases.Table().FindLease(Kept)->ExpiresAt, ExpiresBefore);
 
 	// 3. A write that passes every gate and uses the lease's lock extends it.

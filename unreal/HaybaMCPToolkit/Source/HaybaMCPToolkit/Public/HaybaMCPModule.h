@@ -43,6 +43,9 @@ struct FHaybaExactExternalApproval
     FString TargetRef;
     FString TargetFingerprint;
     FString LeaseBinding;
+    /** Kept in memory only to revalidate the live lease at the approval click. */
+    FString LeaseId;
+    int32 ConnectionId = 0;
     FString PolicyVersion;
     FString Consequence;
     FDateTime ExpiresAt;
