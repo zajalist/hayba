@@ -253,6 +253,25 @@ describe('chat server Pro loop', () => {
     await second.frames;
   });
 
+  it('reopens a BYOK brain session when its API key rotates', async () => {
+    const brain = new FakeBrain();
+    start(brainConnector(brain));
+    const sessionId = 'rotated_key_chat';
+    await post('/chat/config', { session_id: sessionId, provider: 'openrouter', model: 'm', api_key: 'synthetic-old-key' });
+    const first = await stream({ session_id: sessionId, prompt: 'first', loop: 'pro', llm: 'byok' });
+    await waitFor(() => brain.sentTypes().includes('turn'));
+    brain.finishTurn('a1');
+    await first.frames;
+
+    await post('/chat/config', { session_id: sessionId, provider: 'openrouter', model: 'm', api_key: 'synthetic-new-key' });
+    const second = await stream({ session_id: sessionId, prompt: 'second', loop: 'pro', llm: 'byok' });
+    await waitFor(() => brain.sockets.length === 2 && brain.sentTypes().includes('turn'));
+    expect(brain.sockets[0].readyState).toBe(3);
+    expect(brain.sock.sent[0].llm).toMatchObject({ api_key: 'synthetic-new-key' });
+    brain.finishTurn('a2');
+    await second.frames;
+  });
+
   it('sends DeepSeek BYOK to the Brain without a client-chosen endpoint', async () => {
     const brain = new FakeBrain();
     start(brainConnector(brain));

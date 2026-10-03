@@ -46,7 +46,7 @@
 
 import type { Express, Request, Response } from 'express';
 import type { AddressInfo } from 'node:net';
-import { createHash } from 'node:crypto';
+import { createHash, createHmac, randomBytes } from 'node:crypto';
 import { createLLMClient, type LLMMessage } from '../agents/llm-client.js';
 import { getProvider } from '../agents/providers.js';
 import { discoverModels } from '../agents/model-discovery.js';
@@ -543,6 +543,8 @@ function requestFingerprint(body: {
   return createHash('sha256').update(JSON.stringify(request)).digest('hex');
 }
 
+const proLlmFingerprintKey = randomBytes(32);
+
 const DEFAULT_SYSTEM =
   'You are the Hayba in-editor copilot. You help build Unreal Engine worlds by ' +
   'calling Hayba tools. Prefer reads before writes; respect Plan Mode.';
@@ -1021,7 +1023,10 @@ export function registerChatRoutes(app: Express, options: ChatRoutesOptions = {}
         cleanup();
         return;
       }
-      const llmFingerprint = createHash('sha256').update(JSON.stringify(llm.mode)).digest('hex');
+      // The mode can contain a BYOK API key. A process-local HMAC keeps key
+      // rotation detectable without retaining or exposing a plain key hash.
+      const llmFingerprint = createHmac('sha256', proLlmFingerprintKey)
+        .update(JSON.stringify(llm.mode)).digest('hex');
       if (session.brain && session.brainLlmFingerprint !== llmFingerprint) {
         await dropBrain(session).catch(() => undefined);
         session.approvedCall = undefined;
