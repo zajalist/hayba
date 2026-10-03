@@ -39,6 +39,13 @@ function toolResponse(name: string, input: Record<string, unknown> = {}, id = `c
   };
 }
 
+const nativeApproval = {
+  proposal_id: 'proposal-1',
+  operation_digest: 'digest-1',
+  target_ref: 'TestActor',
+  target_fingerprint: 'fingerprint-1',
+};
+
 class FakeLLMClient implements LLMClient {
   provider = 'mock';
   model = 'fake';
@@ -220,10 +227,10 @@ describe('semantic runAgentLoop', () => {
   it.each(['ts', 'ue', 'workflow', 'mcp'] as const)(
     'pauses semantically for %s approval without completion',
     async (source) => {
-      const workflow = { ok: false, stages: [{ stage: 'terrain', status: 'pending', code: 'plan_mode_required' }] };
+      const workflow = { ok: false, stages: [{ stage: 'terrain', status: 'pending', code: 'plan_mode_required' }], ...nativeApproval };
       const dispatch = vi.fn(async () =>
         source === 'ue'
-          ? { status: 'plan_mode_required' }
+          ? { status: 'plan_mode_required', ...nativeApproval }
           : source === 'mcp'
             ? { content: [{ type: 'text', text: JSON.stringify(workflow) }] }
             : workflow,
@@ -243,11 +250,38 @@ describe('semantic runAgentLoop', () => {
         source: source === 'ts' ? 'ts' : 'ue',
         argsHash: '{"label":"Tree"}',
       });
+      if (source !== 'ts') expect(events.at(-1)).toMatchObject({
+        nativeProposalId: nativeApproval.proposal_id,
+        nativeOperationDigest: nativeApproval.operation_digest,
+        nativeTargetRef: nativeApproval.target_ref,
+        nativeTargetFingerprint: nativeApproval.target_fingerprint,
+      });
       expect(events.some((event) => event.type === 'activity_completed')).toBe(false);
       expect(reduceStream(events).status).toBe('awaiting_approval');
       expect(dispatch).toHaveBeenCalledTimes(source === 'ts' ? 0 : 1);
     },
   );
+
+  it('carries native proposal identity through the semantic approval event', async () => {
+    const dispatch = vi.fn(async () => ({ status: 'plan_mode_required', ...nativeApproval }));
+    const events = await collect(runSemanticAgentLoop(baseParams({
+      activityId: 'actor-review',
+      client: new FakeLLMClient([toolResponse('actor_transform', { actor_id: 'TestActor' })]),
+      planMode: false,
+      dispatchTool: dispatch,
+      tools: [{ name: 'actor_transform', description: '', input_schema: { type: 'object', properties: {} } }],
+    })));
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    expect(events.filter((event) => event.type === 'approval_requested')).toHaveLength(1);
+    expect(events.at(-1)).toMatchObject({
+      type: 'approval_requested', source: 'ue',
+      nativeProposalId: nativeApproval.proposal_id,
+      nativeOperationDigest: nativeApproval.operation_digest,
+      nativeTargetRef: nativeApproval.target_ref,
+      nativeTargetFingerprint: nativeApproval.target_fingerprint,
+    });
+    expect(reduceStream(events).status).toBe('awaiting_approval');
+  });
 
   it.each(['c1', 'new-call-id'])(
     'resumes the same activity with call ID %s through a one-shot approval',
@@ -373,6 +407,44 @@ describe('isDestructiveToolName', () => {
 });
 
 describe('runAgentLoop', () => {
+  it.each([
+    'actor_transform', 'actor_delete', 'actor_set_properties', 'actor_tag', 'actor_set_visibility',
+  ])('%s reaches the native exact gate after its call-bound TS approval', async (name) => {
+    const dispatch = vi.fn(async () => ({ status: 'plan_mode_required', ...nativeApproval }));
+    const input = { actor_id: 'TestActor' };
+    const events = await collect(runAgentLoop(baseParams({
+      client: new FakeLLMClient([toolResponse(name, input)]),
+      dispatchTool: dispatch,
+      planMode: true,
+      approvedCall: { name, argsHash: argsHash(input) },
+      tools: [{ name, description: '', input_schema: { type: 'object', properties: {} } }],
+    })));
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    expect(events.filter((event) => event.type === 'plan_request')).toHaveLength(1);
+    expect(events.at(-1)).toMatchObject({
+      type: 'plan_request', source: 'ue',
+      nativeProposalId: nativeApproval.proposal_id,
+      nativeOperationDigest: nativeApproval.operation_digest,
+      nativeTargetRef: nativeApproval.target_ref,
+      nativeTargetFingerprint: nativeApproval.target_fingerprint,
+    });
+    expect(events.some((event) => event.type === 'tool_result')).toBe(false);
+  });
+
+  it('fails closed when a native approval response lacks correlation metadata', async () => {
+    const dispatch = vi.fn(async () => ({ status: 'plan_mode_required', ...nativeApproval, target_fingerprint: '' }));
+    const events = await collect(runAgentLoop(baseParams({
+      client: new FakeLLMClient([toolResponse('actor_transform', { actor_id: 'TestActor' })]),
+      dispatchTool: dispatch,
+      planMode: true,
+      approvedCall: { name: 'actor_transform', argsHash: argsHash({ actor_id: 'TestActor' }) },
+      tools: [{ name: 'actor_transform', description: '', input_schema: { type: 'object', properties: {} } }],
+    })));
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    expect(events.at(-1)).toMatchObject({ type: 'error', kind: 'approval_metadata_invalid' });
+    expect(events.some((event) => event.type === 'plan_request')).toBe(false);
+  });
+
   it.each(['world_ingest', 'asset_prepare', 'level_save'])(
     'requests approval before dispatching %s in Plan Mode',
     async (name) => {
@@ -393,7 +465,7 @@ describe('runAgentLoop', () => {
   );
 
   it.each([false, true])('treats workflow approval-required stages as a pause, not a failure (MCP=%s)', async (mcp) => {
-    const result = { ok: false, stages: [{ stage: 'terrain', status: 'pending', code: 'plan_mode_required' }] };
+    const result = { ok: false, stages: [{ stage: 'terrain', status: 'pending', code: 'plan_mode_required' }], ...nativeApproval };
     const dispatch = vi.fn(async () =>
       mcp ? { content: [{ type: 'text', text: JSON.stringify(result) }], isError: false } : result,
     );
@@ -785,12 +857,12 @@ describe('runAgentLoop', () => {
   });
 
   it('C1: approve A then model requests B → B re-pauses, NO dispatch', async () => {
-    const client = new FakeLLMClient([toolResponse('actor_delete', { id: 'B' }, 'c1')]);
+    const client = new FakeLLMClient([toolResponse('actor_spawn', { id: 'B' }, 'c1')]);
     const dispatch = vi.fn(async () => ({ ok: true }));
     // Approval bound to a DIFFERENT call (actor_spawn / id:A).
     const approvedCall = { name: 'actor_spawn', argsHash: argsHash({ id: 'A' }) };
     const tools = [
-      { name: 'actor_delete', description: 'del', input_schema: { type: 'object' as const, properties: {} } },
+      { name: 'actor_spawn', description: 'spawn', input_schema: { type: 'object' as const, properties: {} } },
     ];
     const events = await collect(
       runAgentLoop(baseParams({ client, tools, dispatchTool: dispatch, planMode: true, approvedCall })),
@@ -845,7 +917,7 @@ describe('runAgentLoop', () => {
   it('C++ plan_mode_required response → plan_request pause, not a failure', async () => {
     const client = new FakeLLMClient([toolResponse('actor_spawn', {}, 'c1')]);
     // Dispatch returns the C++ gate payload (plan mode NOT set on the loop side).
-    const dispatch = vi.fn(async () => ({ status: 'plan_mode_required', hint: 'approve first' }));
+    const dispatch = vi.fn(async () => ({ status: 'plan_mode_required', hint: 'approve first', ...nativeApproval }));
 
     const events = await collect(runAgentLoop(baseParams({ client, dispatchTool: dispatch })));
 
@@ -854,6 +926,12 @@ describe('runAgentLoop', () => {
     expect(plan).toBeDefined();
     expect((plan as { source?: string }).source).toBe('ue');
     expect((plan as { hint?: string }).hint).toBe('approve first');
+    expect(plan).toMatchObject({
+      nativeProposalId: nativeApproval.proposal_id,
+      nativeOperationDigest: nativeApproval.operation_digest,
+      nativeTargetRef: nativeApproval.target_ref,
+      nativeTargetFingerprint: nativeApproval.target_fingerprint,
+    });
     // No tool_result (not counted as success/failure) after the gate.
     expect(events.some((e) => e.type === 'tool_result')).toBe(false);
   });

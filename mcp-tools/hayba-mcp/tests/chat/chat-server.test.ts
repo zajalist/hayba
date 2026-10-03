@@ -28,6 +28,12 @@ import {
 
 // A distinctive fake key we assert never leaks into any SSE frame or config read.
 const FAKE_KEY = 'sk-ant-LEAK-CANARY-000111222333';
+const NATIVE_APPROVAL = {
+  proposal_id: 'proposal-actor-1',
+  operation_digest: 'digest-actor-1',
+  target_ref: 'TestActor',
+  target_fingerprint: 'fingerprint-actor-1',
+};
 
 // ---------------------------------------------------------------------------
 // Scriptable fake LLM client
@@ -804,6 +810,75 @@ describe('sidecar SSE chat server', () => {
     const done = frames2.find((f) => f.event === 'done')!.data as { reason: string };
     expect(done.reason).toBe('end_turn');
     expect(dispatchCount).toBe(1);
+  });
+
+  it('binds the native actor review to its proposal after the TS safety pause', async () => {
+    let dispatchCount = 0;
+    ({ server, url } = startApp({
+      createClient: makeFakeClientFactory([
+        { content: null, toolCalls: [{ id: 'c1', name: 'actor_transform', input: { actor_id: 'TestActor' } }], stopReason: 'tool_use' },
+        { content: null, toolCalls: [{ id: 'c2', name: 'actor_transform', input: { actor_id: 'TestActor' } }], stopReason: 'tool_use' },
+        { content: null, toolCalls: [{ id: 'c3', name: 'actor_transform', input: { actor_id: 'TestActor' } }], stopReason: 'tool_use' },
+        { content: 'Done', toolCalls: [], stopReason: 'end_turn' },
+      ]) as never,
+      tools: [{ name: 'actor_transform', description: 'move', input_schema: { type: 'object', properties: {} } }],
+      dispatchTool: async () => {
+        dispatchCount++;
+        return dispatchCount === 1
+          ? { status: 'plan_mode_required', ...NATIVE_APPROVAL }
+          : { actor_id: 'TestActor', moved: true };
+      },
+    }));
+    const post = (path: string, body: object) => fetch(`${url}${path}`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+    });
+
+    const first = await post('/chat/stream', { session_id: 'native_review', prompt: 'move actor', provider: 'mock' });
+    const tsFrames = await readAllFrames(first.body!);
+    expect(dispatchCount).toBe(0);
+    expect(tsFrames.filter((frame) => frame.event === 'plan_request')).toHaveLength(1);
+    expect(tsFrames.find((frame) => frame.event === 'plan_request')?.data).toMatchObject({ source: 'ts' });
+    expect((await post('/chat/approve', { session_id: 'native_review' })).status).toBe(200);
+
+    const second = await post('/chat/stream', { session_id: 'native_review', prompt: 'move actor', provider: 'mock' });
+    const frames = await readAllFrames(second.body!);
+    expect(dispatchCount).toBe(1);
+    expect(frames.filter((frame) => frame.event === 'approval_requested')).toHaveLength(1);
+    expect(frames.find((frame) => frame.event === 'approval_requested')?.data).toMatchObject({
+      source: 'ue',
+      nativeProposalId: NATIVE_APPROVAL.proposal_id,
+      nativeOperationDigest: NATIVE_APPROVAL.operation_digest,
+      nativeTargetRef: NATIVE_APPROVAL.target_ref,
+      nativeTargetFingerprint: NATIVE_APPROVAL.target_fingerprint,
+    });
+    expect(frames.filter((frame) => frame.event === 'plan_request')).toHaveLength(1);
+    expect(frames.find((frame) => frame.event === 'plan_request')?.data).toMatchObject({
+      source: 'ue', ...NATIVE_APPROVAL,
+    });
+
+    expect((await post('/chat/approve', { session_id: 'native_review' })).status).toBe(409);
+    expect((await post('/chat/approve', {
+      session_id: 'native_review', native_proposal_id: NATIVE_APPROVAL.proposal_id,
+    })).status).toBe(409);
+    expect((await post('/chat/approve', {
+      session_id: 'native_review', native_proposal_id: 'stale',
+      native_operation_digest: NATIVE_APPROVAL.operation_digest,
+    })).status).toBe(409);
+    const approved = await post('/chat/approve', {
+      session_id: 'native_review', native_proposal_id: NATIVE_APPROVAL.proposal_id,
+      native_operation_digest: NATIVE_APPROVAL.operation_digest,
+    });
+    expect(approved.status).toBe(200);
+    expect((await post('/chat/approve', {
+      session_id: 'native_review', native_proposal_id: NATIVE_APPROVAL.proposal_id,
+      native_operation_digest: NATIVE_APPROVAL.operation_digest,
+    })).status).toBe(409);
+
+    const resumed = await post('/chat/stream', { session_id: 'native_review', prompt: 'move actor', provider: 'mock' });
+    const resumedFrames = await readAllFrames(resumed.body!);
+    expect(resumedFrames.some((frame) => frame.event === 'plan_request')).toBe(false);
+    expect(resumedFrames.find((frame) => frame.event === 'done')?.data).toMatchObject({ reason: 'end_turn' });
+    expect(dispatchCount).toBe(2);
   });
 
   it('rejects a changed prompt after approval without dispatching the old call', async () => {

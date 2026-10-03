@@ -243,6 +243,21 @@ type TurnLoop = 'community' | 'pro';
 /** A plan-gated call plus the loop that raised it; an approval never crosses loops. */
 interface OriginatedCall extends ApprovedCall {
   origin: TurnLoop;
+  nativeProposalId?: string;
+  nativeOperationDigest?: string;
+}
+
+function hasNativeApprovalFields(event: {
+  source: 'ts' | 'ue';
+  nativeProposalId?: string;
+  nativeOperationDigest?: string;
+  nativeTargetRef?: string;
+  nativeTargetFingerprint?: string;
+}): boolean {
+  if (event.source !== 'ue') return true;
+  return [event.nativeProposalId, event.nativeOperationDigest,
+    event.nativeTargetRef, event.nativeTargetFingerprint].every((value) =>
+      typeof value === 'string' && value.trim().length > 0);
 }
 
 /** The approval a turn on `loop` may use, stripped of its origin tag. */
@@ -812,7 +827,11 @@ export function registerChatRoutes(app: Express, options: ChatRoutesOptions = {}
   // ── POST /chat/approve ───────────────────────────────────────────────────
   app.post('/chat/approve', (req: Request, res: Response) => {
     if (!requireLoopback(req, res)) return;
-    const { session_id } = jsonObjectBody(req) as { session_id?: string };
+    const { session_id, native_proposal_id, native_operation_digest } = jsonObjectBody(req) as {
+      session_id?: string;
+      native_proposal_id?: string;
+      native_operation_digest?: string;
+    };
     if (!session_id) return res.status(400).json({ error: 'session_id is required' });
     const session = sessions.get(session_id);
     if (!session) return res.status(404).json({ error: 'unknown session' });
@@ -821,6 +840,11 @@ export function registerChatRoutes(app: Express, options: ChatRoutesOptions = {}
     // whole turn. Without a pending plan_request there is nothing to approve.
     if (!session.pendingPlanCall) {
       return res.status(409).json({ error: 'no pending plan request to approve' });
+    }
+    if (session.pendingPlanCall.nativeProposalId &&
+        (native_proposal_id !== session.pendingPlanCall.nativeProposalId ||
+         native_operation_digest !== session.pendingPlanCall.nativeOperationDigest)) {
+      return res.status(409).json({ error: 'native approval does not match the pending proposal' });
     }
     session.approvedCall = session.pendingPlanCall;
     session.approvedRequestFingerprint = session.requestFingerprint;
@@ -1289,6 +1313,9 @@ async function runTurn(session: ChatSession, params: RunTurnParams): Promise<voi
   const observe = (event: AgentStreamEvent): void => {
     // The native Agent surface observes these structured frames directly. Keep
     // legacy frames below for older clients until their migration lands.
+    // A malformed remote native pause must not appear as an actionable review.
+    // The legacy adapter below emits an error instead of parking the session.
+    if (event.type === 'approval_requested' && !hasNativeApprovalFields(event)) return;
     emit(session, event.type, event);
     switch (event.type) {
       case 'activity_started':
@@ -1493,8 +1520,23 @@ function forwardEvent(
     case 'plan_request': {
       // C1: record the identity of the paused call so /chat/approve can bind the
       // approval to THIS exact {name, argsHash} rather than the whole turn.
+      if (!hasNativeApprovalFields(ev)) {
+        const error = 'The editor requested approval without complete native proposal details.';
+        emit(session, 'error', { error, kind: 'approval_metadata_invalid' });
+        setError({ error, kind: 'approval_metadata_invalid' });
+        setReason('error');
+        break;
+      }
       const hash = ev.argsHash ?? argsHash(ev.call.input);
-      session.pendingPlanCall = { name: ev.call.name, argsHash: hash, origin };
+      session.pendingPlanCall = {
+        name: ev.call.name,
+        argsHash: hash,
+        origin,
+        ...(ev.source === 'ue' ? {
+          nativeProposalId: ev.nativeProposalId,
+          nativeOperationDigest: ev.nativeOperationDigest,
+        } : {}),
+      };
       const input = redactBoundaryValue(ev.call.input) as Record<string, unknown>;
       emit(session, 'plan_request', {
         id: ev.call.id,
@@ -1503,6 +1545,12 @@ function forwardEvent(
         source: ev.source,
         hint: ev.hint,
         args_hash: hash,
+        ...(ev.source === 'ue' ? {
+          proposal_id: ev.nativeProposalId,
+          operation_digest: ev.nativeOperationDigest,
+          target_ref: ev.nativeTargetRef,
+          target_fingerprint: ev.nativeTargetFingerprint,
+        } : {}),
       });
       // Loop RETURNS after plan_request — the turn pauses pending approval.
       setReason('plan_request');

@@ -6,10 +6,10 @@
  * Plan-Mode safety gate honoured on both sides:
  *
  *   - UE-bridged commands: C++ is the AUTHORITATIVE gate. When Plan Mode is on
- *     and a destructive command runs without an approved plan, `ProcessCommand`
- *     returns `{ status: 'plan_mode_required', hint }` (ok:true). The loop
- *     recognises that payload, emits a `plan_request` event and PAUSES — it is
- *     NOT counted as a tool failure and no further tools are dispatched.
+ *     and a destructive command runs without exact approval, `ProcessCommand`
+ *     returns `plan_mode_required` with a proposal ID, operation digest, target
+ *     reference and fingerprint. The loop validates those fields, emits a
+ *     `plan_request` event and PAUSES without dispatching further tools.
  *   - TS-side handlers: many tools resolve entirely in Node and never reach the
  *     C++ gate, so the loop mirrors the C++ `IsDestructiveCommand` semantics via
  *     `isDestructiveToolName()` and pauses BEFORE dispatch when Plan Mode is on
@@ -450,11 +450,18 @@ export type AgentDoneReason =
   | 'aborted'
   | 'wall_clock';
 
+interface NativeApprovalMetadata {
+  nativeProposalId: string;
+  nativeOperationDigest: string;
+  nativeTargetRef: string;
+  nativeTargetFingerprint: string;
+}
+
 export type AgentEvent =
   | { type: 'text_delta'; text: string }
   | { type: 'tool_call'; call: LLMToolCall }
   | { type: 'tool_result'; id: string; name: string; result: unknown; isError?: boolean }
-  | { type: 'plan_request'; call: LLMToolCall; hint?: string; source: 'ts' | 'ue'; argsHash?: string }
+  | ({ type: 'plan_request'; call: LLMToolCall; hint?: string; source: 'ts' | 'ue'; argsHash?: string } & Partial<NativeApprovalMetadata>)
   | { type: 'done'; reason: AgentDoneReason; stopReason?: LLMStopReason; usage?: LLMUsage; pendingWarningIds?: string[]; warningReviews?: WarningReviewRecord[]; warningOverflow?: boolean }
   | { type: 'error'; error: string; kind?: string; reason?: string };
 
@@ -519,32 +526,44 @@ function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);
 }
 
-/** Is a dispatch result the C++ Plan-Mode pause payload? */
-function isPlanModeRequired(result: unknown): result is { status: string; hint?: string } {
-  if (typeof result !== 'object' || result === null) return false;
+/** Find the C++ Plan-Mode pause payload, including MCP text envelopes. */
+function planModePayload(result: unknown): Record<string, unknown> | null {
+  if (typeof result !== 'object' || result === null) return null;
   const payload = result as {
     status?: unknown;
     stages?: Array<{ status?: unknown; code?: unknown }>;
     content?: Array<{ type?: unknown; text?: string }>;
   };
-  if (payload.status === 'plan_mode_required') return true;
+  if (payload.status === 'plan_mode_required') return result as Record<string, unknown>;
   if (
     Array.isArray(payload.stages) &&
     payload.stages.some((stage) => stage?.status === 'pending' && stage.code === 'plan_mode_required')
   )
-    return true;
+    return result as Record<string, unknown>;
   // Direct MCP dispatch may retain text blocks instead of unwrapping JSON.
-  return (
-    Array.isArray(payload.content) &&
-    payload.content.some((block) => {
-      if (block.type !== 'text' || typeof block.text !== 'string') return false;
-      try {
-        return isPlanModeRequired(JSON.parse(block.text));
-      } catch {
-        return false;
-      }
-    })
-  );
+  if (!Array.isArray(payload.content)) return null;
+  for (const block of payload.content) {
+    if (block.type !== 'text' || typeof block.text !== 'string') continue;
+    try {
+      const nested = planModePayload(JSON.parse(block.text));
+      if (nested) return nested;
+    } catch { /* A non-JSON text block is not a native approval response. */ }
+  }
+  return null;
+}
+
+function nativeApprovalMetadata(payload: Record<string, unknown>): NativeApprovalMetadata | null {
+  const valid = (value: unknown, max: number): value is string =>
+    typeof value === 'string' && value.trim().length > 0 && value.length <= max && !/[\x00-\x1f\x7f]/.test(value);
+  const { proposal_id, operation_digest, target_ref, target_fingerprint } = payload;
+  if (!valid(proposal_id, 128) || !valid(operation_digest, 128) ||
+      !valid(target_ref, 1024) || !valid(target_fingerprint, 128)) return null;
+  return {
+    nativeProposalId: proposal_id,
+    nativeOperationDigest: operation_digest,
+    nativeTargetRef: target_ref,
+    nativeTargetFingerprint: target_fingerprint,
+  };
 }
 
 /**
@@ -840,12 +859,23 @@ async function* runExecutionLoop(params: AgentLoopParams): AsyncGenerator<AgentE
       }
 
       // C++ Plan-Mode gate response: pause, NOT a failure, no further dispatch.
-      if (isPlanModeRequired(result)) {
+      const nativePause = planModePayload(result);
+      if (nativePause) {
+        const metadata = nativeApprovalMetadata(nativePause);
+        if (!metadata) {
+          yield {
+            type: 'error',
+            kind: 'approval_metadata_invalid',
+            error: 'The editor requested approval without complete native proposal details. The edit was not approved; start a new review after checking the editor.',
+          };
+          return;
+        }
         yield {
           type: 'plan_request',
           call,
           source: 'ue',
-          hint: (result as { hint?: string }).hint,
+          hint: typeof nativePause.hint === 'string' ? nativePause.hint : undefined,
+          ...metadata,
         };
         return;
       }
@@ -948,6 +978,12 @@ export async function* runAgentLoop(params: AgentLoopParams): AsyncGenerator<Age
           argsHash: event.argsHash ?? argsHash(event.call.input),
           source: event.source,
           hint: event.hint,
+          ...(event.source === 'ue' ? {
+            nativeProposalId: event.nativeProposalId,
+            nativeOperationDigest: event.nativeOperationDigest,
+            nativeTargetRef: event.nativeTargetRef,
+            nativeTargetFingerprint: event.nativeTargetFingerprint,
+          } : {}),
         };
         break;
       case 'error':
@@ -1029,6 +1065,12 @@ export async function* adaptToLegacy(
           source: event.source,
           hint: event.hint,
           ...(event.source === 'ts' ? { argsHash: event.argsHash } : {}),
+          ...(event.source === 'ue' ? {
+            nativeProposalId: event.nativeProposalId,
+            nativeOperationDigest: event.nativeOperationDigest,
+            nativeTargetRef: event.nativeTargetRef,
+            nativeTargetFingerprint: event.nativeTargetFingerprint,
+          } : {}),
         };
         break;
       case 'activity_completed':
