@@ -133,6 +133,7 @@ private:
     TSharedPtr<SButton>                     ExternalDetailsButton;
     FString                                 DisplayedExternalPlanId;
     bool                                    bExternalDetailsExpanded = false;
+    bool                                    bExternalChangeNeedsDetails = false;
     TSharedPtr<FHaybaMCPModelDiscoveryClient> ModelDiscoveryClient;
     TOptional<FHaybaMCPModelDiscoveryResult> DiscoveredModels;
     FString                                 ModelSearch;

@@ -200,7 +200,7 @@ namespace
             {TEXT("actor_tag"), TEXT("Tag actor")},
             {TEXT("actor_spawn"), TEXT("Spawn actor")},
             {TEXT("actor_delete"), TEXT("Delete actor")},
-            {TEXT("actor_set_transform"), TEXT("Set actor transform")},
+            {TEXT("actor_transform"), TEXT("Set actor transform")},
             {TEXT("actor_set_visibility"), TEXT("Set actor visibility")},
             {TEXT("actor_set_properties"), TEXT("Set actor properties")},
             {TEXT("lease_acquire"), TEXT("Reserve edit scope")},
@@ -679,17 +679,10 @@ void SHaybaMCPToolStreamPanel::AddToolCall(const FString& ToolName, const FStrin
 
 void SHaybaMCPToolStreamPanel::RebuildSummary(TSharedPtr<FHaybaTurn> Turn) const
 {
-    TArray<FString> Names;
-    for (const auto& C : Turn->Calls)
-    {
-        Names.AddUnique(C.ToolName);
-        if (Names.Num() >= 3) break;
-    }
-    Turn->Summary = FString::Printf(TEXT("Turn %d  -  %d call%s  (%s)"),
+    Turn->Summary = FString::Printf(TEXT("Turn %d · %d call%s"),
         Turn->TurnIndex + 1,
         Turn->Calls.Num(),
-        Turn->Calls.Num() == 1 ? TEXT("") : TEXT("s"),
-        *FString::Join(Names, TEXT(", ")));
+        Turn->Calls.Num() == 1 ? TEXT("") : TEXT("s"));
 }
 
 bool SHaybaMCPToolStreamPanel::CallMatchesFilter(const FHaybaToolCall& Call) const

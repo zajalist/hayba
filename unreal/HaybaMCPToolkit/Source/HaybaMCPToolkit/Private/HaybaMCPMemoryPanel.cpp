@@ -10,6 +10,7 @@
 #include "Widgets/SBoxPanel.h"
 #include "Widgets/SOverlay.h"
 #include "Widgets/Layout/SBorder.h"
+#include "Widgets/Layout/SWrapBox.h"
 #include "Styling/AppStyle.h"
 #include "Dom/JsonObject.h"
 #include "Serialization/JsonReader.h"
@@ -72,10 +73,12 @@ void SHaybaMCPMemoryPanel::Construct(const FArguments& InArgs)
         [
             SNew(SBorder).BorderImage(FAppStyle::Get().GetBrush("Brushes.Header")).Padding(FMargin(6, 3))
             [
-                SNew(SHorizontalBox)
-                + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)[ SNew(SButton).Text(LOCTEXT("All", "All")).OnClicked(this, &SHaybaMCPMemoryPanel::OnCheckAll) ]
-                + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(2, 0)[ SNew(SButton).Text(LOCTEXT("None", "None")).OnClicked(this, &SHaybaMCPMemoryPanel::OnCheckNone) ]
-                + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(12, 0, 2, 0)
+                SNew(SWrapBox).UseAllottedSize(true)
+                + SWrapBox::Slot().VAlign(VAlign_Center)
+                [ SNew(SButton).Text(LOCTEXT("All", "All")).OnClicked(this, &SHaybaMCPMemoryPanel::OnCheckAll) ]
+                + SWrapBox::Slot().VAlign(VAlign_Center).Padding(2, 0)
+                [ SNew(SButton).Text(LOCTEXT("None", "None")).OnClicked(this, &SHaybaMCPMemoryPanel::OnCheckNone) ]
+                + SWrapBox::Slot().VAlign(VAlign_Center).Padding(8, 0, 2, 0)
                 [
                     SNew(SComboBox<TSharedPtr<FString>>)
                     .OptionsSource(&PrimitiveOptions)
@@ -84,9 +87,10 @@ void SHaybaMCPMemoryPanel::Construct(const FArguments& InArgs)
                     .InitiallySelectedItem(SelectedPrimitive)
                     [ SNew(STextBlock).Text_Lambda([this](){ return FText::FromString(SelectedPrimitive.IsValid() ? *SelectedPrimitive : FString()); }) ]
                 ]
-                + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(2, 0)[ SNew(SButton).Text(LOCTEXT("ApplyTmpl", "Apply to checked")).OnClicked(this, &SHaybaMCPMemoryPanel::OnApplyTemplate) ]
-                + SHorizontalBox::Slot().FillWidth(1.f)[ SNullWidget::NullWidget ]
-                + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)[ SNew(SButton).Text(LOCTEXT("RemoveChecked", "Remove checked")).OnClicked(this, &SHaybaMCPMemoryPanel::OnRemoveChecked) ]
+                + SWrapBox::Slot().VAlign(VAlign_Center).Padding(2, 0)
+                [ SNew(SButton).Text(LOCTEXT("ApplyTmpl", "Apply to checked")).OnClicked(this, &SHaybaMCPMemoryPanel::OnApplyTemplate) ]
+                + SWrapBox::Slot().VAlign(VAlign_Center).Padding(4, 0)
+                [ SNew(SButton).Text(LOCTEXT("RemoveChecked", "Remove checked")).OnClicked(this, &SHaybaMCPMemoryPanel::OnRemoveChecked) ]
             ]
         ]
         + SVerticalBox::Slot().FillHeight(1.f).Padding(6, 2)

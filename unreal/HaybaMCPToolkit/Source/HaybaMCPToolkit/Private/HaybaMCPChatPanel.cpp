@@ -79,6 +79,85 @@ namespace
         return true;
     }
 
+    FString ExactReviewChange(const FHaybaExactExternalApproval& Operation, bool& bNeedsDetails)
+    {
+        bNeedsDetails = false;
+        TSharedPtr<FJsonObject> Params;
+        if (!FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Operation.ReviewParamsJson), Params)
+            || !Params.IsValid())
+        {
+            bNeedsDetails = true;
+            return TEXT("Review the exact parameters before approving.");
+        }
+        if (Operation.Command == TEXT("actor_delete")) return TEXT("Delete this actor");
+        if (Operation.Command == TEXT("actor_set_visibility"))
+        {
+            bool bVisible = false;
+            if (Params->TryGetBoolField(TEXT("visible"), bVisible))
+                return bVisible ? TEXT("Show this actor") : TEXT("Hide this actor");
+        }
+        if (Operation.Command == TEXT("actor_transform"))
+        {
+            TArray<FString> Changes;
+            const auto AddVector = [&Params, &Changes](const TCHAR* Key, const TCHAR* Label, const TCHAR* Unit)
+            {
+                const TArray<TSharedPtr<FJsonValue>>* Values = nullptr;
+                if (!Params->TryGetArrayField(Key, Values) || !Values || Values->Num() != 3) return;
+                double X = 0.0, Y = 0.0, Z = 0.0;
+                if (!(*Values)[0].IsValid() || !(*Values)[1].IsValid() || !(*Values)[2].IsValid() ||
+                    !(*Values)[0]->TryGetNumber(X) || !(*Values)[1]->TryGetNumber(Y) ||
+                    !(*Values)[2]->TryGetNumber(Z) || !FMath::IsFinite(X) ||
+                    !FMath::IsFinite(Y) || !FMath::IsFinite(Z)) return;
+                Changes.Add(FString::Printf(TEXT("%s %.2f, %.2f, %.2f%s"), Label, X, Y, Z, Unit));
+            };
+            AddVector(TEXT("location"), TEXT("Move to"), TEXT(" cm"));
+            AddVector(TEXT("rotation"), TEXT("Rotate to"), TEXT("° (pitch, yaw, roll)"));
+            AddVector(TEXT("scale"), TEXT("Scale to"), TEXT(""));
+            if (!Changes.IsEmpty()) return FString::Join(Changes, TEXT(" · "));
+        }
+        if (Operation.Command == TEXT("actor_tag"))
+        {
+            TArray<FString> Changes;
+            for (const TCHAR* Key : { TEXT("add"), TEXT("remove") })
+            {
+                const TArray<TSharedPtr<FJsonValue>>* Values = nullptr;
+                if (!Params->TryGetArrayField(Key, Values) || !Values) continue;
+                TArray<FString> Tags;
+                for (const TSharedPtr<FJsonValue>& Value : *Values)
+                    if (Value.IsValid() && Value->Type == EJson::String) Tags.Add(Value->AsString());
+                if (!Tags.IsEmpty()) Changes.Add(FString::Printf(TEXT("%s %s"),
+                    FCString::Strcmp(Key, TEXT("add")) == 0 ? TEXT("Add tags") : TEXT("Remove tags"),
+                    *FString::Join(Tags, TEXT(", "))));
+            }
+            if (!Changes.IsEmpty())
+            {
+                FString Summary = FString::Join(Changes, TEXT(" · "));
+                if (Summary.Len() > 160)
+                {
+                    bNeedsDetails = true;
+                    Summary = Summary.Left(157) + TEXT("…");
+                }
+                return Summary;
+            }
+        }
+        if (Operation.Command == TEXT("actor_set_properties"))
+        {
+            const TSharedPtr<FJsonObject>* Properties = nullptr;
+            if (Params->TryGetObjectField(TEXT("properties"), Properties) && Properties && Properties->IsValid())
+            {
+                TArray<FString> Names;
+                for (const auto& Pair : (*Properties)->Values)
+                    Names.Add(FString(*Pair.Key));
+                Names.Sort();
+                bNeedsDetails = true; // Names alone do not reveal the values being written.
+                return FString::Printf(TEXT("Set %d properties: %s. Review values below."), Names.Num(),
+                    *FString::Join(Names, TEXT(", ")).Left(120));
+            }
+        }
+        bNeedsDetails = true;
+        return TEXT("Review the exact parameters before approving.");
+    }
+
     void Toast(const FText& Msg)
     {
         FNotificationInfo Info(Msg);
@@ -457,8 +536,10 @@ void SHaybaMCPChatPanel::Construct(const FArguments&, FHaybaMCPModule* InModule)
     ChildSlot
     [
         SNew(SVerticalBox)
-        + SVerticalBox::Slot().AutoHeight().Padding(8.f, 6.f)
+        + SVerticalBox::Slot().AutoHeight().HAlign(HAlign_Left).Padding(8.f, 6.f)
         [
+            SNew(SBox).MaxDesiredWidth(720.f)
+            [
             SNew(SBorder).BorderImage(FHaybaMCPStyle::GetBrush(TEXT("Hayba.Brush.Settings.Section"))).Padding(14.f)
             .Visibility_Lambda([this]() { return Module && !Module->PendingExternalPlan.IsEmpty() ? EVisibility::Visible : EVisibility::Collapsed; })
             [
@@ -483,7 +564,7 @@ void SHaybaMCPChatPanel::Construct(const FArguments&, FHaybaMCPModule* InModule)
                         return Module && Module->PendingExternalPlanIsExact
                             ? (bAwaitingPlanApproval && !IsNativeApprovalForCurrentActivity(Module->PendingExternalPlanId)
                                 ? LOCTEXT("ExternalOtherScope", "This request is separate from the Chat action awaiting review.")
-                                : LOCTEXT("ExternalExactScope", "Approval applies once to this operation while its target is unchanged."))
+                                : LOCTEXT("ExternalExactScope", "One use while the target is unchanged. Save separately."))
                             : LOCTEXT("ExternalPreviewScope", "This outline cannot authorize an edit. The agent must submit a specific operation for review.");
                     })
                     .Font(FHaybaMCPStyle::Font(11)).AutoWrapText(true)
@@ -495,12 +576,24 @@ void SHaybaMCPChatPanel::Construct(const FArguments&, FHaybaMCPModule* InModule)
                     [ SNew(SButton)
                         .ButtonStyle(&FHaybaMCPStyle::Get().GetWidgetStyle<FButtonStyle>("Hayba.Button.Review.Primary"))
                         .ContentPadding(FMargin(14.f, 7.f))
+                        .ToolTipText_Lambda([this]()
+                        {
+                            if (bExternalChangeNeedsDetails && !bExternalDetailsExpanded)
+                                return LOCTEXT("ExternalReviewValuesFirst", "Review the exact values before approving.");
+                            if (AgentClient.IsValid() && AgentClient->IsStreaming())
+                                return LOCTEXT("ExternalWaitForStream", "Wait for the current review to finish.");
+                            return LOCTEXT("ExternalApproveOnceTip", "Authorize one retry while the target is unchanged.");
+                        })
                         .Visibility_Lambda([this]() { return Module && Module->PendingExternalPlanIsExact
                             ? EVisibility::Visible : EVisibility::Collapsed; })
-                        .IsEnabled_Lambda([this]() { return Module && Module->PendingExternalPlanIsExact &&
-                            DisplayedExternalPlanId == Module->PendingExternalPlanId &&
-                            (!IsNativeApprovalForCurrentActivity(DisplayedExternalPlanId) ||
-                                !AgentClient.IsValid() || !AgentClient->IsStreaming()); })
+                        .IsEnabled_Lambda([this]()
+                        {
+                            if (!Module || !Module->PendingExternalPlanIsExact ||
+                                DisplayedExternalPlanId != Module->PendingExternalPlanId) return false;
+                            return (!bExternalChangeNeedsDetails || bExternalDetailsExpanded) &&
+                                (!IsNativeApprovalForCurrentActivity(DisplayedExternalPlanId) ||
+                                    !AgentClient.IsValid() || !AgentClient->IsStreaming());
+                        })
                         .OnClicked_Lambda([this]()
                         {
                             const FString Command = Module ? Module->PendingExternalOperation.Command : FString();
@@ -542,6 +635,7 @@ void SHaybaMCPChatPanel::Construct(const FArguments&, FHaybaMCPModule* InModule)
                             ? LOCTEXT("ExternalReject", "Reject") : LOCTEXT("ExternalDismiss", "Dismiss"); })
                             .Font(FHaybaMCPStyle::Font(12)) ] ]
                 ]
+            ]
             ]
         ]
 
@@ -596,6 +690,7 @@ void SHaybaMCPChatPanel::RebuildExternalProposal()
     if (!ExternalPlanStepsBox.IsValid()) return;
     ExternalPlanStepsBox->ClearChildren();
     ExternalDetailsButton.Reset();
+    bExternalChangeNeedsDetails = false;
     if (DisplayedExternalPlanId != (Module ? Module->PendingExternalPlanId : FString()))
         bExternalDetailsExpanded = false;
     DisplayedExternalPlanId = Module ? Module->PendingExternalPlanId : FString();
@@ -610,11 +705,12 @@ void SHaybaMCPChatPanel::RebuildExternalProposal()
             [ SNew(STextBlock).Text(FText::FromString(Label + Value))
                 .Font(FHaybaMCPStyle::Font(11)).AutoWrapText(true) ];
         };
-        AddReviewLine(TEXT("Source  "), Operation.Source);
-        AddReviewLine(TEXT("Owner  "), Operation.Owner);
-        AddReviewLine(TEXT("Operation  "), Operation.Command);
+        const FString Change = ExactReviewChange(Operation, bExternalChangeNeedsDetails);
+        ExternalPlanStepsBox->AddSlot().AutoHeight().Padding(0.f, 2.f, 0.f, 5.f)
+        [ SNew(STextBlock).Text(FText::FromString(Change))
+            .Font(FHaybaMCPStyle::Font(13, true)).AutoWrapText(true) ];
         AddReviewLine(TEXT("Target  "), Operation.TargetRef);
-        AddReviewLine(TEXT("Effect  "), Operation.Consequence);
+        AddReviewLine(TEXT("Source  "), Operation.Source);
         if (!Operation.ReviewParamsJson.IsEmpty())
         {
             ExternalPlanStepsBox->AddSlot().AutoHeight().Padding(0.f, 6.f, 0.f, 0.f)
@@ -636,6 +732,9 @@ void SHaybaMCPChatPanel::RebuildExternalProposal()
                     .Font(FHaybaMCPStyle::Font(11)) ] ];
             if (bExternalDetailsExpanded)
             {
+                AddReviewLine(TEXT("Owner  "), Operation.Owner);
+                AddReviewLine(TEXT("Operation  "), Operation.Command);
+                AddReviewLine(TEXT("Effect  "), Operation.Consequence);
                 AddReviewLine(TEXT("Parameters  "), Operation.ReviewParamsJson);
                 AddReviewLine(TEXT("Operation digest  "), Operation.OperationDigest);
                 AddReviewLine(TEXT("Target fingerprint  "), Operation.TargetFingerprint);
@@ -2116,7 +2215,9 @@ void SHaybaMCPChatPanel::HandleStreamDone(const FHaybaChatDone& Done)
         !Session.Messages[InProgressMessageIndex].ActivityId.IsEmpty();
     const bool bHadPartialText = !InProgressAssistantText.TrimStartAndEnd().IsEmpty();
     const bool bFailedTerminal = Done.Reason == TEXT("error") || Done.Reason == TEXT("brain_unavailable");
-    const bool bNoReply = !Done.bCancelled && !bFailedTerminal && !bAwaitingPlanApproval && !bTurnErrorShown && !bHasActivity &&
+    // Activity records can be emitted before the provider produces any text.
+    // They must never make a text-empty turn look like a successful reply.
+    const bool bNoReply = !Done.bCancelled && !bFailedTerminal && !bAwaitingPlanApproval && !bTurnErrorShown &&
         InProgressAssistantText.TrimStartAndEnd().IsEmpty() && Done.AssistantText.TrimStartAndEnd().IsEmpty();
     const FString DoneTag = Done.bCancelled ? TEXT("[stopped]") : TEXT("");
     FinalizeInProgressBubble(DoneTag);
@@ -2129,7 +2230,12 @@ void SHaybaMCPChatPanel::HandleStreamDone(const FHaybaChatDone& Done)
         bTurnErrorShown = true;
     }
     if (bNoReply)
-        AddSystemError(TEXT("No reply received. Check the connection, then edit and resend your message."), LastPrompt);
+    {
+        if (bHasActivity)
+            AddSystemError(TEXT("No reply received. Review Activity for possible changes before sending another request."), FString());
+        else
+            AddSystemError(TEXT("No reply received. Check the connection, then edit and resend your message."), LastPrompt);
+    }
     bTurnErrorShown = false;
 
     // A recorded warning review does not prove that the finding was fixed.

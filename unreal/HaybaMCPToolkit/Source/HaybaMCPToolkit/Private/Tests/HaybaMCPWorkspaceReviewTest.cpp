@@ -5,6 +5,7 @@
 #include "GameFramework/Actor.h"
 #include "Components/SceneComponent.h"
 #include "HaybaMCPMainPanel.h"
+#include "HaybaMCPToolStreamPanel.h"
 #include "HaybaMCPLeaseManager.h"
 #include "HaybaMCPSettings.h"
 #include "Tests/HaybaMCPLeaseTestUtil.h"
@@ -411,7 +412,19 @@ bool FHaybaWorkspaceVisualReview::RunTest(const FString&)
                 Module.ProposeExactExternalOperation(MoveTemp(Proposal));
             }
             if (View == TEXT("World")) Panel->ShowPanel(EHaybaPanel::World);
-            if (View == TEXT("Activity")) Panel->ShowPanel(EHaybaPanel::Activity);
+            if (View == TEXT("Activity"))
+            {
+                Panel->ShowPanel(EHaybaPanel::Activity);
+                if (TSharedPtr<SHaybaMCPToolStreamPanel> Activity = Module.ToolStreamPanel.Pin())
+                {
+                    Activity->AddToolCall(TEXT("actor_transform"),
+                        TEXT("{\"actor_id\":\"/Scratch/BlockoutMarker\",\"location\":[120,0,40]}"),
+                        TEXT("{\"ok\":true,\"after\":{\"location\":[120,0,40]}}"));
+                    Activity->AddToolCall(TEXT("asset_import"),
+                        TEXT("{\"asset_path\":\"/Scratch/Props/MarketStall\"}"),
+                        TEXT("{\"ok\":false,\"error\":{\"code\":\"read_only\"}}"));
+                }
+            }
             if (View == TEXT("Rules")) Panel->ShowPanel(EHaybaPanel::Rules);
             if (View == TEXT("Library")) Panel->ShowPanel(EHaybaPanel::Library);
             if (View == TEXT("Settings")) Panel->ShowPanel(EHaybaPanel::Settings);
