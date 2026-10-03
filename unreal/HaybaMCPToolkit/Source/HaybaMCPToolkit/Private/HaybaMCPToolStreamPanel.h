@@ -12,6 +12,8 @@ enum class EHaybaRendererType : uint8
 struct FHaybaToolCall
 {
     FString ToolName;
+    // Bounded, redacted at ingress. These are the only payloads used by UI,
+    // search, clipboard, and archive; never retain the raw module record here.
     FString ParamsJson;
     FString ResultJson;
     EHaybaRendererType RendererType = EHaybaRendererType::Generic;
