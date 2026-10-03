@@ -3,6 +3,7 @@
 #include "Dom/JsonObject.h"
 
 class IHaybaMCPHandler;
+class AActor;
 struct FHaybaMCPRequestContext;
 
 class FHaybaMCPCommandHandler
@@ -67,6 +68,12 @@ public:
      *  lease classification can default from it and its drift test can
      *  check every registered command against it. */
     static bool IsPlanGatedCommand(const FString& Cmd);
+
+    /** Game-thread editor snapshot used on proposal, approval, and dispatch. */
+    static bool CaptureExactApprovalTarget(const FString& Cmd, const TSharedPtr<FJsonObject>& Params,
+        FString& OutTargetRef, FString& OutFingerprint);
+    /** Read-only actor serialization seam for a target-edit regression test. */
+    static bool FingerprintActorForApproval(AActor* Actor, FString& OutFingerprint);
 
     static FString MakeOkResponse(
         const FString& Id,

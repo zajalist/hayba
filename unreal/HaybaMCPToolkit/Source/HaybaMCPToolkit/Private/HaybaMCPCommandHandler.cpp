@@ -38,6 +38,10 @@
 #include "ImageUtils.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
+#include "Misc/SecureHash.h"
+#include "Serialization/ArchiveUObject.h"
+#include "Hash/Blake3.h"
+#include "Components/ActorComponent.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogHaybaMCPCmd, Log, All);
 
@@ -847,6 +851,127 @@ static AActor* FindActorByLabel_GameThread(const FString& Label)
         if (It->GetActorLabel() == Label) return *It;
     }
     return nullptr;
+}
+
+namespace
+{
+    // No object-sized buffer: every serialized field contributes to a strong
+    // digest as it is written. An unusually large target fails closed before
+    // the next chunk is accepted, keeping approval capture bounded.
+    class FApprovalHashArchive final : public FArchiveUObject
+    {
+    public:
+        FApprovalHashArchive() { SetIsSaving(true); }
+
+        virtual void Serialize(void* Data, int64 Length) override
+        {
+            if (Length < 0 || uint64(Length) > MaxBytes - HashedBytes)
+            {
+                bWithinLimit = false;
+                SetError();
+                return;
+            }
+            Hasher.Update(&Length, sizeof(Length));
+            if (Length > 0) Hasher.Update(Data, uint64(Length));
+            HashedBytes += uint64(Length);
+        }
+
+        virtual FArchive& operator<<(FName& Name) override
+        {
+            AddString(Name.ToString());
+            return *this;
+        }
+
+        virtual FArchive& operator<<(UObject*& Object) override
+        {
+            AddString(GetPathNameSafe(Object));
+            return *this;
+        }
+
+        virtual FString GetArchiveName() const override { return TEXT("FApprovalHashArchive"); }
+        bool IsWithinLimit() const { return bWithinLimit && !IsError(); }
+        FString Fingerprint() const { return LexToString(Hasher.Finalize()); }
+
+    private:
+        void AddString(const FString& Value)
+        {
+            FTCHARToUTF8 Utf8(*Value);
+            Serialize(const_cast<ANSICHAR*>(Utf8.Get()), Utf8.Length());
+        }
+
+        static constexpr uint64 MaxBytes = 8ull * 1024ull * 1024ull;
+        FBlake3 Hasher;
+        uint64 HashedBytes = 0;
+        bool bWithinLimit = true;
+    };
+}
+
+bool FHaybaMCPCommandHandler::CaptureExactApprovalTarget(const FString& Cmd,
+    const TSharedPtr<FJsonObject>& Params, FString& OutTargetRef, FString& OutFingerprint)
+{
+    check(IsInGameThread());
+    OutTargetRef.Empty();
+    OutFingerprint.Empty();
+    // Only operations with a uniquely resolvable existing actor are reviewable
+    // in this slice. Generic Python, asset writes, batches, and creates need
+    // operation-specific target inventories before they can be approved.
+    const bool bNameOrLabel = Cmd == TEXT("actor_transform") || Cmd == TEXT("actor_delete");
+    const bool bNameOnly = Cmd == TEXT("actor_set_properties") || Cmd == TEXT("actor_tag") ||
+        Cmd == TEXT("actor_set_visibility");
+    if (!bNameOrLabel && !bNameOnly) return false;
+    if (!Params.IsValid() || !GEditor) return false;
+    FString ActorId;
+    if (!Params->TryGetStringField(TEXT("actorId"), ActorId))
+        Params->TryGetStringField(TEXT("actor_id"), ActorId);
+    if (ActorId.IsEmpty()) return false;
+    UWorld* World = GEditor->GetEditorWorldContext().World();
+    if (!World) return false;
+    AActor* Target = nullptr;
+    for (TActorIterator<AActor> It(World); It; ++It)
+    {
+        if (It->GetName() != ActorId && (!bNameOrLabel || It->GetActorLabel() != ActorId)) continue;
+        if (Target) return false; // Ambiguous labels are never stable references.
+        Target = *It;
+    }
+    if (!Target) return false;
+
+    OutTargetRef = Target->GetPathName() + TEXT("#") + Target->GetActorGuid().ToString(EGuidFormats::Digits);
+    return FingerprintActorForApproval(Target, OutFingerprint);
+}
+
+bool FHaybaMCPCommandHandler::FingerprintActorForApproval(AActor* Target, FString& OutFingerprint)
+{
+    OutFingerprint.Empty();
+    if (!Target || !IsInGameThread()) return false;
+    TArray<UActorComponent*> Components;
+    Target->GetComponents(Components);
+    if (Components.Num() > 256) return false;
+    FApprovalHashArchive Archive;
+    Target->Serialize(Archive);
+    if (!Archive.IsWithinLimit()) return false;
+    FString VisibleState = Target->GetPathName() + TEXT("|") + Target->GetActorGuid().ToString() +
+        TEXT("|") + Target->GetActorTransform().ToString() +
+        FString::Printf(TEXT("|hidden:%d:%d"), Target->IsHidden(), Target->IsTemporarilyHiddenInEditor());
+    if (Target->Tags.Num() > 256 || VisibleState.Len() > 64 * 1024) return false;
+    for (const FName Tag : Target->Tags)
+    {
+        VisibleState += TEXT("|tag:") + Tag.ToString();
+        if (VisibleState.Len() > 64 * 1024) return false;
+    }
+    const FTCHARToUTF8 VisibleUtf8(*VisibleState);
+    Archive.Serialize(const_cast<ANSICHAR*>(VisibleUtf8.Get()), VisibleUtf8.Length());
+    Components.Sort([](const UActorComponent& A, const UActorComponent& B)
+    {
+        return A.GetPathName() < B.GetPathName();
+    });
+    for (UActorComponent* Component : Components)
+    {
+        if (!Component) continue;
+        Component->Serialize(Archive);
+        if (!Archive.IsWithinLimit()) return false;
+    }
+    OutFingerprint = Archive.Fingerprint();
+    return true;
 }
 
 /**
@@ -1892,58 +2017,90 @@ FString FHaybaMCPCommandHandler::ProcessCommandInContext(const FString& CommandJ
         return MakeOkResponse(Id, Data, Cmd);
     }
 
-    // Plan Mode safety gate: destructive commands require an approved plan.
+    // Plan Mode safety gate: an external write needs a frozen, single-use
+    // native call approval. Prose plans are useful context but cannot spend
+    // this gate, regardless of the legacy per-plan persistence preference.
     {
         auto& S = FHaybaMCPSettings::Get();
         if (S.bPlanModeEnabled && IsDestructiveCommand(Cmd))
         {
             FHaybaMCPModule* M = FModuleManager::GetModulePtr<FHaybaMCPModule>("HaybaMCPToolkit");
             const FString Caller = Leases.EffectiveOwner();
-            // Approval is per owner: another agent's Approve does not cover this caller.
-            // An editor_batch step is covered by the approval its batch passed.
             const FHaybaMCPRequestContext* GateContext = Leases.Current();
             const bool bBatchCovered = GateContext && GateContext->bPlanPreApproved;
-            const bool bApproved = bBatchCovered
-                || (M && HaybaMCPLease::PlanApprovalApplies(M->bPlanApproved, M->PlanOwner, Caller));
-            if (!bApproved)
+            if (!bBatchCovered)
             {
+                FString TargetRef;
+                FString TargetFingerprint;
+                if (!M || !CaptureExactApprovalTarget(Cmd, Params, TargetRef, TargetFingerprint))
+                {
+                    if (M) M->InvalidateExternalApproval();
+                    FGateRefusal Refusal;
+                    Refusal.Code = TEXT("exact_approval_unavailable");
+                    Refusal.Message = FString::Printf(TEXT("%s was not run: its target cannot be frozen for exact native review. Use a supported actor edit or keep this operation in Draft until a target adapter is available."), *Cmd);
+                    return MakeGateRefusal(Id, Cmd, Refusal);
+                }
+
+                TSharedPtr<FJsonObject> Operation = MakeShared<FJsonObject>();
+                Operation->SetStringField(TEXT("cmd"), Cmd);
+                Operation->SetObjectField(TEXT("params"), Params);
+                const FString OperationDigest = FHaybaMCPSecurityManager::HashParams(Operation);
+                const HaybaMCPSecretRedaction::FResult SafeInput = HaybaMCPSecretRedaction::Redact(Params);
+                const FString ReviewParams = SafeInput.Value.IsValid() ? JsonToString(SafeInput.Value.ToSharedRef()) : FString();
+                if (SafeInput.Summary.bApplied || SafeInput.Summary.bTruncated ||
+                    ReviewParams.IsEmpty() || ReviewParams.Len() > 8192)
+                {
+                    M->InvalidateExternalApproval();
+                    FGateRefusal Refusal;
+                    Refusal.Code = TEXT("exact_approval_unavailable");
+                    Refusal.Message = FString::Printf(TEXT("%s was not run: its parameters cannot be shown completely and safely for exact review."), *Cmd);
+                    return MakeGateRefusal(Id, Cmd, Refusal);
+                }
+
+                // Binding includes the lease reference classification. A lease
+                // that expires or changes between review and dispatch changes
+                // this digest even if the caller repeats the same token.
+                const FString LeaseBinding = FMD5::HashAnsiString(*FString::Printf(TEXT("%s:%s"),
+                    GateContext ? *GateContext->LeaseToken : TEXT(""),
+                    GateContext ? LexLeaseRef(GateContext->Caller.LeaseRef) : TEXT("none")));
+                const FString Source = GateContext ? FString::Printf(TEXT("%s (connection %d)"),
+                    *GateContext->Caller.Via, GateContext->ConnId) : TEXT("local");
+                const FString SourceBinding = FMD5::HashAnsiString(*Source);
+                if (M->ConsumeExactExternalApproval(Caller, Cmd, OperationDigest,
+                    TargetFingerprint, LeaseBinding, SourceBinding, TEXT("native-exact-v1")))
+                {
+                    // Consumed before dispatch. A retry, even after failure,
+                    // requires a new proposal and an explicit new click.
+                }
+                else
+                {
+                    FHaybaExactExternalApproval Proposal;
+                    Proposal.Command = Cmd;
+                    Proposal.Owner = Caller;
+                    Proposal.Source = Source;
+                    Proposal.SourceBinding = SourceBinding;
+                    Proposal.OperationDigest = OperationDigest;
+                    Proposal.ReviewParamsJson = ReviewParams;
+                    Proposal.TargetRef = TargetRef;
+                    Proposal.TargetFingerprint = TargetFingerprint;
+                    Proposal.LeaseBinding = LeaseBinding;
+                    Proposal.PolicyVersion = TEXT("native-exact-v1");
+                    Proposal.Consequence = Cmd == TEXT("actor_delete")
+                        ? TEXT("Deletes this actor from the loaded editor world. Save is separate; undo may be available while the actor remains valid.")
+                        : TEXT("Changes this actor in the loaded editor world. Save is separate; undo may be available while the actor remains valid.");
+                    Proposal.ExpiresAt = FDateTime::UtcNow() + FTimespan::FromMinutes(5);
+                    M->ProposeExactExternalOperation(MoveTemp(Proposal));
+
                 auto Data = MakeShared<FJsonObject>();
                 Data->SetStringField(TEXT("status"), TEXT("plan_mode_required"));
-                Data->SetStringField(TEXT("hint"), TEXT("Plan Mode is ON. Call hayba_propose_plan with a steps[] array, then the user must review and approve the external MCP proposal in Agent before destructive commands run."));
-                if (M && M->bPlanApproved)
-                {
-                    Data->SetStringField(TEXT("plan_owner"), M->PlanOwner);
-                    Data->SetStringField(TEXT("caller_owner"), Caller);
-                    Data->SetStringField(TEXT("approval_scope_note"),
-                        TEXT("The approved plan belongs to another agent. Approval is per owner; propose your own plan."));
-                }
-                // Under strict consume the previous Approve was SPENT by the
-                // last destructive command. Without saying so, the second call
-                // in a sequence looks exactly like Approve never worked, and
-                // the user clicks it again wondering what broke.
-                Data->SetStringField(TEXT("approval_mode"),
-                    S.bPlanApprovalStrictConsume ? TEXT("per_call_consume") : TEXT("per_plan_persist"));
-                if (S.bPlanApprovalStrictConsume)
-                {
-                    Data->SetStringField(TEXT("approval_mode_note"),
-                        TEXT("Strict consume is on: each Approve authorises exactly ONE destructive command, so an "
-                             "earlier approval in this sequence has already been used. Set "
-                             "bPlanApprovalStrictConsume=false in the Hayba settings for one Approve to cover a whole plan."));
-                }
+                Data->SetStringField(TEXT("hint"), TEXT("Review the exact native command and target in Chat, approve its proposal ID, then retry this same command. The approval can be used once."));
+                Data->SetStringField(TEXT("proposal_id"), M->PendingExternalPlanId);
+                Data->SetStringField(TEXT("operation_digest"), OperationDigest);
+                Data->SetStringField(TEXT("target_ref"), TargetRef);
+                Data->SetStringField(TEXT("target_fingerprint"), TargetFingerprint);
+                Data->SetStringField(TEXT("approval_mode"), TEXT("exact_call_once"));
                 return MakeOkResponse(Id, Data, Cmd);
-            }
-            // How long one Approve lasts is now a SETTING rather than a
-            // commented-out line, because both answers are right for different
-            // sessions and the choice was previously made by editing source.
-            //
-            // Default (false) keeps the existing per-plan behaviour: a plan
-            // whose steps are "delete these six assets" must not stop dead
-            // after the first one. Strict consume spends the approval on the
-            // first destructive command, which is what an unattended agent
-            // against content that matters wants.
-            if (S.bPlanApprovalStrictConsume && M && !bBatchCovered)
-            {
-                M->bPlanApproved = false;
+                }
             }
         }
         S.PlanModeToolCallCount++;

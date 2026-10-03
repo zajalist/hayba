@@ -21,7 +21,10 @@
 #include "Widgets/Notifications/SNotificationList.h"
 #include "HaybaMCPTcpServer.h"
 #include "HaybaMCPCommandHandler.h"
+#include "HaybaMCPSecurityManager.h"
 #include "HaybaMCPLeaseManager.h"
+#include "HaybaMCPSettings.h"
+#include "Serialization/JsonSerializer.h"
 #include "HaybaMCPEditorHealth.h"
 #include "IHaybaMCPHandler.h"
 #include "handlers/HaybaMCPLegacyHandler.h"
@@ -432,6 +435,109 @@ FHaybaActivityModel& FHaybaMCPModule::GetActivityModel()
         });
     }
     return *ActivityModel;
+}
+
+void FHaybaMCPModule::ProposeExactExternalOperation(FHaybaExactExternalApproval Operation)
+{
+    check(IsInGameThread());
+    // A changed operation invalidates every earlier click, including an
+    // already approved but not yet dispatched call.
+    if (PendingExternalOperation.IsValid() &&
+        PendingExternalOperation.Matches(Operation.Owner, Operation.Command,
+            Operation.OperationDigest, Operation.TargetFingerprint, Operation.LeaseBinding, Operation.SourceBinding,
+            Operation.PolicyVersion, FDateTime::UtcNow()))
+    {
+        return; // Retries of the same refused call keep one review token.
+    }
+    ApprovedExternalOperation = {};
+    Operation.ProposalId = FGuid::NewGuid().ToString(EGuidFormats::Digits);
+    PendingExternalOperation = MoveTemp(Operation);
+    PendingExternalPlanId = PendingExternalOperation.ProposalId;
+    PendingExternalPlanIsExact = true;
+    PendingExternalPlan = FString::Printf(TEXT("%s on %s"),
+        *PendingExternalOperation.Command, *PendingExternalOperation.TargetRef);
+    PendingExternalSteps.Reset();
+    bPlanApproved = false;
+}
+
+void FHaybaMCPModule::InvalidateExternalApproval()
+{
+    check(IsInGameThread());
+    PendingExternalOperation = {};
+    ApprovedExternalOperation = {};
+    PendingExternalPlan.Empty();
+    PendingExternalPlanId.Empty();
+    PendingExternalSteps.Reset();
+    PendingExternalPlanIsExact = false;
+    bPlanApproved = false;
+}
+
+bool FHaybaMCPModule::ResolveExternalPlan(const FString& ExpectedProposalId, bool bApprove)
+{
+    check(IsInGameThread());
+    if (!PendingExternalPlanIsExact && !bApprove && !ExpectedProposalId.IsEmpty() &&
+        ExpectedProposalId == PendingExternalPlanId)
+    {
+        PendingExternalPlan.Empty();
+        PendingExternalPlanId.Empty();
+        PendingExternalSteps.Reset();
+        return true;
+    }
+    if (!PendingExternalPlanIsExact || !PendingExternalOperation.IsValid() ||
+        ExpectedProposalId.IsEmpty() || ExpectedProposalId != PendingExternalOperation.ProposalId)
+        return false;
+
+    if (!bApprove)
+    {
+        PendingExternalOperation = {};
+        PendingExternalPlan.Empty();
+        PendingExternalPlanId.Empty();
+        PendingExternalSteps.Reset();
+        PendingExternalPlanIsExact = false;
+        ApprovedExternalOperation = {};
+        return true;
+    }
+
+    FHaybaExactExternalApproval Candidate = PendingExternalOperation;
+    TSharedPtr<FJsonObject> Params;
+    const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(Candidate.ReviewParamsJson);
+    FString CurrentRef;
+    FString CurrentFingerprint;
+    const bool bParamsParsed = FJsonSerializer::Deserialize(Reader, Params) && Params.IsValid();
+    TSharedPtr<FJsonObject> FrozenCall = MakeShared<FJsonObject>();
+    FrozenCall->SetStringField(TEXT("cmd"), Candidate.Command);
+    if (bParamsParsed) FrozenCall->SetObjectField(TEXT("params"), Params);
+    const bool bStillCurrent = bParamsParsed &&
+        FHaybaMCPSecurityManager::HashParams(FrozenCall) == Candidate.OperationDigest &&
+        FHaybaMCPCommandHandler::CaptureExactApprovalTarget(Candidate.Command, Params, CurrentRef, CurrentFingerprint) &&
+        CurrentRef == Candidate.TargetRef && CurrentFingerprint == Candidate.TargetFingerprint &&
+        Candidate.PolicyVersion == TEXT("native-exact-v1") && FHaybaMCPSettings::Get().bPlanModeEnabled &&
+        FDateTime::UtcNow() <= Candidate.ExpiresAt;
+
+    // Reject and stale proposals both clear the pending review. A second
+    // Approve cannot resurrect it, and a fresh command must propose again.
+    PendingExternalOperation = {};
+    PendingExternalPlan.Empty();
+    PendingExternalPlanId.Empty();
+    PendingExternalSteps.Reset();
+    PendingExternalPlanIsExact = false;
+    ApprovedExternalOperation = {};
+    if (!bStillCurrent) return false;
+    ApprovedExternalOperation = MoveTemp(Candidate);
+    return true;
+}
+
+bool FHaybaMCPModule::ConsumeExactExternalApproval(const FString& Owner, const FString& Command,
+    const FString& OperationDigest, const FString& TargetFingerprint, const FString& LeaseBinding,
+    const FString& SourceBinding, const FString& PolicyVersion)
+{
+    check(IsInGameThread());
+    const bool bMatches = ApprovedExternalOperation.Matches(Owner, Command, OperationDigest,
+        TargetFingerprint, LeaseBinding, SourceBinding, PolicyVersion, FDateTime::UtcNow());
+    // Even a changed target or command spends the token. A rejected attempt
+    // cannot later replay after the editor happens to return to an old state.
+    if (ApprovedExternalOperation.IsValid()) ApprovedExternalOperation = {};
+    return bMatches;
 }
 
 TSharedPtr<FJsonObject> FHaybaMCPModule::GetTcpTransportLimits() const

@@ -28,6 +28,36 @@ struct FHaybaExternalPlanStep
     FString Tool;
 };
 
+// A single frozen native call. The digest covers the command and every input
+// parameter; TargetFingerprint is captured from the live editor object.
+// None of these fields is an authorization until ResolveExternalPlan succeeds.
+struct FHaybaExactExternalApproval
+{
+    FString ProposalId;
+    FString Command;
+    FString Owner;
+    FString Source;
+    FString SourceBinding;
+    FString OperationDigest;
+    FString ReviewParamsJson;
+    FString TargetRef;
+    FString TargetFingerprint;
+    FString LeaseBinding;
+    FString PolicyVersion;
+    FString Consequence;
+    FDateTime ExpiresAt;
+
+    bool IsValid() const { return !ProposalId.IsEmpty() && !OperationDigest.IsEmpty() && !TargetFingerprint.IsEmpty(); }
+    bool Matches(const FString& InOwner, const FString& InCommand, const FString& InDigest,
+        const FString& InTargetFingerprint, const FString& InLeaseBinding, const FString& InSourceBinding,
+        const FString& InPolicyVersion, FDateTime Now) const
+    {
+        return IsValid() && Now <= ExpiresAt && Owner == InOwner && Command == InCommand &&
+            OperationDigest == InDigest && TargetFingerprint == InTargetFingerprint &&
+            LeaseBinding == InLeaseBinding && SourceBinding == InSourceBinding && PolicyVersion == InPolicyVersion;
+    }
+};
+
 class FHaybaMCPModule : public IModuleInterface
 {
 public:
@@ -82,11 +112,10 @@ public:
     void ClearToolCallHistory();
     static constexpr int32 ToolCallHistoryMax = 200;
 
-    // Plan Mode handshake — set by Plan panel's Approve click, reset by every
-    // destructive command so each plan must be approved exactly once.
+    // Legacy Plan panel state retained for its chat event bridge. It is not a
+    // native external-command authorization; only ApprovedExternalOperation is.
     bool bPlanApproved = false;
-    // Owner (envelope `owner`, else per connection) of the plan on the panel.
-    // Only that owner may spend bPlanApproved; empty = pre-lease global rule.
+    // Owner of the legacy prose plan, retained for display and migration only.
     FString PlanOwner;
 
     // External MCP proposals survive navigation and tab recreation. Chat has
@@ -94,6 +123,9 @@ public:
     FString PendingExternalPlan;
     FString PendingExternalPlanId;
     TArray<FHaybaExternalPlanStep> PendingExternalSteps;
+    FHaybaExactExternalApproval PendingExternalOperation;
+    FHaybaExactExternalApproval ApprovedExternalOperation;
+    bool PendingExternalPlanIsExact = false;
     void ProposeExternalPlan(const FString& Summary,
         TArray<FHaybaExternalPlanStep> Steps = {})
     {
@@ -101,16 +133,19 @@ public:
         PendingExternalPlan = Summary;
         PendingExternalPlanId = FGuid::NewGuid().ToString(EGuidFormats::Digits);
         PendingExternalSteps = MoveTemp(Steps);
+        PendingExternalOperation = {};
+        ApprovedExternalOperation = {};
+        PendingExternalPlanIsExact = false;
     }
-    bool ResolveExternalPlan(bool bApprove)
-    {
-        if (PendingExternalPlan.IsEmpty()) return false;
-        bPlanApproved = bApprove;
-        PendingExternalPlan.Empty();
-        PendingExternalPlanId.Empty();
-        PendingExternalSteps.Empty();
-        return true;
-    }
+    /** Legacy no-token approval is intentionally non-authorizing. */
+    bool ResolveExternalPlan(bool /*bApprove*/) { return false; }
+    bool ResolveExternalPlan(const FString& ExpectedProposalId, bool bApprove);
+    void ProposeExactExternalOperation(FHaybaExactExternalApproval Operation);
+    void InvalidateExternalApproval();
+    bool ConsumeExactExternalApproval(const FString& Owner, const FString& Command,
+        const FString& OperationDigest, const FString& TargetFingerprint, const FString& LeaseBinding,
+        const FString& SourceBinding,
+        const FString& PolicyVersion);
 
     // Satellite modules (HaybaMCPGAS/Niagara/MetaSound/Sequencer) register their
     // command handlers into the core router at their own StartupModule, so an

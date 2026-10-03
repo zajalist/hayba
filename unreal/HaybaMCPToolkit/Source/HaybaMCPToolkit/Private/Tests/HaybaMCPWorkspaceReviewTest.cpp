@@ -1,6 +1,9 @@
 #include "Misc/AutomationTest.h"
 #include "HaybaMCPPlanOverlay.h"
 #include "HaybaMCPModule.h"
+#include "HaybaMCPCommandHandler.h"
+#include "GameFramework/Actor.h"
+#include "Components/SceneComponent.h"
 #include "HaybaMCPMainPanel.h"
 #include "Framework/Application/SlateApplication.h"
 #include "Widgets/SWindow.h"
@@ -11,6 +14,43 @@
 #include "RHI.h"
 
 #if WITH_DEV_AUTOMATION_TESTS
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FHaybaExactActorFingerprintTest, "Hayba.MCP.Workspace.ExactActorFingerprint",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FHaybaExactActorFingerprintTest::RunTest(const FString&)
+{
+    AActor* Actor = NewObject<AActor>(GetTransientPackage(), NAME_None, RF_Transient);
+    USceneComponent* Root = NewObject<USceneComponent>(Actor, NAME_None, RF_Transient);
+    Actor->SetRootComponent(Root);
+    FString Before;
+    FString Repeated;
+    FString AfterTransform;
+    FString AfterTag;
+    FString AfterVisibility;
+    FString AfterProperty;
+    TestTrue(TEXT("transient actor can be fingerprinted"),
+        FHaybaMCPCommandHandler::FingerprintActorForApproval(Actor, Before));
+    TestTrue(TEXT("unchanged actor can be fingerprinted again"),
+        FHaybaMCPCommandHandler::FingerprintActorForApproval(Actor, Repeated));
+    TestEqual(TEXT("unchanged actor keeps its version"), Repeated, Before);
+    Root->SetRelativeLocation(FVector(10, 20, 30));
+    TestTrue(TEXT("transformed actor can be fingerprinted"),
+        FHaybaMCPCommandHandler::FingerprintActorForApproval(Actor, AfterTransform));
+    TestTrue(TEXT("transform invalidates target version"), AfterTransform != Before);
+    Actor->Tags.Add(TEXT("approval-test-edited"));
+    TestTrue(TEXT("retagged actor can be fingerprinted"),
+        FHaybaMCPCommandHandler::FingerprintActorForApproval(Actor, AfterTag));
+    TestTrue(TEXT("tag edit invalidates target version"), AfterTag != AfterTransform);
+    Actor->SetIsTemporarilyHiddenInEditor(true);
+    TestTrue(TEXT("hidden actor can be fingerprinted"),
+        FHaybaMCPCommandHandler::FingerprintActorForApproval(Actor, AfterVisibility));
+    TestTrue(TEXT("visibility edit invalidates target version"), AfterVisibility != AfterTag);
+    Actor->InitialLifeSpan += 12.f;
+    TestTrue(TEXT("property-edited actor can be fingerprinted"),
+        FHaybaMCPCommandHandler::FingerprintActorForApproval(Actor, AfterProperty));
+    TestTrue(TEXT("property edit invalidates target version"), AfterProperty != AfterVisibility);
+    return true;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FHaybaExternalProposalTest, "Hayba.MCP.Workspace.ExternalProposal",
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 bool FHaybaExternalProposalTest::RunTest(const FString&)
@@ -24,14 +64,69 @@ bool FHaybaExternalProposalTest::RunTest(const FString&)
     TestFalse(TEXT("proposal does not grant approval"), Module.bPlanApproved);
     TestEqual(TEXT("structured step retained for review"), Module.PendingExternalSteps.Num(), 1);
     TestFalse(TEXT("proposal ID assigned"), Module.PendingExternalPlanId.IsEmpty());
-    TestTrue(TEXT("explicit approval succeeds"), Module.ResolveExternalPlan(true));
-    TestTrue(TEXT("native gate receives approval"), Module.bPlanApproved);
-    TestTrue(TEXT("resolved proposal cleared"), Module.PendingExternalPlan.IsEmpty());
-    TestTrue(TEXT("resolved review data cleared"), Module.PendingExternalSteps.IsEmpty() && Module.PendingExternalPlanId.IsEmpty());
-    Module.ProposeExternalPlan(TEXT("Delete that cube"));
-    TestFalse(TEXT("new proposal revokes old approval"), Module.bPlanApproved);
-    TestTrue(TEXT("rejection resolves proposal"), Module.ResolveExternalPlan(false));
-    TestFalse(TEXT("rejection grants no approval"), Module.bPlanApproved);
+    const FString ProseId = Module.PendingExternalPlanId;
+    TestFalse(TEXT("prose plan cannot authorize a native command"), Module.ResolveExternalPlan(ProseId, true));
+    TestTrue(TEXT("prose rejection resolves proposal"), Module.ResolveExternalPlan(ProseId, false));
+    TestFalse(TEXT("prose rejection grants no approval"), Module.bPlanApproved);
+
+    FString UnsupportedRef;
+    FString UnsupportedVersion;
+    TestFalse(TEXT("batch has no exact target adapter and must refuse under Plan Mode"),
+        FHaybaMCPCommandHandler::CaptureExactApprovalTarget(TEXT("editor_batch"),
+            MakeShared<FJsonObject>(), UnsupportedRef, UnsupportedVersion));
+
+    FHaybaExactExternalApproval First;
+    First.Command = TEXT("actor_transform");
+    First.Owner = TEXT("agent-a");
+    First.OperationDigest = TEXT("digest-a");
+    First.ReviewParamsJson = TEXT("{\"actorId\":\"TestActor\"}");
+    First.TargetRef = TEXT("/Temp/TestWorld.TestActor#guid");
+    First.TargetFingerprint = TEXT("version-a");
+    First.LeaseBinding = TEXT("lease-a");
+    First.Source = TEXT("external (connection 1)");
+    First.SourceBinding = TEXT("source-a");
+    First.PolicyVersion = TEXT("native-exact-v1");
+    First.ExpiresAt = FDateTime::UtcNow() + FTimespan::FromMinutes(5);
+    Module.ProposeExactExternalOperation(First);
+    const FString FirstId = Module.PendingExternalPlanId;
+    TestTrue(TEXT("exact proposal visible"), Module.PendingExternalPlanIsExact);
+    TestFalse(TEXT("new exact proposal does not grant approval"), Module.bPlanApproved);
+    TestFalse(TEXT("changed target refuses approval"), Module.PendingExternalOperation.Matches(
+        First.Owner, First.Command, First.OperationDigest, TEXT("version-b"), First.LeaseBinding, First.SourceBinding,
+        First.PolicyVersion, FDateTime::UtcNow()));
+    TestFalse(TEXT("changed operation refuses approval"), Module.PendingExternalOperation.Matches(
+        First.Owner, First.Command, TEXT("digest-b"), First.TargetFingerprint, First.LeaseBinding, First.SourceBinding,
+        First.PolicyVersion, FDateTime::UtcNow()));
+    TestFalse(TEXT("changed lease refuses approval"), Module.PendingExternalOperation.Matches(
+        First.Owner, First.Command, First.OperationDigest, First.TargetFingerprint, TEXT("lease-b"), First.SourceBinding,
+        First.PolicyVersion, FDateTime::UtcNow()));
+    TestFalse(TEXT("changed source refuses approval"), Module.PendingExternalOperation.Matches(
+        First.Owner, First.Command, First.OperationDigest, First.TargetFingerprint, First.LeaseBinding,
+        TEXT("source-b"), First.PolicyVersion, FDateTime::UtcNow()));
+
+    FHaybaExactExternalApproval Second = First;
+    Second.OperationDigest = TEXT("digest-b");
+    Module.ProposeExactExternalOperation(Second);
+    TestFalse(TEXT("revised proposal invalidates old token"), Module.ResolveExternalPlan(FirstId, true));
+    const FString SecondId = Module.PendingExternalPlanId;
+    TestTrue(TEXT("exact rejection resolves proposal"), Module.ResolveExternalPlan(SecondId, false));
+    TestFalse(TEXT("double rejection refused"), Module.ResolveExternalPlan(SecondId, false));
+
+    // The module's one-use gate also refuses a second dispatch, even for the
+    // same immutable call. Approval resolution itself is tested by the live
+    // editor test because it must re-read the actual target object.
+    First.ProposalId = TEXT("approved-token");
+    Module.ApprovedExternalOperation = First;
+    TestTrue(TEXT("first exact dispatch consumes approval"), Module.ConsumeExactExternalApproval(
+        First.Owner, First.Command, First.OperationDigest, First.TargetFingerprint,
+        First.LeaseBinding, First.SourceBinding, First.PolicyVersion));
+    TestFalse(TEXT("second dispatch cannot replay approval"), Module.ConsumeExactExternalApproval(
+        First.Owner, First.Command, First.OperationDigest, First.TargetFingerprint,
+        First.LeaseBinding, First.SourceBinding, First.PolicyVersion));
+    Module.ProposeExactExternalOperation(First);
+    Module.InvalidateExternalApproval();
+    TestFalse(TEXT("unsupported next operation invalidates pending review"), Module.PendingExternalPlanIsExact);
+    TestFalse(TEXT("unsupported next operation invalidates unused approval"), Module.ApprovedExternalOperation.IsValid());
     return true;
 }
 
