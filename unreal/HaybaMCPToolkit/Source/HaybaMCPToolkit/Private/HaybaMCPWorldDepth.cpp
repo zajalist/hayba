@@ -68,3 +68,13 @@ bool HaybaWorldDepth::SceneColorToDisplay(const FLinearColor& Pixel, FColor& Out
     OutColor = FLinearColor(Pixel.R, Pixel.G, Pixel.B, 1.f).ToFColor(true);
     return true;
 }
+
+HaybaWorldDepth::EColorSource HaybaWorldDepth::SelectDisplayColor(
+    const FLinearColor& SceneColor, const FLinearColor* BaseColor, FColor& OutColor)
+{
+    if (BaseColor && SceneColorToDisplay(*BaseColor, OutColor))
+        return EColorSource::RenderedMaterialBaseColor;
+    if (SceneColorToDisplay(SceneColor, OutColor))
+        return EColorSource::RenderedSceneColor;
+    return EColorSource::Unobserved;
+}

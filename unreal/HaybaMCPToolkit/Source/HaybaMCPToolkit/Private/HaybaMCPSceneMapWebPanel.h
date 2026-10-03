@@ -41,6 +41,9 @@ public:
     const FString& GetDepthStatus() const { return DepthStatus; }
     double GetDepthReadbackMs() const { return DepthReadbackMs; }
     double GetDepthReadbackGameThreadMaxMs() const { return DepthReadbackGameThreadMaxMs; }
+    int32 GetMaterialBaseColorPointCount() const { return MaterialBaseColorPointCount; }
+    const FString& GetBaseColorStatus() const { return BaseColorStatus; }
+    double GetBaseColorReadbackMs() const { return BaseColorReadbackMs; }
     bool DidDepthReadbackExceedBudget() const { return bDepthReadbackBudgetExceeded; }
     double GetDepthProcessingCpuMs() const { return DepthCpuMs; }
     double GetDepthMaxTickCpuMs() const { return DepthMaxTickCpuMs; }
@@ -77,7 +80,11 @@ private:
     TStrongObjectPtr<USceneCaptureComponent2D> DepthCapture;
     TStrongObjectPtr<UTextureRenderTarget2D> DepthTarget;
     TSharedPtr<FHaybaWorldDepthReadback, ESPMode::ThreadSafe> DepthReadback;
+    TStrongObjectPtr<USceneCaptureComponent2D> BaseColorCapture;
+    TStrongObjectPtr<UTextureRenderTarget2D> BaseColorTarget;
+    TSharedPtr<FHaybaWorldDepthReadback, ESPMode::ThreadSafe> BaseColorReadback;
     TArray<FLinearColor> DepthPixels;
+    TArray<FLinearColor> BaseColorPixels;
     FVector DepthCameraCm = FVector::ZeroVector;
     FRotator DepthRotation = FRotator::ZeroRotator;
     double DepthFov = 90.0;
@@ -94,10 +101,15 @@ private:
     TArray<FDepthAnchor> DepthAnchors;
     int32 DepthPointCount = 0;
     int32 DepthAttributedCount = 0;
+    int32 MaterialBaseColorPointCount = 0;
     double DepthReadbackMs = 0.0;
     double DepthReadbackWaitMs = 0.0;
     double DepthReadbackStartedAt = 0.0;
     double DepthReadbackGameThreadMaxMs = 0.0;
+    double BaseColorReadbackStartedAt = 0.0;
+    double BaseColorReadbackMs = 0.0;
+    double BaseColorReadbackWaitMs = 0.0;
+    FString BaseColorStatus = TEXT("not_attempted");
     bool bDepthReadbackBudgetExceeded = false;
     FString DepthCaptureId;
     double DepthCpuMs = 0.0;
@@ -148,7 +160,9 @@ private:
     void SendPendingPointChunk();
     void FinishScan();
     void BeginDepthCapture();
+    void BeginBaseColorCapture(UWorld* World);
     void ProcessDepthPixels(UWorld* World);
+    void ReleaseBaseColorCapture();
     void ReleaseDepthCapture();
     void Run(const FString& Js);
     void SelectLoadedActor(int32 Generation, int32 ActorIndex);

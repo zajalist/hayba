@@ -59,6 +59,30 @@ bool FHaybaWorldDepthProjectionTest::RunTest(const FString& Parameters)
         DisplayColor.R == 255 && DisplayColor.G == 0 && DisplayColor.B == 0);
     TestFalse(TEXT("nonfinite scene color is unobserved"),
         HaybaWorldDepth::SceneColorToDisplay(FLinearColor(static_cast<float>(NaN), 0.f, 0.f, 1000.f), DisplayColor));
+    const FLinearColor BaseColor(0.f, 1.f, 0.f, 1.f);
+    TestEqual(TEXT("valid material BaseColor wins over dark scene appearance"),
+        HaybaWorldDepth::SelectDisplayColor(FLinearColor::Black, &BaseColor, DisplayColor),
+        HaybaWorldDepth::EColorSource::RenderedMaterialBaseColor);
+    TestTrue(TEXT("material BaseColor supplies the displayed green channel"),
+        DisplayColor.R == 0 && DisplayColor.G == 255 && DisplayColor.B == 0);
+    const FLinearColor BlackBase(0.f, 0.f, 0.f, 1.f);
+    TestEqual(TEXT("black material remains an observed BaseColor"),
+        HaybaWorldDepth::SelectDisplayColor(FLinearColor::White, &BlackBase, DisplayColor),
+        HaybaWorldDepth::EColorSource::RenderedMaterialBaseColor);
+    TestTrue(TEXT("black material displays black"), DisplayColor == FColor::Black);
+    const FLinearColor InvalidBase(static_cast<float>(NaN), 0.f, 0.f, 1.f);
+    TestEqual(TEXT("invalid material BaseColor falls back to actual scene color"),
+        HaybaWorldDepth::SelectDisplayColor(FLinearColor(1.f, 0.f, 0.f, 1.f),
+            &InvalidBase, DisplayColor),
+        HaybaWorldDepth::EColorSource::RenderedSceneColor);
+    TestEqual(TEXT("missing material pass preserves scene-color provenance"),
+        HaybaWorldDepth::SelectDisplayColor(FLinearColor(1.f, 0.f, 0.f, 1.f),
+            nullptr, DisplayColor),
+        HaybaWorldDepth::EColorSource::RenderedSceneColor);
+    TestEqual(TEXT("invalid colors remain explicitly unobserved"),
+        HaybaWorldDepth::SelectDisplayColor(FLinearColor(static_cast<float>(NaN), 0.f, 0.f, 1.f),
+            &InvalidBase, DisplayColor),
+        HaybaWorldDepth::EColorSource::Unobserved);
     // Two adjacent coplanar meshes can fall in one 16x16 depth cell. Only
     // the actual ray pixel may inherit the hit actor's identity.
     TestTrue(TEXT("anchor pixel can carry a ray-verified source"),

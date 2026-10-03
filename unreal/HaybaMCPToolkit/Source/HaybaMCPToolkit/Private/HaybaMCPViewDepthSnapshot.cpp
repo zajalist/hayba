@@ -49,6 +49,12 @@ void HaybaViewDepthSnapshot::FSnapshot::AddPoint(FPoint&& Point)
     ++Group.PointCount;
     Group.BoundsCm += Point.PositionCm;
     if (!Point.SourceActorPath.IsEmpty()) ++MatchedRayPointCount;
+    switch (Point.ColorSource)
+    {
+    case HaybaWorldDepth::EColorSource::RenderedMaterialBaseColor: ++MaterialBaseColorPointCount; break;
+    case HaybaWorldDepth::EColorSource::RenderedSceneColor: ++SceneColorPointCount; break;
+    default: ++UnobservedColorPointCount; break;
+    }
     Points.Add(MoveTemp(Point));
 }
 
@@ -67,7 +73,13 @@ TSharedRef<FJsonObject> HaybaViewDepthSnapshot::BuildPage(const FSnapshot& Snaps
     Out->SetBoolField(TEXT("group_ids_capture_local"), true);
     Out->SetNumberField(TEXT("spatial_cell_size_cm"), SpatialCellSizeCm);
     Out->SetStringField(TEXT("spatial_grouping"), TEXT("fixed_world_space_grid"));
-    Out->SetStringField(TEXT("color_provenance"), TEXT("rendered_scene_color_visible_surface"));
+    Out->SetStringField(TEXT("color_provenance"), TEXT("rendered_material_base_color_or_scene_color_or_unobserved"));
+    Out->SetStringField(TEXT("base_color_status"), Snapshot.BaseColorStatus);
+    Out->SetNumberField(TEXT("material_base_color_point_count"), Snapshot.MaterialBaseColorPointCount);
+    Out->SetNumberField(TEXT("scene_color_point_count"), Snapshot.SceneColorPointCount);
+    Out->SetNumberField(TEXT("unobserved_color_point_count"), Snapshot.UnobservedColorPointCount);
+    Out->SetNumberField(TEXT("base_color_readback_ms"), Snapshot.BaseColorReadbackMs);
+    Out->SetNumberField(TEXT("base_color_readback_wait_ms"), Snapshot.BaseColorReadbackWaitMs);
     Out->SetBoolField(TEXT("spatial_group_ids_match_world_preview"), false);
     Out->SetNumberField(TEXT("resolution_x"), HaybaWorldDepth::Width);
     Out->SetNumberField(TEXT("resolution_y"), HaybaWorldDepth::Height);
@@ -98,6 +110,8 @@ TSharedRef<FJsonObject> HaybaViewDepthSnapshot::BuildPage(const FSnapshot& Snaps
     Coverage->SetBoolField(TEXT("occluded_geometry_included"), false);
     Coverage->SetBoolField(TEXT("whole_world_coverage"), false);
     Coverage->SetBoolField(TEXT("partial"), Snapshot.Status != TEXT("complete_visible_subset"));
+    Coverage->SetBoolField(TEXT("color_partial"),
+        Snapshot.MaterialBaseColorPointCount < Snapshot.Points.Num());
     Coverage->SetStringField(TEXT("source_attribution"), TEXT("exact_pixel_depth_matched_physics_ray_or_unknown"));
     Out->SetObjectField(TEXT("coverage"), Coverage);
     TArray<TSharedPtr<FJsonValue>> Gaps;
@@ -138,9 +152,13 @@ TSharedRef<FJsonObject> HaybaViewDepthSnapshot::BuildPage(const FSnapshot& Snaps
                 Row->SetArrayField(TEXT("pixel"), { MakeShared<FJsonValueNumber>(Point.PixelX),
                     MakeShared<FJsonValueNumber>(Point.PixelY) });
                 Row->SetNumberField(TEXT("depth_cm"), Point.DepthCm);
-                Row->SetStringField(TEXT("color_provenance"), Point.bColorObserved
-                    ? TEXT("rendered_scene_color_visible_surface") : TEXT("unobserved"));
-                if (Point.bColorObserved)
+                const TCHAR* ColorProvenance = TEXT("unobserved");
+                if (Point.ColorSource == HaybaWorldDepth::EColorSource::RenderedMaterialBaseColor)
+                    ColorProvenance = TEXT("rendered_material_base_color_visible_surface");
+                else if (Point.ColorSource == HaybaWorldDepth::EColorSource::RenderedSceneColor)
+                    ColorProvenance = TEXT("rendered_scene_color_visible_surface");
+                Row->SetStringField(TEXT("color_provenance"), ColorProvenance);
+                if (Point.ColorSource != HaybaWorldDepth::EColorSource::Unobserved)
                     Row->SetArrayField(TEXT("display_rgb"), {
                         MakeShared<FJsonValueNumber>(Point.DisplayColor.R),
                         MakeShared<FJsonValueNumber>(Point.DisplayColor.G),

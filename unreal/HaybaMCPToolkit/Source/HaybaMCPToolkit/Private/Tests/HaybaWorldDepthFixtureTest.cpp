@@ -18,7 +18,9 @@
 #include "HAL/PlatformProcess.h"
 #include "HAL/PlatformTime.h"
 #include "RHIGlobals.h"
+#include "RenderUtils.h"
 #include "RenderingThread.h"
+#include "SceneInterface.h"
 #include "UObject/Package.h"
 #include "UObject/StrongObjectPtr.h"
 
@@ -48,8 +50,10 @@ bool FHaybaWorldDepthFixtureTest::RunTest(const FString&)
     FWorldContext& WorldContext = GEngine->CreateNewWorldContext(EWorldType::Game);
     WorldContext.SetCurrentWorld(World.Get());
     USceneCaptureComponent2D* Capture = nullptr;
+    USceneCaptureComponent2D* BaseCapture = nullptr;
     ON_SCOPE_EXIT
     {
+        if (BaseCapture && BaseCapture->IsRegistered()) BaseCapture->UnregisterComponent();
         if (Capture && Capture->IsRegistered()) Capture->UnregisterComponent();
         FlushRenderingCommands();
         GEngine->DestroyWorldContext(World.Get());
@@ -163,6 +167,58 @@ bool FHaybaWorldDepthFixtureTest::RunTest(const FString&)
         return false;
     TestTrue(TEXT("unprojected point lies near the known cube face center"),
         FVector::Dist(WorldPoint, FVector(ExpectedDepthCm, 0.0, 0.0)) <= 10.0);
+
+    if (!TestFalse(TEXT("scratch renderer supports material BaseColor capture"),
+        IsForwardShadingEnabled(World->Scene->GetShaderPlatform()))) return false;
+    UTextureRenderTarget2D* BaseTarget = NewObject<UTextureRenderTarget2D>(World.Get(), NAME_None, RF_Transient);
+    if (!TestNotNull(TEXT("material BaseColor target"), BaseTarget)) return false;
+    BaseTarget->InitCustomFormat(HaybaWorldDepth::Width, HaybaWorldDepth::Height,
+        PF_A32B32G32R32F, true);
+    BaseTarget->UpdateResourceImmediate(true);
+    BaseCapture = NewObject<USceneCaptureComponent2D>(World.Get(), NAME_None, RF_Transient);
+    if (!TestNotNull(TEXT("material BaseColor capture"), BaseCapture)) return false;
+    BaseCapture->bCaptureEveryFrame = false;
+    BaseCapture->bCaptureOnMovement = false;
+    BaseCapture->CaptureSource = ESceneCaptureSource::SCS_BaseColor;
+    BaseCapture->FOVAngle = Capture->FOVAngle;
+    BaseCapture->TextureTarget = BaseTarget;
+    BaseCapture->RegisterComponentWithWorld(World.Get());
+    BaseCapture->SetWorldLocationAndRotation(Capture->GetComponentLocation(),
+        Capture->GetComponentRotation());
+    BaseCapture->CaptureScene();
+    TSharedPtr<FHaybaWorldDepthReadback, ESPMode::ThreadSafe> AsyncBase =
+        FHaybaWorldDepthReadback::Start(BaseTarget->GameThread_GetRenderTargetResource());
+    if (!TestTrue(TEXT("aligned material BaseColor readback queued"), AsyncBase.IsValid())) return false;
+    const double BaseStarted = FPlatformTime::Seconds();
+    while (!AsyncBase->IsComplete() && FPlatformTime::Seconds() - BaseStarted < 10.0)
+    {
+        AsyncBase->Poll();
+        FlushRenderingCommands();
+        FPlatformProcess::Sleep(0.01f);
+    }
+    if (!TestTrue(TEXT("material BaseColor readback completed"), AsyncBase->IsComplete())) return false;
+    TArray<FLinearColor> BasePixels;
+    double BaseCopyMs = 0.0;
+    if (!TestTrue(TEXT("material BaseColor readback returned every pixel"),
+        AsyncBase->TakePixels(BasePixels, BaseCopyMs))) return false;
+    TArray<FLinearColor> StandardBasePixels;
+    if (!TestTrue(TEXT("standard material BaseColor reference readback"),
+        BaseTarget->GameThread_GetRenderTargetResource()->ReadLinearColorPixels(StandardBasePixels))) return false;
+    const FLinearColor& BaseCenter = BasePixels[CenterY * HaybaWorldDepth::Width + CenterX];
+    const FLinearColor& StandardBaseCenter = StandardBasePixels[CenterY * HaybaWorldDepth::Width + CenterX];
+    TestTrue(TEXT("asynchronous material BaseColor channels match standard readback"),
+        FMath::Abs(BaseCenter.R - StandardBaseCenter.R) <= 0.01f &&
+        FMath::Abs(BaseCenter.G - StandardBaseCenter.G) <= 0.01f &&
+        FMath::Abs(BaseCenter.B - StandardBaseCenter.B) <= 0.01f);
+    AddInfo(FString::Printf(TEXT("Aligned material BaseColor: RGB %.3f %.3f %.3f, wait %.2f ms, render copy %.2f ms"),
+        BaseCenter.R, BaseCenter.G, BaseCenter.B,
+        (FPlatformTime::Seconds() - BaseStarted) * 1000.0, BaseCopyMs));
+    TestTrue(TEXT("known opaque cube face has observed material BaseColor"),
+        BaseCenter.R + BaseCenter.G + BaseCenter.B > 0.1f);
+    FColor Chosen = FColor::Black;
+    TestEqual(TEXT("aligned material BaseColor is preferred over lit scene appearance"),
+        HaybaWorldDepth::SelectDisplayColor(Center, &BaseCenter, Chosen),
+        HaybaWorldDepth::EColorSource::RenderedMaterialBaseColor);
     return true;
 }
 

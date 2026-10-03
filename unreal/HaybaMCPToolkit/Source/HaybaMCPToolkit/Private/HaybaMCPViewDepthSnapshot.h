@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "Dom/JsonObject.h"
+#include "HaybaMCPWorldDepth.h"
 
 class UWorld;
 
@@ -19,7 +20,7 @@ struct FPoint
     int32 PixelY = 0;
     double DepthCm = 0.0;
     FColor DisplayColor = FColor::Black;
-    bool bColorObserved = false;
+    HaybaWorldDepth::EColorSource ColorSource = HaybaWorldDepth::EColorSource::Unobserved;
     // Set only on the exact pixel checked by a depth-matched physics ray.
     FString SourceActorPath;
     FString SourceActorLabel;
@@ -46,6 +47,12 @@ struct FSnapshot
     TArray<FString> Gaps;
     int32 ProcessedPixelCount = 0;
     int32 MatchedRayPointCount = 0;
+    int32 MaterialBaseColorPointCount = 0;
+    int32 SceneColorPointCount = 0;
+    int32 UnobservedColorPointCount = 0;
+    FString BaseColorStatus = TEXT("not_attempted");
+    double BaseColorReadbackMs = 0.0;
+    double BaseColorReadbackWaitMs = 0.0;
     double ReadbackMs = 0.0;
     double ReadbackWaitMs = 0.0;
     double ReadbackGameThreadMaxMs = 0.0;

@@ -4,6 +4,7 @@
 
 namespace HaybaWorldDepth
 {
+enum class EColorSource : uint8 { Unobserved, RenderedSceneColor, RenderedMaterialBaseColor };
 constexpr int32 Width = 256;
 constexpr int32 Height = 256;
 constexpr int32 MaxPoints = Width * Height;
@@ -60,4 +61,10 @@ bool TraceMatchesDepth(double DepthCm, double RasterRayDistanceCm,
 /** RGB is the rendered scene color at the same pixel as alpha SceneDepth.
  * This is visible appearance, including lighting, not texture base color. */
 bool SceneColorToDisplay(const FLinearColor& Pixel, FColor& OutColor);
+
+/** Prefer the independently captured material BaseColor only when that pass
+ * completed. Both values describe a rendered visible surface, never the
+ * source texture. Null or invalid BaseColor falls back to lit scene color. */
+EColorSource SelectDisplayColor(const FLinearColor& SceneColor,
+    const FLinearColor* BaseColor, FColor& OutColor);
 }

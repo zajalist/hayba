@@ -91,6 +91,10 @@ bool FHaybaWorldVisualReview::RunTest(const FString&)
                 Context->Panel->GetDepthProcessedPixelCount(), Context->Panel->GetDepthReadbackMs(),
                 Context->Panel->GetDepthReadbackGameThreadMaxMs(),
                 Context->Panel->GetDepthProcessingCpuMs(), Context->Panel->GetDepthMaxTickCpuMs()));
+            AddInfo(FString::Printf(TEXT("World material BaseColor: status=%s, colored points=%d, render readback copy=%.2f ms"),
+                *Context->Panel->GetBaseColorStatus(),
+                Context->Panel->GetMaterialBaseColorPointCount(),
+                Context->Panel->GetBaseColorReadbackMs()));
             if (Context->Panel->DidDepthReadbackExceedBudget())
                 AddWarning(FString::Printf(TEXT("World depth render-thread map/copy took %.2f ms (%.0f ms warning threshold); valid captured pixels were retained."),
                     Context->Panel->GetDepthReadbackMs(), HaybaWorldDepth::ReadbackWarningMs));
@@ -104,6 +108,11 @@ bool FHaybaWorldVisualReview::RunTest(const FString&)
                 Context->Panel->GetDepthProcessedPixelCount(), HaybaWorldDepth::MaxPoints);
             TestEqual(TEXT("scratch World depth capture completed within its CPU budget"),
                 Context->Panel->GetDepthStatus(), FString(TEXT("complete_visible_subset")));
+            TestEqual(TEXT("scratch deferred World captured material BaseColor"),
+                Context->Panel->GetBaseColorStatus(), FString(TEXT("captured")));
+            TestTrue(TEXT("material BaseColor colors most visible depth points"),
+                Context->Panel->GetMaterialBaseColorPointCount() >
+                    Context->Panel->GetDepthPointCount() / 2);
         }
         if (Context->Panel.IsValid() && Context->Window.IsValid())
         {

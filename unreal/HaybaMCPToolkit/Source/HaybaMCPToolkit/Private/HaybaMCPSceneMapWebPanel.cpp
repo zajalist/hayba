@@ -3,6 +3,8 @@
 #include "HaybaMCPEditorHealth.h"
 #include "HaybaMCPWorldDepth.h"
 #include "HaybaMCPWorldDepthReadback.h"
+#include "RenderUtils.h"
+#include "SceneInterface.h"
 
 #include "SWebBrowser.h"
 #include "IWebBrowserWindow.h"
@@ -238,11 +240,13 @@ void SHaybaMCPSceneMapWebPanel::Refresh()
     PendingGeometry = HaybaWorldGeometry::FSnapshot();
     PendingPointCursor = TotalPoints = ScannedActorSlots = TotalActorSlots = 0;
     NodeIndexBase = 1;
-    ActorIndexByPath.Reset(); NodeIndexByPath.Reset(); DepthPixels.Reset();
-    DepthPixelCursor = DepthPointCount = DepthAttributedCount = 0;
+    ActorIndexByPath.Reset(); NodeIndexByPath.Reset(); DepthPixels.Reset(); BaseColorPixels.Reset();
+    DepthPixelCursor = DepthPointCount = DepthAttributedCount = MaterialBaseColorPointCount = 0;
     DepthAnchorCursor = 0; DepthAnchors.Reset();
     DepthReadbackMs = DepthReadbackWaitMs = DepthReadbackStartedAt = 0.0;
     DepthReadbackGameThreadMaxMs = 0.0;
+    BaseColorReadbackStartedAt = BaseColorReadbackMs = BaseColorReadbackWaitMs = 0.0;
+    BaseColorStatus = TEXT("not_attempted");
     DepthCpuMs = DepthMaxTickCpuMs = 0.0;
     bDepthReadbackBudgetExceeded = false;
     DepthCaptureId.Reset();
@@ -331,6 +335,7 @@ void SHaybaMCPSceneMapWebPanel::Tick(const FGeometry& AllottedGeometry,
         if (DepthPhase == EDepthPhase::AwaitReadback || DepthPhase == EDepthPhase::Processing)
         {
             DepthStatus = TEXT("editor_world_changed"); DepthPhase = EDepthPhase::Complete;
+            if (BaseColorStatus == TEXT("capture_queued")) BaseColorStatus = TEXT("editor_world_changed");
             DepthPixels.Reset(); DepthAnchors.Reset(); ReleaseDepthCapture();
         }
         FinishScan(); return;
@@ -339,11 +344,13 @@ void SHaybaMCPSceneMapWebPanel::Tick(const FGeometry& AllottedGeometry,
         GEditor && (GEditor->PlayWorld || GEditor->IsPlaySessionRequestQueued()))
     {
         DepthStatus = TEXT("pie_started_during_capture"); DepthPhase = EDepthPhase::Complete;
+        if (BaseColorStatus == TEXT("capture_queued")) BaseColorStatus = TEXT("pie_started_during_capture");
         DepthPixels.Reset(); DepthAnchors.Reset(); ReleaseDepthCapture(); FinishScan(); return;
     }
     if (DepthPhase == EDepthPhase::AwaitReadback)
     {
         const double PollStarted = FPlatformTime::Seconds();
+        bool bDepthFailed = false;
         if (DepthReadback.IsValid() && !DepthReadback->IsComplete()) DepthReadback->Poll();
         if (DepthReadback.IsValid() && DepthReadback->IsComplete())
         {
@@ -351,28 +358,37 @@ void SHaybaMCPSceneMapWebPanel::Tick(const FGeometry& AllottedGeometry,
             DepthReadbackWaitMs = (FPlatformTime::Seconds() - DepthReadbackStartedAt) * 1000.0;
             bDepthReadbackBudgetExceeded = DepthReadbackMs > HaybaWorldDepth::ReadbackWarningMs;
             DepthReadback.Reset();
-            DepthReadbackGameThreadMaxMs = FMath::Max(DepthReadbackGameThreadMaxMs,
-                (FPlatformTime::Seconds() - PollStarted) * 1000.0);
-            if (bRead)
-            {
-                DepthPhase = EDepthPhase::Processing;
-                DepthStatus = TEXT("depth_visible");
-            }
-            else
-            {
-                DepthStatus = TEXT("readback_unavailable"); DepthPhase = EDepthPhase::Complete;
-                DepthPixels.Reset(); ReleaseDepthCapture(); FinishScan();
-            }
+            if (!bRead) { DepthStatus = TEXT("readback_unavailable"); bDepthFailed = true; }
         }
-        else if (FPlatformTime::Seconds() - DepthReadbackStartedAt > 10.0)
+        if (BaseColorReadback.IsValid() && !BaseColorReadback->IsComplete())
+            BaseColorReadback->Poll();
+        if (BaseColorReadback.IsValid() && BaseColorReadback->IsComplete())
         {
-            DepthReadbackGameThreadMaxMs = FMath::Max(DepthReadbackGameThreadMaxMs,
-                (FPlatformTime::Seconds() - PollStarted) * 1000.0);
-            DepthStatus = TEXT("readback_timeout"); DepthPhase = EDepthPhase::Complete;
-            DepthPixels.Reset(); ReleaseDepthCapture(); FinishScan();
+            const bool bRead = BaseColorReadback->TakePixels(BaseColorPixels, BaseColorReadbackMs);
+            BaseColorReadbackWaitMs = (FPlatformTime::Seconds() - BaseColorReadbackStartedAt) * 1000.0;
+            BaseColorStatus = bRead ? TEXT("captured") : TEXT("readback_unavailable");
+            ReleaseBaseColorCapture();
         }
-        else DepthReadbackGameThreadMaxMs = FMath::Max(DepthReadbackGameThreadMaxMs,
+        if (BaseColorReadback.IsValid() &&
+            FPlatformTime::Seconds() - BaseColorReadbackStartedAt > 10.0)
+        {
+            BaseColorStatus = TEXT("readback_timeout");
+            ReleaseBaseColorCapture();
+        }
+        if (!bDepthFailed && DepthPixels.Num() != HaybaWorldDepth::MaxPoints &&
+            FPlatformTime::Seconds() - DepthReadbackStartedAt > 10.0)
+        { DepthStatus = TEXT("readback_timeout"); bDepthFailed = true; }
+        if (!bDepthFailed && DepthPixels.Num() == HaybaWorldDepth::MaxPoints &&
+            !BaseColorReadback.IsValid())
+        { DepthPhase = EDepthPhase::Processing; DepthStatus = TEXT("depth_visible"); }
+        DepthReadbackGameThreadMaxMs = FMath::Max(DepthReadbackGameThreadMaxMs,
             (FPlatformTime::Seconds() - PollStarted) * 1000.0);
+        if (bDepthFailed)
+        {
+            DepthPhase = EDepthPhase::Complete;
+            if (BaseColorStatus == TEXT("capture_queued")) BaseColorStatus = TEXT("depth_unavailable");
+            DepthPixels.Reset(); BaseColorPixels.Reset(); ReleaseDepthCapture(); FinishScan();
+        }
         return;
     }
     if (DepthPhase == EDepthPhase::Processing) { ProcessDepthPixels(World); return; }
@@ -506,8 +522,23 @@ void SHaybaMCPSceneMapWebPanel::SendPendingPointChunk()
         LevelCursor >= LoadedLevels.Num() && DeferredActors.IsEmpty()) FinishScan();
 }
 
+void SHaybaMCPSceneMapWebPanel::ReleaseBaseColorCapture()
+{
+    BaseColorReadback.Reset();
+    if (BaseColorCapture.IsValid())
+    {
+        BaseColorCapture->TextureTarget = nullptr;
+        BaseColorCapture->UnregisterComponent();
+    }
+    BaseColorCapture.Reset();
+    if (BaseColorTarget.IsValid()) BaseColorTarget->ReleaseResource();
+    BaseColorTarget.Reset();
+}
+
 void SHaybaMCPSceneMapWebPanel::ReleaseDepthCapture()
 {
+    ReleaseBaseColorCapture();
+    BaseColorPixels.Reset();
     DepthReadback.Reset();
     if (DepthCapture.IsValid())
     {
@@ -574,7 +605,8 @@ void SHaybaMCPSceneMapWebPanel::BeginDepthCapture()
     DepthTarget->UpdateResourceImmediate(true);
     DepthCapture->bCaptureEveryFrame = false;
     DepthCapture->bCaptureOnMovement = false;
-    // One aligned render provides the visible surface's RGB and linear depth.
+    // This pass supplies visible-surface depth and lit scene-color fallback.
+    // A second aligned pass samples material BaseColor where supported.
     // Offscreen/occluded mesh points keep their unknown-color presentation.
     DepthCapture->CaptureSource = ESceneCaptureSource::SCS_SceneColorSceneDepth;
     DepthCapture->FOVAngle = static_cast<float>(DepthFov);
@@ -587,9 +619,41 @@ void SHaybaMCPSceneMapWebPanel::BeginDepthCapture()
     {
         DepthStatus = TEXT("readback_unavailable"); ReleaseDepthCapture(); return;
     }
+    BeginBaseColorCapture(World);
     DepthReadbackStartedAt = FPlatformTime::Seconds();
     DepthPhase = EDepthPhase::AwaitReadback;
     DepthStatus = TEXT("capture_queued");
+}
+
+void SHaybaMCPSceneMapWebPanel::BeginBaseColorCapture(UWorld* World)
+{
+    // UE 5.8 silently substitutes lit scene color for SCS_BaseColor in forward
+    // shading. That value is never advertised as material BaseColor here.
+    if (!World || !World->Scene ||
+        IsForwardShadingEnabled(World->Scene->GetShaderPlatform()))
+    { BaseColorStatus = TEXT("unsupported_forward_renderer"); return; }
+
+    BaseColorTarget.Reset(NewObject<UTextureRenderTarget2D>(World, NAME_None, RF_Transient));
+    BaseColorCapture.Reset(NewObject<USceneCaptureComponent2D>(World, NAME_None, RF_Transient));
+    if (!BaseColorTarget.IsValid() || !BaseColorCapture.IsValid())
+    { BaseColorStatus = TEXT("allocation_failed"); ReleaseBaseColorCapture(); return; }
+    BaseColorTarget->InitCustomFormat(HaybaWorldDepth::Width, HaybaWorldDepth::Height,
+        PF_A32B32G32R32F, true);
+    BaseColorTarget->UpdateResourceImmediate(true);
+    BaseColorCapture->bCaptureEveryFrame = false;
+    BaseColorCapture->bCaptureOnMovement = false;
+    BaseColorCapture->CaptureSource = ESceneCaptureSource::SCS_BaseColor;
+    BaseColorCapture->FOVAngle = static_cast<float>(DepthFov);
+    BaseColorCapture->TextureTarget = BaseColorTarget.Get();
+    BaseColorCapture->RegisterComponentWithWorld(World);
+    BaseColorCapture->SetWorldLocationAndRotation(DepthCameraCm, DepthRotation);
+    BaseColorCapture->CaptureScene();
+    BaseColorReadback = FHaybaWorldDepthReadback::Start(
+        BaseColorTarget->GameThread_GetRenderTargetResource());
+    if (!BaseColorReadback.IsValid())
+    { BaseColorStatus = TEXT("readback_unavailable"); ReleaseBaseColorCapture(); return; }
+    BaseColorReadbackStartedAt = FPlatformTime::Seconds();
+    BaseColorStatus = TEXT("capture_queued");
 }
 
 void SHaybaMCPSceneMapWebPanel::ProcessDepthPixels(UWorld* World)
@@ -677,7 +741,13 @@ void SHaybaMCPSceneMapWebPanel::ProcessDepthPixels(UWorld* World)
         Splat.PositionCm = Point - Geometry.OriginCm;
         Splat.Normal = (DepthCameraCm - Point).GetSafeNormal();
         FColor DisplayColor = FColor::Black;
-        const bool bColorObserved = HaybaWorldDepth::SceneColorToDisplay(ColorDepth, DisplayColor);
+        const FLinearColor* BaseColor = BaseColorPixels.IsValidIndex(Pixel)
+            ? &BaseColorPixels[Pixel] : nullptr;
+        const HaybaWorldDepth::EColorSource ColorSource =
+            HaybaWorldDepth::SelectDisplayColor(ColorDepth, BaseColor, DisplayColor);
+        const bool bColorObserved = ColorSource != HaybaWorldDepth::EColorSource::Unobserved;
+        if (ColorSource == HaybaWorldDepth::EColorSource::RenderedMaterialBaseColor)
+            ++MaterialBaseColorPointCount;
         Splat.R = bColorObserved ? DisplayColor.R : 145;
         Splat.G = bColorObserved ? DisplayColor.G : 138;
         Splat.B = bColorObserved ? DisplayColor.B : 129;
@@ -689,7 +759,7 @@ void SHaybaMCPSceneMapWebPanel::ProcessDepthPixels(UWorld* World)
         ObservedPoint.PixelY = Y;
         ObservedPoint.DepthCm = DepthCm;
         ObservedPoint.DisplayColor = DisplayColor;
-        ObservedPoint.bColorObserved = bColorObserved;
+        ObservedPoint.ColorSource = ColorSource;
         if (bMatchedRayPixel)
         {
             ObservedPoint.SourceActorPath = Anchor.SourceActorPath;
@@ -712,7 +782,8 @@ void SHaybaMCPSceneMapWebPanel::ProcessDepthPixels(UWorld* World)
     AccountCpuTime();
     DepthPhase = EDepthPhase::Complete;
     DepthStatus = DepthPointCount > 0 ? TEXT("complete_visible_subset") : TEXT("no_valid_depth");
-    DepthPixels.Reset(); DepthAnchors.Reset(); ReleaseDepthCapture(); FinishScan();
+    DepthPixels.Reset(); BaseColorPixels.Reset(); DepthAnchors.Reset();
+    ReleaseDepthCapture(); FinishScan();
 }
 
 void SHaybaMCPSceneMapWebPanel::FinishScan()
@@ -732,6 +803,13 @@ void SHaybaMCPSceneMapWebPanel::FinishScan()
         ObservedDepth.ReadbackMs = DepthReadbackMs;
         ObservedDepth.ReadbackWaitMs = DepthReadbackWaitMs;
         ObservedDepth.ReadbackGameThreadMaxMs = DepthReadbackGameThreadMaxMs;
+        ObservedDepth.BaseColorStatus = BaseColorStatus;
+        ObservedDepth.BaseColorReadbackMs = BaseColorReadbackMs;
+        ObservedDepth.BaseColorReadbackWaitMs = BaseColorReadbackWaitMs;
+        if (DepthPointCount > 0 && MaterialBaseColorPointCount != DepthPointCount)
+            ObservedDepth.Gaps.AddUnique(BaseColorStatus == TEXT("captured")
+                ? FString(TEXT("base_color_invalid_pixels"))
+                : FString::Printf(TEXT("base_color_%s"), *BaseColorStatus));
         ObservedDepth.bReadbackBudgetExceeded = bDepthReadbackBudgetExceeded;
         ObservedDepth.ProcessingCpuMs = DepthCpuMs;
         if (DepthStatus != TEXT("complete_visible_subset"))
@@ -744,7 +822,11 @@ void SHaybaMCPSceneMapWebPanel::FinishScan()
     const bool bDepthPartial = DepthStatus != TEXT("complete_visible_subset") &&
         DepthStatus != TEXT("not_attempted");
     if (bDepthPartial) ScanGaps.AddUnique(FString::Printf(TEXT("depth_%s"), *DepthStatus));
-    const bool bAnyPartial = bScanPartial || bDepthPartial;
+    const bool bColorPartial = DepthPointCount > 0 && MaterialBaseColorPointCount != DepthPointCount;
+    if (bColorPartial) ScanGaps.AddUnique(BaseColorStatus == TEXT("captured")
+        ? FString(TEXT("base_color_invalid_pixels"))
+        : FString::Printf(TEXT("base_color_%s"), *BaseColorStatus));
+    const bool bAnyPartial = bScanPartial || bDepthPartial || bColorPartial;
     TSharedRef<FJsonObject> Completion = MakeShared<FJsonObject>();
     Completion->SetBoolField(TEXT("partial"), bAnyPartial);
     Completion->SetStringField(TEXT("worldState"), !ScannedWorld.IsValid() ? TEXT("no_world") :
@@ -769,6 +851,10 @@ void SHaybaMCPSceneMapWebPanel::FinishScan()
     Depth->SetNumberField(TEXT("readbackMs"), DepthReadbackMs);
     Depth->SetNumberField(TEXT("readbackWaitMs"), DepthReadbackWaitMs);
     Depth->SetNumberField(TEXT("readbackGameThreadMaxMs"), DepthReadbackGameThreadMaxMs);
+    Depth->SetStringField(TEXT("baseColorStatus"), BaseColorStatus);
+    Depth->SetNumberField(TEXT("materialBaseColorPointCount"), MaterialBaseColorPointCount);
+    Depth->SetNumberField(TEXT("baseColorReadbackMs"), BaseColorReadbackMs);
+    Depth->SetNumberField(TEXT("baseColorReadbackWaitMs"), BaseColorReadbackWaitMs);
     Depth->SetBoolField(TEXT("readbackBudgetExceeded"), bDepthReadbackBudgetExceeded);
     Depth->SetNumberField(TEXT("processingCpuMs"), DepthCpuMs);
     Depth->SetNumberField(TEXT("maxProcessingTickMs"), DepthMaxTickCpuMs);
@@ -777,7 +863,8 @@ void SHaybaMCPSceneMapWebPanel::FinishScan()
     Depth->SetNumberField(TEXT("readbackWarningMs"), HaybaWorldDepth::ReadbackWarningMs);
     Depth->SetStringField(TEXT("attribution"), TEXT("anchor_pixel_physics_ray_verified_or_unknown"));
     Depth->SetStringField(TEXT("normalProvenance"), TEXT("view_facing_estimate"));
-    Depth->SetStringField(TEXT("pointColorProvenance"), TEXT("rendered_scene_color_visible_surface_or_unobserved"));
+    Depth->SetStringField(TEXT("pointColorProvenance"),
+        TEXT("rendered_material_base_color_or_scene_color_or_unobserved"));
     Depth->SetStringField(TEXT("visibility"), TEXT("first_depth_surface_from_one_editor_view"));
     TArray<TSharedPtr<FJsonValue>> CameraValues;
     CameraValues.Add(MakeShared<FJsonValueNumber>(DepthCameraCm.X));
