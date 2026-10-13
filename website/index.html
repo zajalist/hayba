@@ -26,9 +26,10 @@
       Menu<span class="nav-menu-icon" aria-hidden="true"></span>
     </button>
     <div class="nav-links" id="navLinks">
-      <a href="#pipelines">Toolkit</a>
+      <a href="#capabilities">Toolkit</a>
       <a href="/docs/">Docs</a>
-      <a href="/showcase/">Showcase</a>
+      <a href="#showcase">Showcase</a>
+      <a href="#pricing">Pricing</a>
       <a href="https://github.com/zajalist/hayba/issues" target="_blank" rel="noopener">Community</a>
       <a href="/about/">About</a>
       <a href="https://github.com/zajalist/hayba" target="_blank" rel="noopener">GitHub</a>
@@ -52,12 +53,14 @@
     <div class="hayba-hero-badge">AI-agent toolkit for Unreal Engine</div>
     <h1>Build at the speed<br>of thought.</h1>
     <div class="hero-cta">
-      <a href="https://github.com/zajalist/hayba" target="_blank" rel="noopener" class="hero-link">View source <span class="hero-link-arrow">→</span></a>
+      <a href="#install" class="btn btn-primary">Get Hayba, free</a>
+      <a href="#demo" class="hero-link">Watch it work <span class="hero-link-arrow">→</span></a>
     </div>
   </div>
 
   <div class="hero-status">
-    <div class="hero-version">Latest release: v0.1.0</div>
+    <!-- Latest non-prerelease git tag; update with each release. -->
+    <div class="hero-version">Latest release: v0.3.0</div>
     <div class="hero-status-line">Early access</div>
   </div>
 </section>
@@ -65,85 +68,358 @@
 <!-- ═══════════════════════════════ LEFT TOC ═══════════════════════════════ -->
 <aside class="page-toc" id="pageToc" aria-label="Page sections">
   <a href="#top" data-target="top" class="toc-link toc-brand">Hayba</a>
-  <a href="#pipelines" data-target="pipelines" class="toc-link">Toolkit</a>
-  <a href="#workflow" data-target="workflow" class="toc-link">Workflow</a>
-  <a href="#opensource" data-target="opensource" class="toc-link">Open Source</a>
-  <a href="#roadmap" data-target="roadmap" class="toc-link">Roadmap</a>
+  <a href="#demo" data-target="demo" class="toc-link">Demo</a>
+  <a href="#capabilities" data-target="capabilities" class="toc-link">Toolkit</a>
+  <a href="#safety" data-target="safety" class="toc-link">Safety</a>
+  <a href="#showcase" data-target="showcase" class="toc-link">Showcase</a>
+  <a href="#pricing" data-target="pricing" class="toc-link">Pricing</a>
+  <a href="#install" data-target="install" class="toc-link">Install</a>
   <a href="#faq" data-target="faq" class="toc-link">FAQ</a>
   <a href="https://github.com/zajalist/hayba" target="_blank" rel="noopener" class="toc-link toc-cta">View source</a>
 </aside>
 
 <!-- ═══════════════════════════════ SUB-NAV ═══════════════════════════════ -->
 <nav class="subnav" aria-label="Jump to">
-  <a href="#pipelines" class="subnav-link is-active">Toolkit</a>
-  <a href="#workflow" class="subnav-link">Workflow</a>
-  <a href="#opensource" class="subnav-link">Open source</a>
-  <a href="https://github.com/zajalist/hayba" target="_blank" rel="noopener" class="subnav-link">GitHub</a>
+  <a href="#demo" class="subnav-link is-active">Demo</a>
+  <a href="#capabilities" class="subnav-link">Toolkit</a>
+  <a href="#showcase" class="subnav-link">Showcase</a>
+  <a href="#pricing" class="subnav-link">Pricing</a>
+  <a href="#install" class="subnav-link">Install</a>
 </nav>
 
-<!-- ═══════════════════════════════ PIPELINES ═══════════════════════════════ -->
-<section class="feature-row" id="pipelines">
-  <div class="feature-row-text">
-    <div class="feature-eyebrow">Toolkit · Unreal Engine 5.7+</div>
-    <h2>An MCP your LLM<br>can author with.</h2>
+<main>
+<!-- ═══════════════════════════════ DEMO ═══════════════════════════════ -->
+<section class="band" id="demo" aria-labelledby="demo-title">
+  <div class="feature-row">
+    <div class="feature-row-text">
+      <div class="feature-eyebrow">Unreal Engine 5.8</div>
+      <h2 id="demo-title">Watch it work.</h2>
+    </div>
+    <div class="feature-row-body">
+      <p>An agent builds Blueprint logic in a live editor through Hayba: it adds nodes, wires their pins, compiles, then reads the graph back to check its work. The function on screen has 362 nodes.</p>
+      <p>The same tools reach any MCP client, such as Claude Code or Claude Desktop, and the chat panel inside the editor.</p>
+    </div>
   </div>
-  <div class="feature-row-body">
-    <p>Hayba is an open-source toolkit that lets an AI agent work inside a live Unreal Engine editor. A Node/TypeScript MCP server talks to a C++ editor plugin, so the agent can place actors, build PCG graphs, author materials, Blueprints and UMG widgets, and check its own work.</p>
-    <p>The current source on main has 400+ editor tools across 30+ editor domains. The server starts with 7 tools; your agent searches for the rest and calls them on demand.</p>
-    <a href="/docs/" class="feature-cta">Docs →</a>
+
+  <figure class="demo">
+    <div class="demo-frame">
+      <div class="demo-chrome" aria-hidden="true">
+        <span class="demo-tab"><svg class="icon" viewBox="0 0 16 16"><rect x="1.5" y="3" width="5" height="4" rx="1"/><rect x="9.5" y="9" width="5" height="4" rx="1"/><path d="M6.5 5h2a1.5 1.5 0 0 1 1.5 1.5v2.5"/></svg>Blueprint · Event Graph</span>
+        <span class="demo-meta">362 nodes</span>
+      </div>
+      <div class="demo-media media-slot">
+        <!-- JS starts playback in view (muted loop) and shows controls on hover/focus;
+             without JS the native controls stay on. -->
+        <video id="demoVideo" class="demo-video" width="1920" height="1080"
+               muted loop playsinline controls preload="metadata"
+               poster="assets/media/demo-blueprint-poster.jpg"
+               aria-label="Screen capture of an agent building a 362-node Blueprint function in Unreal Engine">
+          <source src="assets/media/demo-blueprint.webm" type="video/webm">
+          <source src="assets/media/demo-blueprint.mp4" type="video/mp4">
+        </video>
+        <button type="button" class="demo-play" hidden>
+          <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M5 3.5v9l7.5-4.5z"/></svg>
+          <span>Play the capture</span>
+        </button>
+      </div>
+    </div>
+    <figcaption class="demo-caption">Real capture: an agent authoring Blueprint logic through Hayba in Unreal Engine 5.8.</figcaption>
+  </figure>
+</section>
+
+<!-- ═══════════════════════════════ CAPABILITIES ═══════════════════════════════ -->
+<section class="band" id="capabilities" aria-labelledby="cap-title">
+  <div class="feature-row cap-head">
+    <svg class="cap-graph" viewBox="0 0 1100 420" preserveAspectRatio="xMidYMid slice" aria-hidden="true" focusable="false">
+      <g class="cap-nodes">
+        <g transform="translate(40 70)"><rect width="170" height="86" rx="6"/><path class="cap-node-head" d="M6 0h158a6 6 0 0 1 6 6v18H0V6a6 6 0 0 1 6-6z"/><circle cx="170" cy="40" r="3.5"/><circle class="data" cx="170" cy="66" r="3.5"/></g>
+        <g transform="translate(300 34)"><rect width="190" height="112" rx="6"/><path class="cap-node-head" d="M6 0h178a6 6 0 0 1 6 6v18H0V6a6 6 0 0 1 6-6z"/><circle cx="0" cy="40" r="3.5"/><circle cx="190" cy="40" r="3.5"/><circle class="data" cx="0" cy="92" r="3.5"/></g>
+        <g transform="translate(300 250)"><rect width="170" height="86" rx="6"/><path class="cap-node-head" d="M6 0h158a6 6 0 0 1 6 6v18H0V6a6 6 0 0 1 6-6z"/><circle class="data" cx="0" cy="56" r="3.5"/><circle class="data" cx="170" cy="56" r="3.5"/></g>
+        <g transform="translate(590 120)"><rect width="200" height="128" rx="6"/><path class="cap-node-head" d="M6 0h188a6 6 0 0 1 6 6v18H0V6a6 6 0 0 1 6-6z"/><circle cx="0" cy="40" r="3.5"/><circle class="data" cx="0" cy="96" r="3.5"/><circle cx="200" cy="40" r="3.5"/><circle cx="200" cy="96" r="3.5"/></g>
+        <g transform="translate(880 50)"><rect width="180" height="86" rx="6"/><path class="cap-node-head" d="M6 0h168a6 6 0 0 1 6 6v18H0V6a6 6 0 0 1 6-6z"/><circle cx="0" cy="40" r="3.5"/></g>
+        <g transform="translate(880 270)"><rect width="180" height="96" rx="6"/><path class="cap-node-head" d="M6 0h168a6 6 0 0 1 6 6v18H0V6a6 6 0 0 1 6-6z"/><circle cx="0" cy="40" r="3.5"/><circle class="data" cx="0" cy="70" r="3.5"/></g>
+      </g>
+      <path class="wire w1" pathLength="1" d="M210 110 C 260 110, 250 74, 300 74"/>
+      <path class="wire data w1" pathLength="1" d="M210 136 C 270 136, 240 126, 300 126"/>
+      <path class="wire data w2" pathLength="1" d="M210 136 C 270 136, 240 306, 300 306"/>
+      <path class="wire w2" pathLength="1" d="M490 74 C 550 74, 530 160, 590 160"/>
+      <path class="wire data w3" pathLength="1" d="M470 306 C 540 306, 520 216, 590 216"/>
+      <path class="wire w3" pathLength="1" d="M790 160 C 840 160, 830 90, 880 90"/>
+      <path class="wire w4" pathLength="1" d="M790 216 C 840 216, 830 310, 880 310"/>
+      <path class="wire data w4" pathLength="1" d="M470 306 C 640 306, 720 340, 880 340"/>
+    </svg>
+    <div class="feature-row-text">
+      <div class="feature-eyebrow">Toolkit · Unreal Engine 5.7+</div>
+      <h2 id="cap-title">What your agent<br>can do in Unreal.</h2>
+    </div>
+    <div class="feature-row-body">
+      <p class="cap-lead"><span class="cap-count" data-count-to="400" aria-hidden="true">400</span><span class="sr-only">400</span>+ editor tools across 30+ domains.</p>
+      <p>The server starts with 7 tools; the agent searches for the rest and calls them on demand, so its context stays small until it needs a tool.</p>
+      <a href="/docs/" class="feature-cta">Docs →</a>
+    </div>
+  </div>
+
+  <div class="cap-grid">
+    <article class="cap cap-feature">
+      <div class="cap-shot media-slot">
+        <img src="assets/media/cap-blueprint-graph.jpg" width="1600" height="900" loading="lazy" decoding="async"
+             alt="A Blueprint function graph built by an agent through Hayba, with execution and data wires between dozens of nodes">
+      </div>
+      <h3>Blueprints</h3>
+      <p class="cap-line">Author Blueprint logic: nodes, pins, functions and events, then compile and inspect what compiled.</p>
+      <p class="cap-eg"><code>blueprint_add_node</code><code>blueprint_connect_nodes</code><code>blueprint_compile</code></p>
+    </article>
+    <article class="cap cap-feature">
+      <div class="cap-shot media-slot">
+        <img src="assets/media/cap-widget-render.jpg" width="1600" height="900" loading="lazy" decoding="async"
+             alt="A game settings menu built as a UMG widget by an agent and rendered to PNG through Hayba">
+      </div>
+      <h3>UMG widgets</h3>
+      <p class="cap-line">Build widget trees, bind them to data, and render them to PNG to check the layout.</p>
+      <p class="cap-eg"><code>ui_build_tree</code><code>ui_bind_property</code><code>ui_render_widget_to_png</code></p>
+    </article>
+
+    <div class="cap-list">
+      <article class="cap">
+        <h3>Materials</h3>
+        <p class="cap-line">Author material graphs, compile them, and validate the result.</p>
+        <p class="cap-eg"><code>material_add_node</code><code>material_compile</code></p>
+      </article>
+      <article class="cap">
+        <h3>PCG</h3>
+        <p class="cap-line">Create PCG graphs, add their nodes, and cook them in the level.</p>
+        <p class="cap-eg"><code>pcg_create_graph</code><code>pcg_cook_and_wait</code></p>
+      </article>
+      <article class="cap">
+        <h3>Levels and actors</h3>
+        <p class="cap-line">Spawn and move actors, set the camera, and capture the viewport.</p>
+        <p class="cap-eg"><code>actor_spawn</code><code>editor_capture_viewport</code></p>
+      </article>
+      <article class="cap">
+        <h3>Play-In-Editor testing</h3>
+        <p class="cap-line">Start and stop Play-In-Editor, assert on game state, and capture frames.</p>
+        <p class="cap-eg"><code>editor_start_pie</code><code>editor_pie_assert</code></p>
+      </article>
+      <article class="cap">
+        <h3>Validation</h3>
+        <p class="cap-line">Check work before calling it done: PLUMB constraints, plus material and UI validators.</p>
+        <p class="cap-eg"><code>plumb_validate</code><code>ui_validate</code></p>
+      </article>
+      <article class="cap">
+        <h3>In-editor chat</h3>
+        <p class="cap-line">Chat with the editor from the Hayba panel, with your own API key or a local model.</p>
+        <p class="cap-eg cap-eg-text">Ollama or LM Studio run with no key.</p>
+      </article>
+    </div>
   </div>
 </section>
 
-<!-- ═══════════════════════════════ WORKFLOW ═══════════════════════════════ -->
-<section class="feature-row" id="workflow">
-  <div class="feature-row-text">
-    <div class="feature-eyebrow">Workflow</div>
-    <h2>Destructive steps wait<br>for your approval.</h2>
+<!-- ═══════════════════════════════ SAFETY ═══════════════════════════════ -->
+<!-- data-requires="p0": claims below ship only once the P0 safety work is on main. -->
+<section class="band" id="safety" data-requires="p0" aria-labelledby="safety-title">
+  <div class="feature-row">
+    <div class="feature-row-text">
+      <div class="feature-eyebrow">Safety</div>
+      <h2 id="safety-title">Built not to crash<br>your editor.</h2>
+    </div>
+    <div class="feature-row-body">
+      <p>An agent can send thousands of editor commands in a session. When one of them goes wrong, Hayba refuses the work instead of taking the editor down with it.</p>
+    </div>
   </div>
-  <div class="feature-row-body">
-    <p>Drive Hayba from your MCP host, such as Claude Code or Claude Desktop, or chat with the editor directly from the Hayba panel, using your own API key for cloud models, or a local model (Ollama, LM Studio) with no key.</p>
-    <p>With Plan Mode on (the default), destructive steps wait until you approve the plan. Most editor edits land on Unreal's normal undo stack, so Ctrl+Z works — not during Play-In-Editor, and not for asset deletes, saves to disk or arbitrary Python.</p>
-    <a href="/docs/#first-run" class="feature-cta">First run →</a>
+  <dl class="safety-list">
+    <div class="safety-item">
+      <dt>Faults stay contained</dt>
+      <dd>Hayba contains native faults in its handlers, then refuses unsafe work until you restart the editor.</dd>
+    </div>
+    <div class="safety-item">
+      <dt>Read-only files are refused</dt>
+      <dd>A save to a read-only file comes back as a refusal, not a crash.</dd>
+    </div>
+    <div class="safety-item">
+      <dt>Play-In-Editor is guarded</dt>
+      <dd>Hayba guards Play-In-Editor sessions and assets that are still under construction.</dd>
+    </div>
+    <div class="safety-item">
+      <dt>One agent per asset</dt>
+      <dd>Multi-agent editing uses leases, so two agents never edit the same asset at once.</dd>
+    </div>
+    <div class="safety-item">
+      <dt>You approve destructive steps</dt>
+      <dd>With Plan Mode on (the default), destructive steps wait for your approval. Most edits land on Unreal's undo stack, so Ctrl+Z works.</dd>
+    </div>
+  </dl>
+</section>
+
+<!-- ═══════════════════════════════ SHOWCASE ═══════════════════════════════ -->
+<section class="band" id="showcase" aria-labelledby="showcase-title">
+  <div class="feature-row">
+    <div class="feature-row-text">
+      <div class="feature-eyebrow">Showcase</div>
+      <h2 id="showcase-title">Made with Hayba.</h2>
+    </div>
+    <div class="feature-row-body">
+      <p><a class="text-link" href="https://zajalist.itch.io/a-gift-for-the-unfinished-journey" target="_blank" rel="noopener">A Gift for the Unfinished Journey</a> is a free Windows game on itch.io.</p>
+      <p>Its gameplay Blueprints and UI widgets were built by an AI agent through Hayba. Some materials were scripted through Hayba's Python bridge.</p>
+      <a href="https://zajalist.itch.io/a-gift-for-the-unfinished-journey" target="_blank" rel="noopener" class="feature-cta">Play it free on itch.io →</a>
+    </div>
+  </div>
+
+  <div class="gallery" id="gallery">
+    <figure class="shot shot-film">
+      <div class="shot-media media-slot">
+        <video class="shot-video" width="1280" height="714" controls preload="none" playsinline
+               poster="assets/media/intro-poster.jpg"
+               aria-label="In-game cinematic from A Gift for the Unfinished Journey, 18 seconds, with sound">
+          <source src="assets/media/intro.webm" type="video/webm">
+          <source src="assets/media/intro.mp4" type="video/mp4">
+        </video>
+      </div>
+      <figcaption class="shot-label">In-game cinematic</figcaption>
+    </figure>
+    <button type="button" class="shot" data-caption="In-engine shot from A Gift for the Unfinished Journey">
+      <span class="shot-media media-slot"><img src="assets/media/showcase-world-1.jpg" width="1920" height="1080" loading="lazy" decoding="async" alt="In-engine shot from A Gift for the Unfinished Journey"></span>
+    </button>
+    <button type="button" class="shot" data-caption="In-engine shot from A Gift for the Unfinished Journey">
+      <span class="shot-media media-slot"><img src="assets/media/showcase-world-2.jpg" width="1920" height="1080" loading="lazy" decoding="async" alt="In-engine shot from A Gift for the Unfinished Journey"></span>
+    </button>
+    <button type="button" class="shot" data-caption="The settings menu's widget Blueprint graph, built by an agent through Hayba">
+      <span class="shot-media media-slot"><img src="assets/media/showcase-graph-settings.jpg" width="1920" height="1080" loading="lazy" decoding="async" alt="Widget Blueprint graph for the game's settings menu, built by an agent through Hayba"></span>
+      <span class="shot-label">Widget graph</span>
+    </button>
+    <button type="button" class="shot" data-caption="A post-process material graph, scripted through Hayba's Python bridge">
+      <span class="shot-media media-slot"><img src="assets/media/showcase-material.jpg" width="1920" height="1080" loading="lazy" decoding="async" alt="Post-process material graph with a custom HLSL node, scripted through Hayba's Python bridge"></span>
+      <span class="shot-label">Material graph</span>
+    </button>
+    <button type="button" class="shot shot-wide" data-caption="In-engine shot from A Gift for the Unfinished Journey">
+      <span class="shot-media media-slot"><img src="assets/media/showcase-world-3.jpg" width="1920" height="1080" loading="lazy" decoding="async" alt="In-engine shot from A Gift for the Unfinished Journey"></span>
+    </button>
+    <button type="button" class="shot shot-wide" data-caption="The game's settings menu, built as a UMG widget by an agent through Hayba">
+      <span class="shot-media media-slot"><img src="assets/media/showcase-ui-settings.jpg" width="1920" height="1080" loading="lazy" decoding="async" alt="The game's settings menu, a UMG widget built by an agent through Hayba"></span>
+      <span class="shot-label">UMG widget</span>
+    </button>
+  </div>
+
+  <dialog class="lightbox" id="lightbox" aria-label="Screenshot viewer">
+    <figure class="lightbox-figure">
+      <figcaption class="lightbox-caption"><span class="lightbox-text"></span> <span class="lightbox-count"></span></figcaption>
+    </figure>
+    <button type="button" class="lightbox-btn lightbox-prev" aria-label="Previous screenshot"><svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M10 3 5 8l5 5"/></svg></button>
+    <button type="button" class="lightbox-btn lightbox-next" aria-label="Next screenshot"><svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 3 5 5-5 5"/></svg></button>
+    <button type="button" class="lightbox-btn lightbox-close" aria-label="Close viewer" autofocus><svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8"/></svg></button>
+  </dialog>
+</section>
+
+<!-- ═══════════════════════════════ PRICING ═══════════════════════════════ -->
+<section class="band" id="pricing" aria-labelledby="pricing-title">
+  <div class="feature-row">
+    <div class="feature-row-text">
+      <div class="feature-eyebrow">Pricing</div>
+      <h2 id="pricing-title">Free to build with.<br>Pro when you want more.</h2>
+    </div>
+    <div class="feature-row-body">
+      <p>The toolkit is free and MIT-licensed, and runs with your own MCP client or API key. Pro adds a hosted brain, so you need no key at all.</p>
+    </div>
+  </div>
+
+  <div class="plans">
+    <article class="plan" aria-labelledby="plan-free">
+      <h3 class="plan-name" id="plan-free">Free</h3>
+      <p class="plan-price"><span class="plan-amount">$0</span><span class="plan-unit">MIT license</span></p>
+      <ul class="plan-list">
+        <li>The full editor toolkit: 400+ tools</li>
+        <li>In-editor chat with your own key, or a local model</li>
+        <li>Fab tools</li>
+      </ul>
+      <a href="#install" class="btn btn-ghost plan-cta">Get Hayba</a>
+    </article>
+
+    <article class="plan plan-pro" aria-labelledby="plan-pro">
+      <div class="plan-top">
+        <h3 class="plan-name" id="plan-pro">Pro</h3>
+        <span class="plan-tag">Early access soon</span>
+      </div>
+      <fieldset class="billing">
+        <legend class="sr-only">Billing period</legend>
+        <input type="radio" name="billing" id="billMonthly" value="monthly" checked>
+        <label for="billMonthly">Monthly</label>
+        <input type="radio" name="billing" id="billYearly" value="yearly">
+        <label for="billYearly">Yearly</label>
+      </fieldset>
+      <p class="plan-price" aria-live="polite">
+        <span class="plan-amount" data-monthly="$15" data-yearly="$150">$15</span><span class="plan-unit" data-monthly="per month" data-yearly="per year">per month</span>
+      </p>
+      <p class="plan-note" data-monthly="Or $150 a year, two months free." data-yearly="Two months free against monthly billing.">Or $150 a year, two months free.</p>
+      <ul class="plan-list">
+        <li>Everything in Free</li>
+        <li>The hosted brain: multi-step planning, no API key needed</li>
+        <li>The bulk Blueprint builder: whole Blueprints and widgets from a spec</li>
+        <li>All skill packs</li>
+      </ul>
+      <form class="waitlist" id="waitlist" action="/api/waitlist" method="post" novalidate data-state="idle">
+        <label class="waitlist-label" for="waitlistEmail">Join the early-access waitlist</label>
+        <div class="waitlist-row">
+          <input class="waitlist-input" id="waitlistEmail" name="email" type="email" inputmode="email"
+                 autocomplete="email" spellcheck="false" maxlength="254" required
+                 placeholder="you@studio.com" aria-describedby="waitlistStatus">
+          <button class="btn btn-primary waitlist-btn" type="submit">Join waitlist</button>
+        </div>
+        <p class="waitlist-status" id="waitlistStatus" role="status" aria-live="polite"></p>
+      </form>
+    </article>
+
+    <article class="plan" aria-labelledby="plan-packs">
+      <h3 class="plan-name" id="plan-packs">Skill packs</h3>
+      <p class="plan-price"><span class="plan-amount">$29</span><span class="plan-unit">each</span></p>
+      <p class="plan-desc">Curated Unreal playbooks for coding agents. Included with Pro.</p>
+      <p class="plan-soon">Coming with launch</p>
+    </article>
   </div>
 </section>
 
-<!-- ═══════════════════════════════ OPEN SOURCE ═══════════════════════════════ -->
-<section class="feature-row" id="opensource">
-  <div class="feature-row-text">
-    <div class="feature-eyebrow">Open source</div>
-    <h2>MIT-licensed.<br>Forkable. Inspectable.</h2>
+<!-- ═══════════════════════════════ INSTALL ═══════════════════════════════ -->
+<section class="band" id="install" aria-labelledby="install-title">
+  <div class="feature-row">
+    <div class="feature-row-text">
+      <div class="feature-eyebrow">Install · Windows</div>
+      <h2 id="install-title">Get Hayba, free.</h2>
+    </div>
+    <div class="feature-row-body">
+      <p>Hayba builds from source. You need Unreal Engine 5.7+, Visual Studio with the C++ toolchain your engine version requires, and Node.js 22.5 or newer.</p>
+      <p>One-line installer coming in v0.5.</p>
+    </div>
   </div>
-  <div class="feature-row-body">
-    <p>The MCP server and the Unreal editor plugin are MIT-licensed and on GitHub. The toolkit runs locally with your own MCP client or your own API key; no Hayba account is needed.</p>
-    <p>The latest tagged release is v0.1.0 (early access), and Hayba runs on Windows. Install from source: clone the repo, build the MCP server, link the plugin into your project's Plugins folder and compile.</p>
-    <a href="https://github.com/zajalist/hayba" target="_blank" rel="noopener" class="feature-cta">View source →</a>
-    &nbsp;&nbsp;
-    <a href="https://github.com/zajalist/hayba/releases" target="_blank" rel="noopener" class="feature-cta">Watch releases →</a>
-  </div>
-</section>
 
-<!-- ═══════════════════════════════ ROADMAP ═══════════════════════════════ -->
-<section class="feature-row roadmap-row" id="roadmap">
-  <div class="feature-row-text">
-    <div class="feature-eyebrow">Roadmap</div>
-    <h2>The plan.</h2>
-  </div>
-  <div class="feature-row-body">
-    <p>Hayba is built in public. Follow releases and open issues on GitHub.</p>
-  </div>
+  <ol class="docs-steps install-steps" role="list">
+    <li>
+      <h3 class="docs-step-title">Build the MCP server</h3>
+      <p>Clone the repo, install its dependencies and build the server:</p>
+      <div class="docs-cmd" data-copy-name="build commands">
+        <div class="docs-cmd-bar"><span class="docs-cmd-label">Terminal</span></div>
+        <pre><code>git clone https://github.com/zajalist/hayba.git
+cd hayba
+npm install
+npm --prefix mcp-tools/hayba-mcp run build</code></pre>
+      </div>
+    </li>
+    <li>
+      <h3 class="docs-step-title">Add the plugin to your project</h3>
+      <p>From an administrator Command Prompt (or with Windows Developer Mode on), link the plugin into your project's <code>Plugins</code> folder, then regenerate project files and compile:</p>
+      <div class="docs-cmd" data-copy-name="plugin link command">
+        <div class="docs-cmd-bar"><span class="docs-cmd-label">Command Prompt</span></div>
+        <pre><code>mklink /D "&lt;YourProject&gt;\Plugins\HaybaMCPToolkit" "&lt;repo&gt;\unreal\HaybaMCPToolkit"</code></pre>
+      </div>
+    </li>
+    <li>
+      <h3 class="docs-step-title">Register the server with your agent host</h3>
+      <p>For Claude Code:</p>
+      <div class="docs-cmd" data-copy-name="Claude Code command">
+        <div class="docs-cmd-bar"><span class="docs-cmd-label">Terminal</span></div>
+        <pre><code>claude mcp add hayba-toolkit -- node /path/to/hayba/mcp-tools/hayba-mcp/dist/index.js</code></pre>
+      </div>
+      <p>The <a class="text-link" href="/docs/#install">install guide</a> covers copying the plugin instead of linking it, and the Claude Desktop config.</p>
+    </li>
+  </ol>
 </section>
-<div class="roadmap-grid">
-  <div class="roadmap-item is-done">
-    <div class="roadmap-ver">0.1</div>
-    <div class="roadmap-name">Unreal toolkit</div>
-    <div class="roadmap-status">Released · v0.1.0, August 2026</div>
-  </div>
-  <div class="roadmap-item is-doing">
-    <div class="roadmap-ver">Now</div>
-    <div class="roadmap-name">Toolkit development</div>
-    <div class="roadmap-status">In progress · tracked in GitHub issues</div>
-  </div>
-</div>
 
 <!-- ═══════════════════════════════ FAQ ═══════════════════════════════ -->
 <section class="feature-row faq-row" id="faq">
@@ -158,7 +434,15 @@
 <div class="faq-list">
   <details class="faq-item">
     <summary>Is Hayba free?</summary>
-    <p>Yes, the toolkit is free to use. A hosted assistant, Hayba Pro, is coming. The open-source toolkit is MIT-licensed and runs with your own model.</p>
+    <p>Yes. The toolkit is free and MIT-licensed, and runs with your own MCP client or model. Hayba Pro, at $15 a month or $150 a year, adds a hosted brain and the bulk Blueprint builder; <a class="text-link" href="#pricing">join the waitlist</a> for early access.</p>
+  </details>
+  <details class="faq-item">
+    <summary>What's in Pro?</summary>
+    <p>The hosted brain, which plans multi-step work with no API key needed; the bulk Blueprint builder, which builds whole Blueprints and widgets from a spec; and every skill pack. Pro is in early access soon.</p>
+  </details>
+  <details class="faq-item">
+    <summary>Was this game really made with AI?</summary>
+    <p>Its gameplay Blueprints and UI widgets were built by an AI agent through Hayba. Some materials were scripted through Hayba's Python bridge. The art, levels and other assets were not.</p>
   </details>
   <details class="faq-item">
     <summary>Do I need an LLM API key?</summary>
@@ -170,19 +454,21 @@
   </details>
   <details class="faq-item">
     <summary>Can I use Hayba commercially?</summary>
-    <p>Hayba's source code is MIT-licensed, which permits commercial use under the terms of the <a href="https://github.com/zajalist/hayba/blob/main/LICENSE" target="_blank" rel="noopener">MIT license</a>. Unreal Engine's own license still applies to your project.</p>
+    <p>Hayba's source code is MIT-licensed, which permits commercial use under the terms of the <a class="text-link" href="https://github.com/zajalist/hayba/blob/main/LICENSE" target="_blank" rel="noopener">MIT license</a>. Unreal Engine's own license still applies to your project.</p>
   </details>
 </div>
 
 <!-- ═══════════════════════════════ JUMP-TO ═══════════════════════════════ -->
 <div class="jump-to">
   <span class="jump-to-label">Or jump to:</span>
-  <a href="#pipelines" class="subnav-link">Toolkit</a>
-  <a href="#workflow" class="subnav-link">Workflow</a>
-  <a href="#opensource" class="subnav-link">Open source</a>
-  <a href="#roadmap" class="subnav-link">Roadmap</a>
+  <a href="#demo" class="subnav-link">Demo</a>
+  <a href="#capabilities" class="subnav-link">Toolkit</a>
+  <a href="#showcase" class="subnav-link">Showcase</a>
+  <a href="#pricing" class="subnav-link">Pricing</a>
+  <a href="#install" class="subnav-link">Install</a>
   <a href="#faq" class="subnav-link">FAQ</a>
 </div>
+</main>
 
 <!-- ═══════════════════════════════ FOOTER ═══════════════════════════════ -->
 <footer class="site-footer">
@@ -190,12 +476,13 @@
   <div class="footer-grid">
     <div class="footer-col">
       <h4>Tools</h4>
-      <a href="#pipelines">Unreal toolkit</a>
+      <a href="#capabilities">Unreal toolkit</a>
+      <a href="#pricing">Hayba Pro</a>
     </div>
     <div class="footer-col">
       <h4>Learning</h4>
       <a href="/docs/">Documentation</a>
-      <a href="#roadmap">Roadmap</a>
+      <a href="#install">Install</a>
       <a href="#faq">FAQ</a>
     </div>
     <div class="footer-col">
@@ -230,6 +517,11 @@
   import { mountHeroField } from '/lib/hero-field.js';
   import { mountRipples }   from '/lib/ripples.js';
   import { mountPageToc }   from '/lib/page-toc.js';
+  import { mountCommandBlocks } from '/lib/command-blocks.js';
+  import { mountMedia, mountDemoVideo } from '/lib/media.js';
+  import { mountCountUp }   from '/lib/count-up.js';
+  import { mountGallery }   from '/lib/gallery.js';
+  import { mountPricing }   from '/lib/pricing.js';
 
   mountHeroField(document.getElementById('heroField'));
   mountRipples(document.getElementById('heroRipples'));
@@ -238,7 +530,12 @@
   mountStarfield(document.getElementById('footerStarfield'), { density: 0.18, maxR: 0.6, maxBase: 0.28, sparkMinMs: 6000, sparkMaxMs: 14000 });
 
   mountPageToc(document.getElementById('pageToc'));
+  mountMedia();
+  mountDemoVideo(document.getElementById('demoVideo'));
+  mountCountUp();
+  mountGallery(document.getElementById('gallery'), document.getElementById('lightbox'));
+  mountPricing(document.getElementById('pricing'));
+  mountCommandBlocks(document.getElementById('install'));
 </script>
 </body>
 </html>
-
