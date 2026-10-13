@@ -1,12 +1,12 @@
 // Media on the landing page.
 //
 // mountMedia: an image whose file is missing (a capture not shipped yet) leaves
-// its .media-slot's dark editor grid showing instead of a broken-image box.
+// its .media-slot's dark panel showing instead of a broken-image box.
 //
 // mountDemoVideo: the demo capture plays muted and looped only while on screen,
-// and shows its controls on hover or keyboard focus. Reduced-motion readers get
-// the poster and a play button instead. Without this script the native controls
-// stay on and nothing autoplays.
+// and shows its controls on hover or keyboard focus. With reduced motion, or
+// without this script, the poster and the native controls stay as they are and
+// nothing autoplays.
 
 export function mountMedia(root = document) {
   for (const img of root.querySelectorAll('.media-slot img')) watchImage(img);
@@ -23,14 +23,11 @@ export function watchImage(img) {
 export function mountDemoVideo(video) {
   const frame = video && video.closest('.demo-frame');
   if (!frame) return;
-  const playBtn = frame.querySelector('.demo-play');
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
   const canHover = window.matchMedia('(hover: hover)').matches;
-  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  // Reduced motion: no controls over the poster until the reader presses play.
-  let started = !reduceMotion;
 
   // Touch screens have no hover, so they keep the controls.
-  const setControls = (on) => { video.controls = started && (on || !canHover); };
+  const setControls = (on) => { video.controls = on || !canHover; };
   setControls(false);
   video.tabIndex = 0; // reachable by keyboard while its controls are hidden
   frame.addEventListener('pointerenter', () => setControls(true));
@@ -41,18 +38,6 @@ export function mountDemoVideo(video) {
   frame.addEventListener('focusout', (e) => {
     if (!frame.contains(e.relatedTarget)) setControls(false);
   });
-
-  if (reduceMotion) {
-    playBtn.hidden = false;
-    video.addEventListener('play', () => { playBtn.hidden = true; });
-    playBtn.addEventListener('click', () => {
-      started = true;
-      video.controls = true;
-      video.focus();
-      video.play().catch(() => { playBtn.hidden = false; });
-    });
-    return;
-  }
 
   if (!('IntersectionObserver' in window)) return;
   // A pause the reader made sticks; one this observer made does not.

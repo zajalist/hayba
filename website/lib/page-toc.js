@@ -11,7 +11,7 @@ export function mountPageToc(tocEl, { heroEl, threshold = 0.45, probeFraction = 
       el: document.getElementById(l.dataset.target)
         || (l.dataset.target === 'top' ? hero : null),
     }))
-    .filter((t) => t.el);
+    .filter((t) => t.el && !t.link.hidden); // a hidden link's section is hidden too
 
   function onScroll() {
     const y = window.scrollY;

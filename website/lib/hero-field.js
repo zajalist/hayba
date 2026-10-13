@@ -1,5 +1,5 @@
 // Hero orb composition rendered as a single WebGL fragment shader.
-// Linear-RGB accumulation, sRGB encode, TPDF dither at 1 LSB → no banding.
+// Linear-RGB accumulation, sRGB encode, TPDF dither at 1 LSB, so no banding.
 //
 // Caller mounts on a <canvas>; we drive orb positions per-frame via uniforms.
 

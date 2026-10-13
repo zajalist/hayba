@@ -53,8 +53,8 @@
     <div class="hayba-hero-badge">AI-agent toolkit for Unreal Engine</div>
     <h1>Build at the speed<br>of thought.</h1>
     <div class="hero-cta">
-      <a href="#install" class="btn btn-primary">Get Hayba, free</a>
-      <a href="#demo" class="hero-link">Watch it work <span class="hero-link-arrow">→</span></a>
+      <a href="#install" class="btn">Get Hayba, free</a>
+      <a href="#demo" class="hero-link" data-requires="demo-video" hidden>Watch it work</a>
     </div>
   </div>
 
@@ -68,7 +68,7 @@
 <!-- ═══════════════════════════════ LEFT TOC ═══════════════════════════════ -->
 <aside class="page-toc" id="pageToc" aria-label="Page sections">
   <a href="#top" data-target="top" class="toc-link toc-brand">Hayba</a>
-  <a href="#demo" data-target="demo" class="toc-link">Demo</a>
+  <a href="#demo" data-target="demo" class="toc-link" data-requires="demo-video" hidden>Demo</a>
   <a href="#capabilities" data-target="capabilities" class="toc-link">Toolkit</a>
   <a href="#safety" data-target="safety" class="toc-link">Safety</a>
   <a href="#showcase" data-target="showcase" class="toc-link">Showcase</a>
@@ -80,8 +80,8 @@
 
 <!-- ═══════════════════════════════ SUB-NAV ═══════════════════════════════ -->
 <nav class="subnav" aria-label="Jump to">
-  <a href="#demo" class="subnav-link is-active">Demo</a>
-  <a href="#capabilities" class="subnav-link">Toolkit</a>
+  <a href="#demo" class="subnav-link" data-requires="demo-video" hidden>Demo</a>
+  <a href="#capabilities" class="subnav-link is-active">Toolkit</a>
   <a href="#showcase" class="subnav-link">Showcase</a>
   <a href="#pricing" class="subnav-link">Pricing</a>
   <a href="#install" class="subnav-link">Install</a>
@@ -89,10 +89,12 @@
 
 <main>
 <!-- ═══════════════════════════════ DEMO ═══════════════════════════════ -->
-<section class="band" id="demo" aria-labelledby="demo-title">
+<!-- data-requires="demo-video": this section, the hero "Watch it work" link and the
+     Demo links in the TOC, sub-nav and jump-to row stay hidden until
+     assets/media/demo-blueprint.mp4 ships; remove their hidden attributes then. -->
+<section class="band" id="demo" aria-labelledby="demo-title" data-requires="demo-video" hidden>
   <div class="feature-row">
     <div class="feature-row-text">
-      <div class="feature-eyebrow">Unreal Engine 5.8</div>
       <h2 id="demo-title">Watch it work.</h2>
     </div>
     <div class="feature-row-body">
@@ -107,9 +109,9 @@
         <span class="demo-tab"><svg class="icon" viewBox="0 0 16 16"><rect x="1.5" y="3" width="5" height="4" rx="1"/><rect x="9.5" y="9" width="5" height="4" rx="1"/><path d="M6.5 5h2a1.5 1.5 0 0 1 1.5 1.5v2.5"/></svg>Blueprint · Event Graph</span>
         <span class="demo-meta">362 nodes</span>
       </div>
-      <div class="demo-media media-slot">
+      <div class="demo-media">
         <!-- JS starts playback in view (muted loop) and shows controls on hover/focus;
-             without JS the native controls stay on. -->
+             without JS, or with reduced motion, the native controls stay on and nothing autoplays. -->
         <video id="demoVideo" class="demo-video" width="1920" height="1080"
                muted loop playsinline controls preload="metadata"
                poster="assets/media/demo-blueprint-poster.jpg"
@@ -117,10 +119,6 @@
           <source src="assets/media/demo-blueprint.webm" type="video/webm">
           <source src="assets/media/demo-blueprint.mp4" type="video/mp4">
         </video>
-        <button type="button" class="demo-play" hidden>
-          <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M5 3.5v9l7.5-4.5z"/></svg>
-          <span>Play the capture</span>
-        </button>
       </div>
     </div>
     <figcaption class="demo-caption">Real capture: an agent authoring Blueprint logic through Hayba in Unreal Engine 5.8.</figcaption>
@@ -130,7 +128,7 @@
 <!-- ═══════════════════════════════ CAPABILITIES ═══════════════════════════════ -->
 <section class="band" id="capabilities" aria-labelledby="cap-title">
   <div class="feature-row cap-head">
-    <svg class="cap-graph" viewBox="0 0 1100 420" preserveAspectRatio="xMidYMid slice" aria-hidden="true" focusable="false">
+    <svg class="cap-graph" viewBox="0 0 1100 420" preserveAspectRatio="xMidYMid meet" aria-hidden="true" focusable="false">
       <g class="cap-nodes">
         <g transform="translate(40 70)"><rect width="170" height="86" rx="6"/><path class="cap-node-head" d="M6 0h158a6 6 0 0 1 6 6v18H0V6a6 6 0 0 1 6-6z"/><circle cx="170" cy="40" r="3.5"/><circle class="data" cx="170" cy="66" r="3.5"/></g>
         <g transform="translate(300 34)"><rect width="190" height="112" rx="6"/><path class="cap-node-head" d="M6 0h178a6 6 0 0 1 6 6v18H0V6a6 6 0 0 1 6-6z"/><circle cx="0" cy="40" r="3.5"/><circle cx="190" cy="40" r="3.5"/><circle class="data" cx="0" cy="92" r="3.5"/></g>
@@ -149,13 +147,12 @@
       <path class="wire data w4" pathLength="1" d="M470 306 C 640 306, 720 340, 880 340"/>
     </svg>
     <div class="feature-row-text">
-      <div class="feature-eyebrow">Toolkit · Unreal Engine 5.7+</div>
       <h2 id="cap-title">What your agent<br>can do in Unreal.</h2>
     </div>
     <div class="feature-row-body">
       <p class="cap-lead"><span class="cap-count" data-count-to="400" aria-hidden="true">400</span><span class="sr-only">400</span>+ editor tools across 30+ domains.</p>
       <p>The server starts with 7 tools; the agent searches for the rest and calls them on demand, so its context stays small until it needs a tool.</p>
-      <a href="/docs/" class="feature-cta">Docs →</a>
+      <a href="/docs/" class="feature-cta">Docs</a>
     </div>
   </div>
 
@@ -219,7 +216,6 @@
 <section class="band" id="safety" data-requires="p0" aria-labelledby="safety-title">
   <div class="feature-row">
     <div class="feature-row-text">
-      <div class="feature-eyebrow">Safety</div>
       <h2 id="safety-title">Built not to crash<br>your editor.</h2>
     </div>
     <div class="feature-row-body">
@@ -254,29 +250,17 @@
 <section class="band" id="showcase" aria-labelledby="showcase-title">
   <div class="feature-row">
     <div class="feature-row-text">
-      <div class="feature-eyebrow">Showcase</div>
       <h2 id="showcase-title">Made with Hayba.</h2>
     </div>
     <div class="feature-row-body">
       <p><a class="text-link" href="https://zajalist.itch.io/a-gift-for-the-unfinished-journey" target="_blank" rel="noopener">A Gift for the Unfinished Journey</a> is a free Windows game on itch.io.</p>
       <p>Its gameplay Blueprints and UI widgets were built by an AI agent through Hayba. Some materials were scripted through Hayba's Python bridge.</p>
-      <a href="https://zajalist.itch.io/a-gift-for-the-unfinished-journey" target="_blank" rel="noopener" class="feature-cta">Play it free on itch.io →</a>
+      <a href="https://zajalist.itch.io/a-gift-for-the-unfinished-journey" target="_blank" rel="noopener" class="feature-cta">Play it free on itch.io</a>
     </div>
   </div>
 
   <div class="gallery" id="gallery">
-    <figure class="shot shot-film">
-      <div class="shot-media media-slot">
-        <video class="shot-video" width="1280" height="714" controls preload="none" playsinline
-               poster="assets/media/intro-poster.jpg"
-               aria-label="In-game cinematic from A Gift for the Unfinished Journey, 18 seconds, with sound">
-          <source src="assets/media/intro.webm" type="video/webm">
-          <source src="assets/media/intro.mp4" type="video/mp4">
-        </video>
-      </div>
-      <figcaption class="shot-label">In-game cinematic</figcaption>
-    </figure>
-    <button type="button" class="shot" data-caption="In-engine shot from A Gift for the Unfinished Journey">
+    <button type="button" class="shot shot-lead" data-caption="In-engine shot from A Gift for the Unfinished Journey">
       <span class="shot-media media-slot"><img src="assets/media/showcase-world-1.jpg" width="1920" height="1080" loading="lazy" decoding="async" alt="In-engine shot from A Gift for the Unfinished Journey"></span>
     </button>
     <button type="button" class="shot" data-caption="In-engine shot from A Gift for the Unfinished Journey">
@@ -290,10 +274,10 @@
       <span class="shot-media media-slot"><img src="assets/media/showcase-material.jpg" width="1920" height="1080" loading="lazy" decoding="async" alt="Post-process material graph with a custom HLSL node, scripted through Hayba's Python bridge"></span>
       <span class="shot-label">Material graph</span>
     </button>
-    <button type="button" class="shot shot-wide" data-caption="In-engine shot from A Gift for the Unfinished Journey">
+    <button type="button" class="shot" data-caption="In-engine shot from A Gift for the Unfinished Journey">
       <span class="shot-media media-slot"><img src="assets/media/showcase-world-3.jpg" width="1920" height="1080" loading="lazy" decoding="async" alt="In-engine shot from A Gift for the Unfinished Journey"></span>
     </button>
-    <button type="button" class="shot shot-wide" data-caption="The game's settings menu, built as a UMG widget by an agent through Hayba">
+    <button type="button" class="shot" data-caption="The game's settings menu, built as a UMG widget by an agent through Hayba">
       <span class="shot-media media-slot"><img src="assets/media/showcase-ui-settings.jpg" width="1920" height="1080" loading="lazy" decoding="async" alt="The game's settings menu, a UMG widget built by an agent through Hayba"></span>
       <span class="shot-label">UMG widget</span>
     </button>
@@ -313,7 +297,6 @@
 <section class="band" id="pricing" aria-labelledby="pricing-title">
   <div class="feature-row">
     <div class="feature-row-text">
-      <div class="feature-eyebrow">Pricing</div>
       <h2 id="pricing-title">Free to build with.<br>Pro when you want more.</h2>
     </div>
     <div class="feature-row-body">
@@ -330,7 +313,7 @@
         <li>In-editor chat with your own key, or a local model</li>
         <li>Fab tools</li>
       </ul>
-      <a href="#install" class="btn btn-ghost plan-cta">Get Hayba</a>
+      <a href="#install" class="btn plan-cta">Get Hayba</a>
     </article>
 
     <article class="plan plan-pro" aria-labelledby="plan-pro">
@@ -361,7 +344,7 @@
           <input class="waitlist-input" id="waitlistEmail" name="email" type="email" inputmode="email"
                  autocomplete="email" spellcheck="false" maxlength="254" required
                  placeholder="you@studio.com" aria-describedby="waitlistStatus">
-          <button class="btn btn-primary waitlist-btn" type="submit">Join waitlist</button>
+          <button class="btn waitlist-btn" type="submit">Join waitlist</button>
         </div>
         <p class="waitlist-status" id="waitlistStatus" role="status" aria-live="polite"></p>
       </form>
@@ -380,7 +363,6 @@
 <section class="band" id="install" aria-labelledby="install-title">
   <div class="feature-row">
     <div class="feature-row-text">
-      <div class="feature-eyebrow">Install · Windows</div>
       <h2 id="install-title">Get Hayba, free.</h2>
     </div>
     <div class="feature-row-body">
@@ -424,7 +406,6 @@ npm --prefix mcp-tools/hayba-mcp run build</code></pre>
 <!-- ═══════════════════════════════ FAQ ═══════════════════════════════ -->
 <section class="feature-row faq-row" id="faq">
   <div class="feature-row-text">
-    <div class="feature-eyebrow">FAQ</div>
     <h2>Common questions.</h2>
   </div>
   <div class="feature-row-body">
@@ -461,7 +442,7 @@ npm --prefix mcp-tools/hayba-mcp run build</code></pre>
 <!-- ═══════════════════════════════ JUMP-TO ═══════════════════════════════ -->
 <div class="jump-to">
   <span class="jump-to-label">Or jump to:</span>
-  <a href="#demo" class="subnav-link">Demo</a>
+  <a href="#demo" class="subnav-link" data-requires="demo-video" hidden>Demo</a>
   <a href="#capabilities" class="subnav-link">Toolkit</a>
   <a href="#showcase" class="subnav-link">Showcase</a>
   <a href="#pricing" class="subnav-link">Pricing</a>

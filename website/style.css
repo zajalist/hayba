@@ -853,7 +853,7 @@ body {
 .hero-link::after {
   content: '';
   position: absolute;
-  left: 2px; right: 28px; bottom: 2px;
+  left: 2px; right: 2px; bottom: 2px;
   height: 1px;
   background: currentColor;
   opacity: 0.3;
@@ -861,13 +861,7 @@ body {
   transition: opacity 0.2s, right 0.25s var(--ease-out);
 }
 .hero-link:hover { color: var(--accent); letter-spacing: 0.06em; }
-.hero-link:hover::after { opacity: 1; right: 24px; }
-.hero-link-arrow {
-  display: inline-block;
-  transition: transform 0.25s var(--ease-out);
-  font-weight: 300;
-}
-.hero-link:hover .hero-link-arrow { transform: translateX(4px); }
+.hero-link:hover::after { opacity: 1; }
 
 .hero-content h1 {
   font-size: clamp(2rem, 3.6vw, 2.6rem);
@@ -998,12 +992,6 @@ body {
   background: var(--bg-base);
 }
 .feature-row-text { text-align: right; }
-.feature-eyebrow {
-  font-size: 11px; font-weight: 600;
-  letter-spacing: 0.18em; text-transform: uppercase;
-  color: var(--accent-text);
-  margin-bottom: 18px;
-}
 .feature-row h2 {
   font-size: clamp(1.8rem, 3.2vw, 2.4rem);
   font-weight: 600;
@@ -1279,31 +1267,27 @@ main video:focus-visible,
 main a:not(.btn):focus-visible,
 main summary:focus-visible { border-radius: 2px; }
 
-/* ── Buttons ── */
+/* ── Buttons: the hero link's voice in a dark translucent box with an ochre
+   hairline. Light text holds well over 7:1 on the fill at rest and on hover. ── */
 .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 8px;
   min-height: 42px; padding: 0 20px;
-  font: 600 13.5px/1 var(--font-ui);
-  letter-spacing: 0.02em;
+  font: 500 14px/1 var(--font-ui);
+  letter-spacing: 0.04em;
+  color: var(--text-primary);
   text-decoration: none; white-space: nowrap;
-  border: 1px solid transparent; border-radius: 3px;
+  background: rgba(20, 22, 27, 0.66);
+  border: 1px solid var(--accent);
+  border-radius: 3px;
   cursor: pointer;
-  transition: background-color 0.18s, border-color 0.18s, color 0.18s, transform 0.18s var(--ease-out);
+  transition: background-color 0.2s, border-color 0.2s, transform 0.18s var(--ease-out);
+}
+.btn:hover,
+.btn:focus-visible {
+  background: rgba(181, 106, 29, 0.2);
+  border-color: var(--accent-text);
 }
 .btn:active { transform: translateY(1px); }
-/* Near-black on ochre: 4.6:1 at rest, 5.7:1 on the lifted hover. */
-.btn-primary {
-  background: var(--accent);
-  color: #0e1014;
-  box-shadow: 0 10px 24px -12px rgba(0, 0, 0, 0.7);
-}
-.btn-primary:hover { background: var(--accent-text); }
-.btn-ghost {
-  background: transparent;
-  color: var(--text-primary);
-  border-color: var(--border-soft);
-}
-.btn-ghost:hover { border-color: var(--accent-glow); background: var(--accent-dim); }
 .btn:disabled { cursor: progress; opacity: 0.72; transform: none; }
 
 .hero-cta { align-items: center; flex-wrap: wrap; gap: 14px 30px; }
@@ -1374,23 +1358,6 @@ main summary:focus-visible { border-radius: 2px; }
   object-fit: cover;
   background: transparent;
 }
-.demo-play {
-  position: absolute; left: 50%; top: 50%;
-  transform: translate(-50%, -50%);
-  display: inline-flex; align-items: center; gap: 10px;
-  min-height: 44px;
-  padding: 0 20px 0 16px;
-  font: 600 13px var(--font-ui);
-  letter-spacing: 0.02em;
-  color: var(--text-primary);
-  background: rgba(14, 16, 20, 0.86);
-  border: 1px solid var(--accent-glow);
-  border-radius: 999px;
-  cursor: pointer;
-  transition: border-color 0.18s, background-color 0.18s;
-}
-.demo-play:hover { border-color: var(--accent); background: rgba(14, 16, 20, 0.95); }
-.demo-play .icon { color: var(--accent-text); }
 .demo-caption {
   margin-top: 18px;
   font-size: 13px;
@@ -1405,14 +1372,26 @@ main summary:focus-visible { border-radius: 2px; }
   isolation: isolate;
   view-timeline-name: --capgraph;
 }
+@media (min-width: 821px) {
+  .cap-head { padding-top: 200px; padding-bottom: 110px; }
+}
 .cap-graph {
-  position: absolute; inset: 60px 0 0;
-  width: 100%; height: calc(100% - 60px);
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
   z-index: -1;
   pointer-events: none;
-  /* Faint behind the heading and copy, full strength around them. */
-  -webkit-mask-image: radial-gradient(ellipse 46% 62% at 50% 52%, rgba(0,0,0,0.12) 45%, #000 100%);
-  mask-image: radial-gradient(ellipse 46% 62% at 50% 52%, rgba(0,0,0,0.12) 45%, #000 100%);
+  /* Three masks, intersected: fade in from the top, out at the bottom and the
+     sides, and stay faint behind the heading and copy. */
+  -webkit-mask-image:
+    linear-gradient(180deg, transparent 4%, #000 30%, #000 70%, transparent 96%),
+    linear-gradient(90deg, transparent, #000 12%, #000 88%, transparent),
+    radial-gradient(ellipse 42% 34% at 50% 58%, rgba(0,0,0,0.14) 50%, #000 100%);
+  -webkit-mask-composite: source-in, source-in;
+  mask-image:
+    linear-gradient(180deg, transparent 4%, #000 30%, #000 70%, transparent 96%),
+    linear-gradient(90deg, transparent, #000 12%, #000 88%, transparent),
+    radial-gradient(ellipse 42% 34% at 50% 58%, rgba(0,0,0,0.14) 50%, #000 100%);
+  mask-composite: intersect;
 }
 .cap-graph rect { fill: rgba(255, 255, 255, 0.02); stroke: rgba(255, 255, 255, 0.09); }
 .cap-graph .cap-node-head { fill: rgba(181, 106, 29, 0.14); }
@@ -1539,7 +1518,7 @@ main summary:focus-visible { border-radius: 2px; }
   margin: 56px auto 0;
   padding: 0 48px;
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
 }
 .shot {
@@ -1557,11 +1536,9 @@ main summary:focus-visible { border-radius: 2px; }
   transition: border-color 0.2s;
 }
 .shot:hover { border-color: var(--accent-glow); }
-.shot-film { grid-column: span 2; grid-row: span 2; aspect-ratio: auto; cursor: auto; }
-.shot-wide { grid-column: span 2; }
+.shot-lead { grid-column: span 2; grid-row: span 2; aspect-ratio: auto; }
 .shot-media { position: absolute; inset: 0; display: block; overflow: hidden; }
-.shot img,
-.shot-video { display: block; width: 100%; height: 100%; object-fit: cover; }
+.shot img { display: block; width: 100%; height: 100%; object-fit: cover; }
 .shot img { transition: transform 0.6s var(--ease-out); }
 .shot-label {
   position: absolute; left: 10px; bottom: 10px;
@@ -1573,7 +1550,6 @@ main summary:focus-visible { border-radius: 2px; }
   border-radius: 3px;
   pointer-events: none;
 }
-.shot-film .shot-label { top: 10px; bottom: auto; }
 /* Hover parallax: gallery.js sets --mx/--my in [-0.5, 0.5] from the cursor. */
 @media (hover: hover) and (pointer: fine) and (prefers-reduced-motion: no-preference) {
   .shot img {
@@ -1860,8 +1836,8 @@ main summary:focus-visible { border-radius: 2px; }
   }
 }
 @keyframes demo-settle {
-  from { transform: perspective(1800px) rotateX(20deg) translateY(48px) scale(0.93); opacity: 0.45; }
-  to   { transform: none; opacity: 1; }
+  from { transform: perspective(1800px) rotateX(20deg) translateY(48px) scale(0.93); }
+  to   { transform: none; }
 }
 @keyframes wire-draw { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
 @keyframes fade-in   { from { opacity: 0; } to { opacity: 1; } }
@@ -1885,7 +1861,8 @@ main summary:focus-visible { border-radius: 2px; }
   .safety-item { grid-template-columns: minmax(0, 1fr); gap: 6px; padding: 18px 0 20px; }
   .safety-item dt { text-align: left; }
   .gallery { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 40px; }
-  .shot-film { grid-row: auto; aspect-ratio: 16 / 9; }
+  .shot-lead { grid-row: auto; aspect-ratio: 16 / 9; }
+  .gallery > .shot:last-child { grid-column: span 2; }
   .plans { grid-template-columns: minmax(0, 1fr); gap: 12px; margin-top: 44px; }
   .plan,
   .plan:first-child,
@@ -1896,7 +1873,6 @@ main summary:focus-visible { border-radius: 2px; }
 @media (max-width: 560px) {
   .cap-list { grid-template-columns: minmax(0, 1fr); }
   .shot-label { left: 6px; bottom: 6px; }
-  .shot-film .shot-label { top: 6px; }
   .waitlist-row { flex-direction: column; }
   .lightbox { padding: 64px 12px 24px; }
   .lightbox-prev, .lightbox-next { top: auto; bottom: 16px; transform: none; }
