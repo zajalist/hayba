@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FAQ | Hayba docs</title>
+<meta name="description" content="Short answers about platforms, engine versions, clients, models, privacy, cost and safety.">
+<link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/docs/docs.css">
+<link rel="icon" type="image/svg+xml" href="/assets/Logo.svg">
+</head>
+<body class="page-docs">
+<a class="docs-skip" href="#main">Skip to content</a>
+<aside class="docs-sidebar">
+  <a href="/" class="brand-link brand-link-compact">
+    <img src="/assets/Logo-white.svg" alt="" class="brand-mark">
+    <span>Hayba</span>
+  </a>
+  <!-- docs-nav:start -->
+  <details class="docs-menu" open>
+  <summary class="docs-menu-toggle">Documentation menu</summary>
+  <nav class="docs-toc docs-nav" aria-label="Documentation">
+    <div class="docs-toc-group">
+      <p class="docs-toc-title">Start here</p>
+      <a href="/docs/" class="docs-toc-link docs-nav-page">Overview</a>
+      <a href="/docs/getting-started/" class="docs-toc-link docs-nav-page">Getting started</a>
+    </div>
+    <div class="docs-toc-group">
+      <p class="docs-toc-title">Concepts</p>
+      <a href="/docs/concepts/" class="docs-toc-link docs-nav-page">How Hayba works</a>
+      <a href="/docs/concepts/code-mode/" class="docs-toc-link docs-nav-page">Code Mode and tool search</a>
+      <a href="/docs/concepts/plan-mode/" class="docs-toc-link docs-nav-page">Plan Mode, approvals and undo</a>
+      <a href="/docs/concepts/chat/" class="docs-toc-link docs-nav-page">In-editor chat</a>
+      <a href="/docs/concepts/safety/" class="docs-toc-link docs-nav-page">Safety model</a>
+    </div>
+    <div class="docs-toc-group">
+      <p class="docs-toc-title">Guides</p>
+      <a href="/docs/guides/blueprint/" class="docs-toc-link docs-nav-page">Author a Blueprint</a>
+      <a href="/docs/guides/umg-widget/" class="docs-toc-link docs-nav-page">Build and render a UMG widget</a>
+      <a href="/docs/guides/material/" class="docs-toc-link docs-nav-page">Create and validate a material</a>
+      <a href="/docs/guides/actors-viewport/" class="docs-toc-link docs-nav-page">Place actors and capture the viewport</a>
+      <a href="/docs/guides/pie-test/" class="docs-toc-link docs-nav-page">Run a PIE test</a>
+      <a href="/docs/guides/pcg/" class="docs-toc-link docs-nav-page">PCG basics</a>
+    </div>
+    <div class="docs-toc-group">
+      <p class="docs-toc-title">Reference</p>
+      <a href="/docs/tools/" class="docs-toc-link docs-nav-page">Tool reference</a>
+      <a href="/docs/troubleshooting/" class="docs-toc-link docs-nav-page">Troubleshooting</a>
+      <a href="/docs/faq/" aria-current="page" class="docs-toc-link docs-nav-page is-current">FAQ</a>
+    </div>
+  </nav>
+  </details>
+  <!-- docs-nav:end -->
+</aside>
+
+<main class="docs-main" id="main">
+<h1>FAQ</h1>
+<p class="docs-lead">Short answers. Each links to the page with the detail.</p>
+
+<div class="docs-qa">
+  <h3 id="platforms">Does Hayba run on macOS or Linux?</h3>
+  <p>No. Hayba is Windows only. The plugin uses Windows APIs, for example to encrypt chat keys.</p>
+</div>
+
+<div class="docs-qa">
+  <h3 id="engine">Which Unreal Engine versions are supported?</h3>
+  <p>
+    Unreal Engine 5.7+. The plugin does not pin an engine version, but it has to be compiled for
+    the version that opens your project. See <a href="/docs/troubleshooting/#plugin-load">Plugin
+    does not load</a>.
+  </p>
+</div>
+
+<div class="docs-qa">
+  <h3 id="installer">Is there an installer or a Fab listing?</h3>
+  <p>
+    Not yet. You build Hayba from source, as described in
+    <a href="/docs/getting-started/">Getting started</a>.
+  </p>
+</div>
+
+<div class="docs-qa">
+  <h3 id="clients">Which AI clients work with it?</h3>
+  <p>
+    Any client that runs MCP servers over stdio. <a href="/docs/getting-started/#register">Getting
+    started</a> has configs for Claude Code, Claude Desktop, Cursor and VS Code. You can also use
+    the <a href="/docs/concepts/chat/">in-editor chat</a> without an external client.
+  </p>
+</div>
+
+<div class="docs-qa">
+  <h3 id="cost">What does it cost?</h3>
+  <p>
+    Hayba is open source under the MIT license. You pay your model provider for any hosted model
+    you use, through your client or your own API key. Local models through Ollama or LM Studio
+    cost nothing to run beyond your hardware.
+  </p>
+</div>
+
+<div class="docs-qa">
+  <h3 id="privacy">Does my project leave my machine?</h3>
+  <p>
+    The server and plugin run locally and listen only on <code>127.0.0.1</code>. What the agent
+    reads from the editor is sent to whichever model you use, as part of the conversation. With a
+    local model, it stays on your machine. Tools that search or download from Poly Haven,
+    ambientCG or Sketchfab contact those sites when the agent calls them.
+  </p>
+</div>
+
+<div class="docs-qa">
+  <h3 id="seven-tools">Why does my client show only 7 Hayba tools?</h3>
+  <p>
+    That is by design. The agent searches for the other 450 or so tools and calls them through
+    <code>hayba_invoke</code>, which keeps its context free for your task. See
+    <a href="/docs/concepts/code-mode/">Code Mode and tool search</a>.
+  </p>
+</div>
+
+<div class="docs-qa">
+  <h3 id="refused">Why are my agent's edits refused?</h3>
+  <p>
+    Most often Plan Mode. With <strong>Review each external edit</strong> on, the default, only
+    edits to an existing actor can be approved, and everything else that writes is refused with
+    <code>exact_approval_unavailable</code>. Turn it off in a scratch project for creation work.
+    See <a href="/docs/concepts/plan-mode/">Plan Mode, approvals and undo</a> and the
+    <a href="/docs/troubleshooting/#refusals">refusal codes</a>.
+  </p>
+</div>
+
+<div class="docs-qa">
+  <h3 id="undo">Can I undo what the agent did?</h3>
+  <p>
+    Mostly. Each editing command is one entry in Unreal's undo history. Saves, asset deletes,
+    work done during Play and most Python changes cannot be undone. See
+    <a href="/docs/concepts/plan-mode/#undo">Undo</a>. Keep your project under source control.
+  </p>
+</div>
+
+<div class="docs-qa">
+  <h3 id="main-project">Is it safe to point at my main project?</h3>
+  <p>
+    Start with a scratch project. When you move to a real one, use source control, keep Plan Mode
+    on for anything you do not want changed without review, and read the
+    <a href="/docs/concepts/safety/">safety model</a> for what is and is not checked.
+  </p>
+</div>
+
+<div class="docs-qa">
+  <h3 id="multi-agent">Can several agents work in one editor?</h3>
+  <p>
+    Yes. Each agent runs its own server and connects to the same editor. Leases stop them from
+    writing over each other. This is part of the 0.4.0 release candidate in the current source.
+    See <a href="/docs/concepts/safety/#leases">Leases</a>.
+  </p>
+</div>
+
+<div class="docs-qa">
+  <h3 id="python">Can the agent run any Python it likes?</h3>
+  <p>
+    It can run editor Python with <code>python_run</code>, which is useful for anything no typed
+    tool covers. Scripts that touch host files, processes or the network are refused, and each
+    script has a short deadline. Python changes are hard to undo. See
+    <a href="/docs/concepts/safety/#python">Python</a>.
+  </p>
+</div>
+
+<div class="docs-qa">
+  <h3 id="cpp">Can the agent write C++ for my project?</h3>
+  <p>
+    Your client's own file tools can, if it has them. Hayba can trigger a Live Coding compile with
+    <code>editor_live_compile</code>, but Live Coding cannot safely apply class layout changes. See
+    <a href="/docs/troubleshooting/#live-coding">Live Coding and class layout</a>.
+  </p>
+</div>
+
+<div class="docs-qa">
+  <h3 id="bug">Where do I report a bug?</h3>
+  <p>
+    Open an issue on <a href="https://github.com/zajalist/hayba/issues" target="_blank" rel="noopener">GitHub</a>
+    with your engine version, the tool call, its reply, and the <a href="/docs/troubleshooting/#logs">logs</a>.
+    Report security problems privately, as described in the repository's security policy.
+  </p>
+</div>
+
+  <nav class="docs-pager" aria-label="Next and previous pages">
+    <a href="/docs/troubleshooting/" class="docs-pager-prev"><span>Previous</span>Troubleshooting</a>
+  </nav>
+</main>
+
+<script type="module" src="/docs/docs.js"></script>
+</body>
+</html>

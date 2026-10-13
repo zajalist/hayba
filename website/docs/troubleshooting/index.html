@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Troubleshooting | Hayba docs</title>
+<meta name="description" content="Fixes for connection, port, plugin build, Node.js, stale build, Live Coding and timeout problems, and where the logs are.">
+<link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/docs/docs.css">
+<link rel="icon" type="image/svg+xml" href="/assets/Logo.svg">
+</head>
+<body class="page-docs">
+<a class="docs-skip" href="#main">Skip to content</a>
+<aside class="docs-sidebar">
+  <a href="/" class="brand-link brand-link-compact">
+    <img src="/assets/Logo-white.svg" alt="" class="brand-mark">
+    <span>Hayba</span>
+  </a>
+  <!-- docs-nav:start -->
+  <details class="docs-menu" open>
+  <summary class="docs-menu-toggle">Documentation menu</summary>
+  <nav class="docs-toc docs-nav" aria-label="Documentation">
+    <div class="docs-toc-group">
+      <p class="docs-toc-title">Start here</p>
+      <a href="/docs/" class="docs-toc-link docs-nav-page">Overview</a>
+      <a href="/docs/getting-started/" class="docs-toc-link docs-nav-page">Getting started</a>
+    </div>
+    <div class="docs-toc-group">
+      <p class="docs-toc-title">Concepts</p>
+      <a href="/docs/concepts/" class="docs-toc-link docs-nav-page">How Hayba works</a>
+      <a href="/docs/concepts/code-mode/" class="docs-toc-link docs-nav-page">Code Mode and tool search</a>
+      <a href="/docs/concepts/plan-mode/" class="docs-toc-link docs-nav-page">Plan Mode, approvals and undo</a>
+      <a href="/docs/concepts/chat/" class="docs-toc-link docs-nav-page">In-editor chat</a>
+      <a href="/docs/concepts/safety/" class="docs-toc-link docs-nav-page">Safety model</a>
+    </div>
+    <div class="docs-toc-group">
+      <p class="docs-toc-title">Guides</p>
+      <a href="/docs/guides/blueprint/" class="docs-toc-link docs-nav-page">Author a Blueprint</a>
+      <a href="/docs/guides/umg-widget/" class="docs-toc-link docs-nav-page">Build and render a UMG widget</a>
+      <a href="/docs/guides/material/" class="docs-toc-link docs-nav-page">Create and validate a material</a>
+      <a href="/docs/guides/actors-viewport/" class="docs-toc-link docs-nav-page">Place actors and capture the viewport</a>
+      <a href="/docs/guides/pie-test/" class="docs-toc-link docs-nav-page">Run a PIE test</a>
+      <a href="/docs/guides/pcg/" class="docs-toc-link docs-nav-page">PCG basics</a>
+    </div>
+    <div class="docs-toc-group">
+      <p class="docs-toc-title">Reference</p>
+      <a href="/docs/tools/" class="docs-toc-link docs-nav-page">Tool reference</a>
+      <a href="/docs/troubleshooting/" aria-current="page" class="docs-toc-link docs-nav-page is-current">Troubleshooting</a>
+        <div class="docs-toc-sub">
+          <a href="#ports" class="docs-toc-link">Ports 52342 to 52350</a>
+          <a href="#plugin-load" class="docs-toc-link">Plugin does not load</a>
+          <a href="#node" class="docs-toc-link">Node.js not found</a>
+          <a href="#stale" class="docs-toc-link">Stale build after an update</a>
+          <a href="#live-coding" class="docs-toc-link">Live Coding and class layout</a>
+          <a href="#busy" class="docs-toc-link">Editor busy or timeouts</a>
+          <a href="#refusals" class="docs-toc-link">Refused commands</a>
+          <a href="#logs" class="docs-toc-link">Logs</a>
+        </div>
+      <a href="/docs/faq/" class="docs-toc-link docs-nav-page">FAQ</a>
+    </div>
+  </nav>
+  </details>
+  <!-- docs-nav:end -->
+</aside>
+
+<main class="docs-main" id="main">
+<h1>Troubleshooting</h1>
+<p class="docs-lead">
+  Each section starts with the symptom, then the cause and the fix. When none of these match,
+  check the <a href="#logs">logs</a> and open an issue on
+  <a href="https://github.com/zajalist/hayba/issues" target="_blank" rel="noopener">GitHub</a>.
+</p>
+
+<section class="docs-section">
+  <h2 id="ports">Ports 52342 to 52350</h2>
+  <p><strong>Symptom:</strong> <code>hayba_check_ue_status</code> says the editor is not connected, or the agent edits a different editor than the one you are watching.</p>
+  <p>
+    The plugin listens on port 52342. If that port is taken, usually by a second editor, it tries
+    52343, 52344 and so on up to 52350, and writes the port it chose to
+    <code>&lt;YourProject&gt;/<wbr>Saved/<wbr>HaybaMCP/<wbr>instances/<wbr>&lt;pid&gt;.json</code>.
+    The server finds that file by searching upward from its own working directory. If it finds
+    none, it uses 52342.
+  </p>
+  <ol>
+    <li>Check the editor's Output Log for <code>LogHaybaMCP: TCP server started on port</code>. If it says <code>no free port in 52342-52350</code>, close other editors or whatever holds those ports.</li>
+    <li>Start your MCP client from the project folder, so the server can find the instance file.</li>
+    <li>Or pin the port in your client config with the <code>UE_TCP_PORT</code> environment variable:</li>
+  </ol>
+  <div class="docs-cmd" data-copy-name="port override">
+    <div class="docs-cmd-bar"><span class="docs-cmd-label docs-cmd-file">claude_desktop_config.json</span></div>
+    <pre><code>{
+  "mcpServers": {
+    "hayba-toolkit": {
+      "command": "node",
+      "args": ["C:\\dev\\hayba\\mcp-tools\\hayba-mcp\\dist\\index.js"],
+      "env": { "UE_TCP_PORT": "52343" }
+    }
+  }
+}</code></pre>
+  </div>
+  <p>
+    The server reconnects if the editor restarts, and looks up the port again each time. The
+    plugin accepts up to 16 client connections at once.
+  </p>
+</section>
+
+<section class="docs-section">
+  <h2 id="plugin-load">Plugin does not load</h2>
+  <p><strong>Symptom:</strong> Unreal says the HaybaMCPToolkit module is missing or was built with a different engine version, or the Hayba tab is not in the Tools menu.</p>
+  <p>
+    Hayba ships as C++ source. Its binaries must be compiled for the exact engine version that
+    opens the project. Binaries built for Unreal Engine 5.8 do not load in 5.7, and the other way
+    round. The plugin descriptor does not pin an engine version, so it is the build, not the
+    descriptor, that has to match.
+  </p>
+  <ol>
+    <li>Close the editor.</li>
+    <li>Right-click the <code>.uproject</code> file, choose <strong>Switch Unreal Engine version</strong> if needed, then <strong>Generate Visual Studio project files</strong>.</li>
+    <li>Build the <strong>Development Editor</strong> configuration in Visual Studio and read the first error in the build output if it fails.</li>
+  </ol>
+  <p>
+    Most development and testing happens on 5.8. If the plugin fails to compile on 5.7, open an
+    issue with the first compiler error and your exact engine version.
+  </p>
+  <p>Other causes:</p>
+  <ul>
+    <li><strong>The link is broken.</strong> If you moved your clone, <code>Plugins\HaybaMCPToolkit</code> points nowhere. Delete the link and run <code>mklink /D</code> again.</li>
+    <li><strong>A dependency plugin is disabled.</strong> The toolkit needs PCG, Python Editor Script Plugin, Web Browser Widget, Data Validation and Enhanced Input. Enable them under <strong>Edit</strong>, <strong>Plugins</strong>.</li>
+    <li><strong>A satellite plugin reports unknown commands.</strong> GAS commands need both <code>HaybaMCPGAS</code> and the engine's GameplayAbilities plugin.</li>
+  </ul>
+</section>
+
+<section class="docs-section">
+  <h2 id="node">Node.js not found</h2>
+  <p><strong>Symptom:</strong> your MCP client cannot start the server, or the in-editor chat cannot send and the Output Log shows <code>Node.js not found.</code></p>
+  <ul>
+    <li>
+      <strong>Your MCP client</strong> runs <code>node</code> from your <code>PATH</code>. Run
+      <code>node --version</code> in a new terminal; it must print 22.5 or newer. If your client
+      does not see your <code>PATH</code>, put the full path to <code>node.exe</code> in
+      <code>command</code>.
+    </li>
+    <li>
+      <strong>The editor plugin</strong> does not search <code>PATH</code>. It looks for
+      <code>C:\Program Files\nodejs\node.exe</code> and
+      <code>C:\Program Files (x86)\nodejs\node.exe</code>. Version managers install elsewhere.
+      Install Node.js with the official installer in its default folder, then restart the editor.
+    </li>
+    <li>
+      <strong>Server crashes at startup</strong> with a native or <code>sqlite</code> error: your
+      Node.js is older than 22.5. Upgrade it.
+    </li>
+    <li>
+      <code>MCP server not found at:</code> means the plugin cannot find
+      <code>dist/index.js</code>. Build the server, or set <code>SidecarEntryPath</code> as shown in
+      <a href="/docs/getting-started/#install">Getting started</a>.
+    </li>
+  </ul>
+</section>
+
+<section class="docs-section">
+  <h2 id="stale">Stale build after an update</h2>
+  <p><strong>Symptom:</strong> after <code>git pull</code>, tools are missing, behave as before, or a tool the docs describe returns <code>unknown_tool</code>.</p>
+  <p>
+    Your client runs the compiled server in <code>dist/</code>, not the TypeScript source. Pulling
+    new source changes nothing until you rebuild:
+  </p>
+  <div class="docs-cmd" data-copy-name="rebuild commands">
+    <div class="docs-cmd-bar"><span class="docs-cmd-label">Terminal</span></div>
+    <pre><code>npm install
+npm --prefix mcp-tools/hayba-mcp run build:server</code></pre>
+  </div>
+  <ol>
+    <li>Restart the server in your client. In Claude Code, run <code>/mcp</code> and reconnect, or restart the session.</li>
+    <li>Restart the in-editor chat's server too. The plugin reuses whatever already listens on port 7821, so close the editor and end any leftover <code>node.exe</code> for Hayba before you reopen it.</li>
+    <li>If the plugin's C++ changed, close the editor and rebuild the project. A running editor keeps the old plugin loaded.</li>
+  </ol>
+  <p>
+    <code>hayba_check_ue_status</code> reports the plugin version, and the server prints its own
+    version when it starts. They should match.
+  </p>
+</section>
+
+<section class="docs-section">
+  <h2 id="live-coding">Live Coding and class layout</h2>
+  <p><strong>Symptom:</strong> the editor crashes with an access violation soon after a Live Coding compile.</p>
+  <p>
+    Live Coding patches function bodies in a running editor. It cannot safely change a class's layout:
+    adding or removing members, changing a <code>UPROPERTY</code> or <code>UFUNCTION</code>, or
+    changing virtual functions. Patching such a change in leaves old objects with the old layout,
+    and the editor crashes when it touches them.
+  </p>
+  <ul>
+    <li>For changes inside function bodies, Live Coding is fine. An agent can trigger it with <a href="/docs/tools/#editor_live_compile"><code>editor_live_compile</code></a>.</li>
+    <li>For any change to a class declaration in a header, close the editor and do a full build.</li>
+    <li>Always rebuild with the editor closed after updating Hayba itself.</li>
+  </ul>
+  <p>
+    Live Coding errors are written to <code>%LOCALAPPDATA%\<wbr>UnrealBuildTool\<wbr>Log.txt</code>,
+    not to the editor's Output Log.
+  </p>
+</section>
+
+<section class="docs-section">
+  <h2 id="busy">Editor busy or timeouts</h2>
+  <p><strong>Symptom:</strong> calls fail with <code>Timeout waiting for response</code>, or everything slows to a crawl.</p>
+  <p>
+    All editor work runs on the game thread, a few commands per frame. Anything that holds the
+    game thread holds every command behind it. The server gives up on a reply after 30 seconds by
+    default. Common causes:
+  </p>
+  <ul>
+    <li><strong>A modal dialog is open</strong>, such as a save prompt, a compile error or a message box. Commands wait until someone closes it. Look at the editor.</li>
+    <li><strong>Shaders are compiling</strong> after a material change or a new map. Have the agent call <a href="/docs/tools/#wait_for_shaders"><code>wait_for_shaders</code></a> or <a href="/docs/tools/#wait_for_idle"><code>wait_for_idle</code></a> first.</li>
+    <li><strong>A long Python script</strong> holds the thread for its whole deadline: 5 seconds by default, up to 60 with an exclusive lease.</li>
+    <li><strong>A large cook or build</strong> started by <code>build_*</code> or <code>test_run</code>. These run as background jobs; poll <a href="/docs/tools/#build_status"><code>build_status</code></a> instead of waiting on the call.</li>
+    <li><strong>The editor window is minimised or in the background.</strong> Unreal throttles background editors, which slows every frame. Keep it visible during long runs.</li>
+  </ul>
+  <p>
+    <a href="/docs/tools/#editor_get_state"><code>editor_get_state</code></a> shows Live Coding,
+    shader and save activity, builds in progress and editor health in one call.
+  </p>
+</section>
+
+<section class="docs-section">
+  <h2 id="refusals">Refused commands</h2>
+  <p>A refused command did not run. The code says why.</p>
+  <div class="docs-table-wrap">
+    <table class="docs-table">
+      <thead><tr><th scope="col">Code</th><th scope="col">Meaning and fix</th></tr></thead>
+      <tbody>
+        <tr><td><code>plan_mode_required</code></td><td>Plan Mode is holding it. Approve the card in the toolkit's Agent view, then the agent retries. See <a href="/docs/concepts/plan-mode/">Plan Mode</a>.</td></tr>
+        <tr><td><code>exact_approval_unavailable</code></td><td>Plan Mode is on and this command cannot be approved on this version. Turn <strong>Review each external edit</strong> off for creation work.</td></tr>
+        <tr><td><code>pie_active</code></td><td>Play-In-Editor is running. Stop it, then retry.</td></tr>
+        <tr><td><code>pie_blocked</code></td><td>A loaded Blueprint would open a compile-error dialog. Fix and compile the Blueprints it names.</td></tr>
+        <tr><td><code>lease_conflict</code>, <code>owner_required</code></td><td>Another agent holds the resource, or several agents are connected and this one sent no name. See <a href="/docs/concepts/safety/#leases">Leases</a>.</td></tr>
+        <tr><td><code>asset_busy</code></td><td>Another agent is building that asset. Wait, or work on something else.</td></tr>
+        <tr><td><code>editor_unsafe_restart_required</code></td><td>A native fault was caught earlier. Save what you can and restart the editor.</td></tr>
+        <tr><td><code>package_read_only</code></td><td>The file is read-only, often because source control has not checked it out. Check it out and retry.</td></tr>
+        <tr><td><code>unknown_tool</code></td><td>No tool has that name. Check spelling with <code>hayba_search_tools</code>, or see <a href="#stale">Stale build</a>.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="docs-section">
+  <h2 id="logs">Logs</h2>
+  <div class="docs-table-wrap">
+    <table class="docs-table">
+      <thead><tr><th scope="col">What</th><th scope="col">Where</th></tr></thead>
+      <tbody>
+        <tr><td>Plugin messages</td><td>The editor's Output Log, category <code>LogHaybaMCP</code>. Also in <code>&lt;YourProject&gt;/<wbr>Saved/<wbr>Logs/<wbr>&lt;YourProject&gt;.log</code>.</td></tr>
+        <tr><td>Every command the plugin ran</td><td><code>&lt;YourProject&gt;/<wbr>Saved/<wbr>hayba-execution.log</code>, while the execution journal is on.</td></tr>
+        <tr><td>MCP server</td><td>Standard error, collected by your client. Claude Desktop writes it to <code>%APPDATA%\<wbr>Claude\<wbr>logs\<wbr>mcp-server-hayba-toolkit.log</code>. In Claude Code, run <code>claude --debug</code>. Cursor and VS Code show it in their MCP output panels.</td></tr>
+        <tr><td>Live Coding and builds</td><td><code>%LOCALAPPDATA%\<wbr>UnrealBuildTool\<wbr>Log.txt</code></td></tr>
+        <tr><td>Which editor is on which port</td><td><code>&lt;YourProject&gt;/<wbr>Saved/<wbr>HaybaMCP/<wbr>instances/</code></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>
+    The server and the plugin redact secrets, such as API keys and tokens, before they log tool
+    results. Check a log yourself before you share it.
+  </p>
+</section>
+
+  <nav class="docs-pager" aria-label="Next and previous pages">
+    <a href="/docs/tools/" class="docs-pager-prev"><span>Previous</span>Tool reference</a>
+    <a href="/docs/faq/" class="docs-pager-next"><span>Next</span>FAQ</a>
+  </nav>
+</main>
+
+<script type="module" src="/docs/docs.js"></script>
+</body>
+</html>
