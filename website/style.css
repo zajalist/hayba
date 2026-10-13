@@ -1003,16 +1003,6 @@ body {
 .feature-row-body { color: var(--text-secondary); font-size: 14px; line-height: 1.7; padding-top: 8px; }
 .feature-row-body p { margin: 0 0 14px; }
 .feature-row-body p + p { color: var(--text-quiet); }
-.feature-cta {
-  display: inline-block;
-  margin-top: 14px;
-  color: var(--accent-text);
-  font-size: 12px; font-weight: 600;
-  letter-spacing: 0.06em;
-  text-decoration: none;
-  transition: color 0.15s, letter-spacing 0.15s;
-}
-.feature-cta:hover { letter-spacing: 0.1em; }
 
 /* full-width background fills behind the constrained content */
 body { background: var(--bg-base); }

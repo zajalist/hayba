@@ -152,7 +152,6 @@
     <div class="feature-row-body">
       <p class="cap-lead"><span class="cap-count" data-count-to="400" aria-hidden="true">400</span><span class="sr-only">400</span>+ editor tools across 30+ domains.</p>
       <p>The server starts with 7 tools; the agent searches for the rest and calls them on demand, so its context stays small until it needs a tool.</p>
-      <a href="/docs/" class="feature-cta">Docs</a>
     </div>
   </div>
 
@@ -255,7 +254,7 @@
     <div class="feature-row-body">
       <p><a class="text-link" href="https://zajalist.itch.io/a-gift-for-the-unfinished-journey" target="_blank" rel="noopener">A Gift for the Unfinished Journey</a> is a free Windows game on itch.io.</p>
       <p>Its gameplay Blueprints and UI widgets were built by an AI agent through Hayba. Some materials were scripted through Hayba's Python bridge.</p>
-      <a href="https://zajalist.itch.io/a-gift-for-the-unfinished-journey" target="_blank" rel="noopener" class="feature-cta">Play it free on itch.io</a>
+      <a href="https://zajalist.itch.io/a-gift-for-the-unfinished-journey" target="_blank" rel="noopener" class="btn">Play it free on itch.io</a>
     </div>
   </div>
 
@@ -371,36 +370,23 @@
     </div>
   </div>
 
-  <ol class="docs-steps install-steps" role="list">
-    <li>
-      <h3 class="docs-step-title">Build the MCP server</h3>
-      <p>Clone the repo, install its dependencies and build the server:</p>
-      <div class="docs-cmd" data-copy-name="build commands">
-        <div class="docs-cmd-bar"><span class="docs-cmd-label">Terminal</span></div>
-        <pre><code>git clone https://github.com/zajalist/hayba.git
+  <div class="install-steps">
+    <div class="docs-cmd" data-copy-name="install commands">
+      <div class="docs-cmd-bar"><span class="docs-cmd-label">PowerShell</span></div>
+      <pre><code># Build the MCP server
+git clone https://github.com/zajalist/hayba.git
 cd hayba
 npm install
-npm --prefix mcp-tools/hayba-mcp run build</code></pre>
-      </div>
-    </li>
-    <li>
-      <h3 class="docs-step-title">Add the plugin to your project</h3>
-      <p>From an administrator Command Prompt (or with Windows Developer Mode on), link the plugin into your project's <code>Plugins</code> folder, then regenerate project files and compile:</p>
-      <div class="docs-cmd" data-copy-name="plugin link command">
-        <div class="docs-cmd-bar"><span class="docs-cmd-label">Command Prompt</span></div>
-        <pre><code>mklink /D "&lt;YourProject&gt;\Plugins\HaybaMCPToolkit" "&lt;repo&gt;\unreal\HaybaMCPToolkit"</code></pre>
-      </div>
-    </li>
-    <li>
-      <h3 class="docs-step-title">Register the server with your agent host</h3>
-      <p>For Claude Code:</p>
-      <div class="docs-cmd" data-copy-name="Claude Code command">
-        <div class="docs-cmd-bar"><span class="docs-cmd-label">Terminal</span></div>
-        <pre><code>claude mcp add hayba-toolkit -- node /path/to/hayba/mcp-tools/hayba-mcp/dist/index.js</code></pre>
-      </div>
-      <p>The <a class="text-link" href="/docs/#install">install guide</a> covers copying the plugin instead of linking it, and the Claude Desktop config.</p>
-    </li>
-  </ol>
+npm --prefix mcp-tools/hayba-mcp run build
+
+# Link the plugin into your project (run as administrator, or turn on Developer Mode)
+cmd /c mklink /D "&lt;YourProject&gt;\Plugins\HaybaMCPToolkit" "$PWD\unreal\HaybaMCPToolkit"
+
+# Register the server with Claude Code
+claude mcp add hayba-toolkit -- node "$PWD\mcp-tools\hayba-mcp\dist\index.js"</code></pre>
+    </div>
+    <p>Then regenerate your project files and compile. The <a class="text-link" href="/docs/#install">install guide</a> covers copying the plugin instead of linking it, and Claude Desktop.</p>
+  </div>
 </section>
 
 <!-- ═══════════════════════════════ FAQ ═══════════════════════════════ -->
