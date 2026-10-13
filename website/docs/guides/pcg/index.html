@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PCG basics | Hayba docs</title>
+<meta name="description" content="Have an agent scatter meshes with PCG, then edit the graph node by node and read back instance counts.">
+<link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/docs/docs.css">
+<link rel="icon" type="image/svg+xml" href="/assets/Logo.svg">
+</head>
+<body class="page-docs">
+<a class="docs-skip" href="#main">Skip to content</a>
+<aside class="docs-sidebar">
+  <a href="/" class="brand-link brand-link-compact">
+    <img src="/assets/Logo-white.svg" alt="" class="brand-mark">
+    <span>Hayba</span>
+  </a>
+  <!-- docs-nav:start -->
+  <details class="docs-menu" open>
+  <summary class="docs-menu-toggle">Documentation menu</summary>
+  <nav class="docs-toc docs-nav" aria-label="Documentation">
+    <div class="docs-toc-group">
+      <p class="docs-toc-title">Start here</p>
+      <a href="/docs/" class="docs-toc-link docs-nav-page">Overview</a>
+      <a href="/docs/getting-started/" class="docs-toc-link docs-nav-page">Getting started</a>
+    </div>
+    <div class="docs-toc-group">
+      <p class="docs-toc-title">Concepts</p>
+      <a href="/docs/concepts/" class="docs-toc-link docs-nav-page">How Hayba works</a>
+      <a href="/docs/concepts/code-mode/" class="docs-toc-link docs-nav-page">Code Mode and tool search</a>
+      <a href="/docs/concepts/plan-mode/" class="docs-toc-link docs-nav-page">Plan Mode, approvals and undo</a>
+      <a href="/docs/concepts/chat/" class="docs-toc-link docs-nav-page">In-editor chat</a>
+      <a href="/docs/concepts/safety/" class="docs-toc-link docs-nav-page">Safety model</a>
+    </div>
+    <div class="docs-toc-group">
+      <p class="docs-toc-title">Guides</p>
+      <a href="/docs/guides/blueprint/" class="docs-toc-link docs-nav-page">Author a Blueprint</a>
+      <a href="/docs/guides/umg-widget/" class="docs-toc-link docs-nav-page">Build and render a UMG widget</a>
+      <a href="/docs/guides/material/" class="docs-toc-link docs-nav-page">Create and validate a material</a>
+      <a href="/docs/guides/actors-viewport/" class="docs-toc-link docs-nav-page">Place actors and capture the viewport</a>
+      <a href="/docs/guides/pie-test/" class="docs-toc-link docs-nav-page">Run a PIE test</a>
+      <a href="/docs/guides/pcg/" aria-current="page" class="docs-toc-link docs-nav-page is-current">PCG basics</a>
+        <div class="docs-toc-sub">
+          <a href="#before" class="docs-toc-link">Before you start</a>
+          <a href="#prompt" class="docs-toc-link">Prompt</a>
+          <a href="#steps" class="docs-toc-link">What the agent does</a>
+          <a href="#edit" class="docs-toc-link">Editing the graph</a>
+          <a href="#check" class="docs-toc-link">Check the result</a>
+        </div>
+    </div>
+    <div class="docs-toc-group">
+      <p class="docs-toc-title">Reference</p>
+      <a href="/docs/tools/" class="docs-toc-link docs-nav-page">Tool reference</a>
+      <a href="/docs/troubleshooting/" class="docs-toc-link docs-nav-page">Troubleshooting</a>
+      <a href="/docs/faq/" class="docs-toc-link docs-nav-page">FAQ</a>
+    </div>
+  </nav>
+  </details>
+  <!-- docs-nav:end -->
+</aside>
+
+<main class="docs-main" id="main">
+<h1>PCG basics</h1>
+<p class="docs-lead">
+  Have an agent scatter meshes across a landscape with Unreal's Procedural Content Generation
+  framework, read back how many instances it placed, then edit the graph node by node.
+</p>
+
+<section class="docs-section">
+  <h2 id="before">Before you start</h2>
+  <ul>
+    <li>Hayba is installed and your agent is connected. See <a href="/docs/getting-started/">Getting started</a>.</li>
+    <li>The level has a Landscape. The scatter samples a Landscape surface; a static mesh floor gives zero points. Make one in Landscape mode, or have the agent import a heightmap with <a href="/docs/tools/#world_ingest"><code>world_ingest</code></a>.</li>
+    <li><strong>Review each external edit</strong> is off. This guide creates a graph and a volume, which the exact review cannot approve on this version. See <a href="/docs/concepts/plan-mode/#what-can-be-approved">What can be approved</a>.</li>
+  </ul>
+</section>
+
+<section class="docs-section">
+  <h2 id="prompt">Prompt</h2>
+  <div class="docs-cmd docs-cmd-prose" data-copy-name="prompt">
+    <div class="docs-cmd-bar"><span class="docs-cmd-label">Prompt</span></div>
+    <pre><code>Scatter /Engine/BasicShapes/Cone across the landscape at 0.05 points per square metre, with random yaw and scale between 0.8 and 1.4. Tell me how many instances were placed. Then list the generated graph's nodes, lower the density to 0.02, regenerate, and give me the new count.</code></pre>
+  </div>
+</section>
+
+<section class="docs-section">
+  <h2 id="steps">What the agent does</h2>
+  <ol class="docs-calls">
+    <li><a href="/docs/tools/#pcg_scatter_mesh"><code>pcg_scatter_mesh</code></a> builds a jittered PCG graph, places a PCG volume bound to it, generates, and returns the instance count. It fails loudly on zero instances.</li>
+    <li><a href="/docs/tools/#hayba_export_pcg_graph"><code>hayba_export_pcg_graph</code></a> returns the graph as JSON: its nodes, settings and edges.</li>
+    <li><a href="/docs/tools/#pcg_set_prop"><code>pcg_set_prop</code></a> changes the sampler's density. Nested settings use <code>/</code> paths.</li>
+    <li><a href="/docs/tools/#pcg_cook_and_wait"><code>pcg_cook_and_wait</code></a> regenerates the volume, waits for the graph to settle and returns the instance count per mesh.</li>
+  </ol>
+  <p>
+    Trust the counts from <code>pcg_cook_and_wait</code>. PCG generates asynchronously, so a plain
+    generate reads zero in the same call, and <code>pcg_read_node_output</code> reads a cache that
+    may be stale.
+  </p>
+</section>
+
+<section class="docs-section">
+  <h2 id="edit">Editing the graph</h2>
+  <p>To build or change a graph by hand rather than with the one-call scatter:</p>
+  <ol class="docs-calls">
+    <li><a href="/docs/tools/#hayba_search_node_catalog"><code>hayba_search_node_catalog</code></a> finds a node by what it does, when the class name is not known.</li>
+    <li><a href="/docs/tools/#pcg_add_node"><code>pcg_add_node</code></a> adds a node by its settings class. New nodes land at the origin of the graph.</li>
+    <li><a href="/docs/tools/#pcg_list_pins"><code>pcg_list_pins</code></a> lists a node's exact pin labels. Labels are not obvious: the graph input's output pin is <code>In</code>.</li>
+    <li><a href="/docs/tools/#pcg_wire"><code>pcg_wire</code></a> connects two pins. It checks the pin names first and never drops a wire silently.</li>
+    <li><a href="/docs/tools/#pcg_layout"><code>pcg_layout</code></a> arranges the nodes left to right. Close and reopen the graph editor tab to see the new positions.</li>
+    <li><a href="/docs/tools/#pcg_get_node"><code>pcg_get_node</code></a> reads one node's settings in full, and <a href="/docs/tools/#hayba_introspect"><code>hayba_introspect</code></a> lists the properties of a settings class.</li>
+  </ol>
+  <p>
+    To remove things, <a href="/docs/tools/#pcg_disconnect"><code>pcg_disconnect</code></a> cuts one
+    edge and <a href="/docs/tools/#pcg_remove_node"><code>pcg_remove_node</code></a> deletes a node
+    and its edges. Node indices shift after a removal, so the agent re-reads the graph before the
+    next edit.
+  </p>
+</section>
+
+<section class="docs-section">
+  <h2 id="check">Check the result</h2>
+  <ul>
+    <li>Ask for <a href="/docs/tools/#pcg_inspect_instances"><code>pcg_inspect_instances</code></a> on the volume to read the counts again without regenerating.</li>
+    <li>Have the agent frame the volume and capture the viewport. See <a href="/docs/guides/actors-viewport/">Place actors and capture the viewport</a>.</li>
+    <li>Open the generated graph asset in the PCG editor.</li>
+  </ul>
+</section>
+
+  <nav class="docs-pager" aria-label="Next and previous pages">
+    <a href="/docs/guides/pie-test/" class="docs-pager-prev"><span>Previous</span>Run a PIE test</a>
+    <a href="/docs/tools/" class="docs-pager-next"><span>Next</span>Tool reference</a>
+  </nav>
+</main>
+
+<script type="module" src="/docs/docs.js"></script>
+</body>
+</html>

@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Author a Blueprint | Hayba docs</title>
+<meta name="description" content="Have an agent create a Blueprint, add variables, events and nodes, wire them and compile.">
+<link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/docs/docs.css">
+<link rel="icon" type="image/svg+xml" href="/assets/Logo.svg">
+</head>
+<body class="page-docs">
+<a class="docs-skip" href="#main">Skip to content</a>
+<aside class="docs-sidebar">
+  <a href="/" class="brand-link brand-link-compact">
+    <img src="/assets/Logo-white.svg" alt="" class="brand-mark">
+    <span>Hayba</span>
+  </a>
+  <!-- docs-nav:start -->
+  <details class="docs-menu" open>
+  <summary class="docs-menu-toggle">Documentation menu</summary>
+  <nav class="docs-toc docs-nav" aria-label="Documentation">
+    <div class="docs-toc-group">
+      <p class="docs-toc-title">Start here</p>
+      <a href="/docs/" class="docs-toc-link docs-nav-page">Overview</a>
+      <a href="/docs/getting-started/" class="docs-toc-link docs-nav-page">Getting started</a>
+    </div>
+    <div class="docs-toc-group">
+      <p class="docs-toc-title">Concepts</p>
+      <a href="/docs/concepts/" class="docs-toc-link docs-nav-page">How Hayba works</a>
+      <a href="/docs/concepts/code-mode/" class="docs-toc-link docs-nav-page">Code Mode and tool search</a>
+      <a href="/docs/concepts/plan-mode/" class="docs-toc-link docs-nav-page">Plan Mode, approvals and undo</a>
+      <a href="/docs/concepts/chat/" class="docs-toc-link docs-nav-page">In-editor chat</a>
+      <a href="/docs/concepts/safety/" class="docs-toc-link docs-nav-page">Safety model</a>
+    </div>
+    <div class="docs-toc-group">
+      <p class="docs-toc-title">Guides</p>
+      <a href="/docs/guides/blueprint/" aria-current="page" class="docs-toc-link docs-nav-page is-current">Author a Blueprint</a>
+        <div class="docs-toc-sub">
+          <a href="#before" class="docs-toc-link">Before you start</a>
+          <a href="#prompt" class="docs-toc-link">Prompt</a>
+          <a href="#steps" class="docs-toc-link">What the agent does</a>
+          <a href="#check" class="docs-toc-link">Check the result</a>
+        </div>
+      <a href="/docs/guides/umg-widget/" class="docs-toc-link docs-nav-page">Build and render a UMG widget</a>
+      <a href="/docs/guides/material/" class="docs-toc-link docs-nav-page">Create and validate a material</a>
+      <a href="/docs/guides/actors-viewport/" class="docs-toc-link docs-nav-page">Place actors and capture the viewport</a>
+      <a href="/docs/guides/pie-test/" class="docs-toc-link docs-nav-page">Run a PIE test</a>
+      <a href="/docs/guides/pcg/" class="docs-toc-link docs-nav-page">PCG basics</a>
+    </div>
+    <div class="docs-toc-group">
+      <p class="docs-toc-title">Reference</p>
+      <a href="/docs/tools/" class="docs-toc-link docs-nav-page">Tool reference</a>
+      <a href="/docs/troubleshooting/" class="docs-toc-link docs-nav-page">Troubleshooting</a>
+      <a href="/docs/faq/" class="docs-toc-link docs-nav-page">FAQ</a>
+    </div>
+  </nav>
+  </details>
+  <!-- docs-nav:end -->
+</aside>
+
+<main class="docs-main" id="main">
+<h1>Author a Blueprint</h1>
+<p class="docs-lead">
+  Have an agent create an Actor Blueprint, give it a component, a variable and some event-graph
+  logic, compile it and place it in the level.
+</p>
+
+<section class="docs-section">
+  <h2 id="before">Before you start</h2>
+  <ul>
+    <li>Hayba is installed and your agent is connected. See <a href="/docs/getting-started/">Getting started</a>.</li>
+    <li>You are in a scratch project, ideally under source control.</li>
+    <li><strong>Review each external edit</strong> is off. This guide creates assets, which the exact review cannot approve on this version. See <a href="/docs/concepts/plan-mode/#what-can-be-approved">What can be approved</a>.</li>
+  </ul>
+</section>
+
+<section class="docs-section">
+  <h2 id="prompt">Prompt</h2>
+  <div class="docs-cmd docs-cmd-prose" data-copy-name="prompt">
+    <div class="docs-cmd-bar"><span class="docs-cmd-label">Prompt</span></div>
+    <pre><code>Create an Actor Blueprint at /Game/Hayba/BP_Lamp with a PointLight component named Light and a float variable Intensity that defaults to 5000. On BeginPlay, print "Lamp ready". Inspect the graph before you wire anything, compile it, and report any compile errors. Then place one BP_Lamp in the level at 0, 0, 200.</code></pre>
+  </div>
+</section>
+
+<section class="docs-section">
+  <h2 id="steps">What the agent does</h2>
+  <p>The order of calls is usually close to this. Each name links to its parameters.</p>
+  <ol class="docs-calls">
+    <li><a href="/docs/tools/#blueprint_create"><code>blueprint_create</code></a> with the parent class <code>/Script/Engine.Actor</code>. Its <code>package_path</code> is the full asset path, including the name.</li>
+    <li><a href="/docs/tools/#blueprint_add_component"><code>blueprint_add_component</code></a> adds the PointLight.</li>
+    <li><a href="/docs/tools/#blueprint_add_variable"><code>blueprint_add_variable</code></a> adds <code>Intensity</code> as a <code>float</code> with its default.</li>
+    <li><a href="/docs/tools/#blueprint_add_event"><code>blueprint_add_event</code></a> adds the BeginPlay event, or returns the one already there.</li>
+    <li><a href="/docs/tools/#blueprint_add_node"><code>blueprint_add_node</code></a> adds a <code>call_function</code> node for Print String and returns its exact pins.</li>
+    <li><a href="/docs/tools/#blueprint_inspect_graph"><code>blueprint_inspect_graph</code></a> lists node ids and pin names, so the wiring uses real names.</li>
+    <li><a href="/docs/tools/#blueprint_connect_nodes"><code>blueprint_connect_nodes</code></a> wires BeginPlay to Print String, and <a href="/docs/tools/#blueprint_set_pin_default"><code>blueprint_set_pin_default</code></a> sets the text.</li>
+    <li><a href="/docs/tools/#blueprint_compile"><code>blueprint_compile</code></a> applies the staged edits, saves, and returns any errors.</li>
+    <li><a href="/docs/tools/#actor_spawn_from_asset"><code>actor_spawn_from_asset</code></a> places the Blueprint in the level.</li>
+  </ol>
+  <p>Things worth knowing:</p>
+  <ul>
+    <li>Every Blueprint edit is staged until <code>blueprint_compile</code>. A failed compile leaves the previous class in place, so the agent must read <code>errors</code>.</li>
+    <li>Type names follow one grammar for variables, function inputs and event inputs: <code>bool</code>, <code>float</code>, <code>vector</code>, <code>object:&lt;class path&gt;</code>, <code>array&lt;...&gt;</code> and so on.</li>
+    <li>For functions, the agent uses <a href="/docs/tools/#blueprint_add_function"><code>blueprint_add_function</code></a>, then builds the body with <code>blueprint_add_node</code> and <code>graph_name</code> set to the function name.</li>
+    <li>If the package is read-only, the compile refuses with <code>package_read_only</code> before changing anything. Check the file out, or compile with <code>save: false</code>.</li>
+  </ul>
+</section>
+
+<section class="docs-section">
+  <h2 id="check">Check the result</h2>
+  <ul>
+    <li>Ask for <a href="/docs/tools/#blueprint_document"><code>blueprint_document</code></a>. It describes the event graph in plain English. It covers events only, not function graphs.</li>
+    <li>Open <code>BP_Lamp</code> in the editor and look at the event graph.</li>
+    <li>Press Play. <code>Lamp ready</code> appears on screen.</li>
+  </ul>
+</section>
+
+  <nav class="docs-pager" aria-label="Next and previous pages">
+    <a href="/docs/concepts/safety/" class="docs-pager-prev"><span>Previous</span>Safety model</a>
+    <a href="/docs/guides/umg-widget/" class="docs-pager-next"><span>Next</span>Build and render a UMG widget</a>
+  </nav>
+</main>
+
+<script type="module" src="/docs/docs.js"></script>
+</body>
+</html>

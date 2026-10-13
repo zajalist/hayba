@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Build and render a UMG widget | Hayba docs</title>
+<meta name="description" content="Have an agent build a Widget Blueprint, validate its layout and render it to a PNG without Play-In-Editor.">
+<link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/docs/docs.css">
+<link rel="icon" type="image/svg+xml" href="/assets/Logo.svg">
+</head>
+<body class="page-docs">
+<a class="docs-skip" href="#main">Skip to content</a>
+<aside class="docs-sidebar">
+  <a href="/" class="brand-link brand-link-compact">
+    <img src="/assets/Logo-white.svg" alt="" class="brand-mark">
+    <span>Hayba</span>
+  </a>
+  <!-- docs-nav:start -->
+  <details class="docs-menu" open>
+  <summary class="docs-menu-toggle">Documentation menu</summary>
+  <nav class="docs-toc docs-nav" aria-label="Documentation">
+    <div class="docs-toc-group">
+      <p class="docs-toc-title">Start here</p>
+      <a href="/docs/" class="docs-toc-link docs-nav-page">Overview</a>
+      <a href="/docs/getting-started/" class="docs-toc-link docs-nav-page">Getting started</a>
+    </div>
+    <div class="docs-toc-group">
+      <p class="docs-toc-title">Concepts</p>
+      <a href="/docs/concepts/" class="docs-toc-link docs-nav-page">How Hayba works</a>
+      <a href="/docs/concepts/code-mode/" class="docs-toc-link docs-nav-page">Code Mode and tool search</a>
+      <a href="/docs/concepts/plan-mode/" class="docs-toc-link docs-nav-page">Plan Mode, approvals and undo</a>
+      <a href="/docs/concepts/chat/" class="docs-toc-link docs-nav-page">In-editor chat</a>
+      <a href="/docs/concepts/safety/" class="docs-toc-link docs-nav-page">Safety model</a>
+    </div>
+    <div class="docs-toc-group">
+      <p class="docs-toc-title">Guides</p>
+      <a href="/docs/guides/blueprint/" class="docs-toc-link docs-nav-page">Author a Blueprint</a>
+      <a href="/docs/guides/umg-widget/" aria-current="page" class="docs-toc-link docs-nav-page is-current">Build and render a UMG widget</a>
+        <div class="docs-toc-sub">
+          <a href="#before" class="docs-toc-link">Before you start</a>
+          <a href="#prompt" class="docs-toc-link">Prompt</a>
+          <a href="#steps" class="docs-toc-link">What the agent does</a>
+          <a href="#check" class="docs-toc-link">Check the result</a>
+        </div>
+      <a href="/docs/guides/material/" class="docs-toc-link docs-nav-page">Create and validate a material</a>
+      <a href="/docs/guides/actors-viewport/" class="docs-toc-link docs-nav-page">Place actors and capture the viewport</a>
+      <a href="/docs/guides/pie-test/" class="docs-toc-link docs-nav-page">Run a PIE test</a>
+      <a href="/docs/guides/pcg/" class="docs-toc-link docs-nav-page">PCG basics</a>
+    </div>
+    <div class="docs-toc-group">
+      <p class="docs-toc-title">Reference</p>
+      <a href="/docs/tools/" class="docs-toc-link docs-nav-page">Tool reference</a>
+      <a href="/docs/troubleshooting/" class="docs-toc-link docs-nav-page">Troubleshooting</a>
+      <a href="/docs/faq/" class="docs-toc-link docs-nav-page">FAQ</a>
+    </div>
+  </nav>
+  </details>
+  <!-- docs-nav:end -->
+</aside>
+
+<main class="docs-main" id="main">
+<h1>Build and render a UMG widget</h1>
+<p class="docs-lead">
+  Have an agent build a Widget Blueprint, check its layout against game-UI rules, and render it
+  to a PNG you can look at, all without Play-In-Editor.
+</p>
+
+<section class="docs-section">
+  <h2 id="before">Before you start</h2>
+  <ul>
+    <li>Hayba is installed and your agent is connected. See <a href="/docs/getting-started/">Getting started</a>.</li>
+    <li>You are in a scratch project, ideally under source control.</li>
+    <li><strong>Review each external edit</strong> is off. This guide creates assets, which the exact review cannot approve on this version. See <a href="/docs/concepts/plan-mode/#what-can-be-approved">What can be approved</a>.</li>
+  </ul>
+</section>
+
+<section class="docs-section">
+  <h2 id="prompt">Prompt</h2>
+  <div class="docs-cmd docs-cmd-prose" data-copy-name="prompt">
+    <div class="docs-cmd-bar"><span class="docs-cmd-label">Prompt</span></div>
+    <pre><code>Make a pause menu Widget Blueprint at /Game/Hayba/UI/WBP_PauseMenu: a centred vertical box with a "Paused" title and three buttons, Resume, Settings and Quit. Compile and save it, validate it for PC, fix anything the validator reports, then render it to a PNG at 2x scale and show me.</code></pre>
+  </div>
+</section>
+
+<section class="docs-section">
+  <h2 id="steps">What the agent does</h2>
+  <ol class="docs-calls">
+    <li><a href="/docs/tools/#ui_create_widget"><code>ui_create_widget</code></a> creates the Widget Blueprint with a root CanvasPanel. <code>path</code> is the folder and <code>name</code> the asset name.</li>
+    <li><a href="/docs/tools/#ui_build_tree"><code>ui_build_tree</code></a> builds the whole subtree in one call: the box, the title and the buttons with their labels. If a node fails, the widgets made before it are kept and named in the error.</li>
+    <li><a href="/docs/tools/#ui_set_slot_layout"><code>ui_set_slot_layout</code></a> anchors and centres the box. <a href="/docs/tools/#ui_set_text_style"><code>ui_set_text_style</code></a> sets fonts, sizes and colours.</li>
+    <li><a href="/docs/tools/#ui_compile_widget"><code>ui_compile_widget</code></a> compiles, with <code>save_on_success</code> to save.</li>
+    <li><a href="/docs/tools/#ui_validate"><code>ui_validate</code></a> runs the rule catalogue on the real Slate layout: text overflow, room for translation, safe zones, touch target size, overlaps, contrast and gamepad focus.</li>
+    <li><a href="/docs/tools/#ui_render_widget_to_png"><code>ui_render_widget_to_png</code></a> draws the widget to a PNG under <code>Saved/<wbr>Screenshots/<wbr>Hayba</code> and returns the image inline.</li>
+  </ol>
+  <p>Things worth knowing:</p>
+  <ul>
+    <li>Rendering needs no Play session. If <code>coverage_percent</code> is 0, the widget drew nothing; compile it first.</li>
+    <li><a href="/docs/tools/#ui_layout_snapshot"><code>ui_layout_snapshot</code></a> gives the measured geometry the validator judges, when you want numbers instead of a picture.</li>
+    <li>To make a button do something, expose it with <a href="/docs/tools/#ui_set_variable"><code>ui_set_variable</code></a>, compile, then bind its click with <a href="/docs/tools/#ui_bind_event"><code>ui_bind_event</code></a>.</li>
+    <li><code>ui_set_widget_properties</code> stays out of the undo stack on purpose. The typed tools above are the better choice for common changes.</li>
+    <li>For fonts, pass a composite Font asset, not a Font Face. Unreal draws a raw Font Face as glyph tiles.</li>
+  </ul>
+</section>
+
+<section class="docs-section">
+  <h2 id="check">Check the result</h2>
+  <ul>
+    <li>Look at the PNG the agent returns. Ask it to render again after each fix.</li>
+    <li>Ask for the validator's findings by rule, and which it fixed.</li>
+    <li>Open <code>WBP_PauseMenu</code> in the UMG designer.</li>
+  </ul>
+</section>
+
+  <nav class="docs-pager" aria-label="Next and previous pages">
+    <a href="/docs/guides/blueprint/" class="docs-pager-prev"><span>Previous</span>Author a Blueprint</a>
+    <a href="/docs/guides/material/" class="docs-pager-next"><span>Next</span>Create and validate a material</a>
+  </nav>
+</main>
+
+<script type="module" src="/docs/docs.js"></script>
+</body>
+</html>

@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Run a PIE test | Hayba docs</title>
+<meta name="description" content="Have an agent start Play-In-Editor, drive input, assert on game state and stop the session.">
+<link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/docs/docs.css">
+<link rel="icon" type="image/svg+xml" href="/assets/Logo.svg">
+</head>
+<body class="page-docs">
+<a class="docs-skip" href="#main">Skip to content</a>
+<aside class="docs-sidebar">
+  <a href="/" class="brand-link brand-link-compact">
+    <img src="/assets/Logo-white.svg" alt="" class="brand-mark">
+    <span>Hayba</span>
+  </a>
+  <!-- docs-nav:start -->
+  <details class="docs-menu" open>
+  <summary class="docs-menu-toggle">Documentation menu</summary>
+  <nav class="docs-toc docs-nav" aria-label="Documentation">
+    <div class="docs-toc-group">
+      <p class="docs-toc-title">Start here</p>
+      <a href="/docs/" class="docs-toc-link docs-nav-page">Overview</a>
+      <a href="/docs/getting-started/" class="docs-toc-link docs-nav-page">Getting started</a>
+    </div>
+    <div class="docs-toc-group">
+      <p class="docs-toc-title">Concepts</p>
+      <a href="/docs/concepts/" class="docs-toc-link docs-nav-page">How Hayba works</a>
+      <a href="/docs/concepts/code-mode/" class="docs-toc-link docs-nav-page">Code Mode and tool search</a>
+      <a href="/docs/concepts/plan-mode/" class="docs-toc-link docs-nav-page">Plan Mode, approvals and undo</a>
+      <a href="/docs/concepts/chat/" class="docs-toc-link docs-nav-page">In-editor chat</a>
+      <a href="/docs/concepts/safety/" class="docs-toc-link docs-nav-page">Safety model</a>
+    </div>
+    <div class="docs-toc-group">
+      <p class="docs-toc-title">Guides</p>
+      <a href="/docs/guides/blueprint/" class="docs-toc-link docs-nav-page">Author a Blueprint</a>
+      <a href="/docs/guides/umg-widget/" class="docs-toc-link docs-nav-page">Build and render a UMG widget</a>
+      <a href="/docs/guides/material/" class="docs-toc-link docs-nav-page">Create and validate a material</a>
+      <a href="/docs/guides/actors-viewport/" class="docs-toc-link docs-nav-page">Place actors and capture the viewport</a>
+      <a href="/docs/guides/pie-test/" aria-current="page" class="docs-toc-link docs-nav-page is-current">Run a PIE test</a>
+        <div class="docs-toc-sub">
+          <a href="#before" class="docs-toc-link">Before you start</a>
+          <a href="#prompt" class="docs-toc-link">Prompt</a>
+          <a href="#steps" class="docs-toc-link">What the agent does</a>
+          <a href="#automation" class="docs-toc-link">Automation tests</a>
+          <a href="#check" class="docs-toc-link">Check the result</a>
+        </div>
+      <a href="/docs/guides/pcg/" class="docs-toc-link docs-nav-page">PCG basics</a>
+    </div>
+    <div class="docs-toc-group">
+      <p class="docs-toc-title">Reference</p>
+      <a href="/docs/tools/" class="docs-toc-link docs-nav-page">Tool reference</a>
+      <a href="/docs/troubleshooting/" class="docs-toc-link docs-nav-page">Troubleshooting</a>
+      <a href="/docs/faq/" class="docs-toc-link docs-nav-page">FAQ</a>
+    </div>
+  </nav>
+  </details>
+  <!-- docs-nav:end -->
+</aside>
+
+<main class="docs-main" id="main">
+<h1>Run a PIE test</h1>
+<p class="docs-lead">
+  Have an agent start Play-In-Editor, find and press a button on screen, wait for a property in
+  the running game to change, take a screenshot and stop Play. The same tools work for any
+  scripted check of your game's behaviour.
+</p>
+
+<section class="docs-section">
+  <h2 id="before">Before you start</h2>
+  <ul>
+    <li>Hayba is installed and your agent is connected. See <a href="/docs/getting-started/">Getting started</a>.</li>
+    <li>Your level has something to test. The prompt below assumes a start button and a door Blueprint with a boolean <code>bIsOpen</code>; change the names to yours.</li>
+    <li>
+      This guide reads and drives Play, so it works with <strong>Review each external edit</strong>
+      on. One exception: <code>editor_pie_click_actor</code> is held for approval, which the exact
+      review cannot give on this version. Clicking widgets and pressing keys is not held.
+    </li>
+    <li>Compile your Blueprints first. Hayba will not start Play while a loaded Blueprint would open a compile-error dialog.</li>
+  </ul>
+</section>
+
+<section class="docs-section">
+  <h2 id="prompt">Prompt</h2>
+  <div class="docs-cmd docs-cmd-prose" data-copy-name="prompt">
+    <div class="docs-cmd-bar"><span class="docs-cmd-label">Prompt</span></div>
+    <pre><code>Run a PIE test. Check the editor is idle, start Play-In-Editor, read what is on screen and click the button labelled "Start". Then check the actor BP_Door until its property bIsOpen is true, trying up to 10 times. Take a screenshot, stop Play, and tell me whether the test passed and what you observed.</code></pre>
+  </div>
+</section>
+
+<section class="docs-section">
+  <h2 id="steps">What the agent does</h2>
+  <ol class="docs-calls">
+    <li><a href="/docs/tools/#editor_get_state"><code>editor_get_state</code></a> confirms nothing is playing or building.</li>
+    <li><a href="/docs/tools/#editor_start_pie"><code>editor_start_pie</code></a> starts Play. If a Blueprint needs fixing first, it answers <code>pie_blocked</code> and names it.</li>
+    <li><a href="/docs/tools/#editor_pie_widget_tree"><code>editor_pie_widget_tree</code></a> lists the visible widgets with their text and screen rectangles.</li>
+    <li><a href="/docs/tools/#editor_pie_click_widget"><code>editor_pie_click_widget</code></a> clicks the control whose text matches "Start", and reports how many matched.</li>
+    <li><a href="/docs/tools/#editor_pie_wait_for"><code>editor_pie_wait_for</code></a> reads <code>bIsOpen</code> once per call. The agent repeats it until it matches or gives up.</li>
+    <li><a href="/docs/tools/#editor_pie_screenshot"><code>editor_pie_screenshot</code></a> requests a screenshot. The file appears a frame or two later, so the agent checks again with <code>check_only</code>.</li>
+    <li><a href="/docs/tools/#editor_stop_pie"><code>editor_stop_pie</code></a> ends the session.</li>
+  </ol>
+  <p>Things worth knowing:</p>
+  <ul>
+    <li>
+      A command cannot wait inside the game: it runs on the game thread, and the world does not
+      advance while it runs. So <code>editor_pie_wait_for</code> and
+      <a href="/docs/tools/#editor_pie_assert"><code>editor_pie_assert</code></a> each take one
+      observation. A result of <code>polling: true</code> means "not yet", and the agent asks
+      again.
+    </li>
+    <li>
+      <a href="/docs/tools/#editor_pie_press_key"><code>editor_pie_press_key</code></a> sends keyboard and gamepad buttons,
+      <a href="/docs/tools/#editor_pie_type_text"><code>editor_pie_type_text</code></a> types into a focused field, and
+      <a href="/docs/tools/#editor_pie_actor_list"><code>editor_pie_actor_list</code></a> finds runtime actors with their exact paths.
+    </li>
+    <li>While Play runs, edits are refused with <code>pie_active</code>. Stop Play before asking for changes.</li>
+    <li>Only the agent that started a session can drive it. Agents never drive a session you started.</li>
+  </ul>
+</section>
+
+<section class="docs-section">
+  <h2 id="automation">Automation tests</h2>
+  <p>To run Unreal automation tests instead of a scripted Play session:</p>
+  <ol class="docs-calls">
+    <li><a href="/docs/tools/#test_list"><code>test_list</code></a> with <code>filter_pattern</code> finds tests by name.</li>
+    <li><a href="/docs/tools/#test_run"><code>test_run</code></a> starts them as a background job and returns a <code>job_id</code>. Most tests run in a separate editor process, so the open editor stays responsive.</li>
+    <li><a href="/docs/tools/#build_status"><code>build_status</code></a> reports progress and the final pass, fail and skip counts.</li>
+    <li><a href="/docs/tools/#test_get_log"><code>test_get_log</code></a> returns the full errors and warnings of the last run.</li>
+  </ol>
+  <p>A filter that matches no tests fails, rather than reporting an empty pass.</p>
+</section>
+
+<section class="docs-section">
+  <h2 id="check">Check the result</h2>
+  <ul>
+    <li>Ask the agent for each observation it made, not only a verdict.</li>
+    <li>Screenshots land in <code>Saved/<wbr>Screenshots/<wbr>&lt;Platform&gt;</code> unless the agent gave an absolute path.</li>
+    <li><a href="/docs/tools/#editor_get_state"><code>editor_get_state</code></a> should show Play as <code>none</code> when the test ends.</li>
+  </ul>
+</section>
+
+  <nav class="docs-pager" aria-label="Next and previous pages">
+    <a href="/docs/guides/actors-viewport/" class="docs-pager-prev"><span>Previous</span>Place actors and capture the viewport</a>
+    <a href="/docs/guides/pcg/" class="docs-pager-next"><span>Next</span>PCG basics</a>
+  </nav>
+</main>
+
+<script type="module" src="/docs/docs.js"></script>
+</body>
+</html>
