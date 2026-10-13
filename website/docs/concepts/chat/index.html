@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>In-editor chat | Hayba docs</title>
+<meta name="description" content="Chat with an agent inside the Unreal editor using your own API key or a local model.">
+<link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/docs/docs.css">
+<link rel="icon" type="image/svg+xml" href="/assets/Logo.svg">
+</head>
+<body class="page-docs">
+<a class="docs-skip" href="#main">Skip to content</a>
+<aside class="docs-sidebar">
+  <a href="/" class="brand-link brand-link-compact">
+    <img src="/assets/Logo-white.svg" alt="" class="brand-mark">
+    <span>Hayba</span>
+  </a>
+  <!-- docs-nav:start -->
+  <details class="docs-menu" open>
+  <summary class="docs-menu-toggle">Documentation menu</summary>
+  <nav class="docs-toc docs-nav" aria-label="Documentation">
+    <div class="docs-toc-group">
+      <p class="docs-toc-title">Start here</p>
+      <a href="/docs/" class="docs-toc-link docs-nav-page">Overview</a>
+      <a href="/docs/getting-started/" class="docs-toc-link docs-nav-page">Getting started</a>
+    </div>
+    <div class="docs-toc-group">
+      <p class="docs-toc-title">Concepts</p>
+      <a href="/docs/concepts/" class="docs-toc-link docs-nav-page">How Hayba works</a>
+      <a href="/docs/concepts/code-mode/" class="docs-toc-link docs-nav-page">Code Mode and tool search</a>
+      <a href="/docs/concepts/plan-mode/" class="docs-toc-link docs-nav-page">Plan Mode, approvals and undo</a>
+      <a href="/docs/concepts/chat/" aria-current="page" class="docs-toc-link docs-nav-page is-current">In-editor chat</a>
+        <div class="docs-toc-sub">
+          <a href="#providers" class="docs-toc-link">Providers and keys</a>
+          <a href="#local" class="docs-toc-link">Local models</a>
+          <a href="#modes" class="docs-toc-link">Inspect, Draft and Production</a>
+          <a href="#sidecar" class="docs-toc-link">How the chat runs</a>
+        </div>
+      <a href="/docs/concepts/safety/" class="docs-toc-link docs-nav-page">Safety model</a>
+    </div>
+    <div class="docs-toc-group">
+      <p class="docs-toc-title">Guides</p>
+      <a href="/docs/guides/blueprint/" class="docs-toc-link docs-nav-page">Author a Blueprint</a>
+      <a href="/docs/guides/umg-widget/" class="docs-toc-link docs-nav-page">Build and render a UMG widget</a>
+      <a href="/docs/guides/material/" class="docs-toc-link docs-nav-page">Create and validate a material</a>
+      <a href="/docs/guides/actors-viewport/" class="docs-toc-link docs-nav-page">Place actors and capture the viewport</a>
+      <a href="/docs/guides/pie-test/" class="docs-toc-link docs-nav-page">Run a PIE test</a>
+      <a href="/docs/guides/pcg/" class="docs-toc-link docs-nav-page">PCG basics</a>
+    </div>
+    <div class="docs-toc-group">
+      <p class="docs-toc-title">Reference</p>
+      <a href="/docs/tools/" class="docs-toc-link docs-nav-page">Tool reference</a>
+      <a href="/docs/troubleshooting/" class="docs-toc-link docs-nav-page">Troubleshooting</a>
+      <a href="/docs/faq/" class="docs-toc-link docs-nav-page">FAQ</a>
+    </div>
+  </nav>
+  </details>
+  <!-- docs-nav:end -->
+</aside>
+
+<main class="docs-main" id="main">
+<h1>In-editor chat</h1>
+<p class="docs-lead">
+  The Hayba MCP Toolkit tab has its own chat. It uses the same tools as an external client,
+  with a model you choose: a cloud provider with your own API key, or a model running on your
+  machine.
+</p>
+
+<section class="docs-section">
+  <h2 id="providers">Providers and keys</h2>
+  <p>
+    Open the toolkit's <strong>Settings</strong> and find <strong>Chat model</strong>. Pick a
+    provider, paste a key if it needs one, and choose a model. These settings only affect the
+    built-in chat; external clients use their own models.
+  </p>
+  <div class="docs-table-wrap">
+    <table class="docs-table">
+      <thead><tr><th scope="col">Provider</th><th scope="col">Key</th><th scope="col">Default endpoint</th></tr></thead>
+      <tbody>
+        <tr><td>Anthropic</td><td>Required</td><td><code>https://api.anthropic.com</code></td></tr>
+        <tr><td>OpenAI</td><td>Required</td><td><code>https://api.openai.com/v1</code></td></tr>
+        <tr><td>DeepSeek</td><td>Required</td><td><code>https://api.deepseek.com</code></td></tr>
+        <tr><td>Groq</td><td>Required</td><td><code>https://api.groq.com/openai/v1</code></td></tr>
+        <tr><td>OpenRouter</td><td>Required</td><td><code>https://openrouter.ai/api/v1</code></td></tr>
+        <tr><td>Ollama</td><td>None</td><td><code>http://localhost:11434/v1</code></td></tr>
+        <tr><td>LM Studio</td><td>None</td><td><code>http://localhost:1234/v1</code></td></tr>
+        <tr><td>Custom OpenAI-compatible</td><td>Optional</td><td>You set it</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>
+    Keys are encrypted with Windows DPAPI for your user account on this machine. They are never
+    written to disk in plain text, and Settings only shows the last four characters. To change
+    an endpoint, use <strong>Custom endpoint</strong> under <strong>Advanced connection</strong>.
+  </p>
+  <p>
+    After you save a key, the model list fills from the provider. You can also type an exact model
+    id. The chat needs a model that supports tool calls; Settings flags models that are known not
+    to.
+  </p>
+</section>
+
+<section class="docs-section">
+  <h2 id="local">Local models</h2>
+  <p>
+    Choose <strong>Ollama</strong> or <strong>LM Studio</strong> to keep the conversation on your
+    machine. No key is needed. Start the local server first, with a model loaded that supports
+    tool calls. The Ollama default model is <code>qwen2.5-coder:7b-instruct</code>; pull it, or
+    pick another from the list.
+  </p>
+  <div class="docs-cmd" data-copy-name="Ollama command">
+    <div class="docs-cmd-bar"><span class="docs-cmd-label">Terminal</span></div>
+    <pre><code>ollama pull qwen2.5-coder:7b-instruct</code></pre>
+  </div>
+  <p>
+    Small local models follow long tool chains less reliably than large hosted ones. Start with
+    short, specific requests.
+  </p>
+</section>
+
+<section class="docs-section">
+  <h2 id="modes">Inspect, Draft and Production</h2>
+  <p>The chat composer has three modes. The mode sets what the next run may do.</p>
+  <ul>
+    <li><strong>Inspect</strong> reads and explains. It has read-only tools and makes no project changes. New chats start here.</li>
+    <li><strong>Draft</strong> can change the project. Each change waits for your approval in the chat before it runs.</li>
+    <li><strong>Production</strong> also sends every write through the plugin's exact review, even when <strong>Review each external edit</strong> is off. On this version that review covers only edits to one existing actor, so Production refuses other writes. See <a href="/docs/concepts/plan-mode/#what-can-be-approved">What can be approved</a>.</li>
+  </ul>
+  <p>
+    The chat's server reaches the editor through the same plugin router as an external client. On
+    this version the router applies <strong>Review each external edit</strong> to every write it
+    receives, including the chat's. Turn it off for creation work in Draft.
+  </p>
+</section>
+
+<section class="docs-section">
+  <h2 id="sidecar">How the chat runs</h2>
+  <p>
+    When the editor starts, the plugin launches a copy of the MCP server for the chat. It listens
+    on <code>http://127.0.0.1:7821</code>. If something is already listening there, the plugin
+    reuses it rather than starting a second one.
+  </p>
+  <p>The plugin finds this server and Node.js like this:</p>
+  <ul>
+    <li>The server: <code>SidecarEntryPath</code> if you set it; otherwise the built server next to a linked plugin, <code>mcp-tools/<wbr>hayba-mcp/<wbr>dist/<wbr>index.js</code>.</li>
+    <li>Node.js: <code>C:\Program Files\nodejs\node.exe</code> or <code>C:\Program Files (x86)\nodejs\node.exe</code>. The plugin does not search your <code>PATH</code>.</li>
+  </ul>
+  <p>
+    If the chat cannot send, check the Output Log for <code>LogHaybaMCP</code> lines such as
+    <code>Node.js not found.</code> or <code>MCP server not found at:</code>. See
+    <a href="/docs/troubleshooting/#node">Node.js not found</a>.
+  </p>
+  <p>
+    The chat server only accepts requests addressed to this machine; it refuses other
+    <code>Host</code> and <code>Origin</code> headers. Chat sessions are stored with secrets
+    redacted.
+  </p>
+</section>
+
+  <nav class="docs-pager" aria-label="Next and previous pages">
+    <a href="/docs/concepts/plan-mode/" class="docs-pager-prev"><span>Previous</span>Plan Mode, approvals and undo</a>
+    <a href="/docs/concepts/safety/" class="docs-pager-next"><span>Next</span>Safety model</a>
+  </nav>
+</main>
+
+<script type="module" src="/docs/docs.js"></script>
+</body>
+</html>

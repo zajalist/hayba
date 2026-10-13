@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>How Hayba works | Hayba docs</title>
+<meta name="description" content="The MCP server, the C++ editor plugin and the local TCP connection between them.">
+<link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/docs/docs.css">
+<link rel="icon" type="image/svg+xml" href="/assets/Logo.svg">
+</head>
+<body class="page-docs">
+<a class="docs-skip" href="#main">Skip to content</a>
+<aside class="docs-sidebar">
+  <a href="/" class="brand-link brand-link-compact">
+    <img src="/assets/Logo-white.svg" alt="" class="brand-mark">
+    <span>Hayba</span>
+  </a>
+  <!-- docs-nav:start -->
+  <details class="docs-menu" open>
+  <summary class="docs-menu-toggle">Documentation menu</summary>
+  <nav class="docs-toc docs-nav" aria-label="Documentation">
+    <div class="docs-toc-group">
+      <p class="docs-toc-title">Start here</p>
+      <a href="/docs/" class="docs-toc-link docs-nav-page">Overview</a>
+      <a href="/docs/getting-started/" class="docs-toc-link docs-nav-page">Getting started</a>
+    </div>
+    <div class="docs-toc-group">
+      <p class="docs-toc-title">Concepts</p>
+      <a href="/docs/concepts/" aria-current="page" class="docs-toc-link docs-nav-page is-current">How Hayba works</a>
+        <div class="docs-toc-sub">
+          <a href="#parts" class="docs-toc-link">The two parts</a>
+          <a href="#request" class="docs-toc-link">What happens on a call</a>
+          <a href="#ports" class="docs-toc-link">Ports and processes</a>
+          <a href="#state" class="docs-toc-link">Files Hayba writes</a>
+        </div>
+      <a href="/docs/concepts/code-mode/" class="docs-toc-link docs-nav-page">Code Mode and tool search</a>
+      <a href="/docs/concepts/plan-mode/" class="docs-toc-link docs-nav-page">Plan Mode, approvals and undo</a>
+      <a href="/docs/concepts/chat/" class="docs-toc-link docs-nav-page">In-editor chat</a>
+      <a href="/docs/concepts/safety/" class="docs-toc-link docs-nav-page">Safety model</a>
+    </div>
+    <div class="docs-toc-group">
+      <p class="docs-toc-title">Guides</p>
+      <a href="/docs/guides/blueprint/" class="docs-toc-link docs-nav-page">Author a Blueprint</a>
+      <a href="/docs/guides/umg-widget/" class="docs-toc-link docs-nav-page">Build and render a UMG widget</a>
+      <a href="/docs/guides/material/" class="docs-toc-link docs-nav-page">Create and validate a material</a>
+      <a href="/docs/guides/actors-viewport/" class="docs-toc-link docs-nav-page">Place actors and capture the viewport</a>
+      <a href="/docs/guides/pie-test/" class="docs-toc-link docs-nav-page">Run a PIE test</a>
+      <a href="/docs/guides/pcg/" class="docs-toc-link docs-nav-page">PCG basics</a>
+    </div>
+    <div class="docs-toc-group">
+      <p class="docs-toc-title">Reference</p>
+      <a href="/docs/tools/" class="docs-toc-link docs-nav-page">Tool reference</a>
+      <a href="/docs/troubleshooting/" class="docs-toc-link docs-nav-page">Troubleshooting</a>
+      <a href="/docs/faq/" class="docs-toc-link docs-nav-page">FAQ</a>
+    </div>
+  </nav>
+  </details>
+  <!-- docs-nav:end -->
+</aside>
+
+<main class="docs-main" id="main">
+<h1>How Hayba works</h1>
+<p class="docs-lead">
+  Hayba connects an AI agent to a running Unreal editor. The agent talks to an MCP server; the
+  server talks to a plugin inside the editor; the plugin runs the work on the editor's game
+  thread and answers with structured results.
+</p>
+
+<section class="docs-section">
+  <h2 id="parts">The two parts</h2>
+  <h3>The MCP server</h3>
+  <p>
+    A Node.js program in <code>mcp-tools/hayba-mcp</code>. Your MCP client starts it and talks to
+    it over stdio using the Model Context Protocol. It holds the tool catalogue: names,
+    descriptions and parameter schemas. It validates each call's arguments, then forwards the
+    command to the editor. Some tools do more work on the Node side first, such as tool search,
+    PCG graph checks, asset source downloads and agent memory.
+  </p>
+  <h3>The editor plugin</h3>
+  <p>
+    A C++ editor plugin, <code>HaybaMCPToolkit</code>, that loads with the editor. It opens a TCP
+    listener on <code>127.0.0.1</code>, port 52342 by default, and runs each command through one
+    router. The router checks the command against the editor's state (Plan Mode, leases, Play-In-Editor,
+    editor health) before a handler for that domain does the work. There are handlers for actors,
+    assets, Blueprints, materials, UMG, PCG, levels, World Partition, Play-In-Editor, audio,
+    animation, tests and more.
+  </p>
+  <p>
+    The plugin also hosts the editor UI: the <strong>Hayba MCP Toolkit</strong> tab with the
+    in-editor chat, the approval cards, the World view and Settings.
+  </p>
+</section>
+
+<section class="docs-section">
+  <h2 id="request">What happens on a call</h2>
+  <ol>
+    <li>The agent calls a tool, for example <code>hayba_invoke</code> with <code>name: "actor_spawn"</code>.</li>
+    <li>The server checks the arguments against the tool's schema. Through <code>hayba_invoke</code>, an unknown parameter is refused with the list of parameters the tool accepts.</li>
+    <li>The server sends a length-prefixed JSON message to the plugin: the command, an id and the parameters.</li>
+    <li>The plugin queues it for the game thread, where all editor work must run.</li>
+    <li>The router runs its checks. If one fails, the command is refused with a reason code and nothing runs.</li>
+    <li>For commands that change the editor, the router opens an undo transaction named <code>Hayba: &lt;command&gt;</code>, with the exceptions listed under <a href="/docs/concepts/plan-mode/#undo">Undo</a>.</li>
+    <li>The handler runs and returns JSON. The server passes it back to the agent, sometimes with a hint about what to check next.</li>
+  </ol>
+  <p>
+    Commands are answered in order, a few per editor frame. A command that waits on the editor,
+    such as a shader compile or a long Python script, holds up the ones behind it. See
+    <a href="/docs/troubleshooting/#busy">Editor busy or timeouts</a>.
+  </p>
+</section>
+
+<section class="docs-section">
+  <h2 id="ports">Ports and processes</h2>
+  <div class="docs-table-wrap">
+    <table class="docs-table">
+      <thead><tr><th scope="col">Port</th><th scope="col">Who listens</th><th scope="col">What for</th></tr></thead>
+      <tbody>
+        <tr><td>52342</td><td>Editor plugin</td><td>Commands from MCP servers. If it is taken, the plugin tries 52343 to 52350 in turn.</td></tr>
+        <tr><td>7821</td><td>Server started by the plugin</td><td>The in-editor chat and its dashboard.</td></tr>
+        <tr><td>52360</td><td>Server started by your client</td><td>The server's local web dashboard.</td></tr>
+        <tr><td>7822</td><td>Optional visual sidecar</td><td>Image embeddings for visual search. Only if you install it.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>
+    You can have two copies of the server running at once: one your MCP client starts, and one
+    the plugin starts for the in-editor chat. Both connect to the same editor over TCP. The
+    plugin's listener and the server's dashboard bind to <code>127.0.0.1</code>, so other
+    machines cannot reach them.
+  </p>
+</section>
+
+<section class="docs-section">
+  <h2 id="state">Files Hayba writes</h2>
+  <ul>
+    <li><code>&lt;YourProject&gt;/<wbr>Saved/<wbr>HaybaMCP/<wbr>instances/<wbr>&lt;pid&gt;.json</code>: the port each running editor chose. The server reads these to find the editor.</li>
+    <li><code>&lt;YourProject&gt;/<wbr>Saved/<wbr>hayba-execution.log</code>: a journal of every command the plugin ran, if the execution journal is on (the default).</li>
+    <li><code>&lt;YourProject&gt;/<wbr>Saved/<wbr>Screenshots/<wbr>Hayba</code>: images from widget renders and camera renders.</li>
+    <li><code>&lt;YourProject&gt;/<wbr>.scratch</code>: validator profiles, constraints and lessons used by the plugin's panels and the server it starts.</li>
+    <li><code>Saved/<wbr>HaybaMCP/<wbr>settings.json</code>, relative to the server's working directory: optional <a href="/docs/concepts/code-mode/#routing">routing settings</a>.</li>
+  </ul>
+  <p>
+    API keys for the in-editor chat are not in these files. They are encrypted with Windows DPAPI
+    for your user account. See <a href="/docs/concepts/chat/#providers">In-editor chat</a>.
+  </p>
+</section>
+
+  <nav class="docs-pager" aria-label="Next and previous pages">
+    <a href="/docs/getting-started/" class="docs-pager-prev"><span>Previous</span>Getting started</a>
+    <a href="/docs/concepts/code-mode/" class="docs-pager-next"><span>Next</span>Code Mode and tool search</a>
+  </nav>
+</main>
+
+<script type="module" src="/docs/docs.js"></script>
+</body>
+</html>

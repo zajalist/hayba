@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Code Mode and tool search | Hayba docs</title>
+<meta name="description" content="Why the server starts with 7 tools, and how an agent finds and calls the rest.">
+<link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/docs/docs.css">
+<link rel="icon" type="image/svg+xml" href="/assets/Logo.svg">
+</head>
+<body class="page-docs">
+<a class="docs-skip" href="#main">Skip to content</a>
+<aside class="docs-sidebar">
+  <a href="/" class="brand-link brand-link-compact">
+    <img src="/assets/Logo-white.svg" alt="" class="brand-mark">
+    <span>Hayba</span>
+  </a>
+  <!-- docs-nav:start -->
+  <details class="docs-menu" open>
+  <summary class="docs-menu-toggle">Documentation menu</summary>
+  <nav class="docs-toc docs-nav" aria-label="Documentation">
+    <div class="docs-toc-group">
+      <p class="docs-toc-title">Start here</p>
+      <a href="/docs/" class="docs-toc-link docs-nav-page">Overview</a>
+      <a href="/docs/getting-started/" class="docs-toc-link docs-nav-page">Getting started</a>
+    </div>
+    <div class="docs-toc-group">
+      <p class="docs-toc-title">Concepts</p>
+      <a href="/docs/concepts/" class="docs-toc-link docs-nav-page">How Hayba works</a>
+      <a href="/docs/concepts/code-mode/" aria-current="page" class="docs-toc-link docs-nav-page is-current">Code Mode and tool search</a>
+        <div class="docs-toc-sub">
+          <a href="#startup" class="docs-toc-link">The 7 startup tools</a>
+          <a href="#find-call" class="docs-toc-link">Finding and calling a tool</a>
+          <a href="#packs" class="docs-toc-link">Packs</a>
+          <a href="#routing" class="docs-toc-link">Other routing modes</a>
+        </div>
+      <a href="/docs/concepts/plan-mode/" class="docs-toc-link docs-nav-page">Plan Mode, approvals and undo</a>
+      <a href="/docs/concepts/chat/" class="docs-toc-link docs-nav-page">In-editor chat</a>
+      <a href="/docs/concepts/safety/" class="docs-toc-link docs-nav-page">Safety model</a>
+    </div>
+    <div class="docs-toc-group">
+      <p class="docs-toc-title">Guides</p>
+      <a href="/docs/guides/blueprint/" class="docs-toc-link docs-nav-page">Author a Blueprint</a>
+      <a href="/docs/guides/umg-widget/" class="docs-toc-link docs-nav-page">Build and render a UMG widget</a>
+      <a href="/docs/guides/material/" class="docs-toc-link docs-nav-page">Create and validate a material</a>
+      <a href="/docs/guides/actors-viewport/" class="docs-toc-link docs-nav-page">Place actors and capture the viewport</a>
+      <a href="/docs/guides/pie-test/" class="docs-toc-link docs-nav-page">Run a PIE test</a>
+      <a href="/docs/guides/pcg/" class="docs-toc-link docs-nav-page">PCG basics</a>
+    </div>
+    <div class="docs-toc-group">
+      <p class="docs-toc-title">Reference</p>
+      <a href="/docs/tools/" class="docs-toc-link docs-nav-page">Tool reference</a>
+      <a href="/docs/troubleshooting/" class="docs-toc-link docs-nav-page">Troubleshooting</a>
+      <a href="/docs/faq/" class="docs-toc-link docs-nav-page">FAQ</a>
+    </div>
+  </nav>
+  </details>
+  <!-- docs-nav:end -->
+</aside>
+
+<main class="docs-main" id="main">
+<h1>Code Mode and tool search</h1>
+<p class="docs-lead">
+  Hayba has more than 450 tools. Listing all of them to an agent up front would fill its context
+  before it did any work. So the server starts with 7 tools, and the agent searches for the rest
+  when it needs them.
+</p>
+
+<section class="docs-section">
+  <h2 id="startup">The 7 startup tools</h2>
+  <div class="docs-table-wrap">
+    <table class="docs-table">
+      <thead><tr><th scope="col">Tool</th><th scope="col">What it does</th></tr></thead>
+      <tbody>
+        <tr><td><a href="/docs/tools/#hayba_search_tools"><code>hayba_search_tools</code></a></td><td>Finds tools from a plain-language description, such as "make a menu widget". It searches the whole catalogue, including tools that are not loaded.</td></tr>
+        <tr><td><a href="/docs/tools/#hayba_invoke"><code>hayba_invoke</code></a></td><td>Calls a tool by name with its arguments, whether or not its pack is loaded.</td></tr>
+        <tr><td><a href="/docs/tools/#get_tool_signature"><code>get_tool_signature</code></a></td><td>Returns one tool's parameters, return shape and cost.</td></tr>
+        <tr><td><a href="/docs/tools/#list_tool_categories"><code>list_tool_categories</code></a></td><td>Lists every domain and the tools in it.</td></tr>
+        <tr><td><a href="/docs/tools/#hayba_pack_list"><code>hayba_pack_list</code></a></td><td>Lists the tool packs and which are loaded.</td></tr>
+        <tr><td><a href="/docs/tools/#hayba_pack_load"><code>hayba_pack_load</code></a></td><td>Registers a pack's tools natively, so they appear in the client's tool list with full schemas.</td></tr>
+        <tr><td><a href="/docs/tools/#hayba_check_ue_status"><code>hayba_check_ue_status</code></a></td><td>Reports whether the editor is reachable, and its engine and plugin versions.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>
+    The first of these an agent calls also returns a short orientation note, so the agent knows
+    the rest of the catalogue is one search away.
+  </p>
+</section>
+
+<section class="docs-section">
+  <h2 id="find-call">Finding and calling a tool</h2>
+  <p>A typical exchange, when the agent does not know the tool name yet:</p>
+  <ol>
+    <li><code>hayba_search_tools</code> with <code>query: "spawn a static mesh at a location"</code> returns <code>actor_spawn_from_asset</code>, <code>actor_spawn</code> and others, with short descriptions.</li>
+    <li>Optionally, <code>get_tool_signature</code> with <code>command: "actor_spawn_from_asset"</code> returns its parameters.</li>
+    <li><code>hayba_invoke</code> with <code>name: "actor_spawn_from_asset"</code> and <code>args: { "asset_path": "/Game/Meshes/SM_Rock" }</code> runs it.</li>
+  </ol>
+  <p>
+    <code>hayba_invoke</code> checks the arguments strictly. A misspelt or unknown parameter is
+    refused, and the error names the parameters the tool accepts, rather than the value being
+    dropped quietly.
+  </p>
+  <p>
+    If a name is not a server tool but is a plugin command marked callable, <code>hayba_invoke</code>
+    passes it straight to the plugin. The <a href="/docs/tools/">tool reference</a> marks these as
+    plugin commands.
+  </p>
+  <p>
+    You do not have to name tools in your prompts. Describe the task; the agent searches. Naming a
+    tool helps when you already know the one you want.
+  </p>
+</section>
+
+<section class="docs-section">
+  <h2 id="packs">Packs</h2>
+  <p>
+    Tools are grouped into packs. A domain pack holds one subsystem's tools; a workflow pack
+    bundles tools for one task across subsystems. On this version there are four workflow packs:
+    <code>biome</code>, <code>connectors</code>, <code>editor</code> and <code>python</code>.
+  </p>
+  <p>
+    Loading a pack with <code>hayba_pack_load</code> is an optimisation for repeated calls into
+    one area, not a requirement: <code>hayba_invoke</code> already reaches every static tool. When
+    <code>hayba_check_ue_status</code> confirms the editor is connected, the server loads the
+    <code>editor</code> pack by itself. It adds viewport capture, the log stream, Play-In-Editor
+    start, the shader and idle waits, and camera renders.
+  </p>
+  <p>
+    Eleven tools are built when the server starts, because they depend on live objects: the
+    asset search index, slivers and the history journal. They show up in search, but on this
+    version <code>hayba_invoke</code> cannot call them. Load their pack first. The tool reference
+    marks each one.
+  </p>
+</section>
+
+<section class="docs-section">
+  <h2 id="routing">Other routing modes</h2>
+  <p>
+    The server reads optional settings from <code>Saved/<wbr>HaybaMCP/<wbr>settings.json</code>
+    in its working directory, or from the file named by <code>HAYBA_SETTINGS_PATH</code>.
+  </p>
+  <div class="docs-cmd" data-copy-name="routing settings">
+    <div class="docs-cmd-bar"><span class="docs-cmd-label docs-cmd-file">settings.json</span></div>
+    <pre><code>{
+  "toolRouting": "deferred",
+  "alwaysLoadPacks": ["editor"]
+}</code></pre>
+  </div>
+  <ul>
+    <li><code>toolRouting: "deferred"</code> is the default described on this page.</li>
+    <li><code>alwaysLoadPacks</code> loads the named packs at startup.</li>
+    <li>
+      <code>toolRouting: "full"</code> drops search and packs. The server then registers only
+      <code>list_tool_categories</code>, <code>get_tool_signature</code> and <code>python_run</code>.
+      To register every tool natively instead, also set the environment variable
+      <code>HAYBA_CODE_MODE=off</code>. That puts the whole catalogue in the agent's context, so use
+      it only with clients that handle very large tool lists.
+    </li>
+  </ul>
+  <p>
+    The editor's <strong>Progressive tool discovery</strong> setting is stored with the plugin
+    settings; the server takes its routing from the file above.
+  </p>
+</section>
+
+  <nav class="docs-pager" aria-label="Next and previous pages">
+    <a href="/docs/concepts/" class="docs-pager-prev"><span>Previous</span>How Hayba works</a>
+    <a href="/docs/concepts/plan-mode/" class="docs-pager-next"><span>Next</span>Plan Mode, approvals and undo</a>
+  </nav>
+</main>
+
+<script type="module" src="/docs/docs.js"></script>
+</body>
+</html>

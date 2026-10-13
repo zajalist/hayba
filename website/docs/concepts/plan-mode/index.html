@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Plan Mode, approvals and undo | Hayba docs</title>
+<meta name="description" content="How Hayba asks you before an agent changes the editor, what can be approved, and what Ctrl+Z covers.">
+<link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/docs/docs.css">
+<link rel="icon" type="image/svg+xml" href="/assets/Logo.svg">
+</head>
+<body class="page-docs">
+<a class="docs-skip" href="#main">Skip to content</a>
+<aside class="docs-sidebar">
+  <a href="/" class="brand-link brand-link-compact">
+    <img src="/assets/Logo-white.svg" alt="" class="brand-mark">
+    <span>Hayba</span>
+  </a>
+  <!-- docs-nav:start -->
+  <details class="docs-menu" open>
+  <summary class="docs-menu-toggle">Documentation menu</summary>
+  <nav class="docs-toc docs-nav" aria-label="Documentation">
+    <div class="docs-toc-group">
+      <p class="docs-toc-title">Start here</p>
+      <a href="/docs/" class="docs-toc-link docs-nav-page">Overview</a>
+      <a href="/docs/getting-started/" class="docs-toc-link docs-nav-page">Getting started</a>
+    </div>
+    <div class="docs-toc-group">
+      <p class="docs-toc-title">Concepts</p>
+      <a href="/docs/concepts/" class="docs-toc-link docs-nav-page">How Hayba works</a>
+      <a href="/docs/concepts/code-mode/" class="docs-toc-link docs-nav-page">Code Mode and tool search</a>
+      <a href="/docs/concepts/plan-mode/" aria-current="page" class="docs-toc-link docs-nav-page is-current">Plan Mode, approvals and undo</a>
+        <div class="docs-toc-sub">
+          <a href="#plan-mode" class="docs-toc-link">Plan Mode</a>
+          <a href="#what-can-be-approved" class="docs-toc-link">What can be approved</a>
+          <a href="#plans" class="docs-toc-link">Written plans</a>
+          <a href="#undo" class="docs-toc-link">Undo</a>
+        </div>
+      <a href="/docs/concepts/chat/" class="docs-toc-link docs-nav-page">In-editor chat</a>
+      <a href="/docs/concepts/safety/" class="docs-toc-link docs-nav-page">Safety model</a>
+    </div>
+    <div class="docs-toc-group">
+      <p class="docs-toc-title">Guides</p>
+      <a href="/docs/guides/blueprint/" class="docs-toc-link docs-nav-page">Author a Blueprint</a>
+      <a href="/docs/guides/umg-widget/" class="docs-toc-link docs-nav-page">Build and render a UMG widget</a>
+      <a href="/docs/guides/material/" class="docs-toc-link docs-nav-page">Create and validate a material</a>
+      <a href="/docs/guides/actors-viewport/" class="docs-toc-link docs-nav-page">Place actors and capture the viewport</a>
+      <a href="/docs/guides/pie-test/" class="docs-toc-link docs-nav-page">Run a PIE test</a>
+      <a href="/docs/guides/pcg/" class="docs-toc-link docs-nav-page">PCG basics</a>
+    </div>
+    <div class="docs-toc-group">
+      <p class="docs-toc-title">Reference</p>
+      <a href="/docs/tools/" class="docs-toc-link docs-nav-page">Tool reference</a>
+      <a href="/docs/troubleshooting/" class="docs-toc-link docs-nav-page">Troubleshooting</a>
+      <a href="/docs/faq/" class="docs-toc-link docs-nav-page">FAQ</a>
+    </div>
+  </nav>
+  </details>
+  <!-- docs-nav:end -->
+</aside>
+
+<main class="docs-main" id="main">
+<h1>Plan Mode, approvals and undo</h1>
+<p class="docs-lead">
+  Plan Mode makes an external agent wait for you before it changes the editor. This page covers
+  what it checks, what you can approve on this version, and which changes Ctrl+Z can take back.
+</p>
+
+<section class="docs-section">
+  <h2 id="plan-mode">Plan Mode</h2>
+  <p>
+    Plan Mode is the setting <strong>Review each external edit</strong>, under
+    <strong>Settings</strong>, <strong>Editor safety</strong> in the Hayba MCP Toolkit tab. It is
+    on by default in a new project.
+  </p>
+  <p>
+    It applies to every command that changes scene or asset state: anything that creates, adds,
+    sets, deletes, removes, duplicates, imports or renames. It also covers
+    <code>python_run</code>, <code>actor_call_function</code>,
+    <code>editor_run_console_command</code>, <code>editor_batch</code>,
+    <code>editor_save_all_and_quit</code> and <code>editor_pie_click_actor</code>. Reads, searches,
+    validation and captures are never held.
+  </p>
+  <p>When an external agent sends one of these commands while Plan Mode is on:</p>
+  <ol>
+    <li>The plugin does not run it. It freezes the exact command, its parameters and its target into a review card in the toolkit's <strong>Agent</strong> view, and replies <code>plan_mode_required</code> with a proposal id.</li>
+    <li>You read the card and choose <strong>Approve operation</strong>, or reject it.</li>
+    <li>The agent sends the same command again. It runs once. Any retry, even after a failure, needs a new card and a new approval.</li>
+  </ol>
+  <p>
+    An approval is tied to the exact parameters and to the target's state when the card was made.
+    It is refused if the target changes before you approve, if the card is older than five
+    minutes, if the agent disconnects, or if a lease named in the request has expired.
+  </p>
+</section>
+
+<section class="docs-section">
+  <h2 id="what-can-be-approved">What can be approved</h2>
+  <p>
+    On this version, the exact review supports edits to one existing actor, named by
+    <code>actor_id</code>:
+  </p>
+  <ul>
+    <li><a href="/docs/tools/#actor_transform"><code>actor_transform</code></a> and <a href="/docs/tools/#actor_delete"><code>actor_delete</code></a> (actor name or label)</li>
+    <li><a href="/docs/tools/#actor_set_properties"><code>actor_set_properties</code></a>, <a href="/docs/tools/#actor_tag"><code>actor_tag</code></a> and <a href="/docs/tools/#actor_set_visibility"><code>actor_set_visibility</code></a> (actor name)</li>
+  </ul>
+  <p>
+    The name must match exactly one actor. Every other held command is refused with
+    <code>exact_approval_unavailable</code> while Plan Mode is on, because the plugin cannot yet
+    freeze its target for review. That includes spawning actors, creating or editing assets
+    (Blueprints, materials, widgets, PCG graphs), batches and <code>python_run</code>.
+  </p>
+  <div class="docs-callout">
+    <p>
+      To build with an agent, turn <strong>Review each external edit</strong> off in a scratch
+      project, ideally one under source control. The other checks stay on: leases, Play-In-Editor
+      state, editor health and the save guards described in the
+      <a href="/docs/concepts/safety/">safety model</a>, and the approvals in the built-in chat.
+    </p>
+  </div>
+  <p>
+    The in-editor chat's <strong>Production</strong> mode asks for the same exact review on every
+    write, even when the setting is off, so it has the same limits. Use <strong>Draft</strong> for
+    creation work. See <a href="/docs/concepts/chat/#modes">In-editor chat</a>.
+  </p>
+</section>
+
+<section class="docs-section">
+  <h2 id="plans">Written plans</h2>
+  <p>
+    An agent can show you a step-by-step plan with
+    <a href="/docs/tools/#hayba_propose_plan"><code>hayba_propose_plan</code></a> and mark progress
+    with <a href="/docs/tools/#hayba_mark_plan_step"><code>hayba_mark_plan_step</code></a>. The plan
+    appears in the toolkit so you can follow along. It is context, not permission: approving a
+    written plan does not let a held command through. Only the exact review above does.
+  </p>
+  <p>A prompt that asks for a plan first:</p>
+  <div class="docs-cmd docs-cmd-prose" data-copy-name="prompt">
+    <div class="docs-cmd-bar"><span class="docs-cmd-label">Prompt</span></div>
+    <pre><code>Before changing anything, propose a plan with hayba_propose_plan that lists each actor you will move and where. Wait for me to say go, then mark each step as you finish it.</code></pre>
+  </div>
+</section>
+
+<section class="docs-section">
+  <h2 id="undo">Undo</h2>
+  <p>
+    Most commands that change the editor run inside an Unreal undo transaction named
+    <code>Hayba: &lt;command&gt;</code>. Each one is a single entry in <strong>Edit</strong>,
+    <strong>Undo History</strong>, and Ctrl+Z takes it back. This is separate from Plan Mode: it
+    applies whether or not the command needed approval.
+  </p>
+  <p>These are not recorded, so Ctrl+Z will not undo them:</p>
+  <ul>
+    <li>Anything that runs while Play-In-Editor is active.</li>
+    <li>Saves to disk, such as <code>level_save</code>, <code>asset_save</code> and compiles that save. Writing a file cannot be undone.</li>
+    <li>Asset deletes.</li>
+    <li><code>ui_compile_widget</code>, <code>data_set</code> and <code>editor_pie_click_actor</code>.</li>
+    <li>Any call made with <code>transaction: false</code>.</li>
+    <li><code>python_run</code> scripts that load or unload World Partition actors.</li>
+  </ul>
+  <p>
+    Other <code>python_run</code> scripts run inside a transaction, but only changes to objects
+    that record themselves for undo can be taken back. Treat Python changes as permanent.
+  </p>
+  <p>Two asset types stage their edits until you commit them:</p>
+  <ul>
+    <li>Blueprint edits are staged until <a href="/docs/tools/#blueprint_compile"><code>blueprint_compile</code></a>, which also saves by default.</li>
+    <li>Material graph edits are not written to disk until <a href="/docs/tools/#material_compile"><code>material_compile</code></a>.</li>
+  </ul>
+  <p>Use source control on any project an agent edits. Undo is a convenience, not a backup.</p>
+</section>
+
+  <nav class="docs-pager" aria-label="Next and previous pages">
+    <a href="/docs/concepts/code-mode/" class="docs-pager-prev"><span>Previous</span>Code Mode and tool search</a>
+    <a href="/docs/concepts/chat/" class="docs-pager-next"><span>Next</span>In-editor chat</a>
+  </nav>
+</main>
+
+<script type="module" src="/docs/docs.js"></script>
+</body>
+</html>

@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Safety model | Hayba docs</title>
+<meta name="description" content="The checks the editor plugin runs before an agent write: Plan Mode, leases, PIE state, editor health and saves.">
+<link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/docs/docs.css">
+<link rel="icon" type="image/svg+xml" href="/assets/Logo.svg">
+</head>
+<body class="page-docs">
+<a class="docs-skip" href="#main">Skip to content</a>
+<aside class="docs-sidebar">
+  <a href="/" class="brand-link brand-link-compact">
+    <img src="/assets/Logo-white.svg" alt="" class="brand-mark">
+    <span>Hayba</span>
+  </a>
+  <!-- docs-nav:start -->
+  <details class="docs-menu" open>
+  <summary class="docs-menu-toggle">Documentation menu</summary>
+  <nav class="docs-toc docs-nav" aria-label="Documentation">
+    <div class="docs-toc-group">
+      <p class="docs-toc-title">Start here</p>
+      <a href="/docs/" class="docs-toc-link docs-nav-page">Overview</a>
+      <a href="/docs/getting-started/" class="docs-toc-link docs-nav-page">Getting started</a>
+    </div>
+    <div class="docs-toc-group">
+      <p class="docs-toc-title">Concepts</p>
+      <a href="/docs/concepts/" class="docs-toc-link docs-nav-page">How Hayba works</a>
+      <a href="/docs/concepts/code-mode/" class="docs-toc-link docs-nav-page">Code Mode and tool search</a>
+      <a href="/docs/concepts/plan-mode/" class="docs-toc-link docs-nav-page">Plan Mode, approvals and undo</a>
+      <a href="/docs/concepts/chat/" class="docs-toc-link docs-nav-page">In-editor chat</a>
+      <a href="/docs/concepts/safety/" aria-current="page" class="docs-toc-link docs-nav-page is-current">Safety model</a>
+        <div class="docs-toc-sub">
+          <a href="#status" class="docs-toc-link">Release status</a>
+          <a href="#boundaries" class="docs-toc-link">The checks</a>
+          <a href="#leases" class="docs-toc-link">Leases</a>
+          <a href="#pie" class="docs-toc-link">Play-In-Editor</a>
+          <a href="#unsafe" class="docs-toc-link">After a native fault</a>
+          <a href="#python" class="docs-toc-link">Python</a>
+          <a href="#limits" class="docs-toc-link">What it does not do</a>
+        </div>
+    </div>
+    <div class="docs-toc-group">
+      <p class="docs-toc-title">Guides</p>
+      <a href="/docs/guides/blueprint/" class="docs-toc-link docs-nav-page">Author a Blueprint</a>
+      <a href="/docs/guides/umg-widget/" class="docs-toc-link docs-nav-page">Build and render a UMG widget</a>
+      <a href="/docs/guides/material/" class="docs-toc-link docs-nav-page">Create and validate a material</a>
+      <a href="/docs/guides/actors-viewport/" class="docs-toc-link docs-nav-page">Place actors and capture the viewport</a>
+      <a href="/docs/guides/pie-test/" class="docs-toc-link docs-nav-page">Run a PIE test</a>
+      <a href="/docs/guides/pcg/" class="docs-toc-link docs-nav-page">PCG basics</a>
+    </div>
+    <div class="docs-toc-group">
+      <p class="docs-toc-title">Reference</p>
+      <a href="/docs/tools/" class="docs-toc-link docs-nav-page">Tool reference</a>
+      <a href="/docs/troubleshooting/" class="docs-toc-link docs-nav-page">Troubleshooting</a>
+      <a href="/docs/faq/" class="docs-toc-link docs-nav-page">FAQ</a>
+    </div>
+  </nav>
+  </details>
+  <!-- docs-nav:end -->
+</aside>
+
+<main class="docs-main" id="main">
+<h1>Safety model</h1>
+<p class="docs-lead">
+  An Unreal editor is shared, mutable state. An agent can act on a stale read, start Play while
+  something is building, or keep going after a native fault. Hayba checks each write where it
+  happens, in the editor plugin, and refuses with a reason instead of guessing.
+</p>
+
+<section class="docs-section">
+  <h2 id="status">Release status</h2>
+  <p>
+    The protections on this page are in the current source as the 0.4.0 release candidate. They
+    are not in the v0.3.0 release, and final release checks are still running. Plan Mode and
+    undo, described on <a href="/docs/concepts/plan-mode/">their own page</a>, predate this work.
+  </p>
+</section>
+
+<section class="docs-section">
+  <h2 id="boundaries">The checks</h2>
+  <p>
+    Every command passes through one router in the plugin. A refused command does not run, and the
+    reply carries a code the agent can act on.
+  </p>
+  <div class="docs-table-wrap">
+    <table class="docs-table">
+      <thead><tr><th scope="col">Check</th><th scope="col">What it protects</th><th scope="col">Typical refusal</th></tr></thead>
+      <tbody>
+        <tr><td>Plan Mode</td><td>Writes from an external agent wait for your exact approval.</td><td><code>plan_mode_required</code>, <code>exact_approval_unavailable</code></td></tr>
+        <tr><td>Leases</td><td>One agent cannot quietly write to a resource another agent holds.</td><td><code>lease_conflict</code>, <code>owner_required</code></td></tr>
+        <tr><td>Asset busy</td><td>An asset being built by one agent is not compiled, saved or played by another.</td><td><code>asset_busy</code></td></tr>
+        <tr><td>Play-In-Editor</td><td>Edits that are unsafe during Play are refused while it runs.</td><td><code>pie_active</code>, <code>pie_blocked</code></td></tr>
+        <tr><td>Editor health</td><td>After a contained native fault, later writes stop until restart.</td><td><code>editor_unsafe_restart_required</code></td></tr>
+        <tr><td>Saves</td><td>A read-only file returns an error instead of opening a blocking dialog.</td><td><code>package_read_only</code></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>
+    A refusal is a signal to refresh state or change the plan, not to resend the same write.
+    <a href="/docs/tools/#editor_get_state"><code>editor_get_state</code></a> reports the current
+    map, who owns Play-In-Editor, builds in progress, editor health and unsaved packages in one
+    call.
+  </p>
+</section>
+
+<section class="docs-section">
+  <h2 id="leases">Leases</h2>
+  <p>
+    Several agents can share one editor: for example a terrain agent, a foliage agent and a
+    reviewer. A lease is a time-limited claim on named resources: the whole editor, a world, a
+    World Partition region, an actor, an asset, or Play-In-Editor. The editor checks leases but
+    never waits on them, so one agent cannot freeze another.
+  </p>
+  <ul>
+    <li><a href="/docs/tools/#lease_acquire"><code>lease_acquire</code></a> either grants a <code>lease_id</code> or queues the request and says who holds the resource and for how long.</li>
+    <li>Leases last 120 seconds by default, up to 900, and are renewed with <a href="/docs/tools/#lease_renew"><code>lease_renew</code></a>. If an agent disconnects, its leases lapse within about a minute.</li>
+    <li><a href="/docs/tools/#editor_batch"><code>editor_batch</code></a> runs several steps under one lease, one step per frame, and waits for the editor to settle between steps.</li>
+  </ul>
+  <p>
+    Set <strong>When agents edit the same item</strong>, under <strong>Settings</strong>,
+    <strong>Editor safety</strong>, to choose how strict this is. It takes effect immediately.
+  </p>
+  <div class="docs-table-wrap">
+    <table class="docs-table">
+      <thead><tr><th scope="col">Setting</th><th scope="col">Behaviour</th></tr></thead>
+      <tbody>
+        <tr><td>Enforced for writes (default)</td><td>Reads run. A write that collides with another agent's lease is refused. So is a write that names no agent while other agents are connected.</td></tr>
+        <tr><td>Enforced</td><td>As above, and a read that names an expired lease is refused too.</td></tr>
+        <tr><td>Advisory</td><td>Everything runs; conflicts come back as warnings.</td></tr>
+        <tr><td>Off</td><td>No lease checks.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>
+    With a single agent and no other leases, the default refuses nothing. To give each agent a
+    stable name, set <code>HAYBA_AGENT_ID</code> in its MCP server's environment. Leases coordinate
+    agents; they are not authentication.
+  </p>
+</section>
+
+<section class="docs-section">
+  <h2 id="pie">Play-In-Editor</h2>
+  <ul>
+    <li>While Play-In-Editor runs or is starting, only reads and Play observation commands run. Anything else is refused with <code>pie_active</code>. Nothing ran, so the agent can retry after Play stops.</li>
+    <li>Only the agent that started a Play session can drive it with input. No agent drives or stops a session you started.</li>
+    <li><code>editor_start_pie</code> checks loaded Blueprints first. If one would open a compile-error dialog when Play starts, it answers <code>pie_blocked</code> with the Blueprints to fix, instead of leaving a dialog that stalls every command behind it.</li>
+    <li>A running batch pauses during Play and resumes afterwards.</li>
+  </ul>
+  <p>
+    If you press Play while an agent is building assets, Hayba stops it and names the asset. Press
+    Play again within ten seconds to play anyway. The console variable
+    <code>hayba.PIEBuildVeto</code> changes this: <code>0</code> only notifies, <code>1</code> is
+    the default, <code>2</code> always blocks.
+  </p>
+</section>
+
+<section class="docs-section">
+  <h2 id="unsafe">After a native fault</h2>
+  <p>
+    The plugin catches native crashes inside its handlers, Python calls and material calls.
+    Catching one does not make the editor safe to keep using: the interpreter, play state or a
+    save may be damaged. So after a caught fault:
+  </p>
+  <ul>
+    <li>The command that faulted answers <code>native_fault_contained</code>.</li>
+    <li>The editor shows a notification that stays until you dismiss it.</li>
+    <li>Later commands are refused with <code>editor_unsafe_restart_required</code>, apart from status checks and some reads.</li>
+    <li>The Play button is blocked, and any running batch stops.</li>
+  </ul>
+  <p>
+    Only an editor restart clears this. Save what you can, then restart. The goal is that you are
+    warned in time to save, not that a later crash can never happen.
+  </p>
+</section>
+
+<section class="docs-section">
+  <h2 id="python">Python</h2>
+  <p>
+    <a href="/docs/tools/#python_run"><code>python_run</code></a> runs a script inside the editor
+    process. Hayba refuses scripts that write host files, start processes or open network
+    connections. Each script gets a fresh namespace and a 5 second deadline. A longer deadline,
+    up to 60 seconds, needs an exclusive lease, because the script holds the editor's game thread
+    while it runs. <code>python_run</code> is never retried automatically after a lost
+    connection, so a slow script cannot run twice.
+  </p>
+  <p>
+    These limits reduce known risks. They are not process isolation: Python still runs inside the
+    editor.
+  </p>
+</section>
+
+<section class="docs-section">
+  <h2 id="limits">What it does not do</h2>
+  <ul>
+    <li>It does not make arbitrary native code crash-proof, and not every Unreal subsystem can be rolled back.</li>
+    <li>Agent identity is self-declared. Leases prevent accidents between cooperating agents, not abuse.</li>
+    <li>The plugin listens only on <code>127.0.0.1</code>. It is not built to be exposed to a network.</li>
+  </ul>
+  <p>
+    Use a scratch project while you evaluate Hayba, keep projects under source control, and stop
+    the agent when its evidence is incomplete.
+  </p>
+</section>
+
+  <nav class="docs-pager" aria-label="Next and previous pages">
+    <a href="/docs/concepts/chat/" class="docs-pager-prev"><span>Previous</span>In-editor chat</a>
+    <a href="/docs/guides/blueprint/" class="docs-pager-next"><span>Next</span>Author a Blueprint</a>
+  </nav>
+</main>
+
+<script type="module" src="/docs/docs.js"></script>
+</body>
+</html>
