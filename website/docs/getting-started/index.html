@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Getting started | Hayba docs</title>
+<meta name="description" content="Install Hayba from source, register it with Claude Code, Claude Desktop, Cursor or VS Code, and make a first run.">
+<link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/docs/docs.css">
+<link rel="icon" type="image/svg+xml" href="/assets/Logo.svg">
+</head>
+<body class="page-docs">
+<a class="docs-skip" href="#main">Skip to content</a>
+<aside class="docs-sidebar">
+  <a href="/" class="brand-link brand-link-compact">
+    <img src="/assets/Logo-white.svg" alt="" class="brand-mark">
+    <span>Hayba</span>
+  </a>
+  <!-- docs-nav:start -->
+  <details class="docs-menu" open>
+  <summary class="docs-menu-toggle">Documentation menu</summary>
+  <nav class="docs-toc docs-nav" aria-label="Documentation">
+    <div class="docs-toc-group">
+      <p class="docs-toc-title">Start here</p>
+      <a href="/docs/" class="docs-toc-link docs-nav-page">Overview</a>
+      <a href="/docs/getting-started/" aria-current="page" class="docs-toc-link docs-nav-page is-current">Getting started</a>
+        <div class="docs-toc-sub">
+          <a href="#requirements" class="docs-toc-link">Requirements</a>
+          <a href="#install" class="docs-toc-link">Install from source</a>
+          <a href="#register" class="docs-toc-link">Register with your client</a>
+          <a href="#first-run" class="docs-toc-link">First run</a>
+          <a href="#update" class="docs-toc-link">Updating</a>
+        </div>
+    </div>
+    <div class="docs-toc-group">
+      <p class="docs-toc-title">Concepts</p>
+      <a href="/docs/concepts/" class="docs-toc-link docs-nav-page">How Hayba works</a>
+      <a href="/docs/concepts/code-mode/" class="docs-toc-link docs-nav-page">Code Mode and tool search</a>
+      <a href="/docs/concepts/plan-mode/" class="docs-toc-link docs-nav-page">Plan Mode, approvals and undo</a>
+      <a href="/docs/concepts/chat/" class="docs-toc-link docs-nav-page">In-editor chat</a>
+      <a href="/docs/concepts/safety/" class="docs-toc-link docs-nav-page">Safety model</a>
+    </div>
+    <div class="docs-toc-group">
+      <p class="docs-toc-title">Guides</p>
+      <a href="/docs/guides/blueprint/" class="docs-toc-link docs-nav-page">Author a Blueprint</a>
+      <a href="/docs/guides/umg-widget/" class="docs-toc-link docs-nav-page">Build and render a UMG widget</a>
+      <a href="/docs/guides/material/" class="docs-toc-link docs-nav-page">Create and validate a material</a>
+      <a href="/docs/guides/actors-viewport/" class="docs-toc-link docs-nav-page">Place actors and capture the viewport</a>
+      <a href="/docs/guides/pie-test/" class="docs-toc-link docs-nav-page">Run a PIE test</a>
+      <a href="/docs/guides/pcg/" class="docs-toc-link docs-nav-page">PCG basics</a>
+    </div>
+    <div class="docs-toc-group">
+      <p class="docs-toc-title">Reference</p>
+      <a href="/docs/tools/" class="docs-toc-link docs-nav-page">Tool reference</a>
+      <a href="/docs/troubleshooting/" class="docs-toc-link docs-nav-page">Troubleshooting</a>
+      <a href="/docs/faq/" class="docs-toc-link docs-nav-page">FAQ</a>
+    </div>
+  </nav>
+  </details>
+  <!-- docs-nav:end -->
+</aside>
+
+<main class="docs-main" id="main">
+<h1>Getting started</h1>
+<p class="docs-lead">
+  Build Hayba from source, add the plugin to an Unreal project, connect your MCP client and make
+  a first call. Allow about half an hour, most of it for the C++ build.
+</p>
+
+<section class="docs-section">
+  <h2 id="requirements">Requirements</h2>
+  <ul>
+    <li><strong>Windows only</strong>, 64-bit. The plugin does not build for macOS or Linux.</li>
+    <li><strong>Unreal Engine 5.7+</strong>, installed from the Epic Games Launcher or built from source.</li>
+    <li><strong>Visual Studio</strong> with the C++ toolchain your engine version requires. The plugin is C++ and you compile it yourself.</li>
+    <li><strong>Node.js 22.5 or newer.</strong> Use the official Windows installer and keep its default folder: the plugin looks for <code>node.exe</code> there when it starts the in-editor chat.</li>
+    <li><strong>Git</strong>, to clone the repository.</li>
+    <li><strong>An MCP client</strong> such as Claude Code, Claude Desktop, Cursor or VS Code. You can also use the <a href="/docs/concepts/chat/">in-editor chat</a> with your own API key or a local model instead.</li>
+  </ul>
+  <p>
+    The plugin enables the engine plugins it depends on: PCG, Python Editor Script Plugin, Web
+    Browser Widget, Data Validation and Enhanced Input. A Blueprint-only project works: Unreal
+    offers to build the plugin's modules the first time you open it.
+  </p>
+</section>
+
+<section class="docs-section">
+  <h2 id="install">Install from source</h2>
+  <ol class="docs-steps" role="list">
+    <li>
+      <h3 class="docs-step-title">Build the MCP server</h3>
+      <p>Clone the repository, install its dependencies and build the server:</p>
+      <div class="docs-cmd" data-copy-name="build commands">
+        <div class="docs-cmd-bar"><span class="docs-cmd-label">Terminal</span></div>
+        <pre><code>git clone https://github.com/zajalist/hayba.git
+cd hayba
+npm install
+npm --prefix mcp-tools/hayba-mcp run build</code></pre>
+      </div>
+      <p>The server entry point is now at <code>mcp-tools/<wbr>hayba-mcp/<wbr>dist/<wbr>index.js</code>. You will point your client at it in a later step.</p>
+    </li>
+
+    <li>
+      <h3 class="docs-step-title">Link the plugin into your project</h3>
+      <p>
+        Create <code>&lt;YourProject&gt;\Plugins</code> if it does not exist. Then, from an
+        administrator Command Prompt (or with Windows Developer Mode on), link the plugin folder
+        into it. Replace <code>&lt;YourProject&gt;</code> and <code>&lt;repo&gt;</code> with your
+        project folder and your clone:
+      </p>
+      <div class="docs-cmd" data-copy-name="plugin link command">
+        <div class="docs-cmd-bar"><span class="docs-cmd-label">Command Prompt</span></div>
+        <pre><code>mklink /D "&lt;YourProject&gt;\Plugins\HaybaMCPToolkit" "&lt;repo&gt;\unreal\HaybaMCPToolkit"</code></pre>
+      </div>
+      <p>
+        A link, rather than a copy, lets the plugin find the server you just built. If you copy
+        the plugin instead, tell it where the server is. Add this to
+        <code>&lt;YourProject&gt;/<wbr>Saved/<wbr>Config/<wbr>WindowsEditor/<wbr>EditorPerProjectUserSettings.ini</code>,
+        using the full path to your clone:
+      </p>
+      <div class="docs-cmd" data-copy-name="plugin settings">
+        <div class="docs-cmd-bar"><span class="docs-cmd-label docs-cmd-file">EditorPerProjectUserSettings.ini</span></div>
+        <pre><code>[HaybaMCPToolkit]
+SidecarEntryPath=&lt;repo&gt;\mcp-tools\hayba-mcp\dist\index.js</code></pre>
+      </div>
+    </li>
+
+    <li>
+      <h3 class="docs-step-title">Build the project</h3>
+      <p>
+        Right-click your <code>.uproject</code> file and choose <strong>Generate Visual Studio
+        project files</strong>. Open the solution and build the <strong>Development Editor</strong>
+        configuration, or open the project and accept Unreal's offer to rebuild the missing
+        modules. Close the editor before you rebuild after any later plugin update.
+      </p>
+    </li>
+
+    <li>
+      <h3 class="docs-step-title">Optional: satellite plugins</h3>
+      <p>
+        Two optional plugins add commands for engine features not every project enables. Link
+        them the same way if you want those tools:
+      </p>
+      <ul>
+        <li><code>unreal/HaybaMCPGAS</code> adds Gameplay Ability System commands. It needs the engine's GameplayAbilities plugin.</li>
+        <li><code>unreal/HaybaMCPMetaSound</code> adds MetaSound graph commands.</li>
+      </ul>
+      <p>The <a href="/docs/tools/">tool reference</a> marks every tool that needs one of them.</p>
+    </li>
+  </ol>
+</section>
+
+<section class="docs-section">
+  <h2 id="register">Register with your client</h2>
+  <p>
+    Every client runs the same command: <code>node</code> with the full path to
+    <code>dist/index.js</code>. The examples use <code>C:\dev\hayba</code> as the clone
+    location; change it to yours. In JSON files, write each backslash twice.
+  </p>
+
+  <h3 id="claude-code">Claude Code</h3>
+  <div class="docs-cmd" data-copy-name="Claude Code command">
+    <div class="docs-cmd-bar"><span class="docs-cmd-label">Terminal</span></div>
+    <pre><code>claude mcp add hayba-toolkit -- node C:/dev/hayba/mcp-tools/hayba-mcp/dist/index.js</code></pre>
+  </div>
+  <p>
+    Start Claude Code from your Unreal project folder. The server looks for the editor's port
+    file under <code>Saved/HaybaMCP/instances</code>, starting from its working directory, so
+    this lets it find the right editor when several are open.
+  </p>
+
+  <h3 id="claude-desktop">Claude Desktop</h3>
+  <p>
+    Open <strong>Settings</strong>, then <strong>Developer</strong>, then <strong>Edit
+    Config</strong>. This opens <code>%APPDATA%\Claude\<wbr>claude_desktop_config.json</code>. Add
+    the server and restart Claude Desktop:
+  </p>
+  <div class="docs-cmd" data-copy-name="Claude Desktop config">
+    <div class="docs-cmd-bar"><span class="docs-cmd-label docs-cmd-file">claude_desktop_config.json</span></div>
+    <pre><code>{
+  "mcpServers": {
+    "hayba-toolkit": {
+      "command": "node",
+      "args": ["C:\\dev\\hayba\\mcp-tools\\hayba-mcp\\dist\\index.js"]
+    }
+  }
+}</code></pre>
+  </div>
+
+  <h3 id="cursor">Cursor</h3>
+  <p>
+    Add the server to <code>.cursor/mcp.json</code> in your project, or to
+    <code>%USERPROFILE%\.cursor\mcp.json</code> to use it everywhere:
+  </p>
+  <div class="docs-cmd" data-copy-name="Cursor config">
+    <div class="docs-cmd-bar"><span class="docs-cmd-label docs-cmd-file">.cursor/mcp.json</span></div>
+    <pre><code>{
+  "mcpServers": {
+    "hayba-toolkit": {
+      "command": "node",
+      "args": ["C:\\dev\\hayba\\mcp-tools\\hayba-mcp\\dist\\index.js"]
+    }
+  }
+}</code></pre>
+  </div>
+
+  <h3 id="vscode">VS Code</h3>
+  <p>
+    Add the server to <code>.vscode/mcp.json</code> in your workspace, then use it from Copilot
+    Chat in agent mode. VS Code names the top-level key <code>servers</code>:
+  </p>
+  <div class="docs-cmd" data-copy-name="VS Code config">
+    <div class="docs-cmd-bar"><span class="docs-cmd-label docs-cmd-file">.vscode/mcp.json</span></div>
+    <pre><code>{
+  "servers": {
+    "hayba-toolkit": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["C:\\dev\\hayba\\mcp-tools\\hayba-mcp\\dist\\index.js"]
+    }
+  }
+}</code></pre>
+  </div>
+
+  <h3 id="env">Optional environment variables</h3>
+  <p>Most setups need none of these. Add them under <code>env</code> in your client config if you do.</p>
+  <div class="docs-table-wrap">
+    <table class="docs-table">
+      <thead><tr><th scope="col">Variable</th><th scope="col">Default</th><th scope="col">Use</th></tr></thead>
+      <tbody>
+        <tr><td><code>UE_TCP_PORT</code></td><td><code>52342</code></td><td>Connect to one specific editor. Overrides port discovery.</td></tr>
+        <tr><td><code>UE_TCP_HOST</code></td><td><code>127.0.0.1</code></td><td>The editor's address. The plugin only listens on this machine.</td></tr>
+        <tr><td><code>DASHBOARD_PORT</code></td><td><code>52360</code></td><td>Port for the server's local web dashboard.</td></tr>
+        <tr><td><code>HAYBA_SETTINGS_PATH</code></td><td>see <a href="/docs/concepts/code-mode/#routing">routing</a></td><td>Where the server reads its routing settings.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="docs-section">
+  <h2 id="first-run">First run</h2>
+  <ol>
+    <li>
+      Open your project. On first launch the <strong>Hayba MCP Toolkit</strong> tab opens by
+      itself. Later, open it from the <strong>Tools</strong> menu, or run the console command
+      <code>Hayba.MCP.Open</code>.
+    </li>
+    <li>
+      Check the Output Log for <code>LogHaybaMCP: TCP server started on port 52342</code>. Another
+      port between 52343 and 52350 is fine; it means another editor already had 52342.
+    </li>
+    <li>In your client, ask the agent to check the connection:</li>
+  </ol>
+  <div class="docs-cmd docs-cmd-prose" data-copy-name="prompt">
+    <div class="docs-cmd-bar"><span class="docs-cmd-label">Prompt</span></div>
+    <pre><code>Use Hayba to check that the Unreal editor is connected, then list the actors in the current level.</code></pre>
+  </div>
+  <p>
+    The agent calls <a href="/docs/tools/#hayba_check_ue_status"><code>hayba_check_ue_status</code></a>,
+    then finds and calls <a href="/docs/tools/#actor_list"><code>actor_list</code></a>. If the
+    check reports that the editor is not connected, see
+    <a href="/docs/troubleshooting/#ports">Troubleshooting</a>.
+  </p>
+  <div class="docs-callout">
+    <p>
+      <strong>Plan Mode is on by default.</strong> While it is on, an external agent can only
+      make edits you approve one at a time, and only edits to an existing actor can be approved
+      that way. Creating assets, spawning actors and running Python are refused. Read
+      <a href="/docs/concepts/plan-mode/">Plan Mode, approvals and undo</a> before you start the
+      guides.
+    </p>
+  </div>
+  <p>
+    To chat inside the editor instead of an external client, set a provider and key in the
+    toolkit's <strong>Settings</strong>, under <strong>Chat model</strong>. See
+    <a href="/docs/concepts/chat/">In-editor chat</a>.
+  </p>
+</section>
+
+<section class="docs-section">
+  <h2 id="update">Updating</h2>
+  <p>Pull the latest source, then rebuild both halves:</p>
+  <div class="docs-cmd" data-copy-name="update commands">
+    <div class="docs-cmd-bar"><span class="docs-cmd-label">Terminal</span></div>
+    <pre><code>git pull
+npm install
+npm --prefix mcp-tools/hayba-mcp run build:server</code></pre>
+  </div>
+  <p>
+    <code>build:server</code> compiles the server and copies its data files without rebuilding the
+    dashboard. Then restart your MCP client so it starts the new server, close the editor, and
+    rebuild the project so the new plugin code loads. A running editor keeps the old plugin
+    loaded until you restart it. See <a href="/docs/troubleshooting/#stale">Stale build after an
+    update</a>.
+  </p>
+</section>
+
+  <nav class="docs-pager" aria-label="Next and previous pages">
+    <a href="/docs/" class="docs-pager-prev"><span>Previous</span>Overview</a>
+    <a href="/docs/concepts/" class="docs-pager-next"><span>Next</span>How Hayba works</a>
+  </nav>
+</main>
+
+<script type="module" src="/docs/docs.js"></script>
+</body>
+</html>

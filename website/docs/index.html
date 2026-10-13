@@ -3,146 +3,120 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Hayba — Documentation</title>
+<title>Hayba documentation</title>
+<meta name="description" content="Hayba documentation: install, concepts, task guides, the tool reference and troubleshooting.">
 <link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/docs/docs.css">
 <link rel="icon" type="image/svg+xml" href="/assets/Logo.svg">
 </head>
 <body class="page-docs">
-  <aside class="docs-sidebar">
-    <a href="/" class="brand-link brand-link-compact">
-      <img src="/assets/Logo-white.svg" alt="" class="brand-mark" />
-      <span>Hayba</span>
-    </a>
-    <nav class="docs-toc" aria-label="Documentation sections">
-      <div class="docs-toc-group">
-        <div class="docs-toc-title">Getting started</div>
-        <a href="#overview" class="docs-toc-link is-active">Overview</a>
-        <a href="#install" class="docs-toc-link">Install</a>
-        <a href="#first-run" class="docs-toc-link">First run</a>
-      </div>
-      <div class="docs-toc-group">
-        <div class="docs-toc-title">Unreal toolkit</div>
-        <a href="#mcp-overview" class="docs-toc-link">MCP overview</a>
-      </div>
-      <div class="docs-toc-group">
-        <div class="docs-toc-title">FAQ</div>
-        <a href="/#faq" class="docs-toc-link">Common questions</a>
-      </div>
-    </nav>
-  </aside>
+<a class="docs-skip" href="#main">Skip to content</a>
+<aside class="docs-sidebar">
+  <a href="/" class="brand-link brand-link-compact">
+    <img src="/assets/Logo-white.svg" alt="" class="brand-mark">
+    <span>Hayba</span>
+  </a>
+  <!-- docs-nav:start -->
+  <details class="docs-menu" open>
+  <summary class="docs-menu-toggle">Documentation menu</summary>
+  <nav class="docs-toc docs-nav" aria-label="Documentation">
+    <div class="docs-toc-group">
+      <p class="docs-toc-title">Start here</p>
+      <a href="/docs/" aria-current="page" class="docs-toc-link docs-nav-page is-current">Overview</a>
+      <a href="/docs/getting-started/" class="docs-toc-link docs-nav-page">Getting started</a>
+    </div>
+    <div class="docs-toc-group">
+      <p class="docs-toc-title">Concepts</p>
+      <a href="/docs/concepts/" class="docs-toc-link docs-nav-page">How Hayba works</a>
+      <a href="/docs/concepts/code-mode/" class="docs-toc-link docs-nav-page">Code Mode and tool search</a>
+      <a href="/docs/concepts/plan-mode/" class="docs-toc-link docs-nav-page">Plan Mode, approvals and undo</a>
+      <a href="/docs/concepts/chat/" class="docs-toc-link docs-nav-page">In-editor chat</a>
+      <a href="/docs/concepts/safety/" class="docs-toc-link docs-nav-page">Safety model</a>
+    </div>
+    <div class="docs-toc-group">
+      <p class="docs-toc-title">Guides</p>
+      <a href="/docs/guides/blueprint/" class="docs-toc-link docs-nav-page">Author a Blueprint</a>
+      <a href="/docs/guides/umg-widget/" class="docs-toc-link docs-nav-page">Build and render a UMG widget</a>
+      <a href="/docs/guides/material/" class="docs-toc-link docs-nav-page">Create and validate a material</a>
+      <a href="/docs/guides/actors-viewport/" class="docs-toc-link docs-nav-page">Place actors and capture the viewport</a>
+      <a href="/docs/guides/pie-test/" class="docs-toc-link docs-nav-page">Run a PIE test</a>
+      <a href="/docs/guides/pcg/" class="docs-toc-link docs-nav-page">PCG basics</a>
+    </div>
+    <div class="docs-toc-group">
+      <p class="docs-toc-title">Reference</p>
+      <a href="/docs/tools/" class="docs-toc-link docs-nav-page">Tool reference</a>
+      <a href="/docs/troubleshooting/" class="docs-toc-link docs-nav-page">Troubleshooting</a>
+      <a href="/docs/faq/" class="docs-toc-link docs-nav-page">FAQ</a>
+    </div>
+  </nav>
+  </details>
+  <!-- docs-nav:end -->
+</aside>
 
-  <main class="docs-main">
-    <div class="docs-eyebrow">DOCUMENTATION</div>
-    <h1 id="overview">Hayba</h1>
-    <p class="docs-lead">
-      An AI-agent toolkit for Unreal Engine: a Node/TypeScript MCP server plus a C++
-      editor plugin. These notes cover the current source on main; the latest tagged
-      release is v0.1.0 (August 2026).
-    </p>
+<main class="docs-main" id="main">
+<h1>Hayba documentation</h1>
+<p class="docs-lead">
+  Hayba lets an AI agent work inside a running Unreal Engine editor. It has two parts: an MCP
+  server written in TypeScript and a C++ editor plugin. Your agent places actors, builds
+  Blueprints, materials, UMG widgets and PCG graphs, runs Play-In-Editor tests, and reads the
+  editor back to check its own work.
+</p>
+<p>
+  Hayba runs on Windows only and supports Unreal Engine 5.7+. There is no installer yet: you
+  build it from source. These pages describe the current source on the <code>main</code>
+  branch. The latest completed release is v0.3.0. Where a page describes the 0.4.0 release
+  candidate that is already in the source, it says so.
+</p>
 
-    <section class="docs-section">
-      <h2 id="install">Install</h2>
-      <p>
-        Hayba builds from source on Windows. You need Unreal Engine 5.7+, Visual Studio with
-        the C++ toolchain your Unreal Engine version requires, and Node.js 22.5 or newer.
-      </p>
+<ul class="docs-cards" role="list">
+  <li><a href="/docs/getting-started/"><strong>Getting started</strong><span>Requirements, install from source, client setup and a first run.</span></a></li>
+  <li><a href="/docs/concepts/"><strong>How Hayba works</strong><span>The server, the plugin and the local connection between them.</span></a></li>
+  <li><a href="/docs/concepts/plan-mode/"><strong>Plan Mode and undo</strong><span>What an agent can change, what you approve and what Ctrl+Z covers.</span></a></li>
+  <li><a href="/docs/guides/blueprint/"><strong>Guides</strong><span>Six short walkthroughs with prompts you can paste.</span></a></li>
+  <li><a href="/docs/tools/"><strong>Tool reference</strong><span>Every callable tool with its parameters, generated from source.</span></a></li>
+  <li><a href="/docs/troubleshooting/"><strong>Troubleshooting</strong><span>Ports, builds, Node.js, timeouts and where the logs are.</span></a></li>
+</ul>
 
-      <ol class="docs-steps" role="list">
-        <li>
-          <h3 class="docs-step-title">Build the MCP server</h3>
-          <p>Clone the repo, install its dependencies and build the server:</p>
-          <div class="docs-cmd" data-copy-name="build commands">
-            <div class="docs-cmd-bar"><span class="docs-cmd-label">Terminal</span></div>
-            <pre><code>git clone https://github.com/zajalist/hayba.git
+<section class="docs-section">
+  <h2 id="quick-start">Quick start</h2>
+  <p>The short version. <a href="/docs/getting-started/">Getting started</a> has every step in full.</p>
+  <ol>
+    <li>Install Node.js 22.5 or newer, Git, and Visual Studio with the C++ toolchain your engine version needs.</li>
+    <li>Clone the repo and build the MCP server.</li>
+    <li>Link <code>unreal/HaybaMCPToolkit</code> into your project's <code>Plugins</code> folder and build the project.</li>
+    <li>Register the server with your MCP client, open the project, and ask the agent to check the connection.</li>
+  </ol>
+  <div class="docs-cmd" data-copy-name="build commands">
+    <div class="docs-cmd-bar"><span class="docs-cmd-label">Terminal</span></div>
+    <pre><code>git clone https://github.com/zajalist/hayba.git
 cd hayba
 npm install
 npm --prefix mcp-tools/hayba-mcp run build</code></pre>
-          </div>
-        </li>
+  </div>
+  <p>
+    Start in a scratch project. Hayba can change and save editor state, and some changes cannot
+    be undone.
+  </p>
+</section>
 
-        <li>
-          <h3 class="docs-step-title">Add the plugin to your project</h3>
-          <p>
-            Create <code>&lt;YourProject&gt;\Plugins</code> if it doesn't exist, then link the
-            plugin into it from an administrator Command Prompt (or with Windows Developer Mode
-            on). Replace <code>&lt;YourProject&gt;</code> and <code>&lt;repo&gt;</code> with your
-            project folder and your Hayba clone:
-          </p>
-          <div class="docs-cmd" data-copy-name="plugin link command">
-            <div class="docs-cmd-bar"><span class="docs-cmd-label">Command Prompt</span></div>
-            <pre><code>mklink /D "&lt;YourProject&gt;\Plugins\HaybaMCPToolkit" "&lt;repo&gt;\unreal\HaybaMCPToolkit"</code></pre>
-          </div>
-          <p>
-            Then regenerate Visual Studio project files and compile. The link lets the plugin
-            find the MCP server you just built.
-          </p>
-          <p>
-            If you copy the plugin instead of linking it, point it at the server in
-            <code>&lt;YourProject&gt;/<wbr>Saved/<wbr>Config/<wbr>WindowsEditor/<wbr>EditorPerProjectUserSettings.ini</code>,
-            using the full path to your clone:
-          </p>
-          <div class="docs-cmd" data-copy-name="plugin settings">
-            <div class="docs-cmd-bar"><span class="docs-cmd-label docs-cmd-file" title="EditorPerProjectUserSettings.ini">EditorPerProjectUserSettings.ini</span></div>
-            <pre><code>[HaybaMCPToolkit]
-SidecarEntryPath=&lt;repo&gt;\mcp-tools\hayba-mcp\dist\index.js</code></pre>
-          </div>
-        </li>
+<section class="docs-section">
+  <h2 id="sections">What is in these docs</h2>
+  <ul>
+    <li><strong>Concepts</strong> explain <a href="/docs/concepts/">how the parts fit</a>, <a href="/docs/concepts/code-mode/">how an agent finds tools</a>, <a href="/docs/concepts/plan-mode/">approvals and undo</a>, the <a href="/docs/concepts/chat/">in-editor chat</a> and the <a href="/docs/concepts/safety/">safety model</a>.</li>
+    <li><strong>Guides</strong> walk through one task each: <a href="/docs/guides/blueprint/">Blueprints</a>, <a href="/docs/guides/umg-widget/">UMG widgets</a>, <a href="/docs/guides/material/">materials</a>, <a href="/docs/guides/actors-viewport/">actors and the viewport</a>, <a href="/docs/guides/pie-test/">PIE tests</a> and <a href="/docs/guides/pcg/">PCG</a>.</li>
+    <li><strong>Reference</strong> covers the <a href="/docs/tools/">tool list</a>, <a href="/docs/troubleshooting/">troubleshooting</a> and the <a href="/docs/faq/">FAQ</a>.</li>
+  </ul>
+  <p>
+    Found a mistake? Open an issue on
+    <a href="https://github.com/zajalist/hayba/issues" target="_blank" rel="noopener">GitHub</a>.
+  </p>
+</section>
 
-        <li>
-          <h3 class="docs-step-title">Register the server with your agent host</h3>
-          <p>For Claude Code:</p>
-          <div class="docs-cmd" data-copy-name="Claude Code command">
-            <div class="docs-cmd-bar"><span class="docs-cmd-label">Terminal</span></div>
-            <pre><code>claude mcp add hayba-toolkit -- node /path/to/hayba/mcp-tools/hayba-mcp/dist/index.js</code></pre>
-          </div>
-        </li>
-      </ol>
+  <nav class="docs-pager" aria-label="Next and previous pages">
+    <a href="/docs/getting-started/" class="docs-pager-next"><span>Next</span>Getting started</a>
+  </nav>
+</main>
 
-      <p class="docs-note">
-        The <a href="https://github.com/zajalist/hayba#readme" target="_blank" rel="noopener">repo README</a>
-        has the same steps and the Claude Desktop config.
-      </p>
-    </section>
-
-    <section class="docs-section">
-      <h2 id="first-run">First run</h2>
-      <p>
-        On first launch the Hayba MCP Toolkit tab opens by itself (later:
-        <strong>Tools &gt; Hayba MCP Toolkit</strong>, or the console command
-        <code>Hayba.MCP.Open</code>). Your MCP host drives the agent. To chat inside the
-        editor instead, set a provider (and key, for cloud models) under
-        <strong>Settings &gt; AI / LLM Backend</strong>. Plan Mode is on by default: approve
-        plans in the Plan tab.
-      </p>
-    </section>
-
-    <section class="docs-section">
-      <h2 id="mcp-overview">Unreal toolkit (MCP)</h2>
-      <p>
-        Hayba speaks the Model Context Protocol over stdio. It works with Claude Code,
-        Claude Desktop and other MCP clients. The agent places actors, builds PCG graphs,
-        and authors materials, Blueprints and UMG widgets inside a live Unreal Engine 5.7+
-        editor.
-      </p>
-      <p>
-        The current source on main has 400+ editor tools across 30+ editor domains. The
-        server starts with 7 tools; the agent searches the catalogue and calls the rest on
-        demand.
-      </p>
-      <p class="docs-status"><span class="docs-status-tag">WIP</span><span>Full tools reference rolls out per-domain.</span></p>
-    </section>
-
-    <p class="docs-footer-link">
-      <a href="/">Back to landing</a>
-    </p>
-  </main>
-
-  <script type="module">
-    import { mountDocsToc } from '/lib/docs-toc.js';
-    import { mountCommandBlocks } from '/lib/command-blocks.js';
-
-    mountDocsToc(document.querySelector('.docs-toc'));
-    mountCommandBlocks(document.querySelector('.docs-main'));
-  </script>
+<script type="module" src="/docs/docs.js"></script>
 </body>
 </html>
