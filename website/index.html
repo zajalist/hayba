@@ -91,7 +91,8 @@
 <!-- ═══════════════════════════════ DEMO ═══════════════════════════════ -->
 <!-- data-requires="demo-video": this section, the hero "Watch it work" link and the
      Demo links in the TOC, sub-nav and jump-to row stay hidden until
-     assets/media/demo-blueprint.mp4 ships; remove their hidden attributes then. -->
+     assets/media/demo-blueprint.mp4 ships; remove their hidden attributes then.
+     media.js sets the poster from data-poster once the section is visible. -->
 <section class="band" id="demo" aria-labelledby="demo-title" data-requires="demo-video" hidden>
   <div class="feature-row">
     <div class="feature-row-text">
@@ -113,8 +114,8 @@
         <!-- JS starts playback in view (muted loop) and shows controls on hover/focus;
              without JS, or with reduced motion, the native controls stay on and nothing autoplays. -->
         <video id="demoVideo" class="demo-video" width="1920" height="1080"
-               muted loop playsinline controls preload="metadata"
-               poster="assets/media/demo-blueprint-poster.jpg"
+               muted loop playsinline controls preload="none"
+               data-poster="assets/media/demo-blueprint-poster.jpg"
                aria-label="Screen capture of an agent building a 362-node Blueprint function in Unreal Engine">
           <source src="assets/media/demo-blueprint.webm" type="video/webm">
           <source src="assets/media/demo-blueprint.mp4" type="video/mp4">
@@ -157,18 +158,26 @@
 
   <div class="cap-grid">
     <article class="cap cap-feature">
-      <div class="cap-shot media-slot">
-        <img src="assets/media/cap-blueprint-graph.jpg" width="1600" height="900" loading="lazy" decoding="async"
-             alt="A Blueprint function graph built by an agent through Hayba, with execution and data wires between dozens of nodes">
+      <!-- data-requires="unreal-capture": shown once cap-blueprint-graph.mp4 and its .jpg
+           poster ship; media.js then sets the poster from data-poster and loops it. -->
+      <div class="cap-shot media-slot" data-requires="unreal-capture" hidden>
+        <video class="loop-clip" width="1600" height="900" muted loop playsinline preload="none" disablepictureinpicture
+               data-poster="assets/media/cap-blueprint-graph.jpg"
+               aria-label="A Blueprint function graph built by an agent through Hayba, panning across execution and data wires">
+          <source src="assets/media/cap-blueprint-graph.mp4" type="video/mp4">
+        </video>
       </div>
       <h3>Blueprints</h3>
       <p class="cap-line">Author Blueprint logic: nodes, pins, functions and events, then compile and inspect what compiled.</p>
       <p class="cap-eg"><code>blueprint_add_node</code><code>blueprint_connect_nodes</code><code>blueprint_compile</code></p>
     </article>
     <article class="cap cap-feature">
-      <div class="cap-shot media-slot">
-        <img src="assets/media/cap-widget-render.jpg" width="1600" height="900" loading="lazy" decoding="async"
-             alt="A game settings menu built as a UMG widget by an agent and rendered to PNG through Hayba">
+      <div class="cap-shot media-slot" data-requires="unreal-capture" hidden>
+        <video class="loop-clip" width="1600" height="900" muted loop playsinline preload="none" disablepictureinpicture
+               data-poster="assets/media/cap-widget-render.jpg"
+               aria-label="A game settings menu built as a UMG widget by an agent and rendered through Hayba">
+          <source src="assets/media/cap-widget-render.mp4" type="video/mp4">
+        </video>
       </div>
       <h3>UMG widgets</h3>
       <p class="cap-line">Build widget trees, bind them to data, and render them to PNG to check the layout.</p>
@@ -247,49 +256,26 @@
 
 <!-- ═══════════════════════════════ SHOWCASE ═══════════════════════════════ -->
 <section class="band" id="showcase" aria-labelledby="showcase-title">
-  <div class="feature-row">
-    <div class="feature-row-text">
-      <h2 id="showcase-title">Made with Hayba.</h2>
-    </div>
+  <div class="feature-row showcase-strip">
+    <figure class="showcase-clip">
+      <div class="showcase-clip-frame">
+        <!-- GIF-style loop: media.js plays it while on screen; reduced motion and no-JS show the poster. -->
+        <video class="loop-clip" width="1920" height="1080" muted loop playsinline preload="none" disablepictureinpicture
+               poster="assets/media/showcase-loop-hero-poster.jpg"
+               aria-label="Looping in-engine footage: the game's rover and its companion on a dirt road">
+          <source src="assets/media/showcase-loop-hero.webm" type="video/webm">
+          <source src="assets/media/showcase-loop-hero.mp4" type="video/mp4">
+        </video>
+      </div>
+      <figcaption>Real in-engine footage from the game.</figcaption>
+    </figure>
     <div class="feature-row-body">
-      <p><a class="text-link" href="https://zajalist.itch.io/a-gift-for-the-unfinished-journey" target="_blank" rel="noopener">A Gift for the Unfinished Journey</a> is a free Windows game on itch.io.</p>
-      <p>Its gameplay Blueprints and UI widgets were built by an AI agent through Hayba. Some materials were scripted through Hayba's Python bridge.</p>
+      <h2 id="showcase-title">Made with Hayba.</h2>
+      <p>The gameplay Blueprints and UI widgets of A Gift for the Unfinished Journey, a free Windows game, were built by an AI agent through Hayba.</p>
+      <p>Some materials were scripted through Hayba's Python bridge.</p>
       <a href="https://zajalist.itch.io/a-gift-for-the-unfinished-journey" target="_blank" rel="noopener" class="btn">Play it free on itch.io</a>
     </div>
   </div>
-
-  <div class="gallery" id="gallery">
-    <button type="button" class="shot shot-lead" data-caption="In-engine shot from A Gift for the Unfinished Journey">
-      <span class="shot-media media-slot"><img src="assets/media/showcase-world-1.jpg" width="1920" height="1080" loading="lazy" decoding="async" alt="In-engine shot from A Gift for the Unfinished Journey"></span>
-    </button>
-    <button type="button" class="shot" data-caption="In-engine shot from A Gift for the Unfinished Journey">
-      <span class="shot-media media-slot"><img src="assets/media/showcase-world-2.jpg" width="1920" height="1080" loading="lazy" decoding="async" alt="In-engine shot from A Gift for the Unfinished Journey"></span>
-    </button>
-    <button type="button" class="shot" data-caption="The settings menu's widget Blueprint graph, built by an agent through Hayba">
-      <span class="shot-media media-slot"><img src="assets/media/showcase-graph-settings.jpg" width="1920" height="1080" loading="lazy" decoding="async" alt="Widget Blueprint graph for the game's settings menu, built by an agent through Hayba"></span>
-      <span class="shot-label">Widget graph</span>
-    </button>
-    <button type="button" class="shot" data-caption="A post-process material graph, scripted through Hayba's Python bridge">
-      <span class="shot-media media-slot"><img src="assets/media/showcase-material.jpg" width="1920" height="1080" loading="lazy" decoding="async" alt="Post-process material graph with a custom HLSL node, scripted through Hayba's Python bridge"></span>
-      <span class="shot-label">Material graph</span>
-    </button>
-    <button type="button" class="shot" data-caption="In-engine shot from A Gift for the Unfinished Journey">
-      <span class="shot-media media-slot"><img src="assets/media/showcase-world-3.jpg" width="1920" height="1080" loading="lazy" decoding="async" alt="In-engine shot from A Gift for the Unfinished Journey"></span>
-    </button>
-    <button type="button" class="shot" data-caption="The game's settings menu, built as a UMG widget by an agent through Hayba">
-      <span class="shot-media media-slot"><img src="assets/media/showcase-ui-settings.jpg" width="1920" height="1080" loading="lazy" decoding="async" alt="The game's settings menu, a UMG widget built by an agent through Hayba"></span>
-      <span class="shot-label">UMG widget</span>
-    </button>
-  </div>
-
-  <dialog class="lightbox" id="lightbox" aria-label="Screenshot viewer">
-    <figure class="lightbox-figure">
-      <figcaption class="lightbox-caption"><span class="lightbox-text"></span> <span class="lightbox-count"></span></figcaption>
-    </figure>
-    <button type="button" class="lightbox-btn lightbox-prev" aria-label="Previous screenshot"><svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M10 3 5 8l5 5"/></svg></button>
-    <button type="button" class="lightbox-btn lightbox-next" aria-label="Next screenshot"><svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 3 5 5-5 5"/></svg></button>
-    <button type="button" class="lightbox-btn lightbox-close" aria-label="Close viewer" autofocus><svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8"/></svg></button>
-  </dialog>
 </section>
 
 <!-- ═══════════════════════════════ PRICING ═══════════════════════════════ -->
@@ -485,9 +471,8 @@ claude mcp add hayba-toolkit -- node "$PWD\mcp-tools\hayba-mcp\dist\index.js"</c
   import { mountRipples }   from '/lib/ripples.js';
   import { mountPageToc }   from '/lib/page-toc.js';
   import { mountCommandBlocks } from '/lib/command-blocks.js';
-  import { mountMedia, mountDemoVideo } from '/lib/media.js';
+  import { mountMedia, mountDemoVideo, mountLoops } from '/lib/media.js';
   import { mountCountUp }   from '/lib/count-up.js';
-  import { mountGallery }   from '/lib/gallery.js';
   import { mountPricing }   from '/lib/pricing.js';
 
   mountHeroField(document.getElementById('heroField'));
@@ -499,8 +484,8 @@ claude mcp add hayba-toolkit -- node "$PWD\mcp-tools\hayba-mcp\dist\index.js"</c
   mountPageToc(document.getElementById('pageToc'));
   mountMedia();
   mountDemoVideo(document.getElementById('demoVideo'));
+  mountLoops();
   mountCountUp();
-  mountGallery(document.getElementById('gallery'), document.getElementById('lightbox'));
   mountPricing(document.getElementById('pricing'));
   mountCommandBlocks(document.getElementById('install'));
 </script>
