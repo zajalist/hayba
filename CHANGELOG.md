@@ -8,8 +8,60 @@ All notable changes to Hayba MCP Toolkit are documented here. Format based on [K
 - P0 editor safety: sticky unsafe state after a contained native fault, guarded
   saves, Play and dirty-Blueprint preflights, asset-busy protection, and
   owner-bound multi-agent leases with canonical `lease_id` handles.
-- Bounded editor batches, lease adoption/renewal, and structured refusal and
-  warning details for orchestrators.
+- `lease_adopt {owner, lease_id}` lets a persistent connection use the owner
+  of a live matching lease until that connection closes. It revives that
+  owner's orphaned connection-bound leases without moving live bindings or
+  extending unbound leases. A granted `lease_acquire` with an explicit owner
+  also adopts its connection.
+- The Play button is vetoed while an agent holds an asset build lease (P0).
+  `hayba.PIEBuildVeto` (console): `1` (default) stops Play and a second
+  press within 10 s plays anyway, `2` stops it with no override, `0` only
+  shows a notification. The veto after a contained native fault is separate
+  and always on.
+- Sticky `editor_unsafe` (ADR-0011). After Hayba contains a native fault, the
+  editor refuses writes, Python, saves, compiles, PIE and batches with
+  `code: "editor_unsafe_restart_required"` until it restarts; status commands
+  (and, unless the fault stranded a save, a fixed set of reads) still answer.
+  The command that faulted answers `native_fault_contained`. The person at the
+  editor sees one persistent notification. `ping` and `editor_get_state` report
+  `editor_unsafe`, `python_unhealthy` and `health`; `ping` advertises
+  `capabilities.editor_health`.
+- Multi-agent editor leases (ADR-0010). `lease_acquire` / `lease_renew` /
+  `lease_release` / `lease_status` claim `global`, `world:`, `wp-region:`,
+  `asset:`, `actor:` or `pie` resources. Acquire never blocks: it answers
+  granted or queued with position, holder and ETA. The envelope gains optional
+  `owner` and `lease` fields; the Node client sends `HAYBA_AGENT_ID` (or a
+  per-process id) and renews granted leases in the background. The
+  `LeaseEnforcement` setting supports `Advisory` (commands run and carry a
+  `lease_warning`) and `Enforced` (conflicts can be refused with
+  `code: "lease_conflict"`); the shipped default is described under Changed.
+- `python_run` accepts `deadline_s` (5 to 60 s) from a caller holding an
+  exclusive lease on the current world, `transaction: false`, and
+  `world_partition: true`.
+- `editor_batch` / `batch_status` (ADR-0010). Several commands under one
+  lease, one step per editor tick through the normal command path, with a
+  fence after each step that waits across ticks for shaders, asset loads, GC
+  and async loading (`fence_after: idle | gc | none`; `gc` collects garbage
+  only under an exclusive region, world or global lease). Returns a `job_id`
+  at once. `wp_region_load {bounds}` / `wp_region_unload` steps load World
+  Partition regions with a loader adapter the batch owns, and every region is
+  released by the time the batch ends; `on_error: stop | unload_then_stop`.
+  At a fence the batch yields to other owners' queued interactive (or aged)
+  lease requests; fence grants last at most 30 s and the batch stops yielding
+  after 3 yields or 60 s.
+- `ping` reports `capabilities.lease_manager`, `editor_batch` and
+  `wp_region_steps`, so host scripts can switch from a file lock to leases.
+- `asset_busy` (P0). While any owner holds an `asset:<path>` exclusive lease
+  (a build), `editor_start_pie` and `editor_save_all_and_quit` are refused with
+  `code: "asset_busy"` and a `busy` detail naming the asset, owner, label and
+  age; the caller's own build counts. Compiling or saving that asset
+  (`blueprint_compile`, `ui_compile_widget`, `ui_save_widget`,
+  `material_compile`, `bt_compile`, `anim_blueprint_compile`,
+  `audio_asset_save`) is refused for other owners under `Enforced` and runs
+  with a `state_warning` under `Advisory`. `editor_get_state.building` lists
+  every asset build. Blueprint and widget authoring commands lock the asset
+  they name.
+- `ping` reports `capabilities.lease_id`.
 - A scene-derived World preview sampled from loaded static-mesh surfaces,
   linked to authored level/folder/actor/component/instance records and derived
   spatial clusters. `world_semantic_snapshot` exposes bounded pages of the
@@ -20,9 +72,32 @@ All notable changes to Hayba MCP Toolkit are documented here. Format based on [K
   stronger Chat drafting, activity, and review flows.
 
 ### Changed
-- Lease enforcement defaults to `EnforcedForWrites`. Reads remain available
-  under their explicit editor-state and fault-cause policies; undeclared
-  Python mutations fail closed against overlapping claims.
+- Callers resolve owner first (ADR-0010): envelope `owner`, then an
+  adopted connection owner, then `conn:<id>` or in-process `local`. The
+  envelope `lease` never acts as its owner. A foreign synthetic-owner claim
+  is refused with `owner_reserved`; naming another owner's lease adds
+  `lease_binding` to a conflict or warning. Batch steps retain the accepted
+  batch owner, and `lease_status` includes `connection_owner`.
+- Lease enforcement defaults to `EnforcedForWrites` (ADR-0010), shipped
+  together with `lease_id`: a conflicting write is refused with
+  `lease_conflict`, and a write that names no owner while other agents are
+  connected with `owner_required`. Write detection fails closed (only the read
+  sets are Read), undeclared `python_run` conflicts as X on `global` (declare
+  `resources` or `read_only: true`), PIE observation commands are Read, and
+  lease warnings are rate-limited. `ping` reports
+  `capabilities.lease_enforcement` and `owner_required`; `lease_status`
+  reports `active_owners`. Rollback: Project Settings > Hayba MCP Toolkit >
+  Lease Enforcement = Advisory, live.
+- Plan-Mode approval is per owner and per exact call: a destructive command
+  needs a single-use native approval of that command, target and lease, which
+  only the proposing owner can spend. A prose plan cannot spend it.
+- Lease handles are `lease_id` (`ls_<seq>_<mac12>`) on every lease reply and
+  in `lease_status`, and `editor_batch` takes `lease_id` (`lease` still works).
+  `token` is never emitted; it is accepted as a deprecated input on
+  `lease_renew` / `lease_release`, and the reply says so in `deprecation`. The
+  Node server seeds its envelope lease only from `HAYBA_LEASE_ID`, ignores
+  `HAYBA_LEASE` and `HAYBA_LEASE_TOKEN`, and drops an env lease the editor no
+  longer knows.
 - The World view uses a full-width 3D canvas with an on-demand hierarchy
   explorer in place of the old force graph and fixed inspector.
 
@@ -31,9 +106,23 @@ All notable changes to Hayba MCP Toolkit are documented here. Format based on [K
   blocking dialog or continuing unsafely. Plugin Python runs unattended.
 - Large and paged editor responses preserve exact source paths and report
   partial coverage instead of silently clipping agent evidence.
+- `python_run` scripts that load or unload World Partition actors no longer
+  run inside the global editor transaction, which left `UTransBuffer` with a
+  non-zero active count and crashed the next tick in Landscape.
+- `python_run` is no longer re-sent after a transport timeout.
+- `editor_batch` is never re-sent after a transport failure either.
+- Lease handles no longer reach clients as `[REDACTED:token]`: the handle's
+  key is no longer secret-shaped, so renew, release and `editor_batch` work.
 
 ### Removed
-- The four nonfunctional Fab commands whose editor handlers never existed.
+- The four Fab tools (`hayba_fab_login_status`, `hayba_fab_library_list`,
+  `hayba_fab_marketplace_search`, `hayba_fab_download`). They sent
+  `fab_*` commands that no editor handler ever implemented, so every call
+  failed with "Unknown command". They never worked; the "FAB connector"
+  entry in `mcp-tools/hayba-mcp/CHANGELOG.md` describing them was wrong. Fab
+  content can still be added through the
+  Epic Games Launcher or the in-editor Fab plugin and then found with
+  `hayba_asset_search` / `hayba_asset_browse`.
 
 ## [0.3.0] — 2026-09-30
 
