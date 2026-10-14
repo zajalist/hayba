@@ -96,32 +96,22 @@
       <!-- Node-graph captures. Each tile opens the full-resolution capture. -->
       <div class="graph-grid">
         <figure class="media">
-          <a class="graph-link" href="assets/media/graphs/widget-caption-layout-full.webp" target="_blank" rel="noopener">
-            <img src="assets/media/graphs/widget-caption-layout.webp" width="900" height="600" loading="lazy" decoding="async"
-                 alt="A dense widget event graph: a column of layout functions wired into a long chain of math nodes"></a>
+          <a class="graph-link" href="assets/media/graphs/blueprint-function-organized-full.webp" target="_blank" rel="noopener">
+            <img src="assets/media/graphs/blueprint-function-organized.webp" width="1132" height="587" loading="lazy" decoding="async"
+                 alt="A pure Blueprint function laid out left to right: distance inputs, three comparisons, and Select Name nodes that pick Safe, Warning or Breach for the return node"></a>
         </figure>
         <figure class="media">
-          <a class="graph-link" href="assets/media/graphs/widget-settings-menu-full.webp" target="_blank" rel="noopener">
-            <img src="assets/media/graphs/widget-settings-menu.webp" width="750" height="500" loading="lazy" decoding="async"
-                 alt="Settings menu events, such as volume slider changes, each wired to its own handler"></a>
+          <a class="graph-link" href="assets/media/graphs/material-custom-ui.webp" target="_blank" rel="noopener">
+            <img src="assets/media/graphs/material-custom-ui.webp" width="856" height="596" loading="lazy" decoding="async"
+                 alt="A UI material: texture coordinates, Intensity and HeartRate parameters and Time feeding one custom node, with a constant color, into the output"></a>
         </figure>
         <figure class="media">
-          <a class="graph-link" href="assets/media/graphs/widget-debug-menu-full.webp" target="_blank" rel="noopener">
-            <img src="assets/media/graphs/widget-debug-menu.webp" width="600" height="400" loading="lazy" decoding="async"
-                 alt="Debug menu buttons, each On Clicked event wired to a Select Index call"></a>
-        </figure>
-        <figure class="media">
-          <a class="graph-link" href="assets/media/graphs/controller-intro-full.webp" target="_blank" rel="noopener">
-            <img src="assets/media/graphs/controller-intro.webp" width="900" height="600" loading="lazy" decoding="async"
-                 alt="A player controller graph: input mode, a sequence, and timers that start the intro"></a>
-        </figure>
-        <figure class="media">
-          <a class="graph-link" href="assets/media/graphs/character-anim-update-full.webp" target="_blank" rel="noopener">
-            <img src="assets/media/graphs/character-anim-update.webp" width="900" height="600" loading="lazy" decoding="async"
-                 alt="A character's animation update: velocity, casts to the mesh and anim instance, and a blend space position"></a>
+          <a class="graph-link" href="assets/media/graphs/material-instance-runtime.webp" target="_blank" rel="noopener">
+            <img src="assets/media/graphs/material-instance-runtime.webp" width="767" height="460" loading="lazy" decoding="async"
+                 alt="A Blueprint creating a dynamic instance of a master material, then setting its scalar parameters"></a>
         </figure>
       </div>
-      <p class="mosaic-note">Graphs from a game built with Hayba. Open any of them full size.</p>
+      <p class="mosaic-note">Example graphs built by an agent through Hayba. Open any of them full size.</p>
 
       <!-- data-requires="demo-reel": one loop per editor from the demo reel. Remove `hidden`
            on the strip and on each figure once its .mp4 and .jpg poster ship. -->
@@ -188,11 +178,13 @@
   <div class="row-body">
     <article class="item item-media">
       <p>Build, bind, then render to check the layout.</p>
-      <figure class="media">
+      <figure class="media media-pair">
         <img src="assets/media/cap-widget-settings.webp" width="1166" height="786" loading="lazy" decoding="async"
              alt="A game settings menu: Display, Upscaling, Graphics, Audio and Accessibility tabs, with quality pickers and foliage sliders">
-        <figcaption>An example UMG widget built by an agent through Hayba.</figcaption>
-      </figure>
+        <img src="assets/media/cap-widget-loading.webp" width="968" height="604" loading="lazy" decoding="async"
+             alt="A loading screen open in the UMG designer: a particle image, a dial with a progress line, a status line and input hints">
+        <figcaption>Example UMG widgets built by an agent through Hayba: a settings menu, and a loading screen in the designer.</figcaption>
+</figure>
     </article>
   </div>
 </section>
@@ -202,13 +194,11 @@
   <div class="row-body">
     <article class="item">
       <p>Custom nodes, material functions, masters and instances, kept composable.</p>
-      <figure class="media media-pair">
-        <img src="assets/media/graphs/material-crt.webp" width="1178" height="707" loading="lazy" decoding="async"
-             alt="A custom node with eighteen inputs, from phosphor color to scanlines and flicker, feeding a UI material's output">
-        <img src="assets/media/graphs/material-instance-runtime.webp" width="767" height="460" loading="lazy" decoding="async"
-             alt="A Blueprint creating a dynamic instance of a master material, then setting its scalar parameters">
-        <figcaption>An example custom node, and a Blueprint driving an instance of its master. Built through Hayba.</figcaption>
-      </figure>
+      <figure class="media">
+        <img src="assets/media/graphs/material-custom-streams.webp" width="1110" height="624" loading="lazy" decoding="async"
+             alt="A material where world position, camera position, time, wind and stream parameters and a noise volume feed one custom shader node, which a shared parameter collection value scales before the output">
+        <figcaption>An example custom shader node, fed by parameters and a shared parameter collection. Built through Hayba.</figcaption>
+</figure>
     </article>
   </div>
 </section>
