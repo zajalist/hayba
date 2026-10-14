@@ -1050,6 +1050,24 @@ main video:focus-visible,
   .graph-strip { grid-template-columns: minmax(0, 1fr); }
 }
 
+/* Six small node-graph captures; each opens its full-resolution file. */
+.graph-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px 14px;
+  margin-top: 22px;
+}
+.graph-grid .media { margin-top: 0; }
+.graph-grid img { aspect-ratio: 3 / 2; object-fit: cover; }
+.graph-grid figcaption { margin-top: 7px; }
+@container (max-width: 520px) {
+  .graph-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+.graph-link { display: block; border-radius: 4px; }
+.graph-link img { transition: border-color 0.15s; }
+.graph-link:hover img { border-color: var(--accent); }
+.graph-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+
 /* ══════════════ CAPABILITIES INTRO ══════════════ */
 .intro {
   width: min(var(--wrap), 100% - 2 * var(--gutter));

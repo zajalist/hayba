@@ -147,6 +147,46 @@
       <p>Blueprint event graphs, UMG widget trees, PCG graphs and material graphs go through the same loop: add nodes, wire pins, compile, then read the graph back to check it.</p>
       <p>In the game further down this page, one widget Blueprint holds 71 graphs and 1,560 nodes, and a single function holds 362.</p>
 
+      <!-- Node-graph captures from the game's editor. Each tile opens the full-resolution capture. -->
+      <div class="graph-grid">
+        <figure class="media">
+          <a class="graph-link" href="assets/media/graphs/widget-caption-layout-full.webp" target="_blank" rel="noopener">
+            <img src="assets/media/graphs/widget-caption-layout.webp" width="900" height="600" loading="lazy" decoding="async"
+                 alt="A dense widget event graph: a column of layout functions wired into a long chain of math nodes"></a>
+          <figcaption>Widget: caption layout</figcaption>
+        </figure>
+        <figure class="media">
+          <a class="graph-link" href="assets/media/graphs/widget-settings-menu-full.webp" target="_blank" rel="noopener">
+            <img src="assets/media/graphs/widget-settings-menu.webp" width="750" height="500" loading="lazy" decoding="async"
+                 alt="Settings menu events, such as volume slider changes, each wired to its own handler"></a>
+          <figcaption>Widget: settings menu, one of 71 graphs</figcaption>
+        </figure>
+        <figure class="media">
+          <a class="graph-link" href="assets/media/graphs/widget-debug-menu-full.webp" target="_blank" rel="noopener">
+            <img src="assets/media/graphs/widget-debug-menu.webp" width="600" height="400" loading="lazy" decoding="async"
+                 alt="Debug menu buttons, each On Clicked event wired to a Select Index call"></a>
+          <figcaption>Widget: debug menu</figcaption>
+        </figure>
+        <figure class="media">
+          <a class="graph-link" href="assets/media/graphs/controller-intro-full.webp" target="_blank" rel="noopener">
+            <img src="assets/media/graphs/controller-intro.webp" width="900" height="600" loading="lazy" decoding="async"
+                 alt="A player controller graph: input mode, a sequence, and timers that start the intro"></a>
+          <figcaption>Blueprint: player controller intro</figcaption>
+        </figure>
+        <figure class="media">
+          <a class="graph-link" href="assets/media/graphs/character-anim-update-full.webp" target="_blank" rel="noopener">
+            <img src="assets/media/graphs/character-anim-update.webp" width="900" height="600" loading="lazy" decoding="async"
+                 alt="A character's animation update: velocity, casts to the mesh and anim instance, and a blend space position"></a>
+          <figcaption>Blueprint: character animation</figcaption>
+        </figure>
+        <figure class="media">
+          <a class="graph-link" href="assets/media/graphs/material-postprocess-full.webp" target="_blank" rel="noopener">
+            <img src="assets/media/graphs/material-postprocess.webp" width="900" height="600" loading="lazy" decoding="async"
+                 alt="A post-process material: scalar parameters wired into one custom node that drives emissive color"></a>
+          <figcaption>Material: post-process vision</figcaption>
+        </figure>
+      </div>
+
       <!-- data-requires="demo-reel": one loop per editor from the demo reel. Remove `hidden`
            on the strip and on each figure once its .mp4 and .jpg poster ship. -->
       <div class="graph-strip" data-requires="demo-reel" hidden>
@@ -198,7 +238,7 @@
       <p class="tools"><code>blueprint_add_node</code>, <code>blueprint_connect_nodes</code>, <code>blueprint_compile</code></p>
       <figure class="media">
         <!-- GIF-style loop: media.js plays it while on screen; reduced motion and no-JS show the poster. -->
-        <video class="loop-clip" width="1136" height="682" muted loop playsinline preload="none" disablepictureinpicture
+        <video class="loop-clip" width="1920" height="1080" muted loop playsinline preload="none" disablepictureinpicture
                data-poster="assets/media/cap-blueprint-graph.jpg"
                aria-label="A pan across a 362-node Blueprint function, built by an agent through Hayba">
           <source src="assets/media/cap-blueprint-graph.mp4" type="video/mp4">
@@ -233,9 +273,10 @@
       <p>Author material graphs node by node, compile them, and validate the result before calling the work done.</p>
       <p class="tools"><code>material_add_node</code>, <code>material_compile</code>, <code>material_validate</code></p>
       <figure class="media">
-        <img src="assets/media/cap-material-graph.webp" width="820" height="610" loading="lazy" decoding="async"
-             alt="A post-process material graph: scene inputs and scalar parameters wired into one custom function node">
-        <figcaption>A post-process material from the game, scripted through Hayba's Python bridge and compiled with <code>material_compile</code>.</figcaption>
+        <a class="graph-link" href="assets/media/graphs/material-crt-full.webp" target="_blank" rel="noopener">
+          <img src="assets/media/graphs/material-crt.webp" width="1200" height="902" loading="lazy" decoding="async"
+               alt="A CRT terminal material: phosphor color, glow, scanline, curvature and flicker parameters wired into one custom node"></a>
+        <figcaption>The game's CRT terminal material, scripted through Hayba's Python bridge and compiled with <code>material_compile</code>.</figcaption>
       </figure>
     </article>
   </div>
