@@ -120,11 +120,6 @@
             <img src="assets/media/graphs/character-anim-update.webp" width="900" height="600" loading="lazy" decoding="async"
                  alt="A character's animation update: velocity, casts to the mesh and anim instance, and a blend space position"></a>
         </figure>
-        <figure class="media">
-          <a class="graph-link" href="assets/media/graphs/blueprint-material-params-full.webp" target="_blank" rel="noopener">
-            <img src="assets/media/graphs/blueprint-material-params.webp" width="690" height="460" loading="lazy" decoding="async"
-                 alt="A Blueprint setup function: a dynamic material instance, then a chain of Set Scalar Parameter Value calls"></a>
-        </figure>
       </div>
       <p class="mosaic-note">Graphs from a game built with Hayba. Open any of them full size.</p>
 
@@ -205,12 +200,14 @@
 <section class="row feature" id="materials" aria-labelledby="mat-title">
   <h2 class="row-title" id="mat-title">Materials</h2>
   <div class="row-body">
-    <article class="item item-media">
-      <p>Node by node, compiled and validated.</p>
-      <figure class="media">
-        <img src="assets/media/graphs/material-crt.webp" width="1178" height="934" loading="lazy" decoding="async"
-             alt="A CRT terminal material: eighteen inputs, from phosphor color to scanlines and flicker, wired into one custom node">
-        <figcaption>An example material, scripted and compiled through Hayba.</figcaption>
+    <article class="item">
+      <p>Custom nodes, material functions, masters and instances, kept composable.</p>
+      <figure class="media media-pair">
+        <img src="assets/media/graphs/material-crt.webp" width="1178" height="707" loading="lazy" decoding="async"
+             alt="A custom node with eighteen inputs, from phosphor color to scanlines and flicker, feeding a UI material's output">
+        <img src="assets/media/graphs/material-instance-runtime.webp" width="767" height="460" loading="lazy" decoding="async"
+             alt="A Blueprint creating a dynamic instance of a master material, then setting its scalar parameters">
+        <figcaption>An example custom node, and a Blueprint driving an instance of its master. Built through Hayba.</figcaption>
       </figure>
     </article>
   </div>

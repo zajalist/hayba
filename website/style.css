@@ -1000,12 +1000,19 @@ main video:focus-visible,
 }
 .graph-grid .media { margin-top: 0; min-height: 0; }
 .graph-grid .media:first-child { grid-column: span 2; grid-row: span 2; }
+.graph-grid .media:last-child { grid-column: span 2; } /* five tiles: the last one closes the bottom row */
 .graph-grid .graph-link,
 .graph-grid img { height: 100%; }
 .graph-grid img { object-fit: cover; }
 @container (max-width: 520px) {
   .graph-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-auto-rows: 116px; }
-  .graph-grid .media:last-child { grid-column: span 2; }
+  .graph-grid .media:last-child { grid-column: auto; }
+}
+/* Two images side by side under one caption. */
+.media-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+.media-pair figcaption { grid-column: 1 / -1; }
+@container (max-width: 520px) {
+  .media-pair { grid-template-columns: minmax(0, 1fr); }
 }
 .mosaic-note { margin-top: 10px; font-size: 12.5px; color: var(--text-quiet); }
 .graph-link { display: block; border-radius: 4px; }
