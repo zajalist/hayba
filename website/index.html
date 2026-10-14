@@ -7,6 +7,7 @@
   <meta name="description" content="Hayba is an open-source (MIT) toolkit that lets an AI agent work inside a live Unreal Engine editor (5.7+), through a Node/TypeScript MCP server and a C++ editor plugin.">
   <link rel="icon" type="image/svg+xml" href="assets/Logo.svg" />
   <link rel="preload" href="assets/fonts/eb-garamond-latin-500-italic.woff2" as="font" type="font/woff2" crossorigin />
+  <link rel="preload" href="assets/fonts/gantari-latin-600-normal.woff2" as="font" type="font/woff2" crossorigin />
   <link rel="stylesheet" href="style.css" />
 </head>
 <body class="landing">
@@ -98,39 +99,34 @@
           <a class="graph-link" href="assets/media/graphs/widget-caption-layout-full.webp" target="_blank" rel="noopener">
             <img src="assets/media/graphs/widget-caption-layout.webp" width="900" height="600" loading="lazy" decoding="async"
                  alt="A dense widget event graph: a column of layout functions wired into a long chain of math nodes"></a>
-          <figcaption>UMG: caption layout</figcaption>
         </figure>
         <figure class="media">
           <a class="graph-link" href="assets/media/graphs/widget-settings-menu-full.webp" target="_blank" rel="noopener">
             <img src="assets/media/graphs/widget-settings-menu.webp" width="750" height="500" loading="lazy" decoding="async"
                  alt="Settings menu events, such as volume slider changes, each wired to its own handler"></a>
-          <figcaption>UMG: settings menu, 1 of 71 graphs</figcaption>
         </figure>
         <figure class="media">
           <a class="graph-link" href="assets/media/graphs/widget-debug-menu-full.webp" target="_blank" rel="noopener">
             <img src="assets/media/graphs/widget-debug-menu.webp" width="600" height="400" loading="lazy" decoding="async"
                  alt="Debug menu buttons, each On Clicked event wired to a Select Index call"></a>
-          <figcaption>UMG: debug menu</figcaption>
         </figure>
         <figure class="media">
           <a class="graph-link" href="assets/media/graphs/controller-intro-full.webp" target="_blank" rel="noopener">
             <img src="assets/media/graphs/controller-intro.webp" width="900" height="600" loading="lazy" decoding="async"
                  alt="A player controller graph: input mode, a sequence, and timers that start the intro"></a>
-          <figcaption>Blueprint: player controller intro</figcaption>
         </figure>
         <figure class="media">
           <a class="graph-link" href="assets/media/graphs/character-anim-update-full.webp" target="_blank" rel="noopener">
             <img src="assets/media/graphs/character-anim-update.webp" width="900" height="600" loading="lazy" decoding="async"
                  alt="A character's animation update: velocity, casts to the mesh and anim instance, and a blend space position"></a>
-          <figcaption>Blueprint: character animation</figcaption>
         </figure>
         <figure class="media">
           <a class="graph-link" href="assets/media/graphs/blueprint-material-params-full.webp" target="_blank" rel="noopener">
             <img src="assets/media/graphs/blueprint-material-params.webp" width="690" height="460" loading="lazy" decoding="async"
                  alt="A Blueprint setup function: a dynamic material instance, then a chain of Set Scalar Parameter Value calls"></a>
-          <figcaption>Blueprint: runtime material parameters</figcaption>
         </figure>
       </div>
+      <p class="mosaic-note">Graphs from a game built with Hayba. Open any of them full size.</p>
 
       <!-- data-requires="demo-reel": one loop per editor from the demo reel. Remove `hidden`
            on the strip and on each figure once its .mp4 and .jpg poster ship. -->
@@ -174,11 +170,10 @@
   <p>400+ editor tools. The agent loads only the ones it needs.</p>
 </section>
 
-<section class="row" id="blueprints" aria-labelledby="bp-title">
+<section class="row feature" id="blueprints" aria-labelledby="bp-title">
   <h2 class="row-title" id="bp-title">Blueprints</h2>
   <div class="row-body">
     <article class="item item-media">
-      <h3 class="item-name">Event graphs, functions and variables</h3>
       <p>Add nodes, wire pins, compile.</p>
       <figure class="media">
         <!-- GIF-style loop: media.js plays it while on screen; reduced motion and no-JS show the poster. -->
@@ -193,11 +188,10 @@
   </div>
 </section>
 
-<section class="row" id="widgets" aria-labelledby="ui-title">
+<section class="row feature" id="widgets" aria-labelledby="ui-title">
   <h2 class="row-title" id="ui-title">Widgets</h2>
   <div class="row-body">
     <article class="item item-media">
-      <h3 class="item-name">Widget trees, bindings and renders</h3>
       <p>Build, bind, then render to check the layout.</p>
       <figure class="media">
         <img src="assets/media/cap-widget-settings.webp" width="1166" height="786" loading="lazy" decoding="async"
@@ -208,11 +202,10 @@
   </div>
 </section>
 
-<section class="row" id="materials" aria-labelledby="mat-title">
+<section class="row feature" id="materials" aria-labelledby="mat-title">
   <h2 class="row-title" id="mat-title">Materials</h2>
   <div class="row-body">
     <article class="item item-media">
-      <h3 class="item-name">Material graphs, compiled and checked</h3>
       <p>Node by node, compiled and validated.</p>
       <figure class="media">
         <img src="assets/media/graphs/material-crt.webp" width="1178" height="934" loading="lazy" decoding="async"
@@ -223,11 +216,10 @@
   </div>
 </section>
 
-<section class="row" id="worlds" aria-labelledby="world-title">
+<section class="row feature" id="worlds" aria-labelledby="world-title">
   <h2 class="row-title" id="world-title">Worlds</h2>
   <div class="row-body">
     <article class="item item-media">
-      <h3 class="item-name">Actors, cameras and PCG</h3>
       <p>Place actors, cook PCG, capture the viewport.</p>
       <figure class="media">
         <video class="loop-clip" width="1920" height="1080" muted loop playsinline preload="none" disablepictureinpicture
