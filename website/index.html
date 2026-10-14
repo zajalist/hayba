@@ -180,10 +180,10 @@
           <figcaption>Blueprint: character animation</figcaption>
         </figure>
         <figure class="media">
-          <a class="graph-link" href="assets/media/graphs/material-postprocess-full.webp" target="_blank" rel="noopener">
-            <img src="assets/media/graphs/material-postprocess.webp" width="900" height="600" loading="lazy" decoding="async"
-                 alt="A post-process material: scalar parameters wired into one custom node that drives emissive color"></a>
-          <figcaption>Material: post-process vision</figcaption>
+          <a class="graph-link" href="assets/media/graphs/blueprint-material-params-full.webp" target="_blank" rel="noopener">
+            <img src="assets/media/graphs/blueprint-material-params.webp" width="690" height="460" loading="lazy" decoding="async"
+                 alt="A Blueprint setup function: a dynamic material instance, then a chain of Set Scalar Parameter Value calls"></a>
+          <figcaption>Blueprint: material parameters at runtime</figcaption>
         </figure>
       </div>
 
@@ -257,9 +257,9 @@
       <p>Build UMG widget trees, bind them to data, and render them to PNG so the agent can check the layout it made.</p>
       <p class="tools"><code>ui_build_tree</code>, <code>ui_bind_property</code>, <code>ui_render_widget_to_png</code></p>
       <figure class="media">
-        <img src="assets/media/cap-widget-render.webp" width="1280" height="720" loading="lazy" decoding="async"
-             alt="A game title menu with Continue, Begin, Settings and Quit beside a calligraphic emblem">
-        <figcaption>The game's title menu, a UMG widget built by an agent through Hayba.</figcaption>
+        <img src="assets/media/cap-widget-settings.webp" width="1166" height="786" loading="lazy" decoding="async"
+             alt="A game settings menu: Display, Upscaling, Graphics, Audio and Accessibility tabs, with quality pickers and foliage sliders">
+        <figcaption>The game's settings menu, a UMG widget built by an agent through Hayba.</figcaption>
       </figure>
     </article>
   </div>
@@ -273,9 +273,8 @@
       <p>Author material graphs node by node, compile them, and validate the result before calling the work done.</p>
       <p class="tools"><code>material_add_node</code>, <code>material_compile</code>, <code>material_validate</code></p>
       <figure class="media">
-        <a class="graph-link" href="assets/media/graphs/material-crt-full.webp" target="_blank" rel="noopener">
-          <img src="assets/media/graphs/material-crt.webp" width="1200" height="902" loading="lazy" decoding="async"
-               alt="A CRT terminal material: phosphor color, glow, scanline, curvature and flicker parameters wired into one custom node"></a>
+        <img src="assets/media/graphs/material-crt.webp" width="1178" height="934" loading="lazy" decoding="async"
+             alt="A CRT terminal material: eighteen inputs, from phosphor color to scanlines and flicker, wired into one custom node">
         <figcaption>The game's CRT terminal material, scripted through Hayba's Python bridge and compiled with <code>material_compile</code>.</figcaption>
       </figure>
     </article>
