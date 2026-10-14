@@ -966,79 +966,6 @@ main video:focus-visible,
   color: var(--text-quiet);
 }
 
-/* ══════════════ ORGANIZED: the material hierarchy ══════════════
-   HTML lists for the names; one SVG behind them draws the wires. x in the
-   SVG is a percentage of the width (the columns are 26% wide with 11% gaps),
-   y is in pixels, so the wires meet the boxes at any width. */
-.tree {
-  position: relative;
-  display: grid;
-  grid-template-columns: 26% 26% 26%;
-  grid-template-rows: 222px auto;
-  column-gap: 11%;
-  margin-top: 26px;
-}
-.tree-wires {
-  position: absolute; left: 0; top: 0;
-  width: 100%; height: 222px;
-  overflow: visible;
-  pointer-events: none;
-}
-.tree-wires path {
-  fill: none;
-  stroke: var(--accent);
-  stroke-opacity: 0.75;
-  stroke-width: 1;
-  vector-effect: non-scaling-stroke;
-  stroke-dasharray: 1;
-}
-.tree-col { position: relative; min-width: 0; }
-.tree-folder {
-  height: 28px; margin-bottom: 10px;
-  font-size: 12.5px;
-  line-height: 28px;
-  color: var(--text-quiet);
-}
-.tree ul { list-style: none; display: grid; gap: 8px; }
-.tree li {
-  display: flex; flex-direction: column; justify-content: center;
-  height: 40px;
-  padding: 8px 12px;
-  background: var(--bg-base);
-  border: 1px solid var(--border-soft);
-  border-radius: 4px;
-}
-.tree code {
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  font: 12px var(--font-mono);
-  color: var(--text-primary);
-}
-/* The master sits level with the middle of the instance stack (y 130). */
-.tree-master ul { margin-top: 48px; }
-.tree-master li { height: 88px; padding: 10px 12px; border-color: var(--accent-glow); }
-.tree-params {
-  margin-top: 4px;
-  font-size: 12px;
-  line-height: 1.4;
-  color: var(--text-quiet);
-}
-.tree figcaption {
-  grid-column: 1 / -1;
-  margin-top: 14px;
-  font-size: 12.5px;
-  color: var(--text-quiet);
-}
-@container (max-width: 699px) {
-  .tree { grid-template-columns: minmax(0, 1fr); grid-template-rows: none; row-gap: 14px; }
-  .tree-wires { display: none; }
-  .tree-folder { height: auto; line-height: 1.5; margin-bottom: 6px; }
-  .tree ul { gap: 6px; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
-  .tree li { height: auto; min-height: 36px; padding: 8px 12px; }
-  .tree-master ul { margin-top: 0; }
-  .tree-master li { height: auto; }
-  .tree figcaption { margin-top: 2px; }
-}
-
 .graph-strip {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1367,15 +1294,9 @@ main video:focus-visible,
       animation-timeline: view();
       animation-range: entry 0% entry 70%;
     }
-    .tree-wires path {
-      animation: wire-draw linear both;
-      animation-timeline: view();
-      animation-range: entry 60% cover 50%;
-    }
   }
 }
 @keyframes media-in { from { opacity: 0; transform: translateY(18px); } to { opacity: 1; transform: none; } }
-@keyframes wire-draw { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
 
 /* ══════════════ NARROW SCREENS ══════════════ */
 @media (max-width: 900px) {

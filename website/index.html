@@ -92,80 +92,25 @@
   <h2 class="row-title" id="organized-title">Organized, not just generated</h2>
   <div class="row-body">
     <article class="item">
-      <h3 class="item-name">Materials a team can keep working with</h3>
-      <p>Hayba builds a material system the way a technical artist would file it: shared material functions, one master that exposes its parameters, and instances that only change values. Each asset lands in its own folder.</p>
-      <p class="tools"><code>material_function_create</code>, <code>material_create_instance</code>, <code>material_set_param</code>, <code>asset_move</code></p>
-
-      <figure class="tree" aria-labelledby="tree-cap">
-        <svg class="tree-wires" viewBox="0 0 100 222" preserveAspectRatio="none" aria-hidden="true" focusable="false">
-          <path pathLength="1" d="M26 58 C31.5 58, 31.5 130, 37 130"/>
-          <path pathLength="1" d="M26 106 C31.5 106, 31.5 130, 37 130"/>
-          <path pathLength="1" d="M26 154 C31.5 154, 31.5 130, 37 130"/>
-          <path pathLength="1" d="M63 130 C68.5 130, 68.5 58, 74 58"/>
-          <path pathLength="1" d="M63 130 C68.5 130, 68.5 106, 74 106"/>
-          <path pathLength="1" d="M63 130 C68.5 130, 68.5 154, 74 154"/>
-          <path pathLength="1" d="M63 130 C68.5 130, 68.5 202, 74 202"/>
-        </svg>
-        <div class="tree-col">
-          <p class="tree-folder">Functions</p>
-          <ul>
-            <li><code>MF_WorldAlignedNoise</code></li>
-            <li><code>MF_Weathering</code></li>
-            <li><code>MF_EdgeWear</code></li>
-          </ul>
-        </div>
-        <div class="tree-col tree-master">
-          <p class="tree-folder">Masters</p>
-          <ul>
-            <li><code>M_Master_Surface</code><span class="tree-params">BaseColor, Roughness, WearAmount, NoiseScale</span></li>
-          </ul>
-        </div>
-        <div class="tree-col">
-          <p class="tree-folder">Instances</p>
-          <ul>
-            <li><code>MI_Stone_Wet</code></li>
-            <li><code>MI_Metal_Rusted</code></li>
-            <li><code>MI_Wood_Painted</code></li>
-            <li><code>MI_Concrete_Dry</code></li>
-          </ul>
-        </div>
-        <figcaption id="tree-cap">The structure: functions feed one master, and every instance inherits it and changes only its parameters.</figcaption>
-      </figure>
-
-      <!-- data-requires="demo-materials": the agent building the system above. -->
-      <figure class="media" data-requires="demo-materials" hidden>
-        <video class="loop-clip" width="1920" height="1080" muted loop playsinline preload="none" disablepictureinpicture
-               data-poster="assets/media/demo-materials.jpg"
-               aria-label="An agent building a master material, its functions and its instances through Hayba">
-          <source src="assets/media/demo-materials.mp4" type="video/mp4">
-        </video>
-      </figure>
-    </article>
-
-    <article class="item">
-      <h3 class="item-name">Complex graphs, in every editor</h3>
-      <p>Blueprint event graphs, UMG widget trees, PCG graphs and material graphs go through the same loop: add nodes, wire pins, compile, then read the graph back to check it.</p>
-      <p>In the game further down this page, one widget Blueprint holds 71 graphs and 1,560 nodes, and a single function holds 362.</p>
-
-      <!-- Node-graph captures from the game's editor. Each tile opens the full-resolution capture. -->
+      <!-- Node-graph captures. Each tile opens the full-resolution capture. -->
       <div class="graph-grid">
         <figure class="media">
           <a class="graph-link" href="assets/media/graphs/widget-caption-layout-full.webp" target="_blank" rel="noopener">
             <img src="assets/media/graphs/widget-caption-layout.webp" width="900" height="600" loading="lazy" decoding="async"
                  alt="A dense widget event graph: a column of layout functions wired into a long chain of math nodes"></a>
-          <figcaption>Widget: caption layout</figcaption>
+          <figcaption>UMG: caption layout</figcaption>
         </figure>
         <figure class="media">
           <a class="graph-link" href="assets/media/graphs/widget-settings-menu-full.webp" target="_blank" rel="noopener">
             <img src="assets/media/graphs/widget-settings-menu.webp" width="750" height="500" loading="lazy" decoding="async"
                  alt="Settings menu events, such as volume slider changes, each wired to its own handler"></a>
-          <figcaption>Widget: settings menu, one of 71 graphs</figcaption>
+          <figcaption>UMG: settings menu, 1 of 71 graphs</figcaption>
         </figure>
         <figure class="media">
           <a class="graph-link" href="assets/media/graphs/widget-debug-menu-full.webp" target="_blank" rel="noopener">
             <img src="assets/media/graphs/widget-debug-menu.webp" width="600" height="400" loading="lazy" decoding="async"
                  alt="Debug menu buttons, each On Clicked event wired to a Select Index call"></a>
-          <figcaption>Widget: debug menu</figcaption>
+          <figcaption>UMG: debug menu</figcaption>
         </figure>
         <figure class="media">
           <a class="graph-link" href="assets/media/graphs/controller-intro-full.webp" target="_blank" rel="noopener">
@@ -183,7 +128,7 @@
           <a class="graph-link" href="assets/media/graphs/blueprint-material-params-full.webp" target="_blank" rel="noopener">
             <img src="assets/media/graphs/blueprint-material-params.webp" width="690" height="460" loading="lazy" decoding="async"
                  alt="A Blueprint setup function: a dynamic material instance, then a chain of Set Scalar Parameter Value calls"></a>
-          <figcaption>Blueprint: material parameters at runtime</figcaption>
+          <figcaption>Blueprint: runtime material parameters</figcaption>
         </figure>
       </div>
 
@@ -226,7 +171,7 @@
 <!-- ═══════════════════════════════ CAPABILITIES ═══════════════════════════════ -->
 <section class="intro" id="capabilities" aria-labelledby="cap-title">
   <h2 class="display-2" id="cap-title">What your agent can do in <em>Unreal.</em></h2>
-  <p>400+ editor tools across 30+ domains. The server starts with 7 tools; the agent searches for the rest and calls them on demand, so its context stays small until it needs a tool.</p>
+  <p>400+ editor tools. The agent loads only the ones it needs.</p>
 </section>
 
 <section class="row" id="blueprints" aria-labelledby="bp-title">
@@ -234,8 +179,7 @@
   <div class="row-body">
     <article class="item item-media">
       <h3 class="item-name">Event graphs, functions and variables</h3>
-      <p>Add nodes and functions, declare variables and wire pins, then compile and inspect what compiled.</p>
-      <p class="tools"><code>blueprint_add_node</code>, <code>blueprint_connect_nodes</code>, <code>blueprint_compile</code></p>
+      <p>Add nodes, wire pins, compile.</p>
       <figure class="media">
         <!-- GIF-style loop: media.js plays it while on screen; reduced motion and no-JS show the poster. -->
         <video class="loop-clip" width="1920" height="1080" muted loop playsinline preload="none" disablepictureinpicture
@@ -243,7 +187,7 @@
                aria-label="A pan across a 362-node Blueprint function, built by an agent through Hayba">
           <source src="assets/media/cap-blueprint-graph.mp4" type="video/mp4">
         </video>
-        <figcaption>A pan across the game's 362-node audio function, built from a spec through Hayba.</figcaption>
+        <figcaption>An example 362-node Blueprint function, built by an agent through Hayba.</figcaption>
       </figure>
     </article>
   </div>
@@ -254,12 +198,11 @@
   <div class="row-body">
     <article class="item item-media">
       <h3 class="item-name">Widget trees, bindings and renders</h3>
-      <p>Build UMG widget trees, bind them to data, and render them to PNG so the agent can check the layout it made.</p>
-      <p class="tools"><code>ui_build_tree</code>, <code>ui_bind_property</code>, <code>ui_render_widget_to_png</code></p>
+      <p>Build, bind, then render to check the layout.</p>
       <figure class="media">
         <img src="assets/media/cap-widget-settings.webp" width="1166" height="786" loading="lazy" decoding="async"
              alt="A game settings menu: Display, Upscaling, Graphics, Audio and Accessibility tabs, with quality pickers and foliage sliders">
-        <figcaption>The game's settings menu, a UMG widget built by an agent through Hayba.</figcaption>
+        <figcaption>An example UMG widget built by an agent through Hayba.</figcaption>
       </figure>
     </article>
   </div>
@@ -270,12 +213,11 @@
   <div class="row-body">
     <article class="item item-media">
       <h3 class="item-name">Material graphs, compiled and checked</h3>
-      <p>Author material graphs node by node, compile them, and validate the result before calling the work done.</p>
-      <p class="tools"><code>material_add_node</code>, <code>material_compile</code>, <code>material_validate</code></p>
+      <p>Node by node, compiled and validated.</p>
       <figure class="media">
         <img src="assets/media/graphs/material-crt.webp" width="1178" height="934" loading="lazy" decoding="async"
              alt="A CRT terminal material: eighteen inputs, from phosphor color to scanlines and flicker, wired into one custom node">
-        <figcaption>The game's CRT terminal material, scripted through Hayba's Python bridge and compiled with <code>material_compile</code>.</figcaption>
+        <figcaption>An example material, scripted and compiled through Hayba.</figcaption>
       </figure>
     </article>
   </div>
@@ -286,8 +228,7 @@
   <div class="row-body">
     <article class="item item-media">
       <h3 class="item-name">Actors, cameras and PCG</h3>
-      <p>Spawn and arrange actors, set up cameras, build and cook PCG graphs, and capture the viewport to see the result.</p>
-      <p class="tools"><code>actor_spawn</code>, <code>pcg_create_graph</code>, <code>pcg_cook_and_wait</code>, <code>editor_capture_viewport</code></p>
+      <p>Place actors, cook PCG, capture the viewport.</p>
       <figure class="media">
         <video class="loop-clip" width="1920" height="1080" muted loop playsinline preload="none" disablepictureinpicture
                data-poster="assets/media/showcase-loop-rising-poster.jpg"
@@ -295,67 +236,23 @@
           <source src="assets/media/showcase-loop-rising.webm" type="video/webm">
           <source src="assets/media/showcase-loop-rising.mp4" type="video/mp4">
         </video>
-        <figcaption>Real in-engine footage from the game below. Its landscape and art were made by hand.</figcaption>
+        <figcaption>In-engine footage from a game made with Hayba. Landscape and art made by hand.</figcaption>
       </figure>
     </article>
   </div>
 </section>
 
-<section class="row" id="testing" aria-labelledby="test-title">
-  <h2 class="row-title" id="test-title">Testing</h2>
-  <div class="row-body row-body-split">
-    <article class="item">
-      <h3 class="item-name">Play-In-Editor, asserted</h3>
-      <p>Start and stop Play-In-Editor, assert on game state, and capture frames, so the agent tests what it built.</p>
-      <p class="tools"><code>editor_start_pie</code>, <code>editor_pie_assert</code></p>
-    </article>
-    <article class="item">
-      <h3 class="item-name">Validated before it is done</h3>
-      <p>Check work before calling it finished: PLUMB constraints, plus the material and UI validators.</p>
-      <p class="tools"><code>plumb_validate</code>, <code>ui_validate</code></p>
-    </article>
-  </div>
-</section>
-
 <section class="row" id="safety" aria-labelledby="safety-title">
-  <h2 class="row-title" id="safety-title">Safety</h2>
+  <h2 class="row-title" id="safety-title">Safe by default</h2>
   <div class="row-body">
-    <article class="item">
-      <h3 class="item-name">Built not to crash your editor</h3>
-      <p>An agent can send thousands of editor commands in a session. When one of them goes wrong, Hayba refuses the work instead of taking the editor down with it.</p>
-    </article>
     <dl class="facts">
-      <div>
-        <dt>Faults stay contained</dt>
-        <dd>Hayba contains native faults in its handlers, then refuses unsafe work until you restart the editor.</dd>
-      </div>
-      <div>
-        <dt>Read-only files are refused</dt>
-        <dd>A save to a read-only file comes back as a refusal, not a crash.</dd>
-      </div>
-      <div>
-        <dt>Play-In-Editor is guarded</dt>
-        <dd>Hayba guards Play-In-Editor sessions and assets that are still under construction.</dd>
-      </div>
-      <div>
-        <dt>One agent per asset</dt>
-        <dd>Multi-agent editing uses leases, so two agents never edit the same asset at once.</dd>
-      </div>
-      <div>
-        <dt>You approve destructive steps</dt>
-        <dd>With Plan Mode on (the default), an edit runs only after you approve it. Most edits land on Unreal's undo stack, so Ctrl+Z works.</dd>
-      </div>
+      <div><dt>Crash-contained</dt><dd>A failing command is refused, not fatal to the editor.</dd></div>
+      <div><dt>You approve edits</dt><dd>Plan Mode is on by default, and Ctrl+Z works.</dd></div>
+      <div><dt>One agent per asset</dt><dd>Leases keep agents from colliding.</dd></div>
+      <div><dt>Tested in Play-In-Editor</dt><dd>Agents start PIE, assert state and capture frames.</dd></div>
+      <div><dt>Validated before done</dt><dd>PLUMB constraints, plus UI and material checks.</dd></div>
+      <div><dt>Your model, your key</dt><dd>Bring a key, or run a local model with none.</dd></div>
     </dl>
-  </div>
-</section>
-
-<section class="row" id="chat" aria-labelledby="chat-title">
-  <h2 class="row-title" id="chat-title">Chat</h2>
-  <div class="row-body">
-    <article class="item">
-      <h3 class="item-name">In-editor chat, on your terms</h3>
-      <p>Talk to the editor from the Hayba panel with your own API key, or run a local model through Ollama or LM Studio with no key at all. Any MCP client, such as Claude Code or Claude Desktop, reaches the same tools.</p>
-    </article>
   </div>
 </section>
 
@@ -373,8 +270,7 @@
       <figcaption>Real in-engine footage from the game.</figcaption>
     </figure>
     <div class="showcase-text">
-      <p>The gameplay Blueprints and UI widgets of <cite>A Gift for the Unfinished Journey</cite>, a free Windows game, were built by an AI agent through Hayba.</p>
-      <p>Some materials were scripted through Hayba's Python bridge; the art and levels were made by hand.</p>
+      <p>The Blueprints and UI of <cite>A Gift for the Unfinished Journey</cite> were built by an agent through Hayba. Art and levels made by hand.</p>
       <p><a class="text-link" href="https://zajalist.itch.io/a-gift-for-the-unfinished-journey" target="_blank" rel="noopener">Play it free on itch.io</a></p>
     </div>
   </div>
