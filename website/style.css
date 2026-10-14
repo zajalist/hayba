@@ -483,7 +483,7 @@ input, textarea { caret-color: var(--accent-text); }
 
 /* ─────────── WIP / placeholder pages (showcase) ─────────── */
 .page-wip {
-  background: var(--bg-deep); min-height: 100vh;
+  background: var(--bg-base); min-height: 100vh;
   display: flex; align-items: center; justify-content: center;
   padding: 60px 24px;
 }
@@ -493,10 +493,6 @@ input, textarea { caret-color: var(--accent-text); }
 }
 .wip-shell .brand-link {
   justify-content: center;
-}
-.wip-eyebrow {
-  font-size: 13px; font-weight: 500;
-  color: var(--text-secondary); margin-bottom: 14px;
 }
 .wip-shell h1 {
   font-size: 38px; font-weight: 600;
@@ -511,16 +507,12 @@ input, textarea { caret-color: var(--accent-text); }
 
 /* ─────────── Static doc pages (about) ─────────── */
 .page-doc {
-  background: var(--bg-deep); min-height: 100vh;
+  background: var(--bg-base); min-height: 100vh;
   padding: 70px 24px 80px;
 }
 .doc-shell {
   max-width: 720px; margin: 0 auto;
   color: var(--text-primary);
-}
-.doc-eyebrow {
-  font-size: 13px; font-weight: 500;
-  color: var(--text-secondary); margin-bottom: 10px;
 }
 .doc-shell h1 {
   font-size: 34px; font-weight: 600;
@@ -539,7 +531,7 @@ input, textarea { caret-color: var(--accent-text); }
 
 /* ─────────── Documentation page (docs) ─────────── */
 .page-docs {
-  background: var(--bg-deep); min-height: 100vh;
+  background: var(--bg-base); min-height: 100vh;
   display: grid;
   grid-template-columns: 260px minmax(0, 1fr);
   color: var(--text-primary);
@@ -588,10 +580,6 @@ input, textarea { caret-color: var(--accent-text); }
   padding: 60px 56px 100px;
 }
 .docs-main h1, .docs-main h2 { scroll-margin-top: 24px; }
-.docs-eyebrow {
-  font-size: 13px; font-weight: 500;
-  color: var(--text-secondary); margin-bottom: 10px;
-}
 .docs-main h1 {
   font-size: 32px; font-weight: 600;
   letter-spacing: -0.02em; line-height: 1.15;
@@ -893,7 +881,8 @@ main video:focus-visible,
    One centred column, chapter headings in a plain sans, big images stacked
    with tight gaps. Hero, nav and footer keep the dark theme. */
 .landing main,
-.landing .page-toc {
+.landing .page-toc,
+.page-docs, .page-doc, .page-wip {
   --bg-deep:   #d5d6d8;
   --bg-base:   #e3e3e3;
   --bg-panel:  #ebebeb;
@@ -915,7 +904,13 @@ main video:focus-visible,
   padding-bottom: 136px;
 }
 .landing .site-footer { margin-top: 0; } /* the light ground runs straight into the footer */
-.landing main ::selection { background: rgba(122, 92, 51, 0.24); color: var(--text-primary); }
+.landing main ::selection,
+:is(.page-docs, .page-doc, .page-wip) ::selection { background: rgba(122, 92, 51, 0.24); color: var(--text-primary); }
+html:has(> body:is(.page-docs, .page-doc, .page-wip)) { scrollbar-color: #bfc2c7 #e3e3e3; }
+/* The brand mark is drawn white for dark grounds; on the light pages it reads dark. */
+:is(.page-docs, .page-doc, .page-wip) .brand-mark { filter: brightness(0.16); }
+/* Page titles share the landing's heading face. */
+.docs-main h1, .docs-main h2, .doc-shell h1, .wip-shell h1 { font-family: var(--font-heading); font-weight: 600; }
 
 /* ══════════════ ROWS ══════════════ */
 .row {
