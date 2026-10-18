@@ -38,10 +38,10 @@
   },
   "devDependencies": {
     "@types/express": "^5.0.0",
-    "@types/node": "^26.1.2",
-    "msw": "^2.15.0",
+    "@types/node": "^26.6.5",
+    "msw": "^3.0.3",
     "typescript": "^7.0.2",
-    "vitest": "^4.1.10"
+    "vitest": "^5.0.5"
   },
   "engines": {
     "node": ">=22.5.0"
