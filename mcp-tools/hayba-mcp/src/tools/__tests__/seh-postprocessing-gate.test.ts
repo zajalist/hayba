@@ -4,6 +4,9 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
+const nativeFile = (...parts: string[]): string =>
+  readFileSync(join(here, '..', '..', '..', '..', '..', 'unreal', 'HaybaMCPToolkit', 'Source',
+    'HaybaMCPToolkit', 'Private', ...parts), 'utf8');
 const commandHandler = readFileSync(
   join(here, '..', '..', '..', '..', '..', 'unreal', 'HaybaMCPToolkit', 'Source',
     'HaybaMCPToolkit', 'Private', 'HaybaMCPCommandHandler.cpp'),
@@ -15,7 +18,8 @@ describe('native handler SEH containment', () => {
     const hashAt = commandHandler.indexOf('const FString ParamsHash');
     const dispatchAt = commandHandler.indexOf('HaybaSeh::RunGuarded', hashAt);
     const crashResultAt = commandHandler.indexOf('if (bHandlerCrashed)', dispatchAt);
-    const crashRecoveryAt = commandHandler.indexOf('if (bHandlerCrashed)', crashResultAt + 1);
+    // Handler-owned guards (python_run, material) count too: bNativeFault.
+    const crashRecoveryAt = commandHandler.indexOf('if (bNativeFault)', crashResultAt + 1);
     const normalJournalAt = commandHandler.indexOf(
       '// Journal using result directly',
       crashRecoveryAt,
@@ -33,5 +37,22 @@ describe('native handler SEH containment', () => {
   it('does not claim the editor is healthy after a native fault', () => {
     expect(commandHandler).not.toContain('editor kept alive');
     expect(commandHandler).toContain('Treat the editor session as suspect');
+  });
+
+  it('poisons the session: refuses everything but ping and flags every reply', () => {
+    expect(commandHandler).toContain('HaybaSeh::IsSessionPoisoned() && Cmd != TEXT("ping")');
+    expect(commandHandler).toContain('Envelope.SetBoolField(TEXT("session_poisoned"), true)');
+    expect(nativeFile('HaybaMCPSeh.cpp')).toContain('Stack.SetNum(Before.SlowTaskDepth');
+    expect(nativeFile('handlers', 'HaybaMCPPythonHandler.cpp')).toMatch(
+      /ExecPythonGuarded\([^)]*\)\s*\{[\s\S]{0,400}IsSessionPoisoned\(\)/,
+    );
+  });
+
+  it('never drains a TCP command nested inside another command, slow task or modal loop', () => {
+    const tcp = nativeFile('HaybaMCPTcpServer.cpp');
+    const guardAt = tcp.indexOf('const bool bNestedTick');
+    expect(guardAt).toBeGreaterThan(0);
+    expect(guardAt).toBeLessThan(tcp.indexOf('CommandHandler->ProcessCommand(', guardAt));
+    expect(tcp.slice(guardAt, guardAt + 400)).toContain('GIsSlowTask');
   });
 });

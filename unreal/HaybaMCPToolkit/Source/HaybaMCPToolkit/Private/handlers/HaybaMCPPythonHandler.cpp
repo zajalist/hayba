@@ -1787,15 +1787,23 @@ static bool ExecPythonGuardedRaw(IPythonScriptPlugin* Plugin, FPythonCommandEx* 
 // play-world switch (UEditorEngine::OnScriptExecutionStart, which fires whenever
 // python reaches Blueprint code on a PIE object) can be left pushed — and GWorld
 // stuck on the PIE world kills the editor on the next tick. See the long note in
-// HaybaMCPSeh.h. Same repair as HaybaSeh::RunGuarded, applied to this handler's
+// HaybaMCPSeh.h. Same repair as HaybaSeh::RunGuarded (which also poisons the
+// session, so no further Python runs through Hayba), applied to this handler's
 // own guard; the __try stays isolated in ExecPythonGuardedRaw for C2712.
 static bool ExecPythonGuarded(IPythonScriptPlugin* Plugin, FPythonCommandEx* Cmd, bool& bOutCrashed)
 {
-    const HaybaSeh::FWorldSwitchSnapshot Before = HaybaSeh::CaptureWorldSwitchState();
+    // After any caught fault CPython may be corrupt: never run another statement
+    // (this also stops the readback/cleanup calls that follow a faulted script).
+    if (HaybaSeh::IsSessionPoisoned())
+    {
+        bOutCrashed = true;
+        return false;
+    }
+    const HaybaSeh::FFaultSnapshot Before = HaybaSeh::CaptureFaultSnapshot();
     const bool bResult = ExecPythonGuardedRaw(Plugin, Cmd, bOutCrashed);
     if (bOutCrashed)
     {
-        HaybaSeh::RepairWorldSwitchState(Before);
+        HaybaSeh::RepairAfterCaughtFault(Before);
     }
     return bResult;
 }

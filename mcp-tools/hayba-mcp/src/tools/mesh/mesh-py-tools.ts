@@ -59,15 +59,21 @@ import { pyStr } from '../ue-python.js';
 import type { PyToolDescriptor } from '../py-tool-factory.js';
 
 // ── Shared Python helper: load + validate a StaticMesh from a content path ──────
+// No try/with in this block: native python_run policy HCR-TIME-001 refuses them,
+// so _find_sm returns (mesh, None) | (None, error) for explicit status.
+// _load_sm keeps the raising contract for tools that still catch it.
 const PY_MESH_HELPERS = [
+  'def _find_sm(path):',
+  '    obj = unreal.EditorAssetLibrary.load_asset(path) if unreal.EditorAssetLibrary.does_asset_exist(path) else None',
+  '    if obj is None: return None, "asset not found: %s" % path',
+  '    if not isinstance(obj, unreal.StaticMesh): return None, "not a StaticMesh: %s (%s)" % (path, type(obj).__name__)',
+  '    return obj, None',
   'def _load_sm(path):',
-  '    obj = unreal.EditorAssetLibrary.load_asset(path)',
-  '    if obj is None: raise Exception("asset not found: %s" % path)',
-  '    if not isinstance(obj, unreal.StaticMesh): raise Exception("not a StaticMesh: %s (%s)" % (path, type(obj).__name__))',
-  '    return obj',
+  '    sm, msg = _find_sm(path)',
+  '    if sm is None: raise Exception(msg)',
+  '    return sm',
   'def _sm_subsystem():',
-  '    try: return unreal.get_editor_subsystem(unreal.StaticMeshEditorSubsystem)',
-  '    except Exception: return None',
+  '    return unreal.get_editor_subsystem(unreal.StaticMeshEditorSubsystem)',
 ].join('\n');
 
 const readMeta: HaybaToolMeta = {
@@ -236,30 +242,15 @@ function meshGetBoundsScript(p: MeshGetBoundsParams): string {
   return [
     PY_MESH_HELPERS,
     `_path = ${pyStr(p.asset_path)}`,
-    'try:',
-    '    sm = _load_sm(_path)',
-    '    origin = None; extent = None; radius = None; bmin = None; bmax = None',
-    '    try:',
-    '        b = sm.get_bounds()',
-    '        o = b.origin; e = b.box_extent',
-    '        origin = [o.x, o.y, o.z]; extent = [e.x, e.y, e.z]',
-    '        try: radius = b.sphere_radius',
-    '        except Exception: pass',
-    '        bmin = [o.x - e.x, o.y - e.y, o.z - e.z]',
-    '        bmax = [o.x + e.x, o.y + e.y, o.z + e.z]',
-    '    except Exception: pass',
-    '    if origin is None:',
-    '        try:',
-    '            mn, mx = sm.get_bounding_box()',
-    '            bmin = [mn.x, mn.y, mn.z]; bmax = [mx.x, mx.y, mx.z]',
-    '            origin = [(mn.x+mx.x)/2.0, (mn.y+mx.y)/2.0, (mn.z+mx.z)/2.0]',
-    '            extent = [(mx.x-mn.x)/2.0, (mx.y-mn.y)/2.0, (mx.z-mn.z)/2.0]',
-    '        except Exception: pass',
-    '    if origin is None: raise Exception("could not read StaticMesh bounds")',
-    '    _emit({"ok": True, "asset_path": _path, "origin": origin, "extent": extent,',
-    '           "sphere_radius": radius, "min": bmin, "max": bmax})',
-    'except Exception as _e:',
-    '    _err(_e)',
+    'sm, _msg = _find_sm(_path)',
+    'if sm is None:',
+    '    _err(_msg)',
+    'else:',
+    '    b = sm.get_bounds()',
+    '    o = b.origin; e = b.box_extent',
+    '    _emit({"ok": True, "asset_path": _path, "origin": [o.x, o.y, o.z], "extent": [e.x, e.y, e.z],',
+    '           "sphere_radius": b.sphere_radius,',
+    '           "min": [o.x - e.x, o.y - e.y, o.z - e.z], "max": [o.x + e.x, o.y + e.y, o.z + e.z]})',
   ].join('\n');
 }
 

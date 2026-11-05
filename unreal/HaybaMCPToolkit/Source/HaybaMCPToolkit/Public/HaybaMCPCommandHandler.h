@@ -42,6 +42,10 @@ public:
     /** Returns all registered command names. */
     TArray<FString> GetAllCommands() const;
 
+    /** True while a command is executing. The TCP drain defers queued commands
+     *  instead of running them nested inside it. Game thread. */
+    bool IsDispatching() const { return DispatchDepth > 0; }
+
     /**
      * Whether a destructive command should also receive a global editor undo
      * transaction.  This is deliberately narrower than the Plan Mode gate:
@@ -91,4 +95,5 @@ private:
 
     TMap<FString, TSharedRef<IHaybaMCPHandler>> CommandToHandler;
     TArray<TSharedRef<IHaybaMCPHandler>> Handlers;
+    int32 DispatchDepth = 0;
 };

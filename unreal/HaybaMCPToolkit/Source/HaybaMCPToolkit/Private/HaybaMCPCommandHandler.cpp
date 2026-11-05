@@ -1216,12 +1216,51 @@ FString FHaybaMCPCommandHandler::ProcessBatchStep(
     return ProcessWithContext(CommandJson, Context);
 }
 
+// First command whose dispatch caught a native fault (see HaybaSeh). Game thread.
+static FString GPoisonedByCommand;
+
+static FString PoisonedSessionMessage()
+{
+    return FString::Printf(
+        TEXT("A native fault occurred in %s; editor state may be unsafe. Save and restart the editor. ")
+        TEXT("Hayba refuses every command except ping until the editor restarts."),
+        GPoisonedByCommand.IsEmpty() ? TEXT("an earlier native call") : *GPoisonedByCommand);
+}
+
 FString FHaybaMCPCommandHandler::ProcessWithContext(const FString& CommandJson, FHaybaMCPRequestContext& Context)
 {
+    // Never run one command inside another (e.g. an editor panel calling
+    // SendTcpCommand while a running command pumps Slate). The TCP drain
+    // defers instead of getting here; in-process callers are refused.
+    if (DispatchDepth > 0)
+    {
+        return MakeErrorResponse(TEXT(""),
+            TEXT("Request rejected: another Hayba command is still executing on the game thread; nested dispatch is refused. Retry after it returns."),
+            TEXT("protocol"), false, /*bKnownPreflight=*/true);
+    }
+    TGuardValue<int32> DispatchDepthGuard(DispatchDepth, DispatchDepth + 1);
+
     FString Response;
     {
         FHaybaMCPLeaseManager::FScope Scope(Context);
         Response = ProcessCommandInContext(CommandJson);
+    }
+    if (HaybaSeh::IsSessionPoisoned())
+    {
+        // Every reply (ping included) says the editor is not healthy.
+        const FString Poisoned = PoisonedSessionMessage();
+        Response = AddEnvelopeFields(Response, [&Poisoned](FJsonObject& Envelope)
+        {
+            Envelope.SetBoolField(TEXT("session_poisoned"), true);
+            Envelope.SetStringField(TEXT("native_fault"), Poisoned);
+            // Status callers (hayba_check_ue_status) only read `data`.
+            const TSharedPtr<FJsonObject>* Data = nullptr;
+            if (Envelope.TryGetObjectField(TEXT("data"), Data) && Data && Data->IsValid())
+            {
+                (*Data)->SetBoolField(TEXT("session_poisoned"), true);
+                (*Data)->SetStringField(TEXT("native_fault"), Poisoned);
+            }
+        });
     }
     if (Context.LeaseWarning.IsValid())
     {
@@ -1270,6 +1309,15 @@ FString FHaybaMCPCommandHandler::ProcessCommandInContext(const FString& CommandJ
     {
         return MakeErrorResponse(Id,
             TEXT("Request rejected: 'cmd' field is required and must be non-empty"), TEXT("protocol"), false, true);
+    }
+
+    // After a caught native fault nothing Hayba runs can be trusted (abandoned
+    // guards, possibly corrupt CPython). Only ping answers, and it is flagged.
+    if (HaybaSeh::IsSessionPoisoned() && Cmd != TEXT("ping"))
+    {
+        const FString Poisoned = PoisonedSessionMessage();
+        UE_LOG(LogHaybaMCPCmd, Error, TEXT("Refused '%s' (id: %s): %s"), *Cmd, *Id, *Poisoned);
+        return MakeErrorResponse(Id, Poisoned, Cmd, /*bSessionSuspect=*/true, /*bKnownPreflight=*/true);
     }
 
     TSharedPtr<FJsonObject> Params;
@@ -1545,6 +1593,7 @@ FString FHaybaMCPCommandHandler::ProcessCommandInContext(const FString& CommandJ
     // the FStatsCtx usage in HaybaMCPMaterialHandler.cpp.
     FHaybaHandlerResult Result;
     bool bHandlerCrashed = false;
+    const int32 FaultsBefore = HaybaSeh::GetCaughtFaultCount();
     {
         struct FDispatchCtx
         {
@@ -1576,8 +1625,12 @@ FString FHaybaMCPCommandHandler::ProcessCommandInContext(const FString& CommandJ
 
     const int64 DurMs = (int64)((FPlatformTime::Seconds() - Start) * 1000.0);
 
-    if (bHandlerCrashed)
+    // Handler-owned guards (python_run, material compile) turn a fault into an
+    // ordinary Err; the fault count is what says one happened.
+    const bool bNativeFault = bHandlerCrashed || HaybaSeh::GetCaughtFaultCount() != FaultsBefore;
+    if (bNativeFault)
     {
+        if (GPoisonedByCommand.IsEmpty()) GPoisonedByCommand = Cmd;
         // Never continue through transaction completion, diff capture, panel
         // dispatch, response trimming, or a second params serialization after
         // a native fault. The 2026-08-09 test_run incident proved that the old
@@ -1587,10 +1640,14 @@ FString FHaybaMCPCommandHandler::ProcessCommandInContext(const FString& CommandJ
         {
             GEditor->CancelTransaction(0);
         }
+        // material_compile reports its guarded fault as Ok data with an "error" field.
+        FString HandlerError = Result.ErrorMessage;
+        if (HandlerError.IsEmpty() && Result.Data.IsValid()) Result.Data->TryGetStringField(TEXT("error"), HandlerError);
+        const FString FaultError = (HandlerError + TEXT(" ") + PoisonedSessionMessage()).TrimStart();
         FHaybaJournalEntry CrashEntry{
-            FDateTime::UtcNow(), Cmd, ParamsHash, DurMs, false, Result.ErrorMessage };
+            FDateTime::UtcNow(), Cmd, ParamsHash, DurMs, false, FaultError };
         FHaybaMCPSecurityManager::Get().Journal(CrashEntry);
-        return MakeErrorResponse(Id, Result.ErrorMessage, Cmd, /*bSessionSuspect=*/true);
+        return MakeErrorResponse(Id, FaultError, Cmd, /*bSessionSuspect=*/true);
     }
 
     // Classify the handler's complete typed result before ANY success-dependent

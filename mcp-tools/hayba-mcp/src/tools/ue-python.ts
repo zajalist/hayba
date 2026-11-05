@@ -17,8 +17,9 @@ const MARKER = 'HAYBA_JSON:';
  * Python preamble injected ahead of every generated script. Provides:
  *   _emit(obj)  → prints the sentinel-tagged JSON result line
  *   _err(msg)   → emits {"ok": false, "error": msg}
- * Generated scripts should wrap their body in try/except and call _err on
- * failure so the TS side always gets a structured response.
+ * Generated scripts must NOT use try/with (native python_run policy
+ * HCR-TIME-001 refuses them): check expected failures explicitly and call
+ * _err; anything unexpected propagates and runUePythonJson reports it.
  */
 export const PY_PREAMBLE = [
   'import json as _json, unreal as unreal',

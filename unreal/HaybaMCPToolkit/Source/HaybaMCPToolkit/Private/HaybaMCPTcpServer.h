@@ -140,6 +140,9 @@ private:
 	TQueue<int32, EQueueMode::Mpsc> ClosedConnections;
 	FTSTicker::FDelegateHandle DrainTickerHandle;
 	bool DrainPendingCommands(float DeltaTime);
+	// Re-entrancy guard for DrainPendingCommands (see the check at its top).
+	bool bInDrain = false;
+	bool bLoggedDeferral = false;
 	void RetainWorker(TUniquePtr<FHaybaMCPJoinableWorker>&& Worker);
 
 	void HandleClientConnection(FHaybaMCPClientConnectionPtr Conn);

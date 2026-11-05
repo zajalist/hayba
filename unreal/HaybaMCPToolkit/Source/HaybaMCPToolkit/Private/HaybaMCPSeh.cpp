@@ -6,6 +6,9 @@
 #include "Editor.h"           // RestoreEditorWorld, GEditor
 #include "Editor/EditorEngine.h"   // UEditorEngine::GetEditorWorldContext
 #include "Engine/World.h"     // GWorld (UWorldProxy), UWorld
+#include "Misc/FeedbackContext.h"  // GWarn scope stack, FinalizeSlowTask
+#include "Misc/SlowTaskStack.h"
+#include "UObject/UObjectGlobals.h"  // UE::IsSavingPackage / SetIsSavingPackage
 
 DEFINE_LOG_CATEGORY_STATIC(LogHaybaSeh, Log, All);
 
@@ -117,16 +120,86 @@ namespace
         }
     }
 
+namespace
+{
+    int32 GCaughtFaultCount = 0;
+
+    // FinalizeSlowTask is protected on FFeedbackContext; naming it through a
+    // derived class is the standard way to call it (virtually) from outside.
+    struct FFeedbackContextAccess : FFeedbackContext
+    {
+        static void Finalize(FFeedbackContext& Context)
+        {
+            void (FFeedbackContext::*Fn)() = &FFeedbackContextAccess::FinalizeSlowTask;
+            (Context.*Fn)();
+        }
+    };
+}
+
+    FFaultSnapshot CaptureFaultSnapshot()
+    {
+        FFaultSnapshot Snapshot;
+        Snapshot.World = CaptureWorldSwitchState();
+        Snapshot.SlowTaskDepth = GWarn ? GWarn->GetScopeStack().Num() : 0;
+        Snapshot.bSlowTaskDialog = GIsSlowTask;
+        Snapshot.bSavingPackage = UE::IsSavingPackage();
+        return Snapshot;
+    }
+
+    void RepairAfterCaughtFault(const FFaultSnapshot& Before)
+    {
+        ++GCaughtFaultCount;
+        RepairWorldSwitchState(Before.World);
+
+        if (GWarn)
+        {
+            // Entries above the snapshot depth point into stack frames the
+            // __except discarded. Drop them without touching them.
+            FSlowTaskStack& Stack = const_cast<FSlowTaskStack&>(GWarn->GetScopeStack());
+            if (Stack.Num() > Before.SlowTaskDepth)
+            {
+                UE_LOG(LogHaybaSeh, Error,
+                    TEXT("SEH guard: dropped %d abandoned slow task(s) from the editor's progress stack."),
+                    Stack.Num() - Before.SlowTaskDepth);
+                Stack.SetNum(Before.SlowTaskDepth, EAllowShrinking::No);
+            }
+            // The abandoned task owned the progress dialog; nothing else will close it.
+            if (!Before.bSlowTaskDialog && GIsSlowTask)
+            {
+                FFeedbackContextAccess::Finalize(*GWarn);
+                UE_LOG(LogHaybaSeh, Error, TEXT("SEH guard: closed the progress dialog the faulting call left open."));
+            }
+        }
+
+        if (!Before.bSavingPackage && UE::IsSavingPackage())
+        {
+            // An abandoned FScopedSavingFlag leaves this set, and every later
+            // StaticFindObject treats the editor as mid-save (fatal).
+            UE::SetIsSavingPackage(false);
+            UE_LOG(LogHaybaSeh, Error, TEXT("SEH guard: cleared the saving-package flag the faulting save left set."));
+        }
+
+        UE_LOG(LogHaybaSeh, Error,
+            TEXT("SEH guard: caught native fault #%d. The editor was kept alive, but its state is NOT trustworthy. "
+                 "Hayba now refuses every command except ping. SAVE YOUR WORK AND RESTART THE EDITOR."),
+            GCaughtFaultCount);
+    }
+
+    int32 GetCaughtFaultCount()
+    {
+        return GCaughtFaultCount;
+    }
+
     void RunGuarded(void (*Thunk)(void*), void* Context, bool& bOutCrashed)
     {
         bOutCrashed = false;
         if (!Thunk) return;
 
-        const FWorldSwitchSnapshot Before = CaptureWorldSwitchState();
+        const FFaultSnapshot Before = CaptureFaultSnapshot();
         RunGuardedRaw(Thunk, Context, bOutCrashed);
         if (bOutCrashed)
         {
-            RepairWorldSwitchState(Before);
+            RepairAfterCaughtFault(Before);
         }
     }
 }
