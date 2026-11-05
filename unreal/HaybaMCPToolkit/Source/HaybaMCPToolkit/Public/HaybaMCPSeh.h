@@ -113,4 +113,37 @@ namespace HaybaSeh
     /** Compares the current state against Before and repairs a stranded play
      *  world. Returns true only when it actually had to repair something. */
     bool RepairWorldSwitchState(const FWorldSwitchSnapshot& Before);
+
+    // ---- Everything else a caught fault strands ----
+    //
+    // The world switch above is not the only abandoned guard. 2026-11-05:
+    // level_save faulted inside SavePackage, the guard caught it, and the editor
+    // died on the NEXT frame with "Ensure condition failed: TextData
+    // [Text.cpp:311]" in the slow-task SWindow prepass, then an access
+    // violation. FEditorFileUtils' FScopedSlowTask lived in a frame the
+    // __except jumped over: its pointer stayed on GWarn's scope stack (pointing
+    // at reused stack memory) and its dialog stayed open, so Slate read garbage
+    // FText the next time it painted the dialog. SavePackage's own saving flag
+    // is abandoned the same way.
+    //
+    // RepairStrandedEngineState undoes the stranded state it can name, so the
+    // user can still save and restart. It does NOT make the session healthy;
+    // FHaybaEditorHealth records the fault and refuses unsafe work until restart.
+
+    /** Engine state to compare against after a fault. Trivially destructible
+     *  for the same C2712 reason as FWorldSwitchSnapshot. */
+    struct FFaultSnapshot
+    {
+        FWorldSwitchSnapshot World;
+        int32 SlowTaskDepth = 0;
+        bool bSlowTaskDialog = false;
+        bool bSavingPackage = false;
+    };
+
+    FFaultSnapshot CaptureFaultSnapshot();
+
+    /** Drops abandoned slow tasks, closes their orphaned progress dialog and
+     *  clears an abandoned saving flag, relative to Before. Does not touch the
+     *  world switch (RepairWorldSwitchState). Call only after a caught fault. */
+    void RepairStrandedEngineState(const FFaultSnapshot& Before);
 }

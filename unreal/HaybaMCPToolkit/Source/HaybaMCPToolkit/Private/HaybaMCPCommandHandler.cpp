@@ -1678,6 +1678,17 @@ FString FHaybaMCPCommandHandler::ProcessBatchStep(
 
 FString FHaybaMCPCommandHandler::ProcessWithContext(const FString& CommandJson, FHaybaMCPRequestContext& Context)
 {
+    // Never run one command inside another (e.g. an editor panel calling
+    // SendTcpCommand while a running command pumps Slate). The TCP drain
+    // defers instead of getting here; in-process callers are refused.
+    if (DispatchDepth > 0)
+    {
+        return MakeErrorResponse(TEXT(""),
+            TEXT("Request rejected: another Hayba command is still executing on the game thread; nested dispatch is refused. Retry after it returns."),
+            TEXT("protocol"), false, /*bKnownPreflight=*/true);
+    }
+    TGuardValue<int32> DispatchDepthGuard(DispatchDepth, DispatchDepth + 1);
+
     FString Response;
     {
         FHaybaMCPLeaseManager::FScope Scope(Context);

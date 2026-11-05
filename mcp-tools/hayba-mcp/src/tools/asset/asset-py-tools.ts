@@ -93,21 +93,17 @@ export type AssetSaveParams = z.infer<typeof assetSaveSchema>;
 function assetSaveScript(p: AssetSaveParams): string {
   return [
     `_paths = ${p.asset_paths !== undefined ? JSON.stringify(p.asset_paths) : 'None'}`,
-    'try:',
-    '    saved = []; failed = []',
-    '    if _paths:',
-    '        for pth in _paths:',
-    '            try:',
-    '                ok = unreal.EditorAssetLibrary.save_asset(pth, only_if_is_dirty=True)',
-    '                (saved if ok else failed).append(pth)',
-    '            except Exception:',
-    '                failed.append(pth)',
-    '        _emit({"ok": len(failed) == 0, "mode": "named", "saved": saved, "saved_count": len(saved), "failed": failed, "warnings": ([] if not failed else ["%d of %d asset(s) failed to save (path missing or not saveable)" % (len(failed), len(_paths))])})',
-    '    else:',
-    '        ok = unreal.EditorLoadingAndSavingUtils.save_dirty_packages(True, True)',
-    '        _emit({"ok": True, "mode": "all_dirty", "saved_all": bool(ok)})',
-    'except Exception as _e:',
-    '    _err(_e)',
+    // No try/with: native python_run policy HCR-TIME-001 refuses them; a missing
+    // path is checked explicitly instead of caught.
+    'saved = []; failed = []',
+    'if _paths:',
+    '    for pth in _paths:',
+    '        ok = unreal.EditorAssetLibrary.does_asset_exist(pth) and unreal.EditorAssetLibrary.save_asset(pth, only_if_is_dirty=True)',
+    '        (saved if ok else failed).append(pth)',
+    '    _emit({"ok": len(failed) == 0, "mode": "named", "saved": saved, "saved_count": len(saved), "failed": failed, "warnings": ([] if not failed else ["%d of %d asset(s) failed to save (path missing or not saveable)" % (len(failed), len(_paths))])})',
+    'else:',
+    '    ok = unreal.EditorLoadingAndSavingUtils.save_dirty_packages(True, True)',
+    '    _emit({"ok": True, "mode": "all_dirty", "saved_all": bool(ok)})',
   ].join('\n');
 }
 
@@ -164,24 +160,20 @@ export type AssetOpenEditorParams = z.infer<typeof assetOpenEditorSchema>;
 function assetOpenEditorScript(p: AssetOpenEditorParams): string {
   return [
     `_paths = ${JSON.stringify(p.asset_paths)}`,
-    'try:',
-    '    objs = []; missing = []',
-    '    for pth in _paths:',
-    '        try:',
-    '            o = unreal.EditorAssetLibrary.load_asset(pth)',
-    '            if o is not None: objs.append(o)',
-    '            else: missing.append(pth)',
-    '        except Exception: missing.append(pth)',
-    '    opened = False',
-    '    if objs:',
-    '        aes = unreal.get_editor_subsystem(unreal.AssetEditorSubsystem)',
-    '        if aes is None: raise Exception("AssetEditorSubsystem unavailable")',
-    '        aes.open_editor_for_assets(objs)',
-    '        opened = True',
-    '    if not opened: raise Exception("no loadable assets to open")',
-    '    _emit({"ok": True, "opened": opened, "count": len(objs), "missing": missing})',
-    'except Exception as _e:',
-    '    _err(_e)',
+    // No try/with (native policy HCR-TIME-001): existence is checked, not caught.
+    'objs = []; missing = []',
+    'for pth in _paths:',
+    '    o = unreal.EditorAssetLibrary.load_asset(pth) if unreal.EditorAssetLibrary.does_asset_exist(pth) else None',
+    '    if o is not None: objs.append(o)',
+    '    else: missing.append(pth)',
+    'aes = unreal.get_editor_subsystem(unreal.AssetEditorSubsystem) if objs else None',
+    'if not objs:',
+    '    _err("no loadable assets to open")',
+    'elif aes is None:',
+    '    _err("AssetEditorSubsystem unavailable")',
+    'else:',
+    '    aes.open_editor_for_assets(objs)',
+    '    _emit({"ok": True, "opened": True, "count": len(objs), "missing": missing})',
   ].join('\n');
 }
 

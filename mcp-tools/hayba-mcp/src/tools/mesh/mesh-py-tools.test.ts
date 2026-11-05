@@ -68,14 +68,13 @@ describe('mesh_get_materials', () => {
 });
 
 describe('mesh_get_bounds', () => {
-  it('reads get_bounds with a get_bounding_box fallback', async () => {
+  it('reads get_bounds (no try/except fallback: native policy refuses try)', async () => {
     const { sender, lastScript } = mockStdout(emit({ ok: true, asset_path: '/Game/M', origin: [0, 0, 0], extent: [1, 1, 1] }));
     setDefaultSender(sender);
     const res = await makePyToolHandler(meshGetBoundsDescriptor)({ asset_path: '/Game/M' });
     expect(res.isError).toBeUndefined();
     const s = lastScript();
     expect(s).toContain('get_bounds');
-    expect(s).toContain('get_bounding_box');
     expect(s).toContain('box_extent');
   });
 });

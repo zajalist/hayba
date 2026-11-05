@@ -8,6 +8,7 @@ const privateDir = join(here, '..', '..', '..', '..', '..', 'unreal', 'HaybaMCPT
 const commandHandler = readFileSync(join(privateDir, 'HaybaMCPCommandHandler.cpp'), 'utf8');
 const pythonHandler = readFileSync(join(privateDir, 'handlers', 'HaybaMCPPythonHandler.cpp'), 'utf8');
 const materialHandler = readFileSync(join(privateDir, 'handlers', 'HaybaMCPMaterialHandler.cpp'), 'utf8');
+const nativeFile = (...parts: string[]): string => readFileSync(join(privateDir, ...parts), 'utf8');
 
 describe('native handler SEH containment', () => {
   it('hashes params before dispatch and returns before normal post-processing after a fault', () => {
@@ -34,5 +35,25 @@ describe('native handler SEH containment', () => {
     }
     expect(pythonHandler).toContain('Fault contained; restart the editor before further work.');
     expect(materialHandler).toContain('Fault contained; restart the editor before further work.');
+  });
+
+  it('repairs the slow tasks, progress dialog and saving flag a caught fault strands', () => {
+    const seh = nativeFile('HaybaMCPSeh.cpp');
+    expect(seh).toContain('Stack.SetNum(Before.SlowTaskDepth');
+    expect(seh).toContain('UE::SetIsSavingPackage(false)');
+    // Health records the fault before the saving flag is cleared.
+    expect(seh.indexOf('RecordCaughtFault(Site')).toBeLessThan(seh.indexOf('RepairStrandedEngineState(Before);'));
+  });
+
+  it('refuses a command dispatched inside another command', () => {
+    expect(commandHandler).toContain('nested dispatch is refused');
+  });
+
+  it('never drains a TCP command nested inside another command, slow task or modal loop', () => {
+    const tcp = nativeFile('HaybaMCPTcpServer.cpp');
+    const guardAt = tcp.indexOf('const bool bNestedTick');
+    expect(guardAt).toBeGreaterThan(0);
+    expect(guardAt).toBeLessThan(tcp.indexOf('CommandHandler->ProcessCommand(', guardAt));
+    expect(tcp.slice(guardAt, guardAt + 400)).toContain('GIsSlowTask');
   });
 });
