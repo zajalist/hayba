@@ -1813,210 +1813,9 @@ static bool ExecPythonGuarded(IPythonScriptPlugin* Plugin, FPythonCommandEx* Cmd
     return bResult;
 }
 
-namespace
-{
-    FString GPspHotfixState = TEXT("pending");
-
-    FString Base64Utf8(const FString& Text)
-    {
-        FTCHARToUTF8 Utf8(*Text);
-        return FBase64::Encode(reinterpret_cast<const uint8*>(Utf8.Get()), Utf8.Length());
-    }
-
-    bool IsEnvKey(const FString& Key)
-    {
-        if (Key.IsEmpty() || Key.Len() > 128 || FChar::IsDigit(Key[0])) return false;
-        for (const TCHAR C : Key)
-        {
-            if (!FChar::IsAlnum(C) && C != TEXT('_')) return false;
-        }
-        return true;
-    }
-
-    constexpr int32 MaxExecFileOutputChars = 512 * 1024;
-    constexpr int32 MaxExecFileEnvEntries = 64;
-    constexpr int32 MaxExecFileEnvValueChars = 32 * 1024;
-}
-
-bool FHaybaMCPPythonHandler::EnsurePspHotfix()
-{
-    static bool bDone = false;
-    if (bDone) return true;
-    IPythonScriptPlugin* Python = IPythonScriptPlugin::Get();
-    if (!Python || !Python->IsPythonInitialized()) return false;
-    bDone = true; // one attempt per session: 'unsupported' or an error must not repeat on every run
-
-    const TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(TEXT("HaybaMCPToolkit"));
-    if (!Plugin.IsValid())
-    {
-        GPspHotfixState = TEXT("error: plugin dir not found");
-        return true;
-    }
-    const FString Dir = FPaths::ConvertRelativePathToFull(Plugin->GetBaseDir() / TEXT("Resources/Python"));
-    FPythonCommandEx Cmd;
-    Cmd.ExecutionMode = EPythonCommandExecutionMode::ExecuteFile;
-    Cmd.Command = FString::Printf(TEXT(
-        "import sys, base64\n"
-        "_p = base64.b64decode('%s').decode('utf-8')\n"
-        "if _p not in sys.path: sys.path.insert(0, _p)\n"
-        "import hayba_psp_hotfix\n"
-        "print('HAYBA_PSP_HOTFIX=' + hayba_psp_hotfix.apply())\n"), *Base64Utf8(Dir));
-    bool bCrashed = false;
-    ExecPythonGuarded(Python, &Cmd, bCrashed);
-    GPspHotfixState = bCrashed ? TEXT("error: native fault") : TEXT("error: ") + Cmd.CommandResult.Left(300);
-    for (const FPythonLogOutputEntry& Entry : Cmd.LogOutput)
-    {
-        if (Entry.Output.StartsWith(TEXT("HAYBA_PSP_HOTFIX=")))
-        {
-            GPspHotfixState = Entry.Output.Mid(17).TrimStartAndEnd();
-        }
-    }
-    const bool bSafe = GPspHotfixState == TEXT("patched") || GPspHotfixState == TEXT("ok");
-    UE_LOG(LogHaybaPython, Display, TEXT("Hayba PSP hotfix: %s"), *GPspHotfixState);
-    if (!bSafe)
-    {
-        UE_LOG(LogHaybaPython, Warning, TEXT("Hayba PSP hotfix not applied (%s): any Python GC can crash the editor while bound Unreal methods are cyclic garbage."), *GPspHotfixState);
-    }
-    return true;
-}
-
 TArray<FString> FHaybaMCPPythonHandler::GetCommands() const
 {
     return { TEXT("python_run"), TEXT("python_exec_file") };
-}
-
-// Trusted project scripts (FoA's ue_remote.py), outside python_run's sandbox. Each run is one
-// request on the game thread: a private namespace, env vars set and restored, the traceback
-// printed instead of left in sys.last_*, and gc.collect() inside the SEH guard before returning,
-// so no wrapper of this run is alive when the next agent's request starts.
-FHaybaHandlerResult FHaybaMCPPythonHandler::ExecFile(const TSharedPtr<FJsonObject>& P)
-{
-    const UHaybaMCPDeveloperSettings* Settings = GetDefault<UHaybaMCPDeveloperSettings>();
-    if (!Settings || !Settings->bAllowProjectPythonFiles)
-    {
-        return FHaybaHandlerResult::Err(TEXT(
-            "python_exec_file disabled [HCR-FILE-001]: the project has not opted in. Set bAllowProjectPythonFiles=True under "
-            "[/Script/HaybaMCPToolkit.HaybaMCPDeveloperSettings] in Config/DefaultHaybaMCP.ini, or use python_run."));
-    }
-    FString Path;
-    if (!P.IsValid() || !P->TryGetStringField(TEXT("path"), Path) || Path.IsEmpty())
-    {
-        return FHaybaHandlerResult::Err(TEXT("Missing required parameter: path"));
-    }
-    const FString ProjectDir = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir());
-    const FString FullPath = FPaths::ConvertRelativePathToFull(ProjectDir, Path);
-    if (!FPaths::IsUnderDirectory(FullPath, ProjectDir) || !FullPath.EndsWith(TEXT(".py"), ESearchCase::IgnoreCase))
-    {
-        return FHaybaHandlerResult::Err(FString::Printf(
-            TEXT("python_exec_file refused [HCR-FILE-002]: '%s' is not a .py file inside the project directory %s."), *FullPath, *ProjectDir));
-    }
-    if (!FPaths::FileExists(FullPath))
-    {
-        return FHaybaHandlerResult::Err(FString::Printf(TEXT("python_exec_file: no such file '%s'."), *FullPath));
-    }
-
-    TSharedPtr<FJsonObject> Env = MakeShared<FJsonObject>();
-    const TSharedPtr<FJsonObject>* EnvIn = nullptr;
-    if (P->HasField(TEXT("env")))
-    {
-        if (!P->TryGetObjectField(TEXT("env"), EnvIn) || !EnvIn || !EnvIn->IsValid() || (*EnvIn)->Values.Num() > MaxExecFileEnvEntries)
-        {
-            return FHaybaHandlerResult::Err(FString::Printf(
-                TEXT("python_exec_file: env must be an object of at most %d string values."), MaxExecFileEnvEntries));
-        }
-        for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : (*EnvIn)->Values)
-        {
-            FString Value;
-            if (!IsEnvKey(Pair.Key) || !Pair.Value.IsValid() || !Pair.Value->TryGetString(Value) || Value.Len() > MaxExecFileEnvValueChars)
-            {
-                return FHaybaHandlerResult::Err(FString::Printf(
-                    TEXT("python_exec_file: env '%s' needs an identifier key and a string value up to %d chars."), *Pair.Key, MaxExecFileEnvValueChars));
-            }
-            Env->SetStringField(Pair.Key, Value);
-        }
-    }
-
-    IPythonScriptPlugin* PythonPlugin = IPythonScriptPlugin::Get();
-    if (!PythonPlugin || !PythonPlugin->IsPythonInitialized())
-    {
-        return FHaybaHandlerResult::Err(TEXT("Python is not initialized in this editor"));
-    }
-    EnsurePspHotfix();
-
-    TSharedPtr<FJsonObject> Request = MakeShared<FJsonObject>();
-    Request->SetStringField(TEXT("path"), FullPath);
-    Request->SetObjectField(TEXT("env"), Env);
-    FString RequestJson;
-    TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&RequestJson);
-    FJsonSerializer::Serialize(Request.ToSharedRef(), Writer);
-
-    FPythonCommandEx RunCmd;
-    RunCmd.ExecutionMode = EPythonCommandExecutionMode::ExecuteFile;
-    RunCmd.Command = FString::Printf(TEXT(
-        "import base64 as _b64, json as _json\n"
-        "def _hayba_exec_file(req):\n"
-        "    import gc, os, sys, traceback\n"
-        "    path, env = req['path'], req['env']\n"
-        "    saved = {k: os.environ.get(k) for k in env}\n"
-        "    os.environ.update(env)\n"
-        "    ok = False\n"
-        "    ns = {'__name__': '__main__', '__file__': path}\n"
-        "    try:\n"
-        "        with open(path, encoding='utf-8') as f:\n"
-        "            src = f.read()\n"
-        "        exec(compile(src, path, 'exec'), ns)\n"
-        "        ok = True\n"
-        "    except BaseException:\n"
-        "        sys.stderr.write(traceback.format_exc())\n"
-        "    finally:\n"
-        "        for k, v in saved.items():\n"
-        "            if v is None: os.environ.pop(k, None)\n"
-        "            else: os.environ[k] = v\n"
-        // Not cleared: a tick callback the script registered may still read its globals.
-        "        ns = src = None\n"
-        "        sys.last_type = sys.last_value = sys.last_traceback = None\n"
-        "        gc.collect()\n"
-        "    return ok\n"
-        "if not _hayba_exec_file(_json.loads(_b64.b64decode('%s').decode('utf-8'))):\n"
-        "    raise RuntimeError('python_exec_file: the script raised; its traceback is in output')\n"),
-        *Base64Utf8(RequestJson));
-
-    const double Start = FPlatformTime::Seconds();
-    bool bCrashed = false;
-    const bool bOk = ExecPythonGuarded(PythonPlugin, &RunCmd, bCrashed);
-    const double ElapsedMs = (FPlatformTime::Seconds() - Start) * 1000.0;
-    if (bCrashed)
-    {
-        return FHaybaHandlerResult::Err(FString::Printf(TEXT(
-            "python_exec_file fatal_error [HCR-NATIVE-002]: '%s' faulted natively; the SEH guard kept the editor alive. "
-            "Save your work and ask for an editor restart before more Python."), *FullPath));
-    }
-
-    FString Output;
-    bool bTruncated = false;
-    for (const FPythonLogOutputEntry& Entry : RunCmd.LogOutput)
-    {
-        if (Output.Len() + Entry.Output.Len() > MaxExecFileOutputChars)
-        {
-            bTruncated = true;
-            break;
-        }
-        Output += Entry.Output;
-        if (!Entry.Output.EndsWith(TEXT("\n"))) Output += TEXT("\n");
-    }
-
-    TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
-    Out->SetBoolField(TEXT("ok"), bOk);
-    Out->SetStringField(TEXT("path"), FullPath);
-    Out->SetStringField(TEXT("output"), Output);
-    Out->SetBoolField(TEXT("output_truncated"), bTruncated);
-    Out->SetNumberField(TEXT("elapsed_ms"), ElapsedMs);
-    Out->SetStringField(TEXT("psp_hotfix"), GPspHotfixState);
-    if (!bOk)
-    {
-        Out->SetStringField(TEXT("error"), RunCmd.CommandResult.Left(4096));
-    }
-    return FHaybaHandlerResult::Ok(Out);
 }
 
 #if WITH_DEV_AUTOMATION_TESTS
@@ -2525,5 +2324,208 @@ FHaybaHandlerResult FHaybaMCPPythonHandler::Run(const TSharedPtr<FJsonObject>& P
     Out->SetNumberField(TEXT("capture_limit_chars_per_stream"), MaxPythonCapturedCharsPerStream);
     Out->SetStringField(TEXT("capture_value_policy"), TEXT("bounded_primitive_only"));
 
+    return FHaybaHandlerResult::Ok(Out);
+}
+
+// python_exec_file and the PSP hotfix live after python_run on purpose: python-crash-policy-contract.test.ts
+// checks, by source order, that python_run refuses Tier 3 before it first touches the interpreter.
+namespace
+{
+    FString GPspHotfixState = TEXT("pending");
+
+    FString Base64Utf8(const FString& Text)
+    {
+        FTCHARToUTF8 Utf8(*Text);
+        return FBase64::Encode(reinterpret_cast<const uint8*>(Utf8.Get()), Utf8.Length());
+    }
+
+    bool IsEnvKey(const FString& Key)
+    {
+        if (Key.IsEmpty() || Key.Len() > 128 || FChar::IsDigit(Key[0])) return false;
+        for (const TCHAR C : Key)
+        {
+            if (!FChar::IsAlnum(C) && C != TEXT('_')) return false;
+        }
+        return true;
+    }
+
+    constexpr int32 MaxExecFileOutputChars = 512 * 1024;
+    constexpr int32 MaxExecFileEnvEntries = 64;
+    constexpr int32 MaxExecFileEnvValueChars = 32 * 1024;
+}
+
+bool FHaybaMCPPythonHandler::EnsurePspHotfix()
+{
+    static bool bDone = false;
+    if (bDone) return true;
+    IPythonScriptPlugin* Python = IPythonScriptPlugin::Get();
+    if (!Python || !Python->IsPythonInitialized()) return false;
+    bDone = true; // one attempt per session: 'unsupported' or an error must not repeat on every run
+
+    const TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(TEXT("HaybaMCPToolkit"));
+    if (!Plugin.IsValid())
+    {
+        GPspHotfixState = TEXT("error: plugin dir not found");
+        return true;
+    }
+    const FString Dir = FPaths::ConvertRelativePathToFull(Plugin->GetBaseDir() / TEXT("Resources/Python"));
+    FPythonCommandEx Cmd;
+    Cmd.ExecutionMode = EPythonCommandExecutionMode::ExecuteFile;
+    Cmd.Command = FString::Printf(TEXT(
+        "import sys, base64\n"
+        "_p = base64.b64decode('%s').decode('utf-8')\n"
+        "if _p not in sys.path: sys.path.insert(0, _p)\n"
+        "import hayba_psp_hotfix\n"
+        "print('HAYBA_PSP_HOTFIX=' + hayba_psp_hotfix.apply())\n"), *Base64Utf8(Dir));
+    bool bCrashed = false;
+    ExecPythonGuarded(Python, &Cmd, bCrashed);
+    GPspHotfixState = bCrashed ? TEXT("error: native fault") : TEXT("error: ") + Cmd.CommandResult.Left(300);
+    for (const FPythonLogOutputEntry& Entry : Cmd.LogOutput)
+    {
+        if (Entry.Output.StartsWith(TEXT("HAYBA_PSP_HOTFIX=")))
+        {
+            GPspHotfixState = Entry.Output.Mid(17).TrimStartAndEnd();
+        }
+    }
+    const bool bSafe = GPspHotfixState == TEXT("patched") || GPspHotfixState == TEXT("ok");
+    UE_LOG(LogHaybaPython, Display, TEXT("Hayba PSP hotfix: %s"), *GPspHotfixState);
+    if (!bSafe)
+    {
+        UE_LOG(LogHaybaPython, Warning, TEXT("Hayba PSP hotfix not applied (%s): any Python GC can crash the editor while bound Unreal methods are cyclic garbage."), *GPspHotfixState);
+    }
+    return true;
+}
+
+// Trusted project scripts (FoA's ue_remote.py), outside python_run's sandbox. Each run is one
+// request on the game thread: a private namespace, env vars set and restored, the traceback
+// printed instead of left in sys.last_*, and gc.collect() inside the SEH guard before returning,
+// so no wrapper of this run is alive when the next agent's request starts.
+FHaybaHandlerResult FHaybaMCPPythonHandler::ExecFile(const TSharedPtr<FJsonObject>& P)
+{
+    const UHaybaMCPDeveloperSettings* Settings = GetDefault<UHaybaMCPDeveloperSettings>();
+    if (!Settings || !Settings->bAllowProjectPythonFiles)
+    {
+        return FHaybaHandlerResult::Err(TEXT(
+            "python_exec_file disabled [HCR-FILE-001]: the project has not opted in. Set bAllowProjectPythonFiles=True under "
+            "[/Script/HaybaMCPToolkit.HaybaMCPDeveloperSettings] in Config/DefaultHaybaMCP.ini, or use python_run."));
+    }
+    FString Path;
+    if (!P.IsValid() || !P->TryGetStringField(TEXT("path"), Path) || Path.IsEmpty())
+    {
+        return FHaybaHandlerResult::Err(TEXT("Missing required parameter: path"));
+    }
+    const FString ProjectDir = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir());
+    const FString FullPath = FPaths::ConvertRelativePathToFull(ProjectDir, Path);
+    if (!FPaths::IsUnderDirectory(FullPath, ProjectDir) || !FullPath.EndsWith(TEXT(".py"), ESearchCase::IgnoreCase))
+    {
+        return FHaybaHandlerResult::Err(FString::Printf(
+            TEXT("python_exec_file refused [HCR-FILE-002]: '%s' is not a .py file inside the project directory %s."), *FullPath, *ProjectDir));
+    }
+    if (!FPaths::FileExists(FullPath))
+    {
+        return FHaybaHandlerResult::Err(FString::Printf(TEXT("python_exec_file: no such file '%s'."), *FullPath));
+    }
+
+    TSharedPtr<FJsonObject> Env = MakeShared<FJsonObject>();
+    const TSharedPtr<FJsonObject>* EnvIn = nullptr;
+    if (P->HasField(TEXT("env")))
+    {
+        if (!P->TryGetObjectField(TEXT("env"), EnvIn) || !EnvIn || !EnvIn->IsValid() || (*EnvIn)->Values.Num() > MaxExecFileEnvEntries)
+        {
+            return FHaybaHandlerResult::Err(FString::Printf(
+                TEXT("python_exec_file: env must be an object of at most %d string values."), MaxExecFileEnvEntries));
+        }
+        for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : (*EnvIn)->Values)
+        {
+            FString Value;
+            if (!IsEnvKey(Pair.Key) || !Pair.Value.IsValid() || !Pair.Value->TryGetString(Value) || Value.Len() > MaxExecFileEnvValueChars)
+            {
+                return FHaybaHandlerResult::Err(FString::Printf(
+                    TEXT("python_exec_file: env '%s' needs an identifier key and a string value up to %d chars."), *Pair.Key, MaxExecFileEnvValueChars));
+            }
+            Env->SetStringField(Pair.Key, Value);
+        }
+    }
+
+    IPythonScriptPlugin* PythonPlugin = IPythonScriptPlugin::Get();
+    if (!PythonPlugin || !PythonPlugin->IsPythonInitialized())
+    {
+        return FHaybaHandlerResult::Err(TEXT("Python is not initialized in this editor"));
+    }
+    EnsurePspHotfix();
+
+    TSharedPtr<FJsonObject> Request = MakeShared<FJsonObject>();
+    Request->SetStringField(TEXT("path"), FullPath);
+    Request->SetObjectField(TEXT("env"), Env);
+    FString RequestJson;
+    TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&RequestJson);
+    FJsonSerializer::Serialize(Request.ToSharedRef(), Writer);
+
+    FPythonCommandEx RunCmd;
+    RunCmd.ExecutionMode = EPythonCommandExecutionMode::ExecuteFile;
+    RunCmd.Command = FString::Printf(TEXT(
+        "import base64 as _b64, json as _json\n"
+        "def _hayba_exec_file(req):\n"
+        "    import gc, os, sys, traceback\n"
+        "    path, env = req['path'], req['env']\n"
+        "    saved = {k: os.environ.get(k) for k in env}\n"
+        "    os.environ.update(env)\n"
+        "    ok = False\n"
+        "    ns = {'__name__': '__main__', '__file__': path}\n"
+        "    try:\n"
+        "        with open(path, encoding='utf-8') as f:\n"
+        "            src = f.read()\n"
+        "        exec(compile(src, path, 'exec'), ns)\n"
+        "        ok = True\n"
+        "    except BaseException:\n"
+        "        sys.stderr.write(traceback.format_exc())\n"
+        "    finally:\n"
+        "        for k, v in saved.items():\n"
+        "            if v is None: os.environ.pop(k, None)\n"
+        "            else: os.environ[k] = v\n"
+        // Not cleared: a tick callback the script registered may still read its globals.
+        "        ns = src = None\n"
+        "        sys.last_type = sys.last_value = sys.last_traceback = None\n"
+        "        gc.collect()\n"
+        "    return ok\n"
+        "if not _hayba_exec_file(_json.loads(_b64.b64decode('%s').decode('utf-8'))):\n"
+        "    raise RuntimeError('python_exec_file: the script raised; its traceback is in output')\n"),
+        *Base64Utf8(RequestJson));
+
+    const double Start = FPlatformTime::Seconds();
+    bool bCrashed = false;
+    const bool bOk = ExecPythonGuarded(PythonPlugin, &RunCmd, bCrashed);
+    const double ElapsedMs = (FPlatformTime::Seconds() - Start) * 1000.0;
+    if (bCrashed)
+    {
+        return FHaybaHandlerResult::Err(FString::Printf(TEXT(
+            "python_exec_file fatal_error [HCR-NATIVE-002]: '%s' faulted natively; the SEH guard kept the editor alive. "
+            "Save your work and ask for an editor restart before more Python."), *FullPath));
+    }
+
+    FString Output;
+    bool bTruncated = false;
+    for (const FPythonLogOutputEntry& Entry : RunCmd.LogOutput)
+    {
+        if (Output.Len() + Entry.Output.Len() > MaxExecFileOutputChars)
+        {
+            bTruncated = true;
+            break;
+        }
+        Output += Entry.Output;
+        if (!Entry.Output.EndsWith(TEXT("\n"))) Output += TEXT("\n");
+    }
+
+    TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
+    Out->SetBoolField(TEXT("ok"), bOk);
+    Out->SetStringField(TEXT("path"), FullPath);
+    Out->SetStringField(TEXT("output"), Output);
+    Out->SetBoolField(TEXT("output_truncated"), bTruncated);
+    Out->SetNumberField(TEXT("elapsed_ms"), ElapsedMs);
+    Out->SetStringField(TEXT("psp_hotfix"), GPspHotfixState);
+    if (!bOk)
+    {
+        Out->SetStringField(TEXT("error"), RunCmd.CommandResult.Left(4096));
+    }
     return FHaybaHandlerResult::Ok(Out);
 }
