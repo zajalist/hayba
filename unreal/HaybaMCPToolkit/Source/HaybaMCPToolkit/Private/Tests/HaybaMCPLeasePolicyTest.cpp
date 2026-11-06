@@ -83,6 +83,10 @@ bool FHaybaMCPLeaseClassificationTest::RunTest(const FString& Parameters)
 		ClassifyPythonRun(true, false, false), EAccessClass::Read);
 	TestEqual(TEXT("an undeclared python mutation is a world write"),
 		ClassifyPythonRun(false, false, false), EAccessClass::WriteWorld);
+	TestEqual(TEXT("python_exec_file by name may touch anything"),
+		ClassifyCommand(TEXT("python_exec_file"), true).Class, EAccessClass::Global);
+	TestEqual(TEXT("an undeclared project script is global"), ClassifyPythonExecFile(false), EAccessClass::Global);
+	TestEqual(TEXT("declared resources scope a project script"), ClassifyPythonExecFile(true), EAccessClass::WriteScoped);
 	return true;
 }
 

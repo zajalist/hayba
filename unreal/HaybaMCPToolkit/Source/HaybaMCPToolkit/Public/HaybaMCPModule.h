@@ -141,6 +141,7 @@ private:
     FTimerHandle AutoOpenTimerHandle;
     FDelegateHandle StudioMenuStartupHandle;
     FDelegateHandle PlanModeMenuStartupHandle;
+    FDelegateHandle PythonInitializedHandle;
 
     FString FindNodeExecutable() const;
     FString GetMCPServerPath() const;
