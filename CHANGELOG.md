@@ -36,6 +36,20 @@ All notable changes to Hayba MCP Toolkit are documented here. Format based on [K
   PIE, and the save-everything mode is gone.
 - `material_add_comment` / `material_set_comment` take `show_bubble` and
   `color_bubble`; add defaults both on.
+- `asset_import` accepts `.gltf` / `.glb` as `static_mesh` under a strict
+  policy:
+  - Sources come only from a `TrustedImportRoots` folder, set in project
+    settings and never by a tool call. The default is empty, which refuses
+    glTF.
+  - Every referenced buffer and texture must be a `data:` URI or a plain
+    relative path below the `.gltf`. Each is pinned for the whole import,
+    capped at 512 MiB per file and 1 GiB in total.
+  - The glTF must be 2.x. Required extensions are limited to
+    `KHR_materials_*`, `KHR_texture_transform` and `KHR_mesh_quantization`,
+    and files with skins or animations are refused.
+  - The destination folder must be new or empty.
+  - The import runs through the project's Interchange asset pipeline in one
+    synchronous automated task, and is verified by folder readback.
 - Multi-agent editor leases (ADR-0010). `lease_acquire` / `lease_renew` /
   `lease_release` / `lease_status` claim `global`, `world:`, `wp-region:`,
   `asset:`, `actor:` or `pie` resources. Acquire never blocks: it answers

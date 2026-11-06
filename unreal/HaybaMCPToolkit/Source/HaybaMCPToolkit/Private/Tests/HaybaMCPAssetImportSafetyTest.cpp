@@ -131,6 +131,65 @@ bool FHaybaAssetImportSkeletalRequestTest::RunTest(const FString& Parameters)
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FHaybaAssetImportGltfPolicyTest,
+    "Hayba.AssetImport.GltfPolicy",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FHaybaAssetImportGltfPolicyTest::RunTest(const FString& Parameters)
+{
+    using namespace HaybaAssetImport;
+    // References may only be plain paths below the .gltf's folder.
+    TestTrue(TEXT("flat file"), IsSafeRelativeUri(TEXT("SM_Burst.bin")));
+    TestTrue(TEXT("textures subfolder"), IsSafeRelativeUri(TEXT("textures/T_Bed_D.png")));
+    for (const TCHAR* Bad : { TEXT("../escape.bin"), TEXT("textures/../../x.png"), TEXT("C:/abs.bin"), TEXT("/rooted.bin"),
+                              TEXT("http://host/x.bin"), TEXT("a%2f..%2fb.bin"), TEXT("x.bin?y"), TEXT("a/b/c/d/e/f.png") })
+    {
+        TestFalse(FString::Printf(TEXT("refuses %s"), Bad), IsSafeRelativeUri(Bad));
+    }
+
+    TArray<FString> Uris;
+    FString Error;
+    TestTrue(TEXT("plain static glTF passes"), ValidateGltfJson(TEXT(
+        "{\"asset\":{\"version\":\"2.0\"},\"extensionsRequired\":[\"KHR_materials_transmission\"],"
+        "\"buffers\":[{\"uri\":\"SM_Burst.bin\"},{\"uri\":\"data:application/octet-stream;base64,AAAA\"}],"
+        "\"images\":[{\"uri\":\"textures/T_A.png\"},{\"bufferView\":0}]}"), Uris, Error));
+    TestEqual(TEXT("both relative files are listed, data: is not"), Uris.Num(), 2);
+
+    TestFalse(TEXT("glTF 1 refused"), ValidateGltfJson(TEXT("{\"asset\":{\"version\":\"1.0\"}}"), Uris, Error));
+    TestFalse(TEXT("Draco refused"), ValidateGltfJson(TEXT(
+        "{\"asset\":{\"version\":\"2.0\"},\"extensionsRequired\":[\"KHR_draco_mesh_compression\"]}"), Uris, Error));
+    TestTrue(TEXT("and named"), Error.Contains(TEXT("KHR_draco_mesh_compression")));
+    TestFalse(TEXT("skins refused for static_mesh"), ValidateGltfJson(TEXT(
+        "{\"asset\":{\"version\":\"2.0\"},\"skins\":[{\"joints\":[0]}]}"), Uris, Error));
+    TestFalse(TEXT("escaping buffer refused"), ValidateGltfJson(TEXT(
+        "{\"asset\":{\"version\":\"2.0\"},\"buffers\":[{\"uri\":\"../../secret.bin\"}]}"), Uris, Error));
+
+    // GLB container: magic, version 2, stated length = file length, JSON chunk first.
+    TArray<uint8> Glb;
+    Glb.SetNumZeroed(28);
+    FMemory::Memcpy(Glb.GetData(), "glTF", 4);
+    WriteLe32(Glb, 4, 2);
+    WriteLe32(Glb, 8, 28);
+    WriteLe32(Glb, 12, 8);
+    WriteLe32(Glb, 16, 0x4E4F534Au);
+    uint32 JsonBytes = 0;
+    TestTrue(TEXT("canonical GLB header"), ValidateGlbHeader(Glb, 28, JsonBytes, Error) && JsonBytes == 8);
+    TestFalse(TEXT("length mismatch refused"), ValidateGlbHeader(Glb, 4096, JsonBytes, Error));
+    WriteLe32(Glb, 12, 64);
+    TestFalse(TEXT("JSON chunk past the end refused"), ValidateGlbHeader(Glb, 28, JsonBytes, Error));
+
+    // Parsing: gltf/glb are static_mesh only, and take no options.
+    TSharedPtr<FJsonObject> Json = ValidRequest();
+    Json->SetStringField(TEXT("source_file"), TEXT("C:/Temp/hayba-asset-connectors/provider/request/SM_Bed.glb"));
+    Json->SetStringField(TEXT("asset_type"), TEXT("static_mesh"));
+    FRequest Parsed;
+    TestTrue(TEXT("glb static_mesh parses"), ParseAndValidateRequest(Json, Parsed, Error) && Parsed.Kind == EKind::StaticMeshGlb);
+    Json->SetStringField(TEXT("asset_type"), TEXT("skeletal_mesh"));
+    TestFalse(TEXT("glb skeletal_mesh is not offered yet"), ParseAndValidateRequest(Json, Parsed, Error));
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
     FHaybaAssetImportHeaderTest,
     "Hayba.AssetImport.BoundedFormatHeaders",
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
