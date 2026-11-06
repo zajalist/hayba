@@ -7,6 +7,7 @@
 #include "Serialization/JsonSerializer.h"
 #include "Interfaces/IPluginManager.h"
 #include "Misc/Paths.h"
+#include "Misc/FileHelper.h"
 #include "HaybaMCPSeh.h"   // RunGuardedAt: the toolkit's one SEH guard (ADR-0011)
 #include "HaybaMCPAccessPolicy.h"
 #include "HaybaMCPDeveloperSettings.h"
@@ -2706,6 +2707,27 @@ FHaybaHandlerResult FHaybaMCPPythonHandler::ExecFile(const TSharedPtr<FJsonObjec
     if (!FPaths::FileExists(FullPath))
     {
         return FHaybaHandlerResult::Err(FString::Printf(TEXT("python_exec_file: no such file '%s'."), *FullPath));
+    }
+
+    // These block the game thread on every pending shader and asset compile in the world
+    // (FinishLoadingBeforeScreenshot -> FinishAllCompilation): one froze a production project's shared editor for 10 min.
+    {
+        FString Source;
+        FFileHelper::LoadFileToString(Source, *FullPath);
+        bool bAllowBlocking = false;
+        P->TryGetBoolField(TEXT("allow_blocking"), bAllowBlocking);
+        for (const TCHAR* Call : { TEXT("take_high_res_screenshot"), TEXT("take_automation_screenshot"),
+                                   TEXT("finish_loading_before_screenshot"), TEXT("finish_all_compilation") })
+        {
+            if (!bAllowBlocking && Source.Contains(Call, ESearchCase::IgnoreCase))
+            {
+                return FHaybaHandlerResult::Err(FString::Printf(TEXT(
+                    "python_exec_file refused [HCR-BLOCK-002]: '%s' calls %s, which blocks the editor's game thread until every "
+                    "pending shader and asset compile in the world finishes (minutes, for every agent). Capture with "
+                    "editor_capture_viewport / render_camera or a SceneCapture2D. allow_blocking:true overrides; hold EXCLUSIVE."),
+                    *FullPath, Call));
+            }
+        }
     }
 
     TSharedPtr<FJsonObject> Env = MakeShared<FJsonObject>();
