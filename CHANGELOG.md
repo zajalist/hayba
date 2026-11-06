@@ -91,6 +91,15 @@ All notable changes to Hayba MCP Toolkit are documented here. Format based on [K
   spend its Approve.
 
 ### Fixed
+- `seq_inspect`, `seq_list_bindings` and `seq_camera_cut` pass the python_run
+  policy again (no `try`/`with`; HCR-TIME-001 refused every sequencer tool) and use
+  the UE 5.8 scripting names (`get_tracks`/`find_tracks_by_type`; `get_master_tracks`
+  is gone). `seq_camera_cut` reuses an existing camera binding, sets the section range
+  in seconds, and takes `can_blend` (track bCanBlend) and `ease_in_seconds` /
+  `ease_out_seconds` (section manual easing). Those are bare UPROPERTYs Python cannot
+  reach, so a new optional `finish` step on python tools sets them through
+  `object_set_property` and then saves. `seq_inspect` lists root tracks with camera
+  cuts; `seq_list_bindings` reports possessable vs spawnable and per-binding tracks.
 - `material_compile` no longer reports success while the platform shader compile
   fails afterwards. It now waits up to 30 s for the material shader map on the
   editor shader platform and returns `FMaterialResource::GetCompileErrors`; any error

@@ -14,6 +14,7 @@ import {
 import { assetOpenEditorDescriptor } from '../asset/asset-py-tools.js';
 import { editorGetCameraDescriptor } from '../editor/editor-py-tools.js';
 import { meshGetBoundsDescriptor } from '../mesh/mesh-py-tools.js';
+import { seqInspectDescriptor, seqListBindingsDescriptor, seqCameraCutDescriptor } from '../sequencer/sequencer-py-tools.js';
 
 const cases: Array<[PyToolDescriptor, Record<string, unknown>]> = [
   [actorInspectDescriptor as unknown as PyToolDescriptor, { actor_id: 'Rock1' }],
@@ -22,6 +23,9 @@ const cases: Array<[PyToolDescriptor, Record<string, unknown>]> = [
   [assetOpenEditorDescriptor as unknown as PyToolDescriptor, { asset_paths: ['/Game/A'] }],
   [editorGetCameraDescriptor as unknown as PyToolDescriptor, {}],
   [meshGetBoundsDescriptor as unknown as PyToolDescriptor, { asset_path: '/Game/M' }],
+  [seqInspectDescriptor as unknown as PyToolDescriptor, { asset_path: '/Game/FoA/Cinematics/LS_WakeUp' }],
+  [seqListBindingsDescriptor as unknown as PyToolDescriptor, { asset_path: '/Game/FoA/Cinematics/LS_WakeUp' }],
+  [seqCameraCutDescriptor as unknown as PyToolDescriptor, { asset_path: '/Game/LS', camera_actor: 'Cam', start_seconds: 0, end_seconds: 2, can_blend: true }],
 ];
 
 /** Drop `#` comments and string literals (left-to-right, like a lexer). */
