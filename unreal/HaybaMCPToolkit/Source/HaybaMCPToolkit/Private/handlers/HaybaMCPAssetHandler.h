@@ -12,7 +12,15 @@ namespace HaybaAssetImport
         SoundWave,
         StaticMeshFbx,
         SkeletalMeshFbx,
+        /** .gltf (JSON + referenced files) and .glb, read only from a TrustedImportRoots folder. */
+        StaticMeshGltf,
+        StaticMeshGlb,
     };
+
+    // glTF policy limits (approved for a production project): JSON, each referenced file, and their total.
+    constexpr int64 MaxGltfJsonBytes = 64ll * 1024ll * 1024ll;
+    constexpr int64 MaxGltfFileBytes = 512ll * 1024ll * 1024ll;
+    constexpr int64 MaxGltfTotalBytes = 1024ll * 1024ll * 1024ll;
 
     /** asset_type "skeletal_mesh" only, from the request's `options` object. */
     struct FSkeletalOptions
@@ -62,6 +70,20 @@ namespace HaybaAssetImport
      *  could create or overwrite (mesh, <Name>_Skeleton, <Name>_PhysicsAsset, or the
      *  animation prefix), or empty when the folder is clear. */
     FString SkeletalCollision(const FRequest& Request, const TArray<FString>& ExistingNames);
+
+    /** Pure: a glTF buffer/image URI that names a file below the .gltf's own folder
+     *  (no scheme, drive, root, "..", escapes, query or excessive depth). */
+    bool IsSafeRelativeUri(const FString& Uri);
+
+    /** Pure: glTF 2.0 policy over the JSON. Rejects other versions, required
+     *  extensions outside KHR_materials_* / KHR_texture_transform /
+     *  KHR_mesh_quantization, skins or animations (static_mesh only), and any URI
+     *  that is neither a data: URI nor IsSafeRelativeUri. OutRelativeUris lists the
+     *  files that must be pinned before import. */
+    bool ValidateGltfJson(const FString& JsonText, TArray<FString>& OutRelativeUris, FString& Error);
+
+    /** Pure: the GLB container header, returning the JSON chunk's length. */
+    bool ValidateGlbHeader(TConstArrayView<uint8> Header, int64 FileBytes, uint32& OutJsonBytes, FString& Error);
 }
 
 class FHaybaMCPAssetHandler : public IHaybaMCPHandler

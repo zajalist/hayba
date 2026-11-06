@@ -122,8 +122,35 @@ describe('native single-file asset_import safety contract (#415)', () => {
     ]) {
       expect(handler).toContain(fact);
     }
-    expect(handler).toContain('glTF/GLB/OBJ/USD and dependency-reading formats are not accepted');
+    expect(handler).toContain('OBJ/USD and other dependency-reading formats are not accepted');
     expect(handler).toContain('only binary .fbx');
+  });
+
+  it('imports glTF/GLB only from a settings-configured trusted root, every reference pinned, into an empty folder', () => {
+    const gltf = between(handler, 'static FHaybaHandlerResult ImportGltf(', '/** A skeletal import creates a set of assets');
+    // Authority comes from settings, never from the request.
+    expect(gltf).toContain('GetDefault<UHaybaMCPDeveloperSettings>()->TrustedImportRoots');
+    expect(handlerHeader).not.toContain('trusted_root');
+    // Order: authority, format, JSON policy, referenced files, empty destination, then AssetTools.
+    for (const [earlier, later] of [
+      ['TrustedImportRoots', 'Source.OpenUnder('],
+      ['Source.OpenUnder(', 'ValidateFileHeader('],
+      ['ValidateFileHeader(', 'ValidateGltfJson('],
+      ['ValidateGltfJson(', 'Lease->OpenUnder(Dir / Uri, Dir'],
+      ['MaxGltfTotalBytes', 'GetAssetsByPath(FName(*Request.DestinationPath), Existing'],
+      ['FindFilesRecursive', 'LoadModulePtr<FAssetToolsModule>'],
+      ['Source.Recheck(Error)', 'ImportAssetTasks('],
+    ]) {
+      expectBefore(gltf, earlier!, later!);
+    }
+    expect(gltf).toContain('Task->bReplaceExisting = false');
+    expect(gltf).toContain('Task->bAsync = false');
+    expect(gltf).not.toContain('bReplaceExisting = true');
+    // Every referenced file is pinned for the whole import and rechecked after it.
+    expect(gltf).toContain('Lease->Recheck(PostError)');
+    expect(handler).toContain('KHR_materials_');
+    expect(handler).toContain('KHR_mesh_quantization');
+    expect(assetImport).toContain('return ImportGltf(Request);');
   });
 
   it('imports skeletal FBX without overwriting anything it could create, verified by folder readback', () => {

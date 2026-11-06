@@ -2882,7 +2882,7 @@
           "name": "asset_type",
           "type": "string",
           "required": true,
-          "description": "Exact type intent: texture for PNG/JPEG, sound_wave for WAV, static_mesh or skeletal_mesh for binary FBX. glTF/GLB/OBJ/USD and dependency-reading formats are rejected."
+          "description": "Exact type intent: texture for PNG/JPEG, sound_wave for WAV, static_mesh or skeletal_mesh for binary FBX, static_mesh for .gltf/.glb. glTF/GLB is read only from a TrustedImportRoots folder (project settings), with every referenced buffer/texture a data: URI or a plain relative path below the .gltf, required extensions limited to KHR_materials_*/KHR_texture_transform/KHR_mesh_quantization, no skins or animations, and a new or empty destination_path. OBJ/USD and other dependency-reading formats are rejected."
         },
         {
           "name": "options",
