@@ -253,6 +253,21 @@ bool FHaybaMCPLeaseTableTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("a dropped ticket is rejected, not silently re-queued"), Table.Acquire(Stale).Status, EStatus::Rejected);
 	TestTrue(TEXT("holder still owns its lease"), Table.FindLease(Holder.Token) != nullptr);
 
+	// A grant that asks for confirmation lapses unless its owner renews it once.
+	HaybaMCPLease::FRequest Confirm = MakeRequest(*this, TEXT("agent-f"), TEXT("asset:/Game/Confirm"));
+	Confirm.TtlSeconds = 600.0;
+	Confirm.ConfirmWithinSeconds = 30.0;
+	const FAcquireResult Unconfirmed = Table.Acquire(Confirm);
+	TestEqual(TEXT("an unconfirmed grant lives only the confirmation window"), Unconfirmed.ExpiresAt, Now + 30.0);
+	const FAcquireResult Confirmed = Table.Acquire(Confirm);
+	double Renewed = 0.0;
+	TestTrue(TEXT("its owner confirms by renewing"), Table.Renew(Confirmed.Token, TEXT("agent-f"), 600.0, Renewed, Error));
+	TestEqual(TEXT("a confirmed grant gets its full TTL"), Renewed, Now + 600.0);
+	Now += 31.0;
+	Table.Expire();
+	TestNull(TEXT("the unconfirmed grant lapsed"), Table.FindLease(Unconfirmed.Token));
+	TestTrue(TEXT("the confirmed grant lives on"), Table.FindLease(Confirmed.Token) != nullptr);
+
 	// Enforcement queries.
 	TestTrue(TEXT("holder is seen as exclusive on the world"),
 		Table.OwnerHoldsExclusive(TEXT("agent-d"), TEXT("world:/game/v")));
