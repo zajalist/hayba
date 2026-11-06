@@ -175,31 +175,27 @@ static bool HaybaPersistAsset(UObject* Asset, FString& OutError)
 
 static bool TryParseProperty(const FString& In, EMaterialProperty& Out)
 {
-    const FString S = In.ToLower();
-    if (S == TEXT("base_color"))            { Out = MP_BaseColor; return true; }
-    if (S == TEXT("metallic"))              { Out = MP_Metallic; return true; }
-    if (S == TEXT("specular"))              { Out = MP_Specular; return true; }
-    if (S == TEXT("roughness"))             { Out = MP_Roughness; return true; }
-    if (S == TEXT("emissive"))              { Out = MP_EmissiveColor; return true; }
-    if (S == TEXT("opacity"))               { Out = MP_Opacity; return true; }
-    if (S == TEXT("opacity_mask"))          { Out = MP_OpacityMask; return true; }
-    if (S == TEXT("normal"))                { Out = MP_Normal; return true; }
-    if (S == TEXT("world_position_offset")) { Out = MP_WorldPositionOffset; return true; }
-    if (S == TEXT("ambient_occlusion"))     { Out = MP_AmbientOcclusion; return true; }
-    if (S == TEXT("subsurface"))            { Out = MP_SubsurfaceColor; return true; }
-    // Task 2: extended connectable outputs
-    if (S == TEXT("pixel_depth_offset"))    { Out = MP_PixelDepthOffset; return true; }
-    if (S == TEXT("refraction"))            { Out = MP_Refraction; return true; }
-    if (S == TEXT("clear_coat"))            { Out = MP_CustomData0; return true; }
-    if (S == TEXT("clear_coat_roughness"))  { Out = MP_CustomData1; return true; }
-    if (S == TEXT("custom_data_0"))         { Out = MP_CustomData0; return true; }
-    if (S == TEXT("custom_data_1"))         { Out = MP_CustomData1; return true; }
-    if (S == TEXT("anisotropy"))            { Out = MP_Anisotropy; return true; }
-    if (S == TEXT("tangent"))               { Out = MP_Tangent; return true; }
-    if (S == TEXT("shading_model_from_node")) { Out = MP_ShadingModel; return true; }
-    // Substrate (from fix/ci-test-suite-green)
-    if (S == TEXT("front_material"))        { Out = MP_FrontMaterial; return true; }
-    if (S == TEXT("displacement"))          { Out = MP_Displacement; return true; }  // Nanite tessellation (needs material_set_property enable_tessellation=true)
+    // One spelling-insensitive table: base_color, BaseColor, MP_BaseColor and "base color"
+    // all match, as do the engine names (EmissiveColor) and the short forms (emissive).
+    FString S = In.TrimStartAndEnd().ToLower();
+    S.RemoveFromStart(TEXT("mp_"));
+    S.ReplaceInline(TEXT("_"), TEXT(""));
+    S.ReplaceInline(TEXT(" "), TEXT(""));
+    static const TMap<FString, EMaterialProperty> Names = {
+        { TEXT("basecolor"), MP_BaseColor }, { TEXT("metallic"), MP_Metallic }, { TEXT("specular"), MP_Specular },
+        { TEXT("roughness"), MP_Roughness }, { TEXT("emissive"), MP_EmissiveColor }, { TEXT("emissivecolor"), MP_EmissiveColor },
+        { TEXT("opacity"), MP_Opacity }, { TEXT("opacitymask"), MP_OpacityMask }, { TEXT("normal"), MP_Normal },
+        { TEXT("worldpositionoffset"), MP_WorldPositionOffset }, { TEXT("ambientocclusion"), MP_AmbientOcclusion },
+        { TEXT("subsurface"), MP_SubsurfaceColor }, { TEXT("subsurfacecolor"), MP_SubsurfaceColor },
+        { TEXT("pixeldepthoffset"), MP_PixelDepthOffset }, { TEXT("refraction"), MP_Refraction },
+        { TEXT("clearcoat"), MP_CustomData0 }, { TEXT("clearcoatroughness"), MP_CustomData1 },
+        { TEXT("customdata0"), MP_CustomData0 }, { TEXT("customdata1"), MP_CustomData1 },
+        { TEXT("anisotropy"), MP_Anisotropy }, { TEXT("tangent"), MP_Tangent },
+        { TEXT("shadingmodelfromnode"), MP_ShadingModel }, { TEXT("shadingmodel"), MP_ShadingModel },
+        // Substrate, and Nanite tessellation (needs material_set_property enable_tessellation=true)
+        { TEXT("frontmaterial"), MP_FrontMaterial }, { TEXT("displacement"), MP_Displacement },
+    };
+    if (const EMaterialProperty* Found = Names.Find(S)) { Out = *Found; return true; }
     return false;
 }
 
@@ -2677,11 +2673,22 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatSetProperty(const TSharedPtr<FJ
         else if (const FString* RealName = Aliases.Find(Key))
         {
             bHasOrdinarySetting = true;
+            // Short enum spellings ("UI", "Translucent", "DefaultLit") resolve to the
+            // enumerator, so every check below sees one canonical name.
+            TSharedPtr<FJsonValue> V = Pair.Value;
+            const UEnum* EnumForKey = Key == TEXT("domain") ? StaticEnum<EMaterialDomain>()
+                : Key == TEXT("blend_mode") ? StaticEnum<EBlendMode>()
+                : Key == TEXT("shading_model") ? StaticEnum<EMaterialShadingModel>() : nullptr;
+            if (EnumForKey && V.IsValid() && V->Type == EJson::String)
+            {
+                const FString Canonical = HaybaReflection::CanonicalEnumName(EnumForKey, V->AsString());
+                if (!Canonical.IsEmpty()) V = MakeShared<FJsonValueString>(Canonical);
+            }
             FProperty* Prop = Mat->GetClass()->FindPropertyByName(FName(**RealName));
             FString Reason;
             if (!Prop || !Prop->HasAnyPropertyFlags(CPF_Edit)
                 || Prop->HasAnyPropertyFlags(CPF_EditConst | CPF_Transient | CPF_Deprecated)
-                || !ValidateJsonForProperty(Prop, Pair.Value, Reason))
+                || !ValidateJsonForProperty(Prop, V, Reason))
             {
                 if (!Prop) Reason = TEXT("is not a mutable material property");
                 Problems.Add(FString::Printf(TEXT("properties.%s %s"), *InputKey, *Reason));
@@ -2691,7 +2698,7 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatSetProperty(const TSharedPtr<FJ
             const EJson ExpectedType =
                 (Key == TEXT("two_sided") || Key == TEXT("enable_tessellation")) ? EJson::Boolean :
                 (Key == TEXT("opacity_mask_clip_value")) ? EJson::Number : EJson::String;
-            if (!Pair.Value.IsValid() || Pair.Value->Type != ExpectedType)
+            if (!V.IsValid() || V->Type != ExpectedType)
             {
                 Problems.Add(FString::Printf(TEXT("properties.%s has the wrong JSON type"), *InputKey));
                 continue;
@@ -2706,17 +2713,17 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatSetProperty(const TSharedPtr<FJ
                     continue;
                 }
             }
-            else if (Key == TEXT("domain") && StaticEnum<EMaterialDomain>()->GetValueByNameString(Pair.Value->AsString()) == INDEX_NONE)
+            else if (Key == TEXT("domain") && StaticEnum<EMaterialDomain>()->GetValueByNameString(V->AsString()) == INDEX_NONE)
             {
                 Problems.Add(TEXT("properties.domain is not a valid material-domain enum value"));
                 continue;
             }
-            else if (Key == TEXT("blend_mode") && StaticEnum<EBlendMode>()->GetValueByNameString(Pair.Value->AsString()) == INDEX_NONE)
+            else if (Key == TEXT("blend_mode") && StaticEnum<EBlendMode>()->GetValueByNameString(V->AsString()) == INDEX_NONE)
             {
                 Problems.Add(TEXT("properties.blend_mode is not a valid blend-mode enum value"));
                 continue;
             }
-            else if (Key == TEXT("shading_model") && StaticEnum<EMaterialShadingModel>()->GetValueByNameString(Pair.Value->AsString()) == INDEX_NONE)
+            else if (Key == TEXT("shading_model") && StaticEnum<EMaterialShadingModel>()->GetValueByNameString(V->AsString()) == INDEX_NONE)
             {
                 Problems.Add(TEXT("properties.shading_model is not a valid shading-model enum value"));
                 continue;
@@ -2725,7 +2732,7 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatSetProperty(const TSharedPtr<FJ
             // Prove the exact reflection conversion against isolated storage.
             // The live material is untouched until every key has passed.
             Prop->CopyCompleteValue_InContainer(StagedMat, Mat);
-            if (!HaybaReflection::SetProp(StagedMat, *RealName, Pair.Value))
+            if (!HaybaReflection::SetProp(StagedMat, *RealName, V))
             {
                 Problems.Add(FString::Printf(TEXT("properties.%s failed while staging"), *InputKey));
                 continue;
@@ -2733,7 +2740,7 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatSetProperty(const TSharedPtr<FJ
             if (Key == TEXT("shading_model"))
             {
                 const EMaterialShadingModel Value = static_cast<EMaterialShadingModel>(
-                    StaticEnum<EMaterialShadingModel>()->GetValueByNameString(Pair.Value->AsString()));
+                    StaticEnum<EMaterialShadingModel>()->GetValueByNameString(V->AsString()));
                 StagedMat->SetShadingModel(Value);
             }
         }

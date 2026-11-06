@@ -78,6 +78,11 @@ All notable changes to Hayba MCP Toolkit are documented here. Format based on [K
   patch, in `docs/migration/saskartarad-editor-gate/`.
 
 ### Changed
+- Material output names are spelling-insensitive in `material_connect_nodes`
+  / `material_disconnect`: `base_color`, `BaseColor`, `MP_BaseColor`, `emissive`,
+  `emissive_color` and `EmissiveColor` all resolve. `material_set_property`
+  accepts short enum forms (`UI`, `Translucent`, `DefaultLit`) as well as
+  `MD_UI` and `EMaterialDomain::MD_UI`.
 - Blueprint mutations and `blueprint_compile` are refused while a PIE session
   runs, because reinstancing live PIE objects was a recurring crash.
   `actor_transform` is now plan-gated, matching its NON_IDEMPOTENT

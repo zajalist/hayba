@@ -64,6 +64,27 @@ namespace HaybaReflection
         return nullptr;
     }
 
+    /** The enumerator's full name for a loose spelling, or empty when nothing matches.
+     *  "EMaterialDomain::MD_UI", "MD_UI", "md_ui" and "UI" all resolve, as do
+     *  "BLEND_Translucent" and "Translucent": callers reach for the short form first. */
+    inline FString CanonicalEnumName(const UEnum* Enum, const FString& In)
+    {
+        if (!Enum) return FString();
+        const FString Want = In.TrimStartAndEnd();
+        for (int32 I = 0; I < Enum->NumEnums(); ++I)
+        {
+            const FString Full = Enum->GetNameByIndex(I).ToString();   // may carry "Enum::"
+            const FString Bare = Enum->GetNameStringByIndex(I);         // "MD_UI"
+            if (Bare.EndsWith(TEXT("_MAX"))) continue;
+            int32 Sep = INDEX_NONE;
+            const FString Tail = Bare.FindChar(TEXT('_'), Sep) ? Bare.Mid(Sep + 1) : Bare; // "UI"
+            if (Want.Equals(Full, ESearchCase::IgnoreCase) || Want.Equals(Bare, ESearchCase::IgnoreCase)
+                || Want.Equals(Tail, ESearchCase::IgnoreCase))
+                return Full;
+        }
+        return FString();
+    }
+
     /** Set a single named field on an arbitrary struct instance by reflection.
      *  Handles every type SetProp does, including nested structs. */
     inline bool SetStructField(UScriptStruct* Struct, void* StructPtr, const FString& FieldName, const TSharedPtr<FJsonValue>& V)
