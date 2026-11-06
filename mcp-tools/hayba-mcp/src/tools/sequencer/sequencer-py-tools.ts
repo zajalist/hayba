@@ -91,70 +91,49 @@
 
 import { z } from 'zod';
 import type { HaybaToolMeta } from '../hayba-tool-meta.js';
-import { pyStr } from '../ue-python.js';
+import { pyStr, runUePythonJson } from '../ue-python.js';
+import { executeCommand } from '../tool-executor.js';
 import type { PyToolDescriptor } from '../py-tool-factory.js';
 import { TOOL_ALIASES } from '../tool-aliases.js';
 
 // ── Shared Python helpers: load + validate a LevelSequence, rate/frame math,
 //    actor lookup, binding lookup by GUID ─────────────────────────────────────
 const PY_SEQ_HELPERS = [
+  // No try/with: python_run's native policy (HCR-TIME-001) refuses them. Expected
+  // failures return (None, message); the 5.8 names are checked against the engine.
+  'MSE = unreal.MovieSceneSequenceExtensions',
+  'MBE = unreal.MovieSceneBindingExtensions',
   'def _load_seq(path):',
+  '    if not unreal.EditorAssetLibrary.does_asset_exist(path): return None, "asset not found: %s" % path',
   '    obj = unreal.EditorAssetLibrary.load_asset(path)',
-  '    if obj is None: raise Exception("asset not found: %s" % path)',
-  '    if not isinstance(obj, unreal.LevelSequence): raise Exception("not a LevelSequence: %s (%s)" % (path, type(obj).__name__))',
-  '    return obj',
-  'def _disp_rate(seq):',
-  '    try:',
-  '        r = unreal.MovieSceneSequenceExtensions.get_display_rate(seq)',
-  '        d = float(r.denominator) or 1.0',
-  '        return float(r.numerator) / d',
-  '    except Exception:',
-  '        return 30.0',
-  'def _tick_res(seq):',
-  '    try:',
-  '        r = unreal.MovieSceneSequenceExtensions.get_tick_resolution(seq)',
-  '        d = float(r.denominator) or 1.0',
-  '        return float(r.numerator) / d',
-  '    except Exception:',
-  '        return 24000.0',
-  'def _sec_to_tick(seq, sec):',
-  '    return int(round(sec * _tick_res(seq)))',
+  '    if not isinstance(obj, unreal.LevelSequence): return None, "not a LevelSequence: %s (%s)" % (path, type(obj).__name__)',
+  '    return obj, ""',
+  'def _rate(r):',
+  '    d = float(r.denominator)',
+  '    return float(r.numerator) / d if d else 0.0',
+  'def _disp_rate(seq): return _rate(MSE.get_display_rate(seq))',
+  'def _tick_res(seq): return _rate(MSE.get_tick_resolution(seq))',
+  'def _sec_to_tick(seq, sec): return int(round(sec * _tick_res(seq)))',
   'def _find_actor(ref):',
-  '    # match by label then path across all level actors, then load_object',
-  '    try:',
-  '        eas = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)',
-  '        acts = eas.get_all_level_actors() if eas is not None else []',
-  '        for a in acts:',
-  '            try:',
-  '                if a.get_actor_label() == ref: return a',
-  '            except Exception: pass',
-  '        for a in acts:',
-  '            try:',
-  '                if a.get_path_name() == ref: return a',
-  '            except Exception: pass',
-  '    except Exception: pass',
-  '    try:',
-  '        o = unreal.load_object(None, ref)',
-  '        if o is not None: return o',
-  '    except Exception: pass',
+  '    eas = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)',
+  '    for a in (eas.get_all_level_actors() if eas is not None else []):',
+  '        if a.get_actor_label() == ref or a.get_path_name() == ref: return a',
   '    return None',
-  'def _add_possessable(seq, actor):',
-  '    # 5.7 possession is UNCERTAIN — probe both known entry points.',
-  '    try:',
-  '        b = seq.add_possessable(actor)',
-  '        if b is not None: return b',
-  '    except Exception: pass',
-  '    try:',
-  '        return unreal.MovieSceneSequenceExtensions.add_possessable(seq, actor)',
-  '    except Exception as _e2:',
-  '        raise Exception("could not possess actor (add_possessable unavailable): %s" % _e2)',
-  'def _binding_by_guid(seq, guid):',
-  '    for b in unreal.MovieSceneSequenceExtensions.get_bindings(seq):',
-  '        try:',
-  '            if str(unreal.MovieSceneBindingExtensions.get_id(b)) == str(guid): return b',
-  '        except Exception: pass',
+  'def _binding(seq, ref):',
+  '    # a binding GUID, display name or name',
+  '    for b in MSE.get_bindings(seq):',
+  '        if str(MBE.get_id(b)) == ref or str(MBE.get_display_name(b)) == ref or MBE.get_name(b) == ref: return b',
   '    return None',
-].join('\n');
+  'def _binding_by_guid(seq, guid): return _binding(seq, str(guid))',
+  'def _add_possessable(seq, actor): return MSE.add_possessable(seq, actor)',
+  'def _binding_for_actor(seq, actor):',
+  '    # reuse the actor binding if there is one: a second possessable is a second track set',
+  '    b = _binding(seq, actor.get_actor_label())',
+  '    return b if b is not None else MSE.add_possessable(seq, actor)',
+  'def _sec(section, start):',
+  '    SE = unreal.MovieSceneSectionExtensions',
+  '    if start: return SE.get_start_frame_seconds(section) if SE.has_start_frame(section) else None',
+  '    return SE.get_end_frame_seconds(section) if SE.has_end_frame(section) else None',].join('\n');
 
 const readMeta: HaybaToolMeta = {
   cost: 'low',
@@ -234,42 +213,31 @@ function seqInspectScript(p: SeqInspectParams): string {
     `_path = ${pyStr(p.asset_path)}`,
     `_limit = ${p.limit}`,
     `_offset = ${p.offset}`,
-    'def _go():',
-    '    seq = _load_seq(_path)',
-    '    fr = _disp_rate(seq)',
-    '    tr = _tick_res(seq)',
-    '    dur = None',
-    '    try:',
-    '        rng = unreal.MovieSceneSequenceExtensions.get_playback_range(seq)',
-    '        sf = rng.get_start_frame(); ef = rng.get_end_frame()',
-    '        dur = (float(ef) - float(sf)) / tr if tr else None',
-    '    except Exception: dur = None',
-    '    allb = list(unreal.MovieSceneSequenceExtensions.get_bindings(seq))',
-    '    total = len(allb)',
+    'seq, _msg = _load_seq(_path)',
+    'if seq is None:',
+    '    _err(_msg)',
+    'else:',
+    '    fr = _disp_rate(seq); tr = _tick_res(seq)',
+    '    start = MSE.get_playback_start_seconds(seq); end = MSE.get_playback_end_seconds(seq)',
+    '    allb = list(MSE.get_bindings(seq))',
     '    page = allb[_offset:_offset + _limit]',
     '    binds = []',
     '    for b in page:',
-    '        name = None; guid = None; ntracks = None',
-    '        try: guid = str(unreal.MovieSceneBindingExtensions.get_id(b))',
-    '        except Exception: pass',
-    '        try: name = unreal.MovieSceneBindingExtensions.get_name(b)',
-    '        except Exception: pass',
-    '        try: ntracks = len(unreal.MovieSceneBindingExtensions.get_tracks(b))',
-    '        except Exception: pass',
-    '        binds.append({"binding_guid": guid, "display_name": name, "track_count": ntracks})',
-    '    mtracks = []',
-    '    try:',
-    '        for t in unreal.MovieSceneSequenceExtensions.get_master_tracks(seq):',
-    '            mtracks.append(type(t).__name__)',
-    '    except Exception: pass',
+    '        tracks = list(MBE.get_tracks(b))',
+    '        binds.append({"binding_guid": str(MBE.get_id(b)), "display_name": str(MBE.get_display_name(b)),',
+    '                      "track_count": len(tracks), "tracks": [type(t).__name__ for t in tracks]})',
+    '    roots = []',
+    '    for t in MSE.get_tracks(seq):',
+    '        secs = list(unreal.MovieSceneTrackExtensions.get_sections(t))',
+    '        e = {"class": type(t).__name__, "path": t.get_path_name(), "section_count": len(secs)}',
+    '        if isinstance(t, unreal.MovieSceneCameraCutTrack):',
+    '            e["cuts"] = [{"section_path": c.get_path_name(), "start_seconds": _sec(c, True), "end_seconds": _sec(c, False)} for c in secs]',
+    '        roots.append(e)',
     '    nxt = _offset + len(page)',
     '    _emit({"ok": True, "asset_path": _path, "frame_rate": fr, "tick_resolution": tr,',
-    '           "duration_seconds": dur, "binding_count": total, "bindings": binds,',
-    '           "master_tracks": mtracks, "has_more": nxt < total, "next_offset": nxt})',
-    'try:',
-    '    _go()',
-    'except Exception as _e:',
-    '    _err(_e)',
+    '           "playback_start_seconds": start, "playback_end_seconds": end, "duration_seconds": end - start,',
+    '           "binding_count": len(allb), "bindings": binds, "master_tracks": [r["class"] for r in roots],',
+    '           "root_tracks": roots, "has_more": nxt < len(allb), "next_offset": nxt})',
   ].join('\n');
 }
 
@@ -494,9 +462,12 @@ export const seqTransformKeyframeDescriptor: PyToolDescriptor<typeof seqTransfor
 // ── seq_camera_cut ────────────────────────────────────────────────────────────
 export const seqCameraCutSchema = z.object({
   asset_path: z.string().min(1).describe('Content path of the LevelSequence'),
-  camera_actor: z.string().min(1).describe('Camera actor label or path to cut to'),
+  camera_actor: z.string().min(1).describe('Camera actor label or path to cut to (an existing binding for it is reused)'),
   start_seconds: z.number().describe('Cut start time (seconds)'),
   end_seconds: z.number().describe('Cut end time (seconds)'),
+  can_blend: z.boolean().optional().describe('Set the camera-cut TRACK\'s bCanBlend (blend between cuts). Not reachable from Python; set through object_set_property.'),
+  ease_in_seconds: z.number().nonnegative().optional().describe('Manual ease-in on this cut section, seconds'),
+  ease_out_seconds: z.number().nonnegative().optional().describe('Manual ease-out on this cut section, seconds (FMovieSceneEasingSettings ManualEaseOutDuration)'),
   dry_run: z.boolean().default(false).describe('Resolve the camera without adding the cut'),
 });
 export type SeqCameraCutParams = z.infer<typeof seqCameraCutSchema>;
@@ -509,62 +480,71 @@ function seqCameraCutScript(p: SeqCameraCutParams): string {
     `_start = ${p.start_seconds}`,
     `_end = ${p.end_seconds}`,
     `_dry = ${p.dry_run ? 'True' : 'False'}`,
-    'def _go():',
-    '    if _end <= _start: raise Exception("end_seconds must be > start_seconds")',
-    '    seq = _load_seq(_path)',
-    '    cam = _find_actor(_cam)',
-    '    if cam is None: raise Exception("camera actor not found: %s" % _cam)',
-    '    if _dry:',
-    '        _emit({"ok": True, "dry_run": True, "resolved": cam.get_path_name()}); return',
-    '    cam_binding = _add_possessable(seq, cam)',
-    '    cam_guid = str(unreal.MovieSceneBindingExtensions.get_id(cam_binding))',
-    '    cuts = [t for t in unreal.MovieSceneSequenceExtensions.get_master_tracks(seq) if isinstance(t, unreal.MovieSceneCameraCutTrack)]',
-    '    if cuts:',
-    '        cut_track = cuts[0]',
-    '    else:',
-    '        cut_track = unreal.MovieSceneSequenceExtensions.add_track(seq, unreal.MovieSceneCameraCutTrack)',
-    '    section = unreal.MovieSceneTrackExtensions.add_section(cut_track)',
-    '    sf = _sec_to_tick(seq, _start); ef = _sec_to_tick(seq, _end)',
-    '    range_applied = False',
-    '    try:',
-    '        unreal.MovieSceneSectionExtensions.set_range(section, sf, ef)',
-    '        range_applied = True',
-    '    except Exception:',
-    '        try:',
-    '            unreal.MovieSceneSectionExtensions.set_start_frame_seconds(section, _start); unreal.MovieSceneSectionExtensions.set_end_frame_seconds(section, _end)',
-    '            range_applied = True',
-    '        except Exception: range_applied = False',
-    '    # bind the camera to the cut section',
-    '    camera_bound = False',
-    '    try:',
-    '        binding_id = unreal.MovieSceneObjectBindingID()',
-    '        binding_id.set_editor_property("guid", unreal.MovieSceneBindingExtensions.get_id(cam_binding))',
-    '        section.set_camera_binding_id(binding_id)',
-    '        camera_bound = True',
-    '    except Exception: camera_bound = False',
-    '    unreal.EditorAssetLibrary.save_asset(_path, only_if_is_dirty=False)',
-    '    warnings = []',
-    '    if not camera_bound: warnings.append("camera_binding_failed: cut section has no camera attached")',
-    '    if not range_applied: warnings.append("range_apply_failed: section start/end frame not set")',
-    '    _emit({"ok": True, "camera_guid": cam_guid, "start_frame": sf, "end_frame": ef,',
-    '           "start_seconds": _start, "end_seconds": _end,',
-    '           "camera_bound": camera_bound, "range_applied": range_applied, "warnings": warnings})',
-    'try:',
-    '    _go()',
-    'except Exception as _e:',
-    '    _err(_e)',
+    'seq, _msg = _load_seq(_path)',
+    'cam = _find_actor(_cam) if seq is not None else None',
+    'if seq is None:',
+    '    _err(_msg)',
+    'elif _end <= _start:',
+    '    _err("end_seconds must be > start_seconds")',
+    'elif cam is None:',
+    '    _err("camera actor not found: %s" % _cam)',
+    'elif _dry:',
+    '    _emit({"ok": True, "dry_run": True, "resolved": cam.get_path_name()})',
+    'else:',
+    '    b = _binding_for_actor(seq, cam)',
+    '    found = MSE.find_tracks_by_type(seq, unreal.MovieSceneCameraCutTrack)',
+    '    track = found[0] if len(found) > 0 else MSE.add_track(seq, unreal.MovieSceneCameraCutTrack)',
+    '    section = unreal.MovieSceneTrackExtensions.add_section(track)',
+    '    unreal.MovieSceneSectionExtensions.set_range_seconds(section, _start, _end)',
+    '    section.set_camera_binding_id(MSE.get_binding_id(seq, b))',
+    '    _emit({"ok": True, "camera_guid": str(MBE.get_id(b)), "track_path": track.get_path_name(),',
+    '           "section_path": section.get_path_name(), "tick_resolution": _tick_res(seq),',
+    '           "start_frame": _sec_to_tick(seq, _start), "end_frame": _sec_to_tick(seq, _end),',
+    '           "start_seconds": _sec(section, True), "end_seconds": _sec(section, False),',
+    '           "camera_bound": True, "range_applied": True, "warnings": []})',
   ].join('\n');
 }
 
+/** bCanBlend and the easing durations are bare UPROPERTY()s, invisible to Python but
+ *  not to C++ reflection, so they go through object_set_property; then the sequence is
+ *  saved once and every value is read back. */
+async function seqCameraCutFinish(p: SeqCameraCutParams, raw: unknown): Promise<unknown> {
+  const r = raw as Record<string, unknown> & { ok?: boolean; dry_run?: boolean; track_path?: string; section_path?: string; tick_resolution?: number; warnings?: string[] };
+  if (!r || r.ok !== true || r.dry_run) return raw;
+  const warnings = [...(r.warnings ?? [])];
+  const out: Record<string, unknown> = { ...r };
+  if (p.can_blend !== undefined && r.track_path) {
+    const res = await executeCommand<{ applied?: string[] }>('object_set_property', { path: r.track_path, properties: { bCanBlend: p.can_blend } });
+    out.can_blend_applied = (res.applied ?? []).includes('bCanBlend');
+    if (!out.can_blend_applied) warnings.push('can_blend: bCanBlend did not apply on the camera-cut track');
+  }
+  if ((p.ease_in_seconds !== undefined || p.ease_out_seconds !== undefined) && r.section_path) {
+    const ticks = (sec: number) => Math.round(sec * (r.tick_resolution ?? 24000));
+    const easing: Record<string, unknown> = {};
+    if (p.ease_in_seconds !== undefined) { easing.bManualEaseIn = true; easing.ManualEaseInDuration = ticks(p.ease_in_seconds); }
+    if (p.ease_out_seconds !== undefined) { easing.bManualEaseOut = true; easing.ManualEaseOutDuration = ticks(p.ease_out_seconds); }
+    const res = await executeCommand<{ applied?: string[] }>('object_set_property', { path: r.section_path, properties: { Easing: easing } });
+    out.easing_applied = (res.applied ?? []).includes('Easing');
+    if (!out.easing_applied) warnings.push('easing did not apply on the cut section');
+  }
+  const saved = await runUePythonJson<{ ok?: boolean }>(
+    `_ok = unreal.EditorAssetLibrary.save_asset(${pyStr(p.asset_path)}, only_if_is_dirty=False)\n_emit({"ok": bool(_ok)})`,
+  );
+  out.saved = saved?.ok === true;
+  if (!out.saved) warnings.push('save_asset returned False; the sequence is changed but not on disk');
+  out.warnings = warnings;
+  return out;
+}
 export const seqCameraCutDescriptor: PyToolDescriptor<typeof seqCameraCutSchema.shape> = {
   name: 'seq_camera_cut',
   description:
-    'Add a camera-cut section binding a camera actor over a time range (seconds) — how a shot gets its camera. Possesses the camera, ensures a master camera-cut track, and sets the section range + camera binding id. Named seq_camera_cut to avoid colliding with the dormant satellite-plugin C++ seq_add_camera_cut command.',
+    'Add a camera-cut section binding a camera actor over a time range (seconds) — how a shot gets its camera. Reuses (or adds) the camera binding, ensures the camera-cut track, sets the section range in seconds and its camera binding id. can_blend sets bCanBlend on the track and ease_in/out_seconds set manual easing on the section (both via object_set_property, since Python cannot reach them); then saves. Named seq_camera_cut to avoid colliding with the dormant satellite-plugin C++ seq_add_camera_cut command.',
   cost: 'medium',
-  returns: '{ok, camera_guid, start_frame, end_frame, start_seconds, end_seconds, camera_bound, range_applied, warnings[], dry_run?}',
+  returns: '{ok, camera_guid, track_path, section_path, start_frame, end_frame, start_seconds, end_seconds, camera_bound, range_applied, can_blend_applied?, easing_applied?, saved, warnings[], dry_run?}',
   schema: seqCameraCutSchema.shape,
   meta: writeMeta,
   buildScript: seqCameraCutScript,
+  finish: seqCameraCutFinish,
   timeoutMs: 30_000,
 };
 
@@ -808,29 +788,23 @@ function seqListBindingsScript(p: SeqListBindingsParams): string {
     `_path = ${pyStr(p.asset_path)}`,
     `_limit = ${p.limit}`,
     `_offset = ${p.offset}`,
-    'def _go():',
-    '    seq = _load_seq(_path)',
-    '    allb = list(unreal.MovieSceneSequenceExtensions.get_bindings(seq))',
-    '    total = len(allb)',
+    'seq, _msg = _load_seq(_path)',
+    'if seq is None:',
+    '    _err(_msg)',
+    'else:',
+    '    allb = list(MSE.get_bindings(seq))',
     '    page = allb[_offset:_offset + _limit]',
+    '    poss = set(str(MBE.get_id(b)) for b in MSE.get_possessables(seq))',
     '    out = []',
     '    for b in page:',
-    '        guid = None; name = None; kind = "possessable"; obj_class = None',
-    '        try: guid = str(unreal.MovieSceneBindingExtensions.get_id(b))',
-    '        except Exception: pass',
-    '        try: name = unreal.MovieSceneBindingExtensions.get_name(b)',
-    '        except Exception: pass',
-    '        try:',
-    '            c = unreal.MovieSceneBindingExtensions.get_possessed_object_class(b)',
-    '            if c is not None: obj_class = c.get_name()',
-    '        except Exception: pass',
-    '        out.append({"guid": guid, "name": name, "kind": kind, "object_class": obj_class})',
+    '        guid = str(MBE.get_id(b))',
+    '        c = MBE.get_possessed_object_class(b)',
+    '        out.append({"guid": guid, "name": MBE.get_name(b), "display_name": str(MBE.get_display_name(b)),',
+    '                    "kind": "possessable" if guid in poss else "spawnable",',
+    '                    "object_class": c.get_name() if c is not None else None,',
+    '                    "tracks": [type(t).__name__ for t in MBE.get_tracks(b)]})',
     '    nxt = _offset + len(page)',
-    '    _emit({"ok": True, "asset_path": _path, "bindings": out, "count": total, "has_more": nxt < total, "next_offset": nxt})',
-    'try:',
-    '    _go()',
-    'except Exception as _e:',
-    '    _err(_e)',
+    '    _emit({"ok": True, "asset_path": _path, "bindings": out, "count": len(allb), "has_more": nxt < len(allb), "next_offset": nxt})',
   ].join('\n');
 }
 
