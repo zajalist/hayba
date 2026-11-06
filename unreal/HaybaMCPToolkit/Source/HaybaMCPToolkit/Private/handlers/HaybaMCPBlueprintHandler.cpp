@@ -1737,8 +1737,8 @@ static bool HaybaNodeBoxes(UEdGraph* Graph, TMap<const UEdGraphNode*, HaybaBluep
             FVector2f Min, Max;
             if (Node && !Node->IsA<UEdGraphNode_Comment>() && Panel->GetBoundsForNode(Node, Min, Max, 0.f))
             {
-                Out.Add(Node, HaybaBlueprintOps::FNodeBox{ FMath::FloorToInt(Min.X), FMath::FloorToInt(Min.Y),
-                    FMath::CeilToInt(Max.X - Min.X), FMath::CeilToInt(Max.Y - Min.Y) });
+                Out.Add(Node, HaybaBlueprintOps::FNodeBox{ FMath::FloorToInt32(Min.X), FMath::FloorToInt32(Min.Y),
+                    FMath::CeilToInt32(Max.X - Min.X), FMath::CeilToInt32(Max.Y - Min.Y) });
                 bMeasured = true;
             }
         }
@@ -1881,7 +1881,7 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::MoveNodes(const TSharedPtr<FJsonO
         if ((W > 0 || H > 0) && !Node->IsA<UEdGraphNode_Comment>())
             return FHaybaHandlerResult::Err(FString::Printf(
                 TEXT("blueprint_move_nodes: width/height apply to comment boxes only; '%s' is not one. Nothing was moved."), *Id));
-        Planned.Add({ Node, FMath::RoundToInt(X), FMath::RoundToInt(Y), FMath::RoundToInt(W), FMath::RoundToInt(H) });
+        Planned.Add({ Node, FMath::RoundToInt32(X), FMath::RoundToInt32(Y), FMath::RoundToInt32(W), FMath::RoundToInt32(H) });
     }
 
     // Position only: no pins, links or structure change, so no skeleton work.
