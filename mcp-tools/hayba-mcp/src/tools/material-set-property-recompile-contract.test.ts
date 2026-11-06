@@ -33,3 +33,15 @@ describe('material_set_property keeps the shader map consistent with the setting
     expect(recompile).toBeLessThan(body.lastIndexOf('return FHaybaHandlerResult::Ok(Out);'));
   });
 });
+
+describe('material graph edits and compiles wait for PIE to stop', () => {
+  it('refuses every graph command before dispatch while a play session runs', () => {
+    const handle = handler.slice(handler.indexOf('FHaybaHandlerResult FHaybaMCPMaterialHandler::Handle('));
+    const guard = handle.indexOf('GEditor->IsPlaySessionInProgress()');
+    expect(guard).toBeGreaterThan(-1);
+    expect(guard).toBeLessThan(handle.indexOf('return MatCreate(P);'));
+    for (const cmd of ['material_set_property', 'material_add_node', 'material_connect_nodes', 'material_compile']) {
+      expect(handle.slice(0, guard)).toContain(`TEXT("${cmd}")`);
+    }
+  });
+});
