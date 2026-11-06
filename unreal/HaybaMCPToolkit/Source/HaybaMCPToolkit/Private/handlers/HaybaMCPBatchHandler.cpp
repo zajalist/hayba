@@ -277,6 +277,7 @@ namespace
 		Region.MinY = MinY;
 		Region.MaxX = MaxX;
 		Region.MaxY = MaxY;
+		FScopeLock LeaseLock(&FHaybaMCPLeaseManager::Get().Mutex());
 		const HaybaMCPLease::FLease* Lease = FHaybaMCPLeaseManager::Get().Table().FindLease(S.LeaseToken);
 		if (!Lease || !LeaseCoversRegion(Lease->Locks, Region))
 		{
@@ -555,8 +556,11 @@ namespace
 		{
 			UE_LOG(LogHaybaMCPBatch, Warning, TEXT("batch %s: %s"), *S->JobId.Left(8), *Note);
 		}
-		FHaybaMCPLeaseManager::Get().Table().EndYield(S->LeaseToken);
-		FHaybaMCPLeaseManager::Get().Table().SetYieldable(S->LeaseToken, false);
+		{
+			FScopeLock LeaseLock(&FHaybaMCPLeaseManager::Get().Mutex());
+			FHaybaMCPLeaseManager::Get().Table().EndYield(S->LeaseToken);
+			FHaybaMCPLeaseManager::Get().Table().SetYieldable(S->LeaseToken, false);
+		}
 
 		const TSharedPtr<FJsonObject> Result = BuildStatus(*S);
 		FHaybaMCPJobRegistry::Get().SetDone(S->JobId, S->Machine->Succeeded() ? 0 : 1, JsonToCondensed(Result));
@@ -581,6 +585,7 @@ namespace
 		In.BusyReason = BusySubsystems();
 		In.bIdle = In.BusyReason.IsEmpty();
 		S->LastBusy = In.BusyReason;
+		TUniquePtr<FScopeLock> LeaseLock = MakeUnique<FScopeLock>(&FHaybaMCPLeaseManager::Get().Mutex());
 		const HaybaMCPLease::FLease* Lease = Table.FindLease(S->LeaseToken);
 		In.bLeaseValid = Lease && Lease->Owner == S->Owner;
 		if (In.bLeaseValid)
@@ -595,6 +600,7 @@ namespace
 			In.bEligibleWaiter = Table.HasEligibleWaiterBlockedBy(S->LeaseToken);
 			In.FenceGrantsOutstanding = Table.CountFenceGrants(S->LeaseToken);
 		}
+		LeaseLock.Reset(); // never held while a step runs: lease commands on TCP threads would wait on it
 		In.LoadedRegions = CountLoaded(*S);
 
 		switch (S->Machine->Tick(In))
@@ -618,13 +624,19 @@ namespace
 			CollectGarbage(GARBAGE_COLLECTION_KEEPFLAGS, true);
 			break;
 		case EAction::BeginYield:
+		{
+			FScopeLock YieldLock(&FHaybaMCPLeaseManager::Get().Mutex());
 			Table.BeginYield(S->LeaseToken);
 			UE_LOG(LogHaybaMCPBatch, Log, TEXT("batch %s: fence after step %d yields to a queued request"),
 				*S->JobId.Left(8), S->Machine->GetStepIndex());
 			break;
+		}
 		case EAction::EndYield:
+		{
+			FScopeLock YieldLock(&FHaybaMCPLeaseManager::Get().Mutex());
 			Table.EndYield(S->LeaseToken);
 			break;
+		}
 		case EAction::UnloadAll:
 			for (const FString& Note : ReleaseAll(*S))
 			{
@@ -667,6 +679,7 @@ FHaybaHandlerResult FHaybaMCPBatchHandler::Start(const TSharedPtr<FJsonObject>& 
 			"editor_batch: lease is required. lease_acquire the resources the steps touch (e.g. world:/Game/Maps/Valley), "
 			"then pass its token as lease."));
 	}
+	FScopeLock LeaseLock(&Leases.Mutex());
 	const HaybaMCPLease::FLease* Lease = Leases.Table().FindLease(Token);
 	if (!Lease)
 	{

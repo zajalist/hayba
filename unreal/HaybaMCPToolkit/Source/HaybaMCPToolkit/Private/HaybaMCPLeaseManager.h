@@ -39,6 +39,13 @@ public:
 
 	HaybaMCPLease::FTable& Table() { return LeaseTable; }
 
+	/** Guards the table: lease_* commands are answered on the TCP threads (so a long game-thread run never
+	 *  stalls them), everything else on the game thread. Hold it for as long as a FLease pointer is used. */
+	FCriticalSection& Mutex() { return TableMutex; }
+
+	/** Game thread: remember the editor world so lease commands answered off the game thread can name it. */
+	void RefreshWorldCache();
+
 	/** Owner string for an envelope: `owner` if present, else per connection. */
 	static FString ResolveOwner(const TSharedPtr<FJsonObject>& Envelope, int32 ConnId);
 
@@ -66,8 +73,8 @@ public:
 		FHaybaMCPRequestContext* Previous = nullptr;
 	};
 
-	/** The request being processed, or null outside ProcessCommand. */
-	FHaybaMCPRequestContext* Current() const { return CurrentContext; }
+	/** The request being processed on this thread, or null outside ProcessCommand. */
+	FHaybaMCPRequestContext* Current() const;
 
 	/** The owner the current command acts as: the named lease's owner when a
 	 *  valid `lease` token was sent, otherwise the envelope owner. */
@@ -100,5 +107,6 @@ private:
 	FHaybaMCPLeaseManager();
 
 	HaybaMCPLease::FTable LeaseTable;
-	FHaybaMCPRequestContext* CurrentContext = nullptr;
+	FCriticalSection TableMutex;
+	FString CachedWorld;
 };

@@ -15,6 +15,10 @@ namespace
 {
 	constexpr int32 MaxOwnerChars = 128;
 
+	// Per thread: a lease command answered on a TCP thread must never see (or clobber) the context of the
+	// command the game thread is running at the same moment.
+	thread_local FHaybaMCPRequestContext* GRequestContext = nullptr;
+
 	FString MakeTokenSalt()
 	{
 		// Tokens are coordination handles, not credentials (the capability
@@ -53,12 +57,31 @@ FString FHaybaMCPLeaseManager::ResolveOwner(const TSharedPtr<FJsonObject>& Envel
 
 FString FHaybaMCPLeaseManager::CurrentWorldPackage()
 {
+	FHaybaMCPLeaseManager& Manager = Get();
+	if (!IsInGameThread())
+	{
+		FScopeLock Lock(&Manager.TableMutex);
+		return Manager.CachedWorld;
+	}
 	if (!GEditor)
 	{
 		return FString();
 	}
 	const UWorld* World = GEditor->GetEditorWorldContext().World();
-	return World ? World->GetOutermost()->GetName() : FString();
+	const FString Package = World ? World->GetOutermost()->GetName() : FString();
+	FScopeLock Lock(&Manager.TableMutex);
+	Manager.CachedWorld = Package;
+	return Package;
+}
+
+void FHaybaMCPLeaseManager::RefreshWorldCache()
+{
+	CurrentWorldPackage();
+}
+
+FHaybaMCPRequestContext* FHaybaMCPLeaseManager::Current() const
+{
+	return GRequestContext;
 }
 
 bool FHaybaMCPLeaseManager::ParseClaims(
@@ -126,18 +149,19 @@ bool FHaybaMCPLeaseManager::ParseClaims(
 
 FHaybaMCPLeaseManager::FScope::FScope(FHaybaMCPRequestContext& Context)
 {
-	FHaybaMCPLeaseManager& Manager = FHaybaMCPLeaseManager::Get();
-	Previous = Manager.CurrentContext;
-	Manager.CurrentContext = &Context;
+	Previous = GRequestContext;
+	GRequestContext = &Context;
 }
 
 FHaybaMCPLeaseManager::FScope::~FScope()
 {
-	FHaybaMCPLeaseManager::Get().CurrentContext = Previous;
+	GRequestContext = Previous;
 }
 
 FString FHaybaMCPLeaseManager::EffectiveOwner()
 {
+	FHaybaMCPRequestContext* CurrentContext = GRequestContext;
+	FScopeLock Lock(&TableMutex);
 	if (!CurrentContext)
 	{
 		return TEXT("local");
@@ -155,6 +179,7 @@ FString FHaybaMCPLeaseManager::EffectiveOwner()
 
 void FHaybaMCPLeaseManager::OnConnectionClosed(int32 ConnId)
 {
+	FScopeLock Lock(&TableMutex);
 	const int32 Released = LeaseTable.ReleaseConnection(ConnId);
 	if (Released > 0)
 	{
@@ -166,6 +191,7 @@ void FHaybaMCPLeaseManager::OnConnectionClosed(int32 ConnId)
 bool FHaybaMCPLeaseManager::CallerHoldsExclusiveOnCurrentWorld()
 {
 	const FString World = CurrentWorldPackage();
+	FScopeLock Lock(&TableMutex);
 	const FString Key = World.IsEmpty()
 		? FString(TEXT("global"))
 		: HaybaMCPAccess::FResource::MakeWorld(World).Key();
@@ -176,6 +202,9 @@ FHaybaMCPLeaseManager::FVerdict FHaybaMCPLeaseManager::CheckCommand(
 	const FString& Cmd, const TSharedPtr<FJsonObject>& Params)
 {
 	FVerdict Verdict;
+	FHaybaMCPRequestContext* CurrentContext = GRequestContext;
+	// Held to the end: Holder below points into the table, which lease commands on TCP threads change.
+	FScopeLock Lock(&TableMutex);
 	const UHaybaMCPDeveloperSettings* Settings = GetDefault<UHaybaMCPDeveloperSettings>();
 	const EHaybaMCPLeaseEnforcement Mode = Settings ? Settings->LeaseEnforcement : EHaybaMCPLeaseEnforcement::Advisory;
 	if (Mode == EHaybaMCPLeaseEnforcement::Off)
@@ -206,6 +235,14 @@ FHaybaMCPLeaseManager::FVerdict FHaybaMCPLeaseManager::CheckCommand(
 			FHaybaMCPPythonHandler::IsReadOnlyScriptForAccess(Script),
 			bWorldPartition || HaybaMCPAccess::ScriptTouchesWorldPartition(Script),
 			Declared.Num() > 0);
+	}
+	else if (Cmd == TEXT("python_exec_file"))
+	{
+		if (!ParseClaims(Params, /*bDefaultExclusive=*/true, Declared, ClaimError))
+		{
+			Declared.Reset();
+		}
+		Class.Class = HaybaMCPAccess::ClassifyPythonExecFile(Declared.Num() > 0);
 	}
 
 	const FString World = CurrentWorldPackage();
