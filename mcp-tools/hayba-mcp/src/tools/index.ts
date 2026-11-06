@@ -2140,7 +2140,7 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
   {
     name: 'material_compile',
     description:
-      'Finalize a material OR material FUNCTION: write it to disk, apply staged settings, surface translator errors + shader optimization stats (materials). Graph edits DEFER the disk write — call this once the graph is complete. NOTE: material functions no longer auto-save either, so after editing a function call material_compile with function_path to persist it (this avoids a half-built function crashing the editor when it is opened/compiled).',
+      'Finalize a material OR material FUNCTION: write it to disk, apply staged settings, surface translator AND platform shader-compile errors (it waits up to 30 s for the shader map, so ok:false means the shaders really failed; a timeout is ok:false with shader_compile_timed_out) + shader optimization stats (materials). Graph edits DEFER the disk write — call this once the graph is complete. NOTE: material functions no longer auto-save either, so after editing a function call material_compile with function_path to persist it (this avoids a half-built function crashing the editor when it is opened/compiled).',
     meta: materialCompileMeta,
     handler: materialCompileHandler,
     cost: 'high',
@@ -2161,11 +2161,11 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
   {
     name: 'material_validate',
     description:
-      'Statically check a material OR material FUNCTION graph for translator-crash-prone wiring WITHOUT compiling: reroutes/named-reroutes used downstream that resolve to no input, and connections to non-existent output indices — both trigger an uncatchable HLSL-translator assert that kills the editor. material_compile runs these same checks and refuses to compile when any fail, so call this first to fix issues safely.',
+      'Statically check a material OR material FUNCTION graph for translator-crash-prone wiring WITHOUT compiling: reroutes/named-reroutes used downstream that resolve to no input, and connections to non-existent output indices — both trigger an uncatchable HLSL-translator assert that kills the editor. material_compile runs these same checks and refuses to compile when any fail, so call this first to fix issues safely. It also lints Custom node HLSL (apostrophes outside comments, unclosed strings, comments or brackets). compile:true (materials) then runs the real platform shader compile and waits for it, so shader errors that would otherwise surface later on the GPU-compile thread are returned here; it never saves.',
     meta: materialValidateMeta,
     handler: materialValidateHandler,
-    cost: 'low',
-    returns: '{ok:boolean, problems:[string]}',
+    cost: 'high',
+    returns: '{ok:boolean, problems:[string], compiled?, shader_platform?, shader_compile_timed_out?, saved?:false}',
     niche: M,
     schema: {
       material_path: z
@@ -2176,6 +2176,10 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
         .string()
         .optional()
         .describe('Path to a material FUNCTION to validate (either this or material_path)'),
+      compile: z
+        .boolean()
+        .optional()
+        .describe('Materials only: after the static checks pass, recompile and wait (up to 30 s) for the platform shader compile and return its errors. Never saves.'),
     },
   },
   {

@@ -66,8 +66,10 @@ describe('compile and persistence truth contract', () => {
       material.indexOf('FHaybaMCPMaterialHandler::MatCompile('),
       material.indexOf('FHaybaMCPMaterialHandler::MatDisconnect('),
     );
-    expect(compile.match(/Bad->SetBoolField\(TEXT\("ok"\), false\)/g)).toHaveLength(4);
-    expect(compile.match(/Bad->SetStringField\(TEXT\("error"\)/g)).toHaveLength(4);
+    // Five failure envelopes: two graph preflights, two native-fault guards, and the
+    // fault guard around the bounded platform shader-compile wait.
+    expect(compile.match(/Bad->SetBoolField\(TEXT\("ok"\), false\)/g)).toHaveLength(5);
+    expect(compile.match(/Bad->SetStringField\(TEXT\("error"\)/g)).toHaveLength(5);
     expect(compile).toContain('FnOut->SetBoolField(TEXT("ok"), bFnSaved)');
     const functionSuccess = compile.slice(
       compile.indexOf('const bool bFnSaved = HaybaPersistAsset'),
