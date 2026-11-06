@@ -91,6 +91,11 @@ All notable changes to Hayba MCP Toolkit are documented here. Format based on [K
   spend its Approve.
 
 ### Fixed
+- Material Collection Parameter nodes made or edited with `material_add_node` /
+  `material_set_node` now resolve their `ParameterId` from the collection (the
+  editor does it in PostEditChangeProperty, which staged edits skip), so they
+  compile instead of failing with "invalid parameter". A name the collection
+  lacks is reported, and `material_get_info` adds `collection_parameter_resolved`.
 - `python_run` scripts that load or unload World Partition actors no longer
   run inside the global editor transaction, which left `UTransBuffer` with a
   non-zero active count and crashed the next tick in Landscape.

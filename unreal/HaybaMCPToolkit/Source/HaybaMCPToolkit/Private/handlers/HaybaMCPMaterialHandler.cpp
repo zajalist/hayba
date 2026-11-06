@@ -28,6 +28,7 @@
 #include "MaterialEditingLibrary.h"
 #include "Materials/MaterialAttributeDefinitionMap.h"
 #include "Materials/MaterialParameterCollection.h"
+#include "Materials/MaterialExpressionCollectionParameter.h"
 #include "StaticParameterSet.h"  // FStaticParameterSet, FStaticSwitchParameter (Task 5)
 #include "MaterialTypes.h"
 #include "Materials/MaterialFunction.h"
@@ -724,6 +725,18 @@ static FApplyNodePropsResult ApplyNodeProps(UMaterialExpression* Expr, const TSh
         if (Aliases.Contains(Key)) continue;
         if (HaybaReflection::SetProp(Expr, Key, Pair.Value)) R.Applied.Add(Key);
         else                                                 R.Unknown.Add(Key);
+    }
+
+    // The editor derives a collection parameter's ParameterId from its name in
+    // PostEditChangeProperty, which staged edits deliberately skip (below). Without the
+    // id the compile fails with "CollectionParameter has invalid parameter <Name>", so
+    // resolve it here from the collection, and report a name the collection lacks.
+    if (UMaterialExpressionCollectionParameter* CP = Cast<UMaterialExpressionCollectionParameter>(Expr))
+    {
+        CP->ParameterId = CP->Collection ? CP->Collection->GetParameterId(CP->ParameterName) : FGuid();
+        if (CP->Collection && !CP->ParameterName.IsNone() && !CP->ParameterId.IsValid())
+            R.Unknown.Add(FString::Printf(TEXT("ParameterName ('%s' is not a parameter of %s)"),
+                *CP->ParameterName.ToString(), *CP->Collection->GetName()));
     }
 
     // Do not broadcast PostEditChange for every staged node edit. Some editor
@@ -1584,6 +1597,12 @@ static TArray<TSharedPtr<FJsonValue>> SerializeMaterialExpressions(
             else
                 Entry->SetStringField(TEXT("parameter_name"), ParameterName.ToString());
             Entry->SetBoolField(TEXT("parameter_name_valid"), bParameterNameValid);
+            // A collection parameter also needs the id the compiler resolves it by.
+            if (const UMaterialExpressionCollectionParameter* CP = Cast<UMaterialExpressionCollectionParameter>(Expr))
+            {
+                Entry->SetBoolField(TEXT("collection_parameter_resolved"), CP->Collection && CP->ParameterId.IsValid()
+                    && CP->Collection->GetParameterId(CP->ParameterName) == CP->ParameterId);
+            }
 
             FMaterialParameterMetadata Metadata;
             const bool bMetadataAvailable = Expr->GetParameterValue(Metadata);
