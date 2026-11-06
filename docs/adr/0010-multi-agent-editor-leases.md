@@ -233,3 +233,34 @@ than one tick.
 4. **Fair scheduling of the drain itself.** Fences serve lease waiters. The
    drain is still one global FIFO for lease-free commands; it could pick by
    the same lanes if a lease-free flood ever starves an interactive agent.
+
+## Running about 20 agents at once (2026-11-05, FoA)
+
+Measured on a live editor shared by about 20 lanes:
+
+- **Lease commands are answered on the TCP reader thread.** A lease_acquire,
+  poll, renew, release or status queued behind a long game-thread run (a
+  MetaHuman build held one frame for six minutes) left every waiter's
+  connection open, filled the 16-client cap, and turned "busy" into
+  "disconnected" for every lane. `FHaybaMCPLeaseHandler::TryHandleOffThread`
+  now answers them on the reader thread under the manager's table mutex. The
+  request context is thread-local; the game thread caches the editor world
+  for `lease_status`; batch-handler table access takes the same mutex and
+  never holds it across a step. Only a connection with nothing else in
+  flight is answered off-thread, so replies never overtake earlier ones.
+  These replies skip the generic secret redaction: the token is the caller's
+  own lease handle, and a redacted token can never be renewed or released.
+- **`python_exec_file {path, env?, resources?}`** runs a trusted `.py` file
+  from inside the project, for project tooling that python_run's sandbox
+  cannot serve (imports, file IO, try/except). It is off unless the project
+  sets `bAllowProjectPythonFiles`. Each run is one guarded request: private
+  namespace, env vars set and restored, the traceback printed instead of
+  left in `sys.last_*`, and `gc.collect()` inside the SEH guard, so nothing
+  of one agent's run is alive when the next request starts. Declared
+  `resources` make it WriteScoped; undeclared it is Global (there is no
+  lexical tier to guess from). It never opens an editor transaction.
+- **PythonScriptPlugin's closure type is patched at every start**
+  (`Resources/Python/hayba_psp_hotfix.py`, applied on OnPythonInitialized and
+  re-checked before any Python run). Its inherited `tp_weaklistoffset`
+  pointed past the object, and CPython's GC wrote through stale memory: six
+  FoA crashes. Repro: `tools/psp-weakref-repro`.

@@ -3,7 +3,11 @@
 #include "HaybaMCPLeaseHandler.h"
 #include "HaybaMCPLeaseManager.h"
 #include "HaybaMCPDeveloperSettings.h"
+#include "HaybaMCPSecurityManager.h"
+#include "HaybaMCPSeh.h"
 #include "HAL/PlatformTime.h"
+#include "Serialization/JsonReader.h"
+#include "Serialization/JsonSerializer.h"
 
 namespace
 {
@@ -61,8 +65,67 @@ TArray<FString> FHaybaMCPLeaseHandler::GetCommands() const
 	};
 }
 
+bool FHaybaMCPLeaseHandler::TryHandleOffThread(const FString& Message, int32 ConnId, FString& OutResponse)
+{
+	// Cheap pre-filter before parsing every frame on the reader thread.
+	if (!Message.Contains(TEXT("\"lease_")) || HaybaSeh::IsSessionPoisoned())
+	{
+		return false;
+	}
+	TSharedPtr<FJsonObject> Envelope;
+	const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(Message);
+	if (!FJsonSerializer::Deserialize(Reader, Envelope) || !Envelope.IsValid())
+	{
+		return false;
+	}
+	FString Cmd, Id;
+	if (!Envelope->TryGetStringField(TEXT("cmd"), Cmd) || !Cmd.StartsWith(TEXT("lease_"))
+		|| !Envelope->TryGetStringField(TEXT("id"), Id) || Id.IsEmpty())
+	{
+		return false;
+	}
+
+	TSharedRef<FJsonObject> Response = MakeShared<FJsonObject>();
+	Response->SetStringField(TEXT("id"), Id);
+	FString AuthReason;
+	if (!FHaybaMCPSecurityManager::Get().ValidateRequest(Envelope, AuthReason))
+	{
+		Response->SetBoolField(TEXT("ok"), false);
+		Response->SetStringField(TEXT("error"), AuthReason);
+	}
+	else
+	{
+		FHaybaMCPRequestContext Context;
+		Context.ConnId = ConnId;
+		Context.Owner = FHaybaMCPLeaseManager::ResolveOwner(Envelope, ConnId);
+		Envelope->TryGetStringField(TEXT("lease"), Context.LeaseToken);
+		FHaybaMCPLeaseManager::FScope Scope(Context);
+
+		const TSharedPtr<FJsonObject>* ParamsObj = nullptr;
+		TSharedPtr<FJsonObject> Params = (Envelope->TryGetObjectField(TEXT("params"), ParamsObj) && ParamsObj)
+			? *ParamsObj : MakeShared<FJsonObject>();
+		FHaybaMCPLeaseHandler Handler;
+		const FHaybaHandlerResult Result = Handler.Handle(Cmd, Params);
+		Response->SetBoolField(TEXT("ok"), Result.bOk);
+		if (Result.bOk)
+		{
+			// Not passed through the generic secret redaction: the token is the caller's own lease handle
+			// (status shows it only to its owner), and a redacted token can never be renewed or released.
+			Response->SetObjectField(TEXT("data"), Result.Data.IsValid() ? Result.Data : MakeShared<FJsonObject>());
+		}
+		else
+		{
+			Response->SetStringField(TEXT("error"), Result.ErrorMessage);
+		}
+	}
+	const TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&OutResponse);
+	FJsonSerializer::Serialize(Response, Writer);
+	return true;
+}
+
 FHaybaHandlerResult FHaybaMCPLeaseHandler::Handle(const FString& Command, const TSharedPtr<FJsonObject>& Params)
 {
+	FScopeLock Lock(&FHaybaMCPLeaseManager::Get().Mutex());
 	const TSharedPtr<FJsonObject> P = Params.IsValid() ? Params : MakeShared<FJsonObject>();
 	if (Command == TEXT("lease_acquire")) return Acquire(P);
 	if (Command == TEXT("lease_renew"))   return Renew(P);
@@ -108,6 +171,7 @@ FHaybaHandlerResult FHaybaMCPLeaseHandler::Acquire(const TSharedPtr<FJsonObject>
 	}
 	Request.Lane = Lane == TEXT("long") ? ELane::Long : ELane::Interactive;
 	P->TryGetNumberField(TEXT("ttl_s"), Request.TtlSeconds);
+	P->TryGetNumberField(TEXT("confirm_within_s"), Request.ConfirmWithinSeconds);
 
 	bool bBind = true;
 	P->TryGetBoolField(TEXT("bind_connection"), bBind);

@@ -122,7 +122,20 @@ namespace HaybaMCPAccess
 		{
 			return { EAccessClass::WriteWorld, true };
 		}
+		if (Cmd == TEXT("python_exec_file"))
+		{
+			return { EAccessClass::Global, true };
+		}
 		return { bIsDestructive ? EAccessClass::WriteScoped : EAccessClass::Read, false };
+	}
+
+	/**
+	 * python_exec_file runs a trusted project script with no lexical tier to guess from, so an
+	 * undeclared run may touch anything (Global); declared resources make it WriteScoped.
+	 */
+	inline EAccessClass ClassifyPythonExecFile(bool bDeclaredResources)
+	{
+		return bDeclaredResources ? EAccessClass::WriteScoped : EAccessClass::Global;
 	}
 
 	/**

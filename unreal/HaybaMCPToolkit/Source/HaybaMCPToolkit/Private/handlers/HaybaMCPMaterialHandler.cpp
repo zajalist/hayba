@@ -2866,7 +2866,17 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatSetProperty(const TSharedPtr<FJ
         bAnyChanged |= bKeyChanged;
         if (bKeyChanged) Changed.Add(MakeShared<FJsonValueString>(Key));
     }
-    if (bAnyChanged) Mat->Modify();
+    if (bAnyChanged)
+    {
+        // These settings decide which shader types the material's shader map must contain. Changing them
+        // under a map still compiling (or compiled) for the old settings left the material inconsistent,
+        // and the next render of it (an editor-autosave thumbnail) failed the MaterialShader.cpp:2567
+        // check ContainsShaderType and killed the editor (FoA, 2026-11-05 23:37, M_UI_SandText switched to
+        // MD_UI + translucent while compiling). Drop the stale compile now; recompile for the new settings
+        // below, before anything can render it.
+        Mat->CancelOutstandingCompilation();
+        Mat->Modify();
+    }
 
     TSharedPtr<FJsonObject> Readback = MakeShared<FJsonObject>();
     TArray<TSharedPtr<FJsonValue>> VerificationFailed;
@@ -2931,6 +2941,24 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatSetProperty(const TSharedPtr<FJ
             *FString::Join(FailedNames, TEXT(", "))));
     }
 
+    bool bRecompileCrashed = false;
+    if (bAnyChanged)
+    {
+        // Same guarded boundary as material_compile: RecompileMaterial broadcasts editor notifications
+        // that a stale script delegate can fault in. It queues an async compile for the new settings;
+        // until that lands the renderer uses the default material instead of the stale map.
+        HaybaSeh::RunGuarded(+[](void* InMat)
+        {
+            UMaterialEditingLibrary::RecompileMaterial(static_cast<UMaterial*>(InMat));
+        }, Mat, bRecompileCrashed);
+        if (bRecompileCrashed)
+        {
+            return FHaybaHandlerResult::Err(TEXT(
+                "material_set_property: the settings were applied, but the native recompile faulted (SEH caught it). "
+                "Restart the editor before another mutation; do not save this material first."));
+        }
+    }
+
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
     Out->SetStringField(TEXT("material_path"), Mat->GetPathName());
     Out->SetArrayField(TEXT("applied"), Applied);
@@ -2945,7 +2973,10 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatSetProperty(const TSharedPtr<FJ
     Out->SetBoolField(TEXT("dirty"), bPackageDirty);
     Out->SetBoolField(TEXT("saved"), false);
     Out->SetBoolField(TEXT("requires_compile"), bPackageDirty);
-    Out->SetStringField(TEXT("note"), TEXT("call material_compile to apply settings and write the material to disk"));
+    Out->SetBoolField(TEXT("recompile_queued"), bAnyChanged);
+    Out->SetStringField(TEXT("note"), bAnyChanged
+        ? TEXT("settings applied and a recompile for them is queued; call material_compile to surface errors and write the material to disk")
+        : TEXT("call material_compile to apply settings and write the material to disk"));
     return FHaybaHandlerResult::Ok(Out);
 }
 

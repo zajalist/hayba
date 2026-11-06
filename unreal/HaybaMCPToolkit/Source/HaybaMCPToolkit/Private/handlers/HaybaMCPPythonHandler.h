@@ -15,6 +15,10 @@ public:
      *  only to pick the script's lease access class. */
     static bool IsReadOnlyScriptForAccess(const FString& Code) { return ClassifyScript(Code) == EPythonTier::ReadOnly; }
 
+    /** Apply Resources/Python/hayba_psp_hotfix.py once per editor session (PythonScriptPlugin's
+     *  closure type crashes CPython's GC). False only while Python is not initialized yet. */
+    static bool EnsurePspHotfix();
+
 #if WITH_DEV_AUTOMATION_TESTS
     /** Exact fatal table exported only to prove every native deny rule through
      *  the pure source-policy matcher. Destructive examples must never reach
@@ -29,5 +33,6 @@ public:
 
 private:
     FHaybaHandlerResult Run(const TSharedPtr<FJsonObject>& P);
+    FHaybaHandlerResult ExecFile(const TSharedPtr<FJsonObject>& P);
     static EPythonTier ClassifyScript(const FString& Code);
 };

@@ -79,6 +79,7 @@
 #include "WorkspaceMenuStructureModule.h"
 #include "Widgets/Docking/SDockTab.h"
 #include "Interfaces/IPluginManager.h"
+#include "IPythonScriptPlugin.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogHaybaMCP, Log, All);
 
@@ -209,6 +210,16 @@ void FHaybaMCPModule::StartupModule()
     CommandHandler->RegisterHandler(MakeShared<FHaybaMCPRenderHandler>());
     CommandHandler->RegisterHandler(MakeShared<FHaybaMCPLeaseHandler>());
     CommandHandler->RegisterHandler(MakeShared<FHaybaMCPBatchHandler>());
+
+    // PythonScriptPlugin's closure type crashes CPython's GC (hayba_psp_hotfix.py): patch it as
+    // soon as Python is up, before any agent's script or an engine GC can reach the bug.
+    if (IPythonScriptPlugin* Python = IPythonScriptPlugin::Get())
+    {
+        if (!FHaybaMCPPythonHandler::EnsurePspHotfix())
+        {
+            PythonInitializedHandle = Python->OnPythonInitialized().AddLambda([]() { FHaybaMCPPythonHandler::EnsurePspHotfix(); });
+        }
+    }
 
     // Optional-capability check: warn (log + editor notification) for any
     // satellite plugin that is disabled, so the user understands why a command
@@ -371,6 +382,14 @@ void FHaybaMCPModule::ShutdownModule()
         GEditor->GetTimerManager()->ClearTimer(AutoOpenTimerHandle);
     }
     AutoOpenTimerHandle.Invalidate();
+    if (PythonInitializedHandle.IsValid())
+    {
+        if (IPythonScriptPlugin* Python = IPythonScriptPlugin::Get())
+        {
+            Python->OnPythonInitialized().Remove(PythonInitializedHandle);
+        }
+        PythonInitializedHandle.Reset();
+    }
     if (OpenToolkitConsoleCommand)
     {
         IConsoleManager::Get().UnregisterConsoleObject(OpenToolkitConsoleCommand, false);

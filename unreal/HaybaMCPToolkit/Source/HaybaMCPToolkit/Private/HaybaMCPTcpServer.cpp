@@ -1,5 +1,7 @@
 #include "HaybaMCPTcpServer.h"
 #include "HaybaMCPCommandHandler.h"
+#include "HaybaMCPLeaseManager.h"
+#include "handlers/HaybaMCPLeaseHandler.h"
 #include "HaybaMCPFrameReadPolicy.h"
 #include "HaybaMCPSettings.h"
 #include "Containers/StringConv.h"
@@ -447,6 +449,35 @@ void FHaybaMCPTcpServer::HandleClientConnection(FHaybaMCPClientConnectionPtr Con
 			break;
         }
 		Conn->RequestsReceived.Increment();
+
+		// Lease commands are answered here, on the reader thread, so a lane can queue, poll, renew and release
+		// while another lane's long script holds the game thread. Only with nothing else in flight on this
+		// connection, so responses never overtake earlier ones.
+		FString LeaseResponse;
+		if (Conn->ResponsesPending.GetValue() == 0
+			&& FHaybaMCPLeaseHandler::TryHandleOffThread(Message, Conn->ConnId, LeaseResponse))
+		{
+			FHaybaMCPCountReservationPtr ResponseReservation =
+				MakeShared<FHaybaMCPCountReservation, ESPMode::ThreadSafe>(Conn->ResponsesPending);
+			const FTCHARToUTF8 LeaseUtf8(*LeaseResponse);
+			FHaybaMCPOutboundBudgetReservationPtr MemoryReservation =
+				FHaybaMCPOutboundBudgetReservation::TryCreate(
+					Conn->OutboundBudget, GlobalOutboundBudget,
+					static_cast<int64>(LeaseResponse.GetAllocatedSize()) + LeaseUtf8.Length());
+			if (!MemoryReservation.IsValid())
+			{
+				UE_LOG(LogHaybaMCPTCP, Warning, TEXT("Disconnecting client above outbound-memory budget (lease reply)"));
+				break;
+			}
+			Conn->OutboundResponses.Enqueue(FHaybaMCPOutboundResponse{
+				MoveTemp(LeaseResponse), MoveTemp(ResponseReservation), MoveTemp(MemoryReservation) });
+			if (Conn->OutboundEvent)
+			{
+				Conn->OutboundEvent->Trigger();
+			}
+			continue;
+		}
+
 		if (Conn->ResponsesPending.GetValue() >= MaxPipelinedRequestsPerClient)
 		{
 			UE_LOG(LogHaybaMCPTCP, Warning,
@@ -590,6 +621,7 @@ bool FHaybaMCPTcpServer::DrainPendingCommands(float /*DeltaTime*/)
     }
     bLoggedDeferral = false;
     TGuardValue<bool> DrainGuard(bInDrain, true);
+    FHaybaMCPLeaseManager::Get().RefreshWorldCache(); // lease_status answered off the game thread names this world
 
     FHaybaMCPPendingCommand Cmd;
     const double Deadline = FPlatformTime::Seconds() + MaxDrainSeconds;
