@@ -214,6 +214,7 @@ private:
     IConsoleObject* OpenStudioConsoleCommand = nullptr;
     FTimerHandle AutoOpenTimerHandle;
     FDelegateHandle StudioMenuStartupHandle;
+    FDelegateHandle PythonInitializedHandle;
 
     FString FindNodeExecutable() const;
     FString GetMCPServerPath() const;

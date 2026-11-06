@@ -527,6 +527,7 @@ static bool IsDestructiveCommand(const FString& Cmd)
     static const TSet<FString> DestructiveCommands = {
         // Arbitrary code / wildcard invocation
         TEXT("python_run"),
+        TEXT("python_exec_file"),
         // Runs any number of commands under one lease (each step is gated
         // again unless the batch itself was approved). See docs/adr/0010.
         TEXT("editor_batch"),
@@ -720,6 +721,9 @@ bool FHaybaMCPCommandHandler::ShouldCreateEditorTransaction(const FString& Cmd)
     // Saving is not undoable; a transaction would only serialize every object in
     // the packages being saved, inside the save.
     if (Cmd == TEXT("asset_save")) return false;
+    // A project script saves, imports and deletes assets itself, as it did through remote
+    // execution; one global transaction around all of that is the WP-unload crash class again.
+    if (Cmd == TEXT("python_exec_file")) return false;
 
     return true;
 }

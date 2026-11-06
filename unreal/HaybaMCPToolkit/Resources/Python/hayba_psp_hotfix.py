@@ -45,6 +45,9 @@ def fix_type(t):
     return t.__weakrefoffset__ == 0
 
 
+CLOSURE_TYPE_NAME = 'builtin_function_or_method_with_closure'
+
+
 def closure_type():
     import unreal
     return type(unreal.SystemLibrary.get_engine_version)
@@ -53,6 +56,8 @@ def closure_type():
 def apply():
     """Fix the live editor's closure type. Returns 'patched', 'ok' or 'unsupported'."""
     t = closure_type()
+    if t.__name__ != CLOSURE_TYPE_NAME:
+        return 'unsupported'
     if not is_broken(t):
         return 'ok'
     return 'patched' if fix_type(t) else 'unsupported'

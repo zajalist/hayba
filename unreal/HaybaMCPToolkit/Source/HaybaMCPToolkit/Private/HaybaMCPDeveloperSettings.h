@@ -95,6 +95,10 @@ public:
     bool bAllowLongPythonDeadlineWithoutLease = false;
 
     UPROPERTY(EditAnywhere, Config, Category="Multi-Agent",
+        meta=(ToolTip="Let python_exec_file run trusted .py files from inside this project's directory, outside python_run's sandbox (SEH-guarded, private namespace, GC after every run). Off by default: anything that can write a file in the project can then run it in the editor."))
+    bool bAllowProjectPythonFiles = false;
+
+    UPROPERTY(EditAnywhere, Config, Category="Multi-Agent",
         meta=(ToolTip="What happens when a command collides with another agent's lease (lease_acquire). EnforcedForWrites (default): reads run; a conflicting write is refused with lease_conflict, and a write that names no owner while other agents are connected with owner_required. Advisory runs everything and attaches lease_warning. Enforced also refuses a read that names a dead lease. Takes effect immediately."))
     EHaybaMCPLeaseEnforcement LeaseEnforcement = EHaybaMCPLeaseEnforcement::EnforcedForWrites;
 
