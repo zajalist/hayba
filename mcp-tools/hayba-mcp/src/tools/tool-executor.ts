@@ -119,6 +119,13 @@ export const NON_IDEMPOTENT = new Set<string>([
   'blueprint_set_pin_default',
   'blueprint_add_custom_event',
   'blueprint_remove_node',
+  // Append/remove mutations: a resend duplicates a comment, or fails on a node or
+  // link the first attempt already removed. blueprint_move_nodes is set-to-value
+  // and stays retryable.
+  'blueprint_add_comment',
+  'blueprint_remove_nodes',
+  'blueprint_disconnect',
+  'blueprint_graph_batch',
   // Material authoring
   'material_create',
   'material_create_instance',

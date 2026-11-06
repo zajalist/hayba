@@ -2,13 +2,13 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { makePyToolHandler } from '../py-tool-factory.js';
 import { setDefaultSender, NON_IDEMPOTENT, type Sender } from '../tool-executor.js';
 import {
-  assetSaveDescriptor,
   assetCreateFolderDescriptor,
   assetOpenEditorDescriptor,
   assetGetSourcePathDescriptor,
   assetPyDescriptors,
   ASSET_NON_IDEMPOTENT,
 } from './asset-py-tools.js';
+import { assetSaveHandler } from './asset-save.js';
 
 // Canned-stdout sender driving the HAYBA_JSON parse path; captures the last
 // script so we can assert on generated python (mirrors editor-py-tools.test.ts).
@@ -27,36 +27,26 @@ function emit(obj: unknown): string {
 
 beforeEach(() => setDefaultSender(undefined as never));
 
-describe('asset_save', () => {
-  it('saves all dirty packages when no paths are given', async () => {
-    const { sender, lastScript } = mockStdout(emit({ ok: true, mode: 'all_dirty', saved_all: true }));
-    setDefaultSender(sender);
-    const res = await makePyToolHandler(assetSaveDescriptor)({});
+describe('asset_save (native C++)', () => {
+  it('puts the named paths on the asset_save wire command, never python_run', async () => {
+    const calls: Array<{ cmd: string; params: Record<string, unknown> }> = [];
+    setDefaultSender((async (cmd: string, params: Record<string, unknown>) => {
+      calls.push({ cmd, params });
+      return { id: 'inmem', ok: true, data: { ok: true, saved: ['/Game/A'], saved_count: 1, skipped: [], failed: [], verified: true } };
+    }) as Sender);
+    const res = await assetSaveHandler({ asset_paths: ['/Game/A'] }, undefined as never);
     expect(res.isError).toBeUndefined();
-    const s = lastScript();
-    expect(s).toContain('save_dirty_packages(True, True)');
-    expect(s).toContain('_paths = None');
+    expect(calls).toEqual([{ cmd: 'asset_save', params: { asset_paths: ['/Game/A'] } }]);
   });
 
-  it('saves a named set via save_asset', async () => {
-    const { sender, lastScript } = mockStdout(emit({ ok: true, mode: 'named', saved: ['/Game/A'], saved_count: 1, failed: [] }));
-    setDefaultSender(sender);
-    await makePyToolHandler(assetSaveDescriptor)({ asset_paths: ['/Game/A'] });
-    const s = lastScript();
-    expect(s).toContain('save_asset');
-    expect(s).toContain('_paths = ["/Game/A"]');
+  it('has no save-everything mode: paths are required', async () => {
+    setDefaultSender((async () => { throw new Error('must not reach the editor'); }) as Sender);
+    expect((await assetSaveHandler({}, undefined as never)).isError).toBe(true);
+    expect((await assetSaveHandler({ asset_paths: [] }, undefined as never)).isError).toBe(true);
   });
 
-  it('binds ok to zero failures in named mode (no silent success on failed saves)', async () => {
-    const { sender, lastScript } = mockStdout(emit({ ok: true }));
-    setDefaultSender(sender);
-    await makePyToolHandler(assetSaveDescriptor)({ asset_paths: ['/Game/A'] });
-    const s = lastScript();
-    expect(s).toContain('"ok": len(failed) == 0');
-    expect(s).toContain('warnings');
-  });
-
-  it('is NOT classified NON_IDEMPOTENT (retry-safe)', () => {
+  it('is no longer a python descriptor, and stays retry-safe', () => {
+    expect(assetPyDescriptors.map((d) => d.name)).not.toContain('asset_save');
     expect(NON_IDEMPOTENT.has('asset_save')).toBe(false);
   });
 });
@@ -106,10 +96,10 @@ describe('asset_get_source_path', () => {
 });
 
 describe('asset-domain factory catalog', () => {
-  it('exports 4 net-new tools with unique names', () => {
+  it('exports 3 net-new tools with unique names (asset_save went native)', () => {
     const names = assetPyDescriptors.map((d) => d.name);
-    expect(names).toHaveLength(4);
-    expect(new Set(names).size).toBe(4);
+    expect(names).toHaveLength(3);
+    expect(new Set(names).size).toBe(3);
   });
 
   it('every tool has a 30s timeout and structured returns', () => {

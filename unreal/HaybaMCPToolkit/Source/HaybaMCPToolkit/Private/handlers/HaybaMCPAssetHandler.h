@@ -11,10 +11,32 @@ namespace HaybaAssetImport
         TextureJpeg,
         SoundWave,
         StaticMeshFbx,
+        SkeletalMeshFbx,
+    };
+
+    /** asset_type "skeletal_mesh" only, from the request's `options` object. */
+    struct FSkeletalOptions
+    {
+        /** Existing USkeleton object path; empty creates <Name>_Skeleton. */
+        FString Skeleton;
+        /** false = animation-only import onto Skeleton (required then). */
+        bool bImportMesh = true;
+        bool bCreatePhysicsAsset = true;
+        /** Existing UPhysicsAsset to use instead of creating one. */
+        FString PhysicsAsset;
+        bool bImportAnimations = false;
+        bool bImportMaterials = false;
+        bool bImportTextures = false;
+        bool bImportMorphTargets = false;
+        /** "import" (default), "compute" or "import_and_tangents". */
+        FString NormalImportMethod = TEXT("import");
+        bool bUseT0AsRefPose = false;
+        bool bUpdateSkeletonReferencePose = false;
     };
 
     struct FRequest
     {
+        FSkeletalOptions Skeletal;
         FString SourceFile;
         FString DestinationPath;
         FString AssetType;
@@ -35,6 +57,11 @@ namespace HaybaAssetImport
     /** Pure per-kind byte cap used by both request shaping and the pinned-handle check. */
     int64 MaxFileBytesForKind(EKind Kind);
     bool ValidateFileSize(EKind Kind, int64 FileBytes, FString& Error);
+
+    /** Pure: the first asset name in the destination folder that a skeletal import
+     *  could create or overwrite (mesh, <Name>_Skeleton, <Name>_PhysicsAsset, or the
+     *  animation prefix), or empty when the folder is clear. */
+    FString SkeletalCollision(const FRequest& Request, const TArray<FString>& ExistingNames);
 }
 
 class FHaybaMCPAssetHandler : public IHaybaMCPHandler
@@ -48,6 +75,8 @@ private:
     FHaybaHandlerResult AssetRegistryQuery(const TSharedPtr<FJsonObject>& P);
     FHaybaHandlerResult AssetGetInfo(const TSharedPtr<FJsonObject>& P);
     FHaybaHandlerResult AssetImport(const TSharedPtr<FJsonObject>& P);
+    /** Save named, loaded, dirty content packages natively (never maps, never "all dirty"). */
+    FHaybaHandlerResult AssetSave(const TSharedPtr<FJsonObject>& P);
     FHaybaHandlerResult AssetDuplicate(const TSharedPtr<FJsonObject>& P);
     FHaybaHandlerResult AssetDelete(const TSharedPtr<FJsonObject>& P);
     FHaybaHandlerResult AssetGetReferences(const TSharedPtr<FJsonObject>& P);

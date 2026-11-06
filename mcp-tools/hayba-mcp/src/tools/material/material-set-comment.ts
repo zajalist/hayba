@@ -19,6 +19,8 @@ export const schema = z.object({
   size: z.tuple([z.number(), z.number()]).optional().describe('New box size [width, height]'),
   color: z.array(z.number()).min(3).max(4).optional().describe('New color [r, g, b] or [r, g, b, a] (0..1)'),
   font_size: z.number().int().optional().describe('New title font size'),
+  show_bubble: z.boolean().optional().describe('Set "Show Bubble When Zoomed"'),
+  color_bubble: z.boolean().optional().describe('Set "Color Bubble"'),
 }).refine((d) => !!d.material_path || !!d.function_path, {
   message: 'one of material_path or function_path is required',
 });

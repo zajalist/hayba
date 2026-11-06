@@ -2268,37 +2268,33 @@
           "name": "variable_type",
           "type": "string",
           "required": true,
-          "description": "bool, int, int64, float, string, name, text, byte, vector, rotator, transform, linear_color, vector2d, object:<class path>, class:<class path>, soft_object:<class path>, soft_class:<class path>, struct:<struct path>, enum:<enum path>, or array<any of those>. Blueprint classes end in _C, e.g. object:/Game/UI/WBP_Menu.WBP_Menu_C"
+          "description": "bool, int, int64, float (or double), string, name, text, byte, vector, rotator, transform, linear_color, vector2d, object:<class path>, class:<class path>, soft_object:<class path>, soft_class:<class path>, struct:<struct path>, enum:<enum path>, or array<any of those>. Blueprint classes end in _C, e.g. object:/Game/UI/WBP_Menu.WBP_Menu_C"
         },
-        {
-          "name": "default_value",
-          "type": "string",
-          "required": false,
-          "description": "Default in Unreal's text form, e.g. \"0.2\", \"true\", \"Title\". For arrays and structs set the default afterwards with blueprint_set_defaults."
-        }
+        { "name": "container", "type": "string", "required": false, "description": "none (default), array, set or map; an alternative to the array<...> form" },
+        { "name": "map_value_type", "type": "string", "required": false, "description": "map only: the value type, same grammar as variable_type" },
+        { "name": "default_value", "type": "string", "required": false, "description": "Default in Unreal's text form, e.g. \"0.2\", \"true\", \"(X=0,Y=0,Z=1)\". Checked on the class default object after the compile." },
+        { "name": "instance_editable", "type": "boolean", "required": false, "default": false },
+        { "name": "expose_on_spawn", "type": "boolean", "required": false, "default": false },
+        { "name": "read_only", "type": "boolean", "required": false, "default": false, "description": "Blueprint read-only" },
+        { "name": "category", "type": "string", "required": false },
+        { "name": "tooltip", "type": "string", "required": false },
+        { "name": "update_existing", "type": "boolean", "required": false, "default": false, "description": "if the variable exists with the same type, only set its flags (idempotent builders); a different type is refused" }
       ],
       "returns": {
         "shape": "object",
         "fields": [
-          {
-            "name": "verified",
-            "type": "boolean",
-            "description": "The variable exists with the requested type and, when given, the requested default"
-          },
-          {
-            "name": "compiled_clean",
-            "type": "boolean"
-          },
-          {
-            "name": "default_value",
-            "type": "string",
-            "description": "The default as stored on the variable"
-          }
+          { "name": "variable_name", "type": "string" },
+          { "name": "type", "type": "string" },
+          { "name": "created", "type": "boolean", "description": "false when update_existing only set flags" },
+          { "name": "verified", "type": "boolean", "description": "The variable exists with the requested type and instance-editable flag and, for a new variable given a default, that default on the class default object" },
+          { "name": "compiled_clean", "type": "boolean" },
+          { "name": "default_value", "type": "string", "description": "The default as stored on the class default object" },
+          { "name": "dirty", "type": "boolean" }
         ]
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Add a member variable to a Blueprint and recompile. Object, class and struct references are resolved when added, so a mistyped path is refused with the path in the message instead of compiling into a broken pin. Refuses a name the blueprint already has."
+      "notes": "Add a typed member variable to a Blueprint and recompile: primitives, vector/rotator/transform/colour structs, object/class/soft references, user structs and enums, as arrays, sets or maps, with instance-editable, expose-on-spawn, read-only, category and tooltip set in C++. Object, class and struct references are resolved when added, so a mistyped path is refused with the path in the message instead of compiling into a broken pin. Refuses a name the blueprint already has unless update_existing is set, which makes reruns idempotent."
     },
     "blueprint_compile": {
       "aliases": [],
@@ -2886,12 +2882,23 @@
           "name": "asset_type",
           "type": "string",
           "required": true,
-          "description": "Exact type intent: texture for PNG/JPEG, sound_wave for WAV, or static_mesh for binary FBX. glTF/GLB/OBJ/USD and dependency-reading formats are rejected."
+          "description": "Exact type intent: texture for PNG/JPEG, sound_wave for WAV, static_mesh or skeletal_mesh for binary FBX. glTF/GLB/OBJ/USD and dependency-reading formats are rejected."
+        },
+        {
+          "name": "options",
+          "type": "object",
+          "required": false,
+          "description": "skeletal_mesh only. skeleton (existing Skeleton object path; omit to create <Name>_Skeleton), import_mesh (default true; false = animation-only onto skeleton), create_physics_asset (default true) or physics_asset (existing path), import_animations (each take becomes an AnimSequence), import_materials, import_textures, import_morph_targets (all default false), normal_import_method (import | compute | import_and_tangents), use_t0_as_ref_pose, update_skeleton_reference_pose."
         }
       ],
       "returns": {
         "shape": "object",
         "fields": [
+          {
+            "name": "skeletal_mesh",
+            "type": "string",
+            "description": "skeletal_mesh: the created mesh path. Also skeleton, physics_asset, anim_sequences[], materials[], textures[], created[{path,class}], bone_count and bounds{origin,extent,radius}."
+          },
           {
             "name": "code",
             "type": "string",
@@ -5094,24 +5101,11 @@
           "required": true,
           "description": "Must be unused on this blueprint (case-insensitive); a taken name is refused before anything is created"
         },
-        {
-          "name": "inputs",
-          "type": "array",
-          "required": false,
-          "description": "Parameters as [{\"name\", \"type\"}] — type uses the blueprint_add_variable grammar (float, text, object:<class path>, array<...>)"
-        },
-        {
-          "name": "outputs",
-          "type": "array",
-          "required": false,
-          "description": "Return values as [{\"name\", \"type\"}]; creates the function's result node"
-        },
-        {
-          "name": "pure",
-          "type": "boolean",
-          "required": false,
-          "description": "Mark the function pure (no exec pins; called wherever its output is read)"
-        }
+        { "name": "inputs", "type": "array", "required": false, "description": "Parameters as [{name, type, container?, map_value_type?}]; type uses the blueprint_add_variable grammar (float, text, object:<class path>, array<...>)" },
+        { "name": "outputs", "type": "array", "required": false, "description": "Return values as [{name, type, container?, map_value_type?}]; creates the function's result node" },
+        { "name": "locals", "type": "array", "required": false, "description": "[{name, type, default_value?}] local variables" },
+        { "name": "pure", "type": "boolean", "required": false, "default": false, "description": "Mark the function pure (no exec pins; called wherever its output is read)" },
+        { "name": "const", "type": "boolean", "required": false, "default": false }
       ],
       "returns": {
         "shape": "object",
@@ -5120,6 +5114,8 @@
             "name": "function_name",
             "type": "string"
           },
+          { "name": "graph", "type": "string" },
+          { "name": "locals_created", "type": "integer", "description": "local variables added" },
           {
             "name": "compiled_clean",
             "type": "boolean",
@@ -5154,7 +5150,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Adds a function graph to a blueprint, with an optional signature (inputs, outputs, pure), and recompiles. Every parameter type is checked before the graph is created, so a bad type refuses the whole function rather than leaving a half-built one. Build the body with blueprint_add_node using graph_name = the function name."
+      "notes": "Adds a function graph with its signature (typed inputs, outputs, locals, pure/const) in one call and recompiles in C++. A name already taken is refused before anything is created, and every parameter type is resolved first, so a bad type refuses the whole function rather than leaving a half-built one. Check compiled_clean and signature. Build the body with blueprint_add_node using graph_name = the function name."
     },
     "blueprint_document": {
       "aliases": [],
@@ -5190,9 +5186,9 @@
     },
     "blueprint_add_node": {
       "aliases": [], "handler_cpp": "FHaybaMCPBlueprintHandler::AddNode",
-      "params": [{"name":"path","type":"string","required":true},{"name":"graph_name","type":"string","required":false,"description":"Graph to place the node in; omit for the main event graph, or pass a function name to build its body"},{"name":"node_type","type":"string","required":true,"description":"call_function, branch, select, timer_by_function, variable_get, variable_set, cast, sequence (option_count = number of then_N outputs), self (a reference to this blueprint), or create_widget (class_path = the widget class, ending _C)"},{"name":"function_name","type":"string","required":false},{"name":"class_path","type":"string","required":false,"description":"The class a call_function belongs to (omit for this blueprint's own functions), the target type of a cast, or the widget class of create_widget"},{"name":"variable_name","type":"string","required":false},{"name":"option_count","type":"integer","required":false,"description":"select: number of options; sequence: number of outputs (2-32)"},{"name":"x","type":"number","required":false},{"name":"y","type":"number","required":false}],
-      "returns":{"shape":"object","fields":[{"name":"node_id","type":"string"},{"name":"pins","type":"array"},{"name":"return_class","type":"string","description":"create_widget only: the widget class the output is typed to"}]}, "agent_callable":true,"has_ts_wrapper":false,
-      "notes":"Stages a standard event-graph node and returns its GUID plus exact pins. timer_by_function creates K2_SetTimer; set its Object, FunctionName, Time and Looping pins before compile. For entry points use blueprint_add_event (BeginPlay, Construct), blueprint_add_custom_event, or ui_bind_event (widget events)."
+      "params": [{"name":"path","type":"string","required":true},{"name":"graph_name","type":"string","required":false,"description":"Graph to place the node in; omit for the main event graph, or pass a function name to build its body"},{"name":"node_type","type":"string","required":true,"description":"call_function, message, branch, select, timer_by_function, variable_get, variable_set, cast, custom_event, macro, break_struct, make_struct, call_dispatcher, function_entry, function_result, sequence, make_array, self, format_text, get_data_table_row, spawn_actor_from_class, create_widget, reroute, get_array_item, switch_int, switch_string, switch_name. sequence: option_count = number of then_N outputs; self: a reference to this blueprint; create_widget: class_path = the widget class, ending _C"},{"name":"function_name","type":"string","required":false,"description":"call_function/message: the function; 'ClassPath:Function' (editor Python's form) also works"},{"name":"class_path","type":"string","required":false,"description":"call_function/message owner class (omit for this blueprint's own functions), cast target, the class owning a variable_get/set member, or the widget class of create_widget"},{"name":"variable_name","type":"string","required":false,"description":"variable_get/set: a member of this Blueprint, else a local of the function graph, else a member of class_path"},{"name":"event_name","type":"string","required":false,"description":"custom_event: the event name (an existing one is returned, never duplicated)"},{"name":"macro_name","type":"string","required":false,"description":"macro: e.g. ForEachLoop, DoOnce, IsValid"},{"name":"macro_library","type":"string","required":false,"description":"macro: library Blueprint (default /Engine/EditorBlueprintResources/StandardMacros.StandardMacros); this Blueprint's own macros are searched first"},{"name":"struct_path","type":"string","required":false,"description":"break_struct/make_struct: e.g. /Script/CoreUObject.Vector or /Game/Data/S_Item.S_Item"},{"name":"dispatcher_name","type":"string","required":false,"description":"call_dispatcher: an event dispatcher on this Blueprint"},{"name":"option_count","type":"integer","required":false,"description":"select: number of options; sequence: number of outputs (2-32)"},{"name":"x","type":"number","required":false},{"name":"y","type":"number","required":false}],
+      "returns":{"shape":"object","fields":[{"name":"node_id","type":"string"},{"name":"pins","type":"array"},{"name":"already_existed","type":"boolean"},{"name":"return_class","type":"string","description":"create_widget only: the widget class the output is typed to"}]}, "agent_callable":true,"has_ts_wrapper":false,
+      "notes":"Stages one node and returns its GUID plus exact pins. Covers the editor palette nodes: calls, interface messages, casts, self/local/other-class variables, custom events, StandardMacros (built in C++), struct break/make, dispatcher calls, entry/result, sequence, make array, create widget, spawn actor, data-table row, switches and reroutes. timer_by_function creates K2_SetTimer; set its Object, FunctionName, Time and Looping pins before compile. Refused during PIE or while the Blueprint compiles. For entry points use blueprint_add_event (BeginPlay, Construct), blueprint_add_custom_event, or ui_bind_event (widget events). For many nodes at once use blueprint_graph_batch."
     },
     "blueprint_connect_nodes": {
       "aliases": [], "handler_cpp":"FHaybaMCPBlueprintHandler::ConnectNodes",
@@ -5229,6 +5225,48 @@
       "params":[{"name":"path","type":"string","required":true},{"name":"node_id","type":"string","required":true,"description":"GUID from blueprint_add_node or blueprint_inspect_graph"},{"name":"graph_name","type":"string","required":false,"description":"The graph the node is in; omit for the main event graph"}],
       "returns":{"shape":"object","fields":[{"name":"removed_node_id","type":"string"},{"name":"title","type":"string"},{"name":"verified","type":"boolean","description":"The node is gone from the graph on readback"}]},"agent_callable":true,"has_ts_wrapper":false,
       "notes":"Deletes one node (and its links) from a blueprint graph, for taking back a node placed wrong. Refuses a function's entry or result node, which the function cannot exist without. Staged until blueprint_compile."
+    },
+    "blueprint_graph_batch": {
+      "aliases": [], "handler_cpp":"FHaybaMCPBlueprintHandler::GraphBatch",
+      "params":[{"name":"path","type":"string","required":true},{"name":"graph_name","type":"string","required":false,"description":"default graph for every op (an op may set its own)"},{"name":"ops","type":"array","required":true,"description":"1-2048 ops run in order. Each is {op, ref?, ...the single command's own args}. op: add_node | add_event | connect | set_pin | comment | move | remove | disconnect | fit_comments. ref names the node an op creates; later ops may use that name wherever a node_id/from_node/to_node/node_ids entry goes. connect defaults from_pin 'then' and to_pin 'execute'; move accepts node_id,x,y inline."},{"name":"compile","type":"boolean","required":false,"default":false,"description":"compile in C++ after a fully applied batch"},{"name":"save","type":"boolean","required":false,"default":false,"description":"with compile: save after a clean compile"}],
+      "returns":{"shape":"object","fields":[{"name":"ok","type":"boolean"},{"name":"applied","type":"integer"},{"name":"total","type":"integer"},{"name":"refs","type":"object","description":"ref -> node GUID"},{"name":"results","type":"array"},{"name":"mutation_status","type":"string"},{"name":"failed_index","type":"integer"},{"name":"error","type":"string"},{"name":"hint","type":"string"},{"name":"compile","type":"object"},{"name":"compile_error","type":"string"},{"name":"dirty","type":"boolean"}]},"agent_callable":true,"has_ts_wrapper":false,
+      "notes":"Builds or edits a whole Blueprint graph in ONE call instead of one MCP call per node and link: the replacement for editor-Python graph builders (BlueprintGraphEditor / BlueprintGraphPinLibrary). Each op is the matching single blueprint_* command, so its validation and verified readback apply; the batch stops at the first failing op and reports failed_index plus refs so the rest can be resent. One editor transaction (one undo) and one skeleton regeneration for the whole batch. Example ops: {op:'add_event',ref:'begin',event_name:'ReceiveBeginPlay'}, {op:'add_node',ref:'print',node_type:'call_function',function_name:'/Script/Engine.KismetSystemLibrary:PrintString',x:300}, {op:'connect',from_node:'begin',to_node:'print'}, {op:'set_pin',node_id:'print',pin_name:'InString',value:'hi'}, {op:'comment',title:'Startup',node_ids:['begin','print'],color:[0.2,0.32,0.55]}, {op:'fit_comments'} last so every box fits the real node sizes."
+    },
+    "blueprint_add_comment": {
+      "aliases": [], "handler_cpp":"FHaybaMCPBlueprintHandler::AddComment",
+      "params":[{"name":"path","type":"string","required":true},{"name":"graph_name","type":"string","required":false},{"name":"title","type":"string","required":true},{"name":"description","type":"string","required":false,"description":"optional Details-panel text; leave it out (a production project's rule: comment boxes are title-only)"},{"name":"node_ids","type":"array","required":false,"description":"nodes to enclose; the box is sized around their real rendered sizes"},{"name":"x","type":"integer","required":false},{"name":"y","type":"integer","required":false},{"name":"width","type":"integer","required":false,"default":400},{"name":"height","type":"integer","required":false,"default":100},{"name":"color","type":"array","required":false,"description":"[r,g,b] or [r,g,b,a] linear 0-1"},{"name":"font_size","type":"integer","required":false,"default":18},{"name":"padding","type":"integer","required":false,"default":40},{"name":"bubble","type":"boolean","required":false,"default":true,"description":"Show Bubble When Zoomed + Color Bubble"}],
+      "returns":{"shape":"object","fields":[{"name":"node_id","type":"string"},{"name":"graph","type":"string"},{"name":"rect","type":"array"},{"name":"enclosed","type":"integer"},{"name":"measured","type":"boolean","description":"true when node sizes came from real Slate widgets, false when estimated"},{"name":"bubble","type":"boolean"},{"name":"verified","type":"boolean"},{"name":"dirty","type":"boolean"},{"name":"note","type":"string"}]},"agent_callable":true,"has_ts_wrapper":false,
+      "notes":"Adds a Blueprint comment box in the house style: a short title only, a group colour, and Show Bubble When Zoomed plus Color Bubble on by default. Encloses node_ids, sized from their real rendered widgets (measured:true), or takes an explicit x/y/width/height. Not a structural change, so no compile is needed."
+    },
+    "blueprint_move_nodes": {
+      "aliases": [], "handler_cpp":"FHaybaMCPBlueprintHandler::MoveNodes",
+      "params":[{"name":"path","type":"string","required":true},{"name":"graph_name","type":"string","required":false},{"name":"moves","type":"array","required":true,"description":"1-4096 of {node_id, x, y, width?, height?}; width/height only for comment boxes"},{"name":"pack","type":"boolean","required":false,"default":false,"description":"treat the positions as a plan: using real node sizes, push each moved node straight down until it overlaps no other node"},{"name":"gap","type":"integer","required":false,"default":40,"description":"pack: vertical gap between nodes"},{"name":"fit_comments","type":"boolean","required":false,"default":false,"description":"afterwards, refit every comment box (blueprint_fit_comments)"}],
+      "returns":{"shape":"object","fields":[{"name":"moved","type":"integer"},{"name":"verified","type":"boolean"},{"name":"packed","type":"integer","description":"pack: how many moved nodes were pushed down"},{"name":"measured","type":"boolean"},{"name":"fit","type":"object","description":"fit_comments: the blueprint_fit_comments result"},{"name":"fit_error","type":"string"},{"name":"dirty","type":"boolean"}]},"agent_callable":true,"has_ts_wrapper":false,
+      "notes":"Position-only layout edit for Blueprint graph nodes and comment boxes (resize comments with width/height). Never touches pins, links or structure and needs no compile. All node ids are checked before anything moves. pack:true removes overlaps using real rendered node sizes; fit_comments:true then refits every comment box. The layout lane's tool; get real sizes first with blueprint_measure_nodes."
+    },
+    "blueprint_measure_nodes": {
+      "aliases": [], "handler_cpp":"FHaybaMCPBlueprintHandler::MeasureNodes",
+      "params":[{"name":"path","type":"string","required":true},{"name":"graph_name","type":"string","required":false}],
+      "returns":{"shape":"object","fields":[{"name":"graph","type":"string"},{"name":"measured","type":"boolean","description":"false when Slate is unavailable and sizes are estimates"},{"name":"nodes","type":"array","description":"{node_id, title, rect:[x,y,w,h], comment, in_comment}"},{"name":"node_count","type":"integer"}]},"agent_callable":true,"has_ts_wrapper":false,
+      "notes":"Read-only. Returns every Blueprint graph node's REAL rendered rectangle, measured from a private off-screen graph panel at 1:1 zoom (node sizes exist only in the editor's Slate widgets, so estimates clip), plus which comment box each node starts in. Feed it to a layout planner, then apply with blueprint_move_nodes."
+    },
+    "blueprint_fit_comments": {
+      "aliases": [], "handler_cpp":"FHaybaMCPBlueprintHandler::FitComments",
+      "params":[{"name":"path","type":"string","required":true},{"name":"graph_name","type":"string","required":false},{"name":"padding","type":"integer","required":false,"default":40},{"name":"title_pad","type":"integer","required":false,"description":"room above the nodes for the title bar; default 2x the comment's own text size"},{"name":"comment_ids","type":"array","required":false,"description":"fit only these comments (default: all)"},{"name":"members","type":"object","required":false,"description":"comment_id -> [node_ids] to set a group explicitly; otherwise the editor's grouping, else every node whose top-left lies inside the box"},{"name":"resolve_overlaps","type":"boolean","required":false,"default":false,"description":"push whole top-level groups down until no group box overlaps another group or a loose node"},{"name":"gap","type":"integer","required":false,"default":60},{"name":"title_only","type":"boolean","required":false,"default":false,"description":"cleanup: cut each comment to its first line and clear its Details text"}],
+      "returns":{"shape":"object","fields":[{"name":"measured","type":"boolean"},{"name":"fitted","type":"array","description":"{node_id, title, rect, members}"},{"name":"skipped","type":"array","description":"{node_id, title, reason}"},{"name":"changed","type":"integer"},{"name":"groups_moved","type":"integer"},{"name":"verified","type":"boolean","description":"every fitted box now encloses all its members"},{"name":"dirty","type":"boolean"},{"name":"warning","type":"string"}]},"agent_callable":true,"has_ts_wrapper":false,
+      "notes":"Fixes Blueprint comment boxes that do not fit their nodes: resizes and repositions every comment to enclose its group using the nodes' REAL rendered sizes (an off-screen graph panel, not estimates), inner comments first so nested boxes fit too, with padding and room for the title bar. Optionally pushes overlapping groups apart, and title_only:true trims comments to a one-line title. Colour and bubble flags are never touched. No compile needed."
+    },
+    "blueprint_remove_nodes": {
+      "aliases": [], "handler_cpp":"FHaybaMCPBlueprintHandler::RemoveNodes",
+      "params":[{"name":"path","type":"string","required":true},{"name":"graph_name","type":"string","required":false},{"name":"node_ids","type":"array","required":true,"description":"1-1024 node GUIDs"}],
+      "returns":{"shape":"object","fields":[{"name":"removed","type":"integer"},{"name":"closed_editors","type":"integer"},{"name":"verified","type":"boolean"},{"name":"dirty","type":"boolean"},{"name":"note","type":"string"}]},"agent_callable":true,"has_ts_wrapper":false,
+      "notes":"Deletes Blueprint graph nodes (links break with them). Every id is checked first; function entry nodes and undeletable nodes are refused. Closes the Blueprint's open editors before removing, because a graph panel holding widgets for deleted nodes is a known crash. Staged: compile afterwards."
+    },
+    "blueprint_disconnect": {
+      "aliases": [], "handler_cpp":"FHaybaMCPBlueprintHandler::Disconnect",
+      "params":[{"name":"path","type":"string","required":true},{"name":"graph_name","type":"string","required":false},{"name":"node_id","type":"string","required":true},{"name":"pin_name","type":"string","required":true},{"name":"to_node","type":"string","required":false},{"name":"to_pin","type":"string","required":false}],
+      "returns":{"shape":"object","fields":[{"name":"broken","type":"integer"},{"name":"verified","type":"boolean"},{"name":"dirty","type":"boolean"},{"name":"note","type":"string"}]},"agent_callable":true,"has_ts_wrapper":false,
+      "notes":"Breaks Blueprint pin links: one specific link when to_node and to_pin are given (refused if they are not linked), otherwise every link on the pin. The inverse of blueprint_connect_nodes; staged, compile afterwards."
     },
     "level_get_spatial_index": {
       "aliases": [],

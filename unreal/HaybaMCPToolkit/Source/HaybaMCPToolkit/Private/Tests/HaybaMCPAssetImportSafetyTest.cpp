@@ -75,6 +75,62 @@ bool FHaybaAssetImportRequestTest::RunTest(const FString& Parameters)
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FHaybaAssetImportSkeletalRequestTest,
+    "Hayba.AssetImport.SkeletalRequest",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FHaybaAssetImportSkeletalRequestTest::RunTest(const FString& Parameters)
+{
+    using namespace HaybaAssetImport;
+    auto Skeletal = []()
+    {
+        TSharedPtr<FJsonObject> Json = ValidRequest();
+        Json->SetStringField(TEXT("source_file"), TEXT("C:/Temp/hayba-asset-connectors/provider/request/SK_Hero.fbx"));
+        Json->SetStringField(TEXT("asset_type"), TEXT("skeletal_mesh"));
+        return Json;
+    };
+    FRequest Parsed;
+    FString Error;
+    TestTrue(TEXT("skeletal FBX parses without options"), ParseAndValidateRequest(Skeletal(), Parsed, Error));
+    TestTrue(TEXT("defaults: own skeleton, physics asset, no anims"), Parsed.Kind == EKind::SkeletalMeshFbx
+        && Parsed.Skeletal.Skeleton.IsEmpty() && Parsed.Skeletal.bCreatePhysicsAsset && !Parsed.Skeletal.bImportAnimations);
+
+    TSharedPtr<FJsonObject> Opts = MakeShared<FJsonObject>();
+    Opts->SetBoolField(TEXT("import_animations"), true);
+    Opts->SetStringField(TEXT("normal_import_method"), TEXT("compute"));
+    TSharedPtr<FJsonObject> WithOpts = Skeletal();
+    WithOpts->SetObjectField(TEXT("options"), Opts);
+    TestTrue(TEXT("valid options parse"), ParseAndValidateRequest(WithOpts, Parsed, Error));
+    TestTrue(TEXT("options land"), Parsed.Skeletal.bImportAnimations && Parsed.Skeletal.NormalImportMethod == TEXT("compute"));
+
+    TSharedPtr<FJsonObject> OnTexture = ValidRequest();
+    OnTexture->SetObjectField(TEXT("options"), Opts);
+    TestFalse(TEXT("options are refused for other asset types"), ParseAndValidateRequest(OnTexture, Parsed, Error));
+
+    TSharedPtr<FJsonObject> Bad = MakeShared<FJsonObject>();
+    Bad->SetStringField(TEXT("import_animations"), TEXT("yes"));
+    TSharedPtr<FJsonObject> BadType = Skeletal();
+    BadType->SetObjectField(TEXT("options"), Bad);
+    TestFalse(TEXT("a non-boolean flag is refused"), ParseAndValidateRequest(BadType, Parsed, Error));
+
+    TSharedPtr<FJsonObject> AnimOnly = MakeShared<FJsonObject>();
+    AnimOnly->SetBoolField(TEXT("import_mesh"), false);
+    TSharedPtr<FJsonObject> NoSkeleton = Skeletal();
+    NoSkeleton->SetObjectField(TEXT("options"), AnimOnly);
+    TestFalse(TEXT("animation-only needs a skeleton"), ParseAndValidateRequest(NoSkeleton, Parsed, Error));
+
+    // The importer's names are reserved: none of them may already exist.
+    TestTrue(TEXT("SkeletalCollision(empty folder)"), SkeletalCollision(Parsed, {}).IsEmpty());
+    ParseAndValidateRequest(WithOpts, Parsed, Error);
+    TestEqual(TEXT("an existing skeleton name is a clash"),
+        SkeletalCollision(Parsed, { TEXT("Other"), TEXT("SK_Hero_Skeleton") }), FString(TEXT("SK_Hero_Skeleton")));
+    TestEqual(TEXT("an existing take is a clash"),
+        SkeletalCollision(Parsed, { TEXT("SK_Hero_Anim_Lash") }), FString(TEXT("SK_Hero_Anim_Lash")));
+    TestTrue(TEXT("unrelated names are fine"), SkeletalCollision(Parsed, { TEXT("SK_Heroic"), TEXT("M_Hero") }).IsEmpty());
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
     FHaybaAssetImportHeaderTest,
     "Hayba.AssetImport.BoundedFormatHeaders",
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
