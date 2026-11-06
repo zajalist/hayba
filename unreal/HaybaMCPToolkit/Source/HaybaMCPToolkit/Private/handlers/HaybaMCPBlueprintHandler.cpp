@@ -1470,8 +1470,6 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::AddEvent(const TSharedPtr<FJsonOb
 
     UBlueprint* BP = LoadBPByPath(Path);
     if (!BP) return FHaybaHandlerResult::Err(BlueprintNotFoundError(TEXT("blueprint_add_event"), Path));
-    UEdGraph* Graph = HaybaFindGraph(BP, GraphName);
-    if (!Graph) return FHaybaHandlerResult::Err(TEXT("blueprint_add_event: graph not found"));
 
     UClass* ParentClass = BP->ParentClass.Get();
     UFunction* EventFn = ParentClass ? ParentClass->FindFunctionByName(FName(*EventName)) : nullptr;
@@ -1481,6 +1479,55 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::AddEvent(const TSharedPtr<FJsonOb
             TEXT("blueprint_add_event: no overridable event '%s' on %s"),
             *EventName, ParentClass ? *ParentClass->GetName() : TEXT("<null>")));
     }
+
+    // A parent event with a return value or out params (UUserWidget::OnKeyDown -> FEventReply) cannot be an
+    // event node. Implement it the way the editor's Override menu does (SMyBlueprint::ImplementFunction): a
+    // function graph built from the parent's signature, so its entry and result nodes match it. graph_name is
+    // ignored here; the graph takes the function's name. Idempotent like the event path.
+    if (!UEdGraphSchema_K2::FunctionCanBePlacedAsEvent(EventFn))
+    {
+        UFunction* OverrideFn = nullptr;
+        UClass* const OverrideClass = FBlueprintEditorUtils::GetOverrideFunctionClass(BP, EventFn->GetFName(), &OverrideFn);
+        if (!OverrideClass || !OverrideFn || !UEdGraphSchema_K2::CanKismetOverrideFunction(OverrideFn))
+        {
+            return FHaybaHandlerResult::Err(FString::Printf(
+                TEXT("blueprint_add_event: '%s' on %s is not a Blueprint-overridable function. Nothing was changed."),
+                *EventName, *ParentClass->GetName()));
+        }
+        UEdGraph* FnGraph = FindObject<UEdGraph>(BP, *EventFn->GetName());
+        const bool bExisted = FnGraph != nullptr;
+        if (!FnGraph)
+        {
+            BP->Modify();
+            FnGraph = FBlueprintEditorUtils::CreateNewGraph(BP, EventFn->GetFName(), UEdGraph::StaticClass(), UEdGraphSchema_K2::StaticClass());
+            if (!FnGraph) return FHaybaHandlerResult::Err(TEXT("blueprint_add_event: CreateNewGraph failed for the override graph"));
+            FBlueprintEditorUtils::AddFunctionGraph(BP, FnGraph, /*bIsUserCreated*/ false, OverrideClass);
+            MarkStructural(BP);
+        }
+        UK2Node_FunctionEntry* Entry = nullptr;
+        UK2Node_FunctionResult* Result = nullptr;
+        for (UEdGraphNode* N : FnGraph->Nodes)
+        {
+            if (!Entry) Entry = Cast<UK2Node_FunctionEntry>(N);
+            if (!Result) Result = Cast<UK2Node_FunctionResult>(N);
+        }
+        // node_id is the entry, so a blueprint_graph_batch add_event ref binds to the override's entry point.
+        TSharedPtr<FJsonObject> Out = HaybaDescribeNode(Entry);
+        Out->SetStringField(TEXT("kind"), TEXT("function_override"));
+        Out->SetStringField(TEXT("graph_name"), FnGraph->GetName());
+        Out->SetStringField(TEXT("override_of"), OverrideClass->GetName() + TEXT("::") + EventFn->GetName());
+        Out->SetStringField(TEXT("entry_node_id"), Entry ? Entry->NodeGuid.ToString() : FString());
+        Out->SetStringField(TEXT("result_node_id"), Result ? Result->NodeGuid.ToString() : FString());
+        Out->SetObjectField(TEXT("result_node"), HaybaDescribeNode(Result));
+        Out->SetBoolField(TEXT("already_existed"), bExisted);
+        Out->SetBoolField(TEXT("verified"), Entry != nullptr && BP->FunctionGraphs.Contains(FnGraph));
+        Out->SetBoolField(TEXT("dirty"), BP->GetOutermost()->IsDirty());
+        Out->SetStringField(TEXT("note"), TEXT("Staged. Build the body in graph_name, then call blueprint_compile."));
+        return FHaybaHandlerResult::Ok(Out);
+    }
+
+    UEdGraph* Graph = HaybaFindGraph(BP, GraphName);
+    if (!Graph) return FHaybaHandlerResult::Err(TEXT("blueprint_add_event: graph not found"));
 
     for (UEdGraphNode* N : Graph->Nodes)
     {
