@@ -685,7 +685,12 @@ static FApplyNodePropsResult ApplyNodeProps(UMaterialExpression* Expr, const TSh
         if (UMaterialExpressionMaterialFunctionCall* Fc = Cast<UMaterialExpressionMaterialFunctionCall>(Expr))
             if (UMaterialFunction* Fn = LoadObject<UMaterialFunction>(nullptr, *FuncPath))
             {
-                Fc->SetMaterialFunction(Fn);
+                // Re-setting the SAME function would rebuild Outputs in the function's new
+                // order with no output fixup (SetMaterialFunction passes no old function), so
+                // existing links could land on the wrong pin. UpdateFromFunctionResource alone
+                // refreshes the pins and fixes links up by output id.
+                if (Fc->MaterialFunction != Fn)
+                    Fc->SetMaterialFunction(Fn);
                 // CRITICAL: rebuild FunctionInputs/FunctionOutputs now. Without this
                 // the call's pins stay empty until the editor opens/recompiles, so
                 // connect-by-name (and material_get_info.outputs[]) see nothing —
@@ -741,6 +746,23 @@ static FApplyNodePropsResult ApplyNodeProps(UMaterialExpression* Expr, const TSh
         if (CP->Collection && !CP->ParameterName.IsNone() && !CP->ParameterId.IsValid())
             R.Unknown.Add(FString::Printf(TEXT("ParameterName ('%s' is not a parameter of %s)"),
                 *CP->ParameterName.ToString(), *CP->Collection->GetName()));
+    }
+
+    // A Custom node's output pins come from AdditionalOutputs only through its
+    // PostEditChangeProperty (RebuildOutputs), also skipped here: without this the node
+    // keeps one output and material_connect_nodes refuses from_output_index 1+. Mirror it
+    // minus the broadcast, including its space-stripping of input names.
+    // shortcut: an OPEN material editor keeps its old pins (no GraphNode->ReconstructNode);
+    // editor-rules close the tab before graph edits; upgrade if agents must edit open graphs.
+    if (UMaterialExpressionCustom* Cu = Cast<UMaterialExpressionCustom>(Expr))
+    {
+        for (FCustomInput& In : Cu->Inputs)
+        {
+            FString Name = In.InputName.ToString();
+            if (Name.ReplaceInline(TEXT(" "), TEXT("")) > 0)
+                In.InputName = *Name;
+        }
+        Cu->RebuildOutputs();
     }
 
     // Do not broadcast PostEditChange for every staged node edit. Some editor
