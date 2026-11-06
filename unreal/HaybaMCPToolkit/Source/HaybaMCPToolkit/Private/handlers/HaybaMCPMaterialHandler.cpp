@@ -91,6 +91,21 @@ TArray<FString> FHaybaMCPMaterialHandler::GetCommands() const
 
 FHaybaHandlerResult FHaybaMCPMaterialHandler::Handle(const FString& Cmd, const TSharedPtr<FJsonObject>& P)
 {
+    // Graph edits and compiles rebuild shader maps. During PIE the renderer draws those materials every
+    // frame, and a map rebuilt under it is the 23:37 MaterialShader.cpp:2567 crash class again. Reads,
+    // validation, instances, parameter values and assignment stay available.
+    static const TSet<FString> GraphCommands = {
+        TEXT("material_create"), TEXT("material_function_create"), TEXT("material_add_node"),
+        TEXT("material_set_node"), TEXT("material_set_property"), TEXT("material_delete_node"),
+        TEXT("material_add_comment"), TEXT("material_set_comment"), TEXT("material_delete_comment"),
+        TEXT("material_add_reroute_declaration"), TEXT("material_add_reroute_usage"),
+        TEXT("material_connect_nodes"), TEXT("material_disconnect"), TEXT("material_compile"),
+    };
+    if (GraphCommands.Contains(Cmd) && GEditor && GEditor->IsPlaySessionInProgress())
+    {
+        return FHaybaHandlerResult::Err(FString::Printf(
+            TEXT("%s: a Play-In-Editor session is running; stop it (editor_stop_pie) before editing or compiling material graphs. Nothing was changed."), *Cmd));
+    }
     if (Cmd == TEXT("material_create"))         return MatCreate(P);
     if (Cmd == TEXT("material_function_create")) return MatFunctionCreate(P);
     if (Cmd == TEXT("material_add_node"))       return MatAddNode(P);
