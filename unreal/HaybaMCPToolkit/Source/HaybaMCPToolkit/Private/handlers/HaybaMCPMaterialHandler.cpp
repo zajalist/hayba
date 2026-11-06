@@ -3154,6 +3154,13 @@ static bool HaybaWaitForShaderMap(UMaterial* Mat, double TimeoutSeconds, TArray<
     bTimedOut = false;
     FMaterialResource* Resource = Mat ? Mat->GetMaterialResource(GMaxRHIShaderPlatform) : nullptr;
     if (!Resource) return false;
+    // RecompileMaterial's PostEditChange caches with EMaterialShaderPrecompileMode::None: the shader
+    // map is registered but no job is submitted (the editor compiles shaders on demand when something
+    // renders them), so IsCompilationFinished() was true at once and a broken permutation such as
+    // FPostProcessMaterialPS failed only later, after a clean report. Submit the pending jobs now,
+    // at the priority the editor itself uses when asked to compile, so the wait below sees them.
+    // shortcut: an ODSC editor releases the compiling id first, making this a no-op; a production project is not ODSC.
+    Resource->SubmitCompileJobs_GameThread(EShaderCompileJobPriority::High);
     const double Deadline = FPlatformTime::Seconds() + TimeoutSeconds;
     while (!Resource->IsCompilationFinished())
     {
