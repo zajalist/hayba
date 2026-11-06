@@ -99,13 +99,17 @@ const DOMAINS: ReadonlyArray<{ domain: string; command_count: number; commands: 
       'asset_rename',
     ],
   },
-  // blueprint_add_node / blueprint_connect_nodes / blueprint_add_event are C++ stubs that
-  // return not_implemented_in_v1 — they will never succeed. Omit them so the catalog
-  // does not advertise commands an agent cannot use. (HaybaMCPBlueprintHandler.cpp:345/350/465)
   {
     domain: 'blueprint',
-    command_count: 12,
+    command_count: 19,
     commands: [
+      'blueprint_graph_batch',
+      'blueprint_fit_comments',
+      'blueprint_measure_nodes',
+      'blueprint_add_comment',
+      'blueprint_move_nodes',
+      'blueprint_remove_nodes',
+      'blueprint_disconnect',
       'blueprint_create',
       'blueprint_get_info',
       'blueprint_add_component',

@@ -81,6 +81,7 @@ import { materialDeleteNodeHandler, meta as materialDeleteNodeMeta } from './mat
 import { materialAddCommentHandler, meta as materialAddCommentMeta } from './material/material-add-comment.js';
 import { materialDeleteCommentHandler, meta as materialDeleteCommentMeta } from './material/material-delete-comment.js';
 import { materialSetCommentHandler, meta as materialSetCommentMeta } from './material/material-set-comment.js';
+import { assetSaveHandler, meta as assetSaveMeta, schema as assetSaveSchema } from './asset/asset-save.js';
 import {
   materialAddRerouteDeclarationHandler,
   meta as materialAddRerouteDeclarationMeta,
@@ -2240,6 +2241,16 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
     },
   },
   {
+    name: 'asset_save',
+    description:
+      'Save named assets to disk natively (C++, no editor Python). Each path is saved only if it is loaded and dirty, then verified clean in memory with a fresh file on disk; saved[], skipped[] and failed[] say what happened to each. Refuses maps (use level_save), read-only files, Blueprints mid-compile, and PIE. There is no save-everything mode: other agents share this editor.',
+    meta: assetSaveMeta,
+    handler: assetSaveHandler,
+    cost: 'low',
+    returns: '{ok, saved[], saved_count, skipped[{path,reason}], failed[{path,reason}], verified}',
+    schema: assetSaveSchema.shape,
+  },
+  {
     name: 'material_add_comment',
     description: 'Add a titled comment box around a group of nodes in a material or function graph.',
     meta: materialAddCommentMeta,
@@ -2261,6 +2272,11 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
       size: z.tuple([z.number(), z.number()]).optional().describe('Box size [width, height]'),
       color: z.array(z.number()).min(3).max(4).optional().describe('Box color [r, g, b] or [r, g, b, a] (0..1)'),
       font_size: z.number().int().optional().describe('Title font size (default 18)'),
+      show_bubble: z
+        .boolean()
+        .optional()
+        .describe('"Show Bubble When Zoomed": the title floats above the box when zoomed out (default true)'),
+      color_bubble: z.boolean().optional().describe('"Color Bubble": tint that bubble with the box colour (default true)'),
     },
   },
   {
@@ -2308,6 +2324,8 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
       size: z.tuple([z.number(), z.number()]).optional().describe('New box size [width, height]'),
       color: z.array(z.number()).min(3).max(4).optional().describe('New color [r, g, b] or [r, g, b, a] (0..1)'),
       font_size: z.number().int().optional().describe('New title font size'),
+      show_bubble: z.boolean().optional().describe('Set "Show Bubble When Zoomed"'),
+      color_bubble: z.boolean().optional().describe('Set "Color Bubble"'),
     },
   },
   {

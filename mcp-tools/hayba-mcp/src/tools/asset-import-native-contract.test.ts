@@ -126,6 +126,21 @@ describe('native single-file asset_import safety contract (#415)', () => {
     expect(handler).toContain('only binary .fbx');
   });
 
+  it('imports skeletal FBX without overwriting anything it could create, verified by folder readback', () => {
+    expect(handler).toContain('Out.AssetType == TEXT("skeletal_mesh")');
+    expect(handler).toContain('options is an object and only applies to asset_type skeletal_mesh');
+    expect(handler).toContain('needs options.skeleton');
+    // Every name the import could take is checked before AssetTools is even loaded.
+    expectBefore(assetImport, 'SkeletalCollision(Request, Names)', 'LoadModulePtr<FAssetToolsModule>');
+    for (const name of ['TEXT("_Skeleton")', 'TEXT("_PhysicsAsset")', 'TEXT("_Anim")']) expect(handler).toContain(name);
+    expect(handler).toContain('UI->MeshTypeToImport = S.bImportMesh ? FBXIT_SkeletalMesh : FBXIT_Animation');
+    // Verified by what appeared in the folder, never by the returned pointers.
+    const verify = between(handler, 'static FHaybaHandlerResult VerifySkeletalImport(', 'FHaybaHandlerResult FHaybaMCPAssetHandler::AssetImport(');
+    expect(verify).toContain('if (BeforeImport.Contains(Path)) continue;');
+    expect(verify).not.toContain('ImportedPointers');
+    expect(verify).toContain('GetRefSkeleton().GetNum()');
+  });
+
   it('discards callback-returned pointers and re-resolves exact path/class/package truth', () => {
     expect(assetImport).toContain('const int32 ReturnedPointerCount = ImportedPointers.Num()');
     expect(assetImport).not.toMatch(/for\s*\([^)]*ImportedPointers/);
@@ -182,8 +197,9 @@ describe('native single-file asset_import safety contract (#415)', () => {
     expect(connectorShared).toContain('HAYBA-ASSET-IMPORT-TYPED-BLOCKED');
     expect(connectorShared).not.toMatch(/executeCommand\s*\(\s*['"]asset_import['"]/);
     const contract = sidecar.commands.asset_import!;
-    expect(contract.params.map((param) => param.name)).toEqual(['source_file', 'destination_path', 'asset_type']);
-    expect(contract.params.every((param) => param.required)).toBe(true);
+    expect(contract.params.map((param) => param.name)).toEqual(['source_file', 'destination_path', 'asset_type', 'options']);
+    // options is the one optional field, and only for skeletal_mesh.
+    expect(contract.params.filter((param) => !param.required).map((param) => param.name)).toEqual(['options']);
     const fields = contract.returns.fields?.map((field) => field.name) ?? [];
     for (const field of [
       'code',

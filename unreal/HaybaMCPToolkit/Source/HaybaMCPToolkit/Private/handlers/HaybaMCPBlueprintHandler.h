@@ -22,6 +22,24 @@ private:
     FHaybaHandlerResult SetDefaults(const TSharedPtr<FJsonObject>& P);
     /** Set a literal on an unconnected input pin — the third leg of graph authoring. */
     FHaybaHandlerResult SetPinDefault(const TSharedPtr<FJsonObject>& P);
+    /** Comment box around nodes or at a rect, with the house bubble flags. */
+    FHaybaHandlerResult AddComment(const TSharedPtr<FJsonObject>& P);
+    /** Position-only edit: never changes pins, links or structure. */
+    FHaybaHandlerResult MoveNodes(const TSharedPtr<FJsonObject>& P);
+    FHaybaHandlerResult RemoveNodes(const TSharedPtr<FJsonObject>& P);
+    FHaybaHandlerResult Disconnect(const TSharedPtr<FJsonObject>& P);
+    /** Many graph ops in one call, with refs between them; one structural mark at the end. */
+    FHaybaHandlerResult GraphBatch(const TSharedPtr<FJsonObject>& P);
+    /** Real rendered node sizes, from a private off-screen graph panel. Read-only. */
+    FHaybaHandlerResult MeasureNodes(const TSharedPtr<FJsonObject>& P);
+    /** Resize every comment box around its nodes using the real sizes. */
+    FHaybaHandlerResult FitComments(const TSharedPtr<FJsonObject>& P);
+
+    /** MarkBlueprintAsStructurallyModified, or recorded for one mark at the end
+     *  of a batch (a mark regenerates the skeleton class, so 1000 marks stall). */
+    void MarkStructural(class UBlueprint* BP);
+    bool bDeferStructuralMark = false;
+    bool bStructuralPending = false;
 
     // Initiative #7 — Blueprint compilation safety gates.
     // After every mutation we record the BP's compile state. If the most

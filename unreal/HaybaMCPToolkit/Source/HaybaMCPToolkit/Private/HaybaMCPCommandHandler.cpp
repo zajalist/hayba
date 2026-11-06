@@ -445,6 +445,8 @@ static bool IsDestructiveCommand(const FString& Cmd)
         TEXT("actor_batch_spawn"),
         TEXT("actor_spawn_from_asset"),
         TEXT("actor_set_properties"),
+        // In NON_IDEMPOTENT since f68294a4; the plan-mode-gate test requires it here too.
+        TEXT("actor_transform"),
         TEXT("actor_set_visibility"),
         TEXT("actor_snap_to_socket"),
         TEXT("actor_tag"),
@@ -452,6 +454,7 @@ static bool IsDestructiveCommand(const FString& Cmd)
         TEXT("object_set_property"),
         // Asset lifecycle
         TEXT("asset_import"),
+        TEXT("asset_save"),
         TEXT("asset_duplicate"),
         TEXT("asset_delete"),
         TEXT("asset_rename"),
@@ -463,6 +466,13 @@ static bool IsDestructiveCommand(const FString& Cmd)
         TEXT("blueprint_add_node"),
         TEXT("blueprint_connect_nodes"),
         TEXT("blueprint_set_pin_default"),
+        TEXT("blueprint_add_comment"),
+        TEXT("blueprint_move_nodes"),
+        TEXT("blueprint_remove_nodes"),
+        TEXT("blueprint_disconnect"),
+        TEXT("blueprint_fit_comments"),
+        // Many graph ops in one call; the transaction around it makes the whole batch one undo.
+        TEXT("blueprint_graph_batch"),
         // Material authoring
         TEXT("material_create"),
         TEXT("material_create_instance"),
@@ -595,6 +605,10 @@ bool FHaybaMCPCommandHandler::ShouldCreateEditorTransaction(const FString& Cmd)
     // custom serialization. The explicit asset_save command is the persistence
     // boundary once the caller has inspected data_set's bounded readback.
     if (Cmd == TEXT("data_set")) return false;
+
+    // Saving is not undoable; a transaction would only serialize every object in
+    // the packages being saved, inside the save.
+    if (Cmd == TEXT("asset_save")) return false;
 
     return true;
 }
