@@ -1,5 +1,7 @@
 #include "HaybaMCPTcpServer.h"
 #include "HaybaMCPCommandHandler.h"
+#include "HaybaMCPLeaseManager.h"
+#include "handlers/HaybaMCPLeaseHandler.h"
 #include "HaybaMCPFrameReadPolicy.h"
 #include "HaybaMCPSettings.h"
 #include "Containers/StringConv.h"
