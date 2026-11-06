@@ -30,6 +30,10 @@
 #include "Materials/MaterialAttributeDefinitionMap.h"
 #include "Materials/MaterialParameterCollection.h"
 #include "Materials/MaterialExpressionCollectionParameter.h"
+#include "Materials/MaterialExpressionCustom.h"
+#include "ShaderCompiler.h"
+#include "RHIStrings.h"
+#include "HaybaMaterialLint.h"
 #include "StaticParameterSet.h"  // FStaticParameterSet, FStaticSwitchParameter (Task 5)
 #include "MaterialTypes.h"
 #include "Materials/MaterialFunction.h"
@@ -3068,6 +3072,16 @@ static void CollectMaterialGraphProblems(
         UMaterialExpression* E = EP.Get();
         if (!E) continue;
 
+        // Prose in a Custom node compiles past the translator and fails later on the
+        // shader-compile thread, after material_compile has answered.
+        if (const UMaterialExpressionCustom* Custom = Cast<UMaterialExpressionCustom>(E))
+        {
+            const FString Lint = HaybaMaterialLint::LintCustomHlsl(Custom->Code);
+            if (!Lint.IsEmpty())
+                Out.Add(FString::Printf(TEXT("Custom node '%s' (%s) code %s. Fix the Code text (material_set_node) before compiling."),
+                    *E->GetName(), *Custom->Description, *Lint));
+        }
+
         if (UMaterialExpressionRerouteBase* RR = Cast<UMaterialExpressionRerouteBase>(E))
         {
             if (Consumed.Contains(E))
@@ -3108,6 +3122,30 @@ static void GatherMaterialPropertyInputs(UMaterial* Mat, TArray<FExpressionInput
     }
 }
 
+/** RecompileMaterial returns the translator's errors, but the platform shader compile runs
+ *  afterwards on worker threads, and its failures (the material then renders as the default)
+ *  only surface later. Wait, bounded, for this material's shader map on the editor's
+ *  shader platform and return its real errors. Pumps the shader compiler the way the
+ *  editor tick does, rather than FinishCompilation, which cannot be bounded. */
+static bool HaybaWaitForShaderMap(UMaterial* Mat, double TimeoutSeconds, TArray<FString>& OutErrors, bool& bTimedOut)
+{
+    bTimedOut = false;
+    FMaterialResource* Resource = Mat ? Mat->GetMaterialResource(GMaxRHIShaderPlatform) : nullptr;
+    if (!Resource) return false;
+    const double Deadline = FPlatformTime::Seconds() + TimeoutSeconds;
+    while (!Resource->IsCompilationFinished())
+    {
+        if (FPlatformTime::Seconds() > Deadline) { bTimedOut = true; break; }
+        if (GShaderCompilingManager) GShaderCompilingManager->ProcessAsyncResults(/*bLimitExecutionTime*/ true, /*bBlockOnGlobalShaderCompletion*/ false);
+        FPlatformProcess::Sleep(0.05f);
+        // A finished compile can swap the resource; re-resolve rather than hold a stale one.
+        Resource = Mat->GetMaterialResource(GMaxRHIShaderPlatform);
+        if (!Resource) return false;
+    }
+    OutErrors = Resource->GetCompileErrors();
+    return true;
+}
+
 FHaybaHandlerResult FHaybaMCPMaterialHandler::MatValidate(const TSharedPtr<FJsonObject>& P)
 {
     TArray<FString> Problems;
@@ -3129,6 +3167,37 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatValidate(const TSharedPtr<FJson
         TArray<FExpressionInput*> PropInputs;
         GatherMaterialPropertyInputs(Mat, PropInputs);
         CollectMaterialGraphProblems(Mat->GetExpressions(), PropInputs, Problems);
+
+        // compile:true goes on to the real platform shader compile (no save), so a
+        // material whose shaders fail is caught here instead of falling back in game.
+        bool bCompileRequested = false;
+        P->TryGetBoolField(TEXT("compile"), bCompileRequested);
+        if (bCompileRequested && Problems.Num() == 0)
+        {
+            struct FContext { UMaterial* Material; TArray<FString> Errors; bool bTimedOut = false; } Ctx{ Mat };
+            bool bCrashed = false;
+            HaybaSeh::RunGuarded(+[](void* Raw)
+            {
+                FContext* C = static_cast<FContext*>(Raw);
+                C->Errors = UMaterialEditingLibrary::RecompileMaterial(C->Material);
+                if (C->Errors.Num() == 0) HaybaWaitForShaderMap(C->Material, 30.0, C->Errors, C->bTimedOut);
+            }, &Ctx, bCrashed);
+            if (bCrashed)
+                Problems.Add(TEXT("a native fault occurred during the compile; restart the editor before another mutation"));
+            else if (Ctx.bTimedOut)
+                Problems.Add(TEXT("the platform shader compile was still running after 30 s; its result is unknown, so run material_validate {compile:true} again"));
+            Problems.Append(Ctx.Errors);
+            TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
+            Out->SetBoolField(TEXT("ok"), Problems.Num() == 0);
+            TArray<TSharedPtr<FJsonValue>> Arr;
+            for (const FString& Pr : Problems) Arr.Add(MakeShared<FJsonValueString>(Pr));
+            Out->SetArrayField(TEXT("problems"), Arr);
+            Out->SetBoolField(TEXT("compiled"), !bCrashed);
+            Out->SetStringField(TEXT("shader_platform"), LexToString(GMaxRHIShaderPlatform));
+            Out->SetBoolField(TEXT("shader_compile_timed_out"), Ctx.bTimedOut);
+            Out->SetBoolField(TEXT("saved"), false);
+            return FHaybaHandlerResult::Ok(Out);
+        }
     }
 
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
@@ -3290,10 +3359,36 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatCompile(const TSharedPtr<FJsonO
             return FHaybaHandlerResult::Ok(Bad);
         }
 
+        // The translator passing is not the shader compiling. Wait (bounded) for the platform
+        // shader map so its errors decide ok and the save, not a later silent fallback.
+        bool bShaderWaited = false, bShaderTimedOut = false;
+        if (CompileErrors.Num() == 0)
+        {
+            struct FWaitContext { UMaterial* Material; TArray<FString>* Errors; bool* bWaited; bool* bTimedOut; }
+                Wait{ Mat, &CompileErrors, &bShaderWaited, &bShaderTimedOut };
+            bool bWaitCrashed = false;
+            HaybaSeh::RunGuarded(+[](void* P)
+            {
+                FWaitContext* W = static_cast<FWaitContext*>(P);
+                *W->bWaited = HaybaWaitForShaderMap(W->Material, 30.0, *W->Errors, *W->bTimedOut);
+            }, &Wait, bWaitCrashed);
+            if (bWaitCrashed)
+            {
+                TSharedPtr<FJsonObject> Bad = MakeShared<FJsonObject>();
+                Bad->SetBoolField(TEXT("ok"), false);
+                Bad->SetBoolField(TEXT("saved"), false);
+                Bad->SetBoolField(TEXT("has_errors"), true);
+                Bad->SetBoolField(TEXT("compiled_clean"), false);
+                Bad->SetBoolField(TEXT("session_suspect"), true);
+                Bad->SetStringField(TEXT("error"), TEXT("material_compile: a native fault occurred while waiting for the shader compile; the material was not saved. Restart the editor before another mutation."));
+                return FHaybaHandlerResult::Ok(Bad);
+            }
+        }
+
         TArray<TSharedPtr<FJsonValue>> Errs;
         for (const FString& Error : CompileErrors) Errs.Add(MakeShared<FJsonValueString>(Error));
 
-        const bool bCompiledClean = CompileErrors.Num() == 0;
+        const bool bCompiledClean = CompileErrors.Num() == 0 && !bShaderTimedOut;
         FString SaveErr;
         bool bSaved = false;
         if (bCompiledClean)
@@ -3311,7 +3406,14 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatCompile(const TSharedPtr<FJsonO
         Out->SetBoolField(TEXT("compiled_clean"), bCompiledClean);
         Out->SetBoolField(TEXT("has_errors"), !bCompiledClean);
         Out->SetBoolField(TEXT("saved"), bSaved);
-        if (!bCompiledClean)
+        Out->SetStringField(TEXT("shader_platform"), LexToString(GMaxRHIShaderPlatform));
+        Out->SetBoolField(TEXT("shader_compile_waited"), bShaderWaited);
+        Out->SetBoolField(TEXT("shader_compile_timed_out"), bShaderTimedOut);
+        if (bShaderTimedOut)
+        {
+            Out->SetStringField(TEXT("error"), TEXT("material_compile: the platform shader compile was still running after 30 s, so whether it succeeds is unknown; the material was not saved. Call material_compile again (finished shaders are cached and return quickly)."));
+        }
+        else if (!bCompiledClean)
         {
             Out->SetStringField(TEXT("error"), TEXT("material_compile: shader compilation failed; the material was not saved. Fix data.errors, then retry."));
         }
