@@ -91,6 +91,16 @@ All notable changes to Hayba MCP Toolkit are documented here. Format based on [K
   spend its Approve.
 
 ### Fixed
+- `material_compile` no longer reports success while the platform shader compile
+  fails afterwards. It now waits up to 30 s for the material shader map on the
+  editor shader platform and returns `FMaterialResource::GetCompileErrors`; any error
+  or a timeout gives `ok:false` and nothing is saved (`shader_compile_timed_out`,
+  `shader_platform`). `material_validate {compile:true}` runs the same compile and
+  wait without saving. Before this, M_UI_SandText compiled "clean", failed
+  on PCD3D_SM6, fell back to the default material and its menu text did not render.
+- Material graph preflight (validate and compile) lints Custom node HLSL: an
+  apostrophe outside a comment, unclosed strings, comments or brackets, and stray
+  closers are refused before any compile.
 - Material Collection Parameter nodes made or edited with `material_add_node` /
   `material_set_node` now resolve their `ParameterId` from the collection (the
   editor does it in PostEditChangeProperty, which staged edits skip), so they
