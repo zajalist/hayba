@@ -51,9 +51,9 @@ const compatibilityUsageKeys = new Set<string>(Object.keys(MATERIAL_USAGE_COMPAT
 
 const propertiesSchema = z
   .object({
-    domain: z.string().min(1).optional(),
-    blend_mode: z.string().min(1).optional(),
-    shading_model: z.string().min(1).optional(),
+    domain: z.string().min(1).optional().describe('Material domain; short forms work: Surface, UI, PostProcess, DeferredDecal, LightFunction, Volume (or MD_UI, EMaterialDomain::MD_UI)'),
+    blend_mode: z.string().min(1).optional().describe('Blend mode; short forms work: Opaque, Masked, Translucent, Additive, Modulate, AlphaComposite (or BLEND_Translucent)'),
+    shading_model: z.string().min(1).optional().describe('Shading model; short forms work: DefaultLit, Unlit, Subsurface, ClearCoat, TwoSidedFoliage (or MSM_DefaultLit)'),
     two_sided: z.boolean().optional(),
     opacity_mask_clip_value: z.number().finite().min(0).max(1).optional(),
     enable_tessellation: z.boolean().optional(),

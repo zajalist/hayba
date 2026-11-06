@@ -2525,7 +2525,7 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
         .string()
         .optional()
         .describe(
-          'Target material output, e.g. base_color, normal, front_material (Substrate), displacement (Nanite tessellation - needs material_set_property enable_tessellation=true)',
+          'Target material output. Spelling-insensitive: base_color, BaseColor, MP_BaseColor and emissive / emissive_color / EmissiveColor all work. Outputs: base_color, metallic, specular, roughness, emissive_color, opacity, opacity_mask, normal, world_position_offset, ambient_occlusion, subsurface_color, pixel_depth_offset, refraction, clear_coat, clear_coat_roughness, anisotropy, tangent, shading_model, front_material (Substrate), displacement (Nanite tessellation; needs material_set_property enable_tessellation=true)',
         ),
     },
   },
