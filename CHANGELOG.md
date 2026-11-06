@@ -36,6 +36,20 @@ All notable changes to Hayba MCP Toolkit are documented here. Format based on [K
   PIE, and the save-everything mode is gone.
 - `material_add_comment` / `material_set_comment` take `show_bubble` and
   `color_bubble`; add defaults both on.
+- `asset_import` accepts `.gltf` / `.glb` as `static_mesh` under a strict
+  policy:
+  - Sources come only from a `TrustedImportRoots` folder, set in project
+    settings and never by a tool call. The default is empty, which refuses
+    glTF.
+  - Every referenced buffer and texture must be a `data:` URI or a plain
+    relative path below the `.gltf`. Each is pinned for the whole import,
+    capped at 512 MiB per file and 1 GiB in total.
+  - The glTF must be 2.x. Required extensions are limited to
+    `KHR_materials_*`, `KHR_texture_transform` and `KHR_mesh_quantization`,
+    and files with skins or animations are refused.
+  - The destination folder must be new or empty.
+  - The import runs through the project's Interchange asset pipeline in one
+    synchronous automated task, and is verified by folder readback.
 - Multi-agent editor leases (ADR-0010). `lease_acquire` / `lease_renew` /
   `lease_release` / `lease_status` claim `global`, `world:`, `wp-region:`,
   `asset:`, `actor:` or `pie` resources. Acquire never blocks: it answers
@@ -64,6 +78,11 @@ All notable changes to Hayba MCP Toolkit are documented here. Format based on [K
   patch, in `docs/migration/saskartarad-editor-gate/`.
 
 ### Changed
+- Material output names are spelling-insensitive in `material_connect_nodes`
+  / `material_disconnect`: `base_color`, `BaseColor`, `MP_BaseColor`, `emissive`,
+  `emissive_color` and `EmissiveColor` all resolve. `material_set_property`
+  accepts short enum forms (`UI`, `Translucent`, `DefaultLit`) as well as
+  `MD_UI` and `EMaterialDomain::MD_UI`.
 - Blueprint mutations and `blueprint_compile` are refused while a PIE session
   runs, because reinstancing live PIE objects was a recurring crash.
   `actor_transform` is now plan-gated, matching its NON_IDEMPOTENT
@@ -72,6 +91,11 @@ All notable changes to Hayba MCP Toolkit are documented here. Format based on [K
   spend its Approve.
 
 ### Fixed
+- Material Collection Parameter nodes made or edited with `material_add_node` /
+  `material_set_node` now resolve their `ParameterId` from the collection (the
+  editor does it in PostEditChangeProperty, which staged edits skip), so they
+  compile instead of failing with "invalid parameter". A name the collection
+  lacks is reported, and `material_get_info` adds `collection_parameter_resolved`.
 - `python_run` scripts that load or unload World Partition actors no longer
   run inside the global editor transaction, which left `UTransBuffer` with a
   non-zero active count and crashed the next tick in Landscape.

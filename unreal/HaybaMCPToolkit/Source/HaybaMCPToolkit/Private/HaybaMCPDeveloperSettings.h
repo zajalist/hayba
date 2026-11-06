@@ -38,6 +38,13 @@ public:
         meta=(ToolTip="Append every command execution to Saved/hayba-execution.log."))
     bool bEnableExecutionJournal = true;
 
+    /** Local folders asset_import may read glTF/GLB (and every buffer and texture they
+     *  reference) from, besides the connector cache. Only settable here, never by a
+     *  tool call, so an agent cannot widen what the in-process importer parses. */
+    UPROPERTY(EditAnywhere, Config, Category="Security",
+        meta=(ToolTip="Absolute local folders that asset_import may read .gltf/.glb files (and their referenced buffers and textures) from. Empty refuses glTF/GLB. Set in project settings only; a tool call cannot change it."))
+    TArray<FString> TrustedImportRoots;
+
     /**
      * Legacy config sink only. Keep the exact property name so an existing
      * DefaultHaybaMCP.ini still deserializes, but do not expose or consume it.
