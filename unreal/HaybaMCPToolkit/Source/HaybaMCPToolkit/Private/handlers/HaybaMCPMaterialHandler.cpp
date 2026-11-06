@@ -2187,6 +2187,10 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatAddComment(const TSharedPtr<FJs
     ValidateIntegerArrayRange(ParamR, TEXT("size"), Size, bHasSize, 1, 1000000);
     ValidateNumberArrayRange(ParamR, TEXT("color"), ColorValues, bHasColor, 0.0, 1.0);
     const int32 Font = ParamR.OptionalIntInRange(TEXT("font_size"), 18, 1, 512);
+    // House comment style: "Show Bubble When Zoomed" + "Color Bubble" on, so the title
+    // floats readably when the graph is zoomed out.
+    const bool bShowBubble = ParamR.OptionalBool(TEXT("show_bubble"), true);
+    const bool bColorBubble = ParamR.OptionalBool(TEXT("color_bubble"), true);
     if (MatPath.IsEmpty() == FuncPath.IsEmpty())
         ParamR.AddError(TEXT("pass exactly one of 'material_path' or 'function_path'"));
     if (ParamR.HasErrors()) return FHaybaHandlerResult::Err(ParamR.ErrorMessage());
@@ -2203,6 +2207,9 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatAddComment(const TSharedPtr<FJs
     auto Setup = [&](UMaterialExpressionComment* C) {
         C->Text = Text; C->SizeX = W; C->SizeY = H; C->CommentColor = Color; C->FontSize = Font;
         C->MaterialExpressionEditorX = X; C->MaterialExpressionEditorY = Y;
+        C->bCommentBubbleVisible_InDetailsPanel = bShowBubble;
+        C->bColorCommentBubble = bColorBubble;
+        C->bCommentBubbleVisible = bShowBubble;
     };
 
     if (!FuncPath.IsEmpty())
@@ -2317,9 +2324,13 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatSetComment(const TSharedPtr<FJs
     ValidateNumberArrayRange(ParamR, TEXT("color"), ColorValues, bHasColor, 0.0, 1.0);
     const bool bHasFont = ParamR.Raw().IsValid() && ParamR.Raw()->HasField(TEXT("font_size"));
     const int32 Font = ParamR.OptionalIntInRange(TEXT("font_size"), 18, 1, 512);
+    const bool bHasShowBubble = ParamR.Raw().IsValid() && ParamR.Raw()->HasField(TEXT("show_bubble"));
+    const bool bShowBubble = ParamR.OptionalBool(TEXT("show_bubble"), false);
+    const bool bHasColorBubble = ParamR.Raw().IsValid() && ParamR.Raw()->HasField(TEXT("color_bubble"));
+    const bool bColorBubble = ParamR.OptionalBool(TEXT("color_bubble"), false);
     if (MatPath.IsEmpty() == FuncPath.IsEmpty())
         ParamR.AddError(TEXT("pass exactly one of 'material_path' or 'function_path'"));
-    if (!bHasText && !bHasPos && !bHasSize && !bHasColor && !bHasFont)
+    if (!bHasText && !bHasPos && !bHasSize && !bHasColor && !bHasFont && !bHasShowBubble && !bHasColorBubble)
         ParamR.AddError(TEXT("no comment fields to update"));
     if (ParamR.HasErrors()) return FHaybaHandlerResult::Err(ParamR.ErrorMessage());
 
@@ -2335,6 +2346,8 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatSetComment(const TSharedPtr<FJs
         if (bHasColor)
             C->CommentColor = FLinearColor(ColorValues[0], ColorValues[1], ColorValues[2], ColorValues.Num() >= 4 ? ColorValues[3] : 1.0);
         if (bHasFont) C->FontSize = Font;
+        if (bHasShowBubble) { C->bCommentBubbleVisible_InDetailsPanel = bShowBubble; C->bCommentBubbleVisible = bShowBubble; }
+        if (bHasColorBubble) C->bColorCommentBubble = bColorBubble;
     };
     auto Verify = [&](const UMaterialExpressionComment* C)
     {
@@ -2351,6 +2364,8 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatSetComment(const TSharedPtr<FJs
                 ColorValues.Num() >= 4 ? ColorValues[3] : 1.0);
             if (!C->CommentColor.Equals(Expected)) return false;
         }
+        if (bHasShowBubble && C->bCommentBubbleVisible_InDetailsPanel != bShowBubble) return false;
+        if (bHasColorBubble && C->bColorCommentBubble != bColorBubble) return false;
         return !bHasFont || C->FontSize == Font;
     };
 

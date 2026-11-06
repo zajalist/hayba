@@ -45,6 +45,9 @@ const HEAVY_OPS = new Set<string>([
   // src/tools/ui/*.ts), so registering it here covers all of them at once —
   // no per-tool timeout to keep in sync.
   'ui_mutate_tree',
+  // Up to 2048 graph ops (plus an optional compile) in one game-thread call; a
+  // whole FoA graph build is far past the medium (10s) tier.
+  'blueprint_graph_batch',
 ]);
 
 /** Register an additional command as a heavy (game-thread-blocking) op. */

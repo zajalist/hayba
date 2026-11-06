@@ -5,6 +5,37 @@ All notable changes to Hayba MCP Toolkit are documented here. Format based on [K
 ## [Unreleased]
 
 ### Added
+- `blueprint_graph_batch`: up to 2048 Blueprint graph ops in one call
+  (add_node, add_event, connect, set_pin, comment, move, remove, disconnect,
+  fit_comments), with `ref` names linking ops. Each op runs through the
+  matching single command, so the same validation and verified readback apply.
+  The batch stops at the first failed op and reports `failed_index`, `refs`
+  and `mutation_status`. It is one undo and one skeleton regeneration, with
+  `compile`/`save` optional at the end. It replaces editor-Python graph
+  builders.
+- `blueprint_add_comment` (title-only house style, colour, Show Bubble When
+  Zoomed and Color Bubble on by default), `blueprint_move_nodes`
+  (position-only; `pack` removes overlaps using real node sizes, and
+  `fit_comments` refits boxes afterwards), `blueprint_remove_nodes` (closes
+  the Blueprint's editors first), and `blueprint_disconnect`.
+- `blueprint_measure_nodes` and `blueprint_fit_comments`. Real rendered node
+  rectangles come from a private off-screen `SGraphPanel`. Fit resizes every
+  comment around its group, inner boxes first; it can optionally push
+  overlapping groups apart, and `title_only` trims comment text to its title.
+  Colour and bubble flags are never changed.
+- `blueprint_add_node` gains `custom_event`, `macro` (StandardMacros, built
+  in C++), `message`, `break_struct`, `make_struct`, `call_dispatcher`,
+  `function_entry` and `function_result`. It also gains the palette nodes
+  sequence, make_array, self, format_text, get_data_table_row,
+  spawn_actor_from_class, create_widget, reroute, get_array_item and the
+  switches. `variable_get`/`set` now resolve locals and other classes'
+  members, and `function_name` accepts the `Class:Function` form.
+- Native C++ `asset_save` replaces the python-backed tool. It saves named,
+  loaded, dirty `/Game` packages only and verifies each (clean in memory, fresh
+  file on disk). It refuses maps, read-only files, compiling Blueprints and
+  PIE, and the save-everything mode is gone.
+- `material_add_comment` / `material_set_comment` take `show_bubble` and
+  `color_bubble`; add defaults both on.
 - Multi-agent editor leases (ADR-0010). `lease_acquire` / `lease_renew` /
   `lease_release` / `lease_status` claim `global`, `world:`, `wp-region:`,
   `asset:`, `actor:` or `pie` resources. Acquire never blocks: it answers
@@ -33,6 +64,10 @@ All notable changes to Hayba MCP Toolkit are documented here. Format based on [K
   patch, in `docs/migration/saskartarad-editor-gate/`.
 
 ### Changed
+- Blueprint mutations and `blueprint_compile` are refused while a PIE session
+  runs, because reinstancing live PIE objects was a recurring crash.
+  `actor_transform` is now plan-gated, matching its NON_IDEMPOTENT
+  classification.
 - Plan-Mode approval is per owner: only the agent that proposed a plan can
   spend its Approve.
 
