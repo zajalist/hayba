@@ -7,7 +7,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..
 const handler = readFileSync(
   join(root, 'unreal', 'HaybaMCPToolkit', 'Source', 'HaybaMCPToolkit', 'Private', 'handlers', 'HaybaMCPMaterialHandler.cpp'),
   'utf8',
-);
+).replace(/\r\n/g, '\n'); // CRLF checkouts (core.autocrlf)
 const apply = handler.slice(handler.indexOf('static FApplyNodePropsResult ApplyNodeProps('));
 const body = apply.slice(0, apply.indexOf('\n    return R;'));
 
