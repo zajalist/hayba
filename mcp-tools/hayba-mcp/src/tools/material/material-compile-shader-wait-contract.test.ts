@@ -7,7 +7,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..
 const handler = readFileSync(
   join(root, 'unreal', 'HaybaMCPToolkit', 'Source', 'HaybaMCPToolkit', 'Private', 'handlers', 'HaybaMCPMaterialHandler.cpp'),
   'utf8',
-);
+).replace(/\r\n/g, '\n'); // CRLF checkouts (core.autocrlf)
 
 function between(start: string, end: string): string {
   const a = handler.indexOf(start);
@@ -29,6 +29,20 @@ describe('material_compile waits for the real shader compile', () => {
     expect(wait).toContain('GetCompileErrors()');
     // FinishCompilation cannot be bounded; the wait must not call it.
     expect(wait).not.toContain('FinishCompilation(');
+  });
+
+  // RecompileMaterial caches with PrecompileMode::None, which submits no jobs for ANY domain: the
+  // wait saw "finished" at once, and Post Process M_PP_MenuV31's FPostProcessMaterialPS failure
+  // (PPI_POST_PROCESS_INPUT0 in Custom HLSL) surfaced only in game, after a clean report.
+  it('submits the pending shader jobs, post-process domain included, before it starts waiting', () => {
+    const wait = between('static bool HaybaWaitForShaderMap(', 'FHaybaHandlerResult FHaybaMCPMaterialHandler::MatValidate(');
+    const submit = wait.indexOf('Resource->SubmitCompileJobs_GameThread(EShaderCompileJobPriority::High);');
+    expect(submit).toBeGreaterThan(-1);
+    expect(submit).toBeLessThan(wait.indexOf('while (!Resource->IsCompilationFinished())'));
+    // One resource holds every shader type of the material's own domain and usage (FPostProcessMaterialPS
+    // for MD_PostProcess), so the wait and the compile verdict must not branch on the domain.
+    const compile = between('static bool HaybaWaitForShaderMap(', '// ── Optimization feedback');
+    expect(compile).not.toMatch(/MaterialDomain|MD_PostProcess|MD_Surface|IsPostProcessMaterial/);
   });
 
   it('decides ok and the save from the shader result, and never saves on a timeout', () => {
