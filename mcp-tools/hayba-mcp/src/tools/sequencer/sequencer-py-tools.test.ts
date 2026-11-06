@@ -63,7 +63,9 @@ describe('seq_inspect', () => {
     await makePyToolHandler(seqInspectDescriptor)({ asset_path: '/Game/LS' });
     const s = lastScript();
     expect(s).toContain('get_display_rate');
-    expect(s).toContain('get_playback_range');
+    expect(s).toContain('get_playback_start_seconds');
+    expect(s).toContain('get_tracks');
+    expect(s).not.toContain('get_master_tracks'); // removed in UE 5.8
     expect(s).toContain('get_bindings');
     expect(s).toContain('next_offset');
   });
@@ -79,7 +81,7 @@ describe('seq_bind_actor', () => {
     const s = lastScript();
     expect(s).toContain('_find_actor');
     expect(s).toContain('add_possessable');
-    expect(s).toContain('MovieSceneSequenceExtensions.add_possessable');
+    expect(s).toContain('MSE.add_possessable');
   });
 });
 
@@ -123,19 +125,48 @@ describe('seq_transform_keyframe', () => {
 });
 
 describe('seq_camera_cut', () => {
-  it('possesses the camera and sets a section range', async () => {
-    const { sender, lastScript } = mockStdout(emit({ ok: true, camera_guid: 'C', start_frame: 0, end_frame: 240 }));
+  function recorder(reply: Record<string, unknown>) {
+    const calls: Array<{ cmd: string; params: Record<string, unknown> }> = [];
+    const sender: Sender = (async (cmd: string, params: Record<string, unknown>) => {
+      calls.push({ cmd, params });
+      if (cmd === 'object_set_property') {
+        return { id: 'inmem', ok: true, data: { ok: true, applied: Object.keys((params.properties as object) ?? {}) } };
+      }
+      const isSave = String(params.script ?? '').includes('save_asset') && !String(params.script ?? '').includes('add_section');
+      return { id: 'inmem', ok: true, data: { ok: true, stdout: emit(isSave ? { ok: true } : reply), stderr: '' } };
+    }) as Sender;
+    return { sender, calls };
+  }
+  const cut = { ok: true, camera_guid: 'C', track_path: '/Game/LS.LS:MovieScene.Cut', section_path: '/Game/LS.LS:MovieScene.Cut.S', tick_resolution: 24000 };
+
+  it('reuses the camera binding and sets the section range in seconds', async () => {
+    const { sender, calls } = recorder(cut);
     setDefaultSender(sender);
-    await makePyToolHandler(seqCameraCutDescriptor)({
-      asset_path: '/Game/LS', camera_actor: 'Cam', start_seconds: 0, end_seconds: 2,
-    });
-    const s = lastScript();
-    expect(s).toContain('MovieSceneCameraCutTrack');
+    await makePyToolHandler(seqCameraCutDescriptor)({ asset_path: '/Game/LS', camera_actor: 'Cam', start_seconds: 0, end_seconds: 2 });
+    const s = String(calls[0]!.params.script);
+    expect(s).toContain('find_tracks_by_type(seq, unreal.MovieSceneCameraCutTrack)');
     expect(s).toContain('add_section');
-    expect(s).toContain('set_camera_binding_id');
-    expect(s).toContain('_start = 0');
-    expect(s).toContain('camera_bound');
-    expect(s).toContain('range_applied');
+    expect(s).toContain('set_range_seconds');
+    expect(s).toContain('set_camera_binding_id(MSE.get_binding_id(seq, b))');
+    expect(s).toContain('_binding_for_actor');
+    // no reflection step when nothing Python cannot reach was asked for
+    expect(calls.some((c) => c.cmd === 'object_set_property')).toBe(false);
+  });
+
+  it('sets bCanBlend and manual easing through object_set_property, then saves', async () => {
+    const { sender, calls } = recorder(cut);
+    setDefaultSender(sender);
+    const res = await makePyToolHandler(seqCameraCutDescriptor)({
+      asset_path: '/Game/LS', camera_actor: 'Cam', start_seconds: 0, end_seconds: 2, can_blend: true, ease_out_seconds: 0.5,
+    });
+    const sets = calls.filter((c) => c.cmd === 'object_set_property');
+    expect(sets[0]!.params).toEqual({ path: cut.track_path, properties: { bCanBlend: true } });
+    expect(sets[1]!.params).toEqual({ path: cut.section_path, properties: { Easing: { bManualEaseOut: true, ManualEaseOutDuration: 12000 } } });
+    expect(String(calls[calls.length - 1]!.params.script)).toContain('save_asset');
+    const out = JSON.parse((res.content[0] as { text: string }).text);
+    expect(out.can_blend_applied).toBe(true);
+    expect(out.easing_applied).toBe(true);
+    expect(out.saved).toBe(true);
   });
 });
 

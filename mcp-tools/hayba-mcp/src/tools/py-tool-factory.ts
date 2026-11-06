@@ -73,6 +73,12 @@ export interface PyToolDescriptor<S extends z.ZodRawShape = z.ZodRawShape> {
    * Forwarded verbatim to the ToolDescriptor by toToolDescriptor.
    */
   niche?: string;
+  /**
+   * Optional second step after a successful script: receives the parsed params and
+   * the script result and returns the final result. For settings Python cannot reach
+   * (bare UPROPERTY() fields) it calls a C++ command such as object_set_property.
+   */
+  finish?: (params: z.infer<z.ZodObject<S>>, result: unknown) => Promise<unknown>;
 }
 
 /**
@@ -118,7 +124,7 @@ export function makePyToolHandler<S extends z.ZodRawShape>(
     try {
       const script = d.buildScript(parsed.data);
       const result = await runUePythonJson(script, d.timeoutMs);
-      return okResult(result);
+      return okResult(d.finish ? await d.finish(parsed.data, result) : result);
     } catch (e) {
       return errorResult(`${d.name} error: ${e instanceof Error ? e.message : String(e)}`);
     }
