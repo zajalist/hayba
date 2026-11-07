@@ -476,11 +476,12 @@ struct FHaybaParamDecl
 };
 
 /** Read `Field` as an array of {name, type, container?, map_value_type?,
- *  default_value?}, resolve every type, and check the names. Returns an error
- *  and fills nothing usable on the first problem, so a caller can refuse before
- *  touching the blueprint. An absent field is an empty list. */
+ *  default_value?, by_ref?, const?}, resolve every type, and check the names.
+ *  by_ref / const are accepted only when bAllowRef (function inputs). Returns an
+ *  error and fills nothing usable on the first problem, so a caller can refuse
+ *  before touching the blueprint. An absent field is an empty list. */
 static FString HaybaReadParamDecls(const TSharedPtr<FJsonObject>& P, const TCHAR* Command, const TCHAR* Field,
-                                   TArray<FHaybaParamDecl>& Out, int32 MaxItems = 32)
+                                   TArray<FHaybaParamDecl>& Out, int32 MaxItems = 32, bool bAllowRef = false)
 {
     Out.Reset();
     if (!P.IsValid() || !P->HasField(Field)) return FString();
@@ -508,6 +509,17 @@ static FString HaybaReadParamDecls(const TSharedPtr<FJsonObject>& P, const TCHAR
         {
             return FString::Printf(TEXT("%s: %s[%d] '%s': %s Nothing was changed."), Command, Field, I, *Name, *ResolveError);
         }
+        // Pass-by-reference and const: an input declared `const FAnimUpdateContext&` compiles to the
+        // CPF_OutParm|CPF_ReferenceParm|CPF_ConstParm parameter a native prototype has.
+        bool bByRef = false, bConstParam = false;
+        (*Item)->TryGetBoolField(TEXT("by_ref"), bByRef);
+        (*Item)->TryGetBoolField(TEXT("const"), bConstParam);
+        if ((bByRef || bConstParam) && !bAllowRef)
+        {
+            return FString::Printf(TEXT("%s: %s[%d] '%s': by_ref and const apply to function inputs only. Nothing was changed."), Command, Field, I, *Name);
+        }
+        PinType.bIsReference = bByRef;
+        PinType.bIsConst = bConstParam;
         Out.Add({ Name.TrimStartAndEnd(), Type, PinType, Default });
     }
     return FString();
@@ -836,13 +848,16 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::AddFunction(const TSharedPtr<FJso
     const FString FuncName = ParamR.RequiredString(TEXT("function_name"), 256);
     const bool bPure = ParamR.OptionalBool(TEXT("pure"), false);
     const bool bConst = ParamR.OptionalBool(TEXT("const"), false);
+    // FKismetUserDeclaredFunctionMetadata::bThreadSafe (BlueprintThreadSafe), which editor Python cannot reach. Anim
+    // node functions need it, and with it every call inside the function must be thread safe too.
+    const bool bThreadSafe = ParamR.OptionalBool(TEXT("thread_safe"), false);
     if (ParamR.HasErrors()) return FHaybaHandlerResult::Err(ParamR.ErrorMessage());
 
     // The whole signature is checked before the graph exists: a function created
     // and then left without its parameters is a worse outcome than a refusal.
     TArray<FHaybaParamDecl> Inputs, Outputs, Locals;
     {
-        FString Problem = HaybaReadParamDecls(P, TEXT("blueprint_add_function"), TEXT("inputs"), Inputs, 64);
+        FString Problem = HaybaReadParamDecls(P, TEXT("blueprint_add_function"), TEXT("inputs"), Inputs, 64, /*bAllowRef=*/true);
         if (Problem.IsEmpty()) Problem = HaybaReadParamDecls(P, TEXT("blueprint_add_function"), TEXT("outputs"), Outputs, 64);
         if (Problem.IsEmpty()) Problem = HaybaReadParamDecls(P, TEXT("blueprint_add_function"), TEXT("locals"), Locals, 128);
         if (!Problem.IsEmpty()) return FHaybaHandlerResult::Err(Problem);
@@ -903,6 +918,7 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::AddFunction(const TSharedPtr<FJso
         }
         if (bPure) Entry->AddExtraFlags(FUNC_BlueprintPure);
         if (bConst) Entry->AddExtraFlags(FUNC_Const);
+        Entry->MetaData.bThreadSafe = bThreadSafe;
     }
     for (const FHaybaParamDecl& D : Locals)
         FBlueprintEditorUtils::AddLocalVariable(BP, NewGraph, FName(*D.Name), D.PinType, D.DefaultValue);
@@ -938,11 +954,16 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::AddFunction(const TSharedPtr<FJso
     };
     const bool bSignatureMatches = Compiled && HasAll(TEXT("inputs"), Inputs) && HasAll(TEXT("outputs"), Outputs)
         && Compiled->HasAnyFunctionFlags(FUNC_BlueprintPure) == bPure;
+    // Thread safety is read back from the skeleton class: the flag only counts once it is
+    // BlueprintThreadSafe metadata there.
+    const UFunction* Skeleton = BP->SkeletonGeneratedClass ? BP->SkeletonGeneratedClass->FindFunctionByName(FName(*FuncName)) : nullptr;
+    const bool bCompiledThreadSafe = Skeleton && FBlueprintEditorUtils::HasFunctionBlueprintThreadSafeMetaData(Skeleton);
+    Out->SetBoolField(TEXT("thread_safe"), bCompiledThreadSafe);
     Out->SetObjectField(TEXT("signature"), Signature);
     Out->SetNumberField(TEXT("locals_created"), Locals.Num());
     if (Entry) Out->SetStringField(TEXT("entry_node_id"), Entry->NodeGuid.ToString());
     if (Result) Out->SetStringField(TEXT("result_node_id"), Result->NodeGuid.ToString());
-    Out->SetBoolField(TEXT("verified"), bGraphExists && bSignatureMatches);
+    Out->SetBoolField(TEXT("verified"), bGraphExists && bSignatureMatches && bCompiledThreadSafe == bThreadSafe);
     Out->SetBoolField(TEXT("dirty"), BP->GetOutermost()->IsDirty());
     return FHaybaHandlerResult::Ok(Out);
 }
@@ -1000,6 +1021,10 @@ static TSharedPtr<FJsonObject> HaybaDescribeNode(UEdGraphNode* Node)
         PinObj->SetStringField(TEXT("name"), Pin->PinName.ToString());
         PinObj->SetStringField(TEXT("direction"), Pin->Direction == EGPD_Input ? TEXT("input") : TEXT("output"));
         PinObj->SetStringField(TEXT("type"), Pin->PinType.PinCategory.ToString());
+        // Literal defaults are part of the graph's meaning; only the ones that are set, to keep the reply small.
+        if (!Pin->DefaultValue.IsEmpty()) PinObj->SetStringField(TEXT("default_value"), Pin->DefaultValue);
+        if (Pin->DefaultObject) PinObj->SetStringField(TEXT("default_object"), Pin->DefaultObject->GetPathName());
+        if (!Pin->DefaultTextValue.IsEmpty()) PinObj->SetStringField(TEXT("default_text"), Pin->DefaultTextValue.ToString());
         Pins.Add(MakeShared<FJsonValueObject>(PinObj));
     }
     Out->SetArrayField(TEXT("pins"), Pins);
@@ -1695,28 +1720,79 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::Compile(const TSharedPtr<FJsonObj
     return FHaybaHandlerResult::Ok(Out);
 }
 
+// The command layer caps every reply array at 50 items (HaybaMCPCommandHandler.cpp, Limits.MaxArrayItems), so a
+// graph read pages instead: a page never exceeds the cap, and the totals say how far there is to go.
+static constexpr int32 HaybaGraphPageMax = 50;
+
+/** Clamp [Offset, Offset + Limit) to Total; describe the page as {offset, returned, total, next_offset|null}. */
+static TSharedPtr<FJsonObject> HaybaPage(int32 Total, int32 Offset, int32 Limit, int32& OutBegin, int32& OutEnd)
+{
+    OutBegin = FMath::Clamp(Offset, 0, Total);
+    OutEnd = FMath::Min(Total, OutBegin + Limit);
+    TSharedPtr<FJsonObject> Page = MakeShared<FJsonObject>();
+    Page->SetNumberField(TEXT("offset"), OutBegin);
+    Page->SetNumberField(TEXT("returned"), OutEnd - OutBegin);
+    Page->SetNumberField(TEXT("total"), Total);
+    if (OutEnd < Total) Page->SetNumberField(TEXT("next_offset"), OutEnd);
+    else Page->SetField(TEXT("next_offset"), MakeShared<FJsonValueNull>());
+    return Page;
+}
+
 FHaybaHandlerResult FHaybaMCPBlueprintHandler::InspectGraph(const TSharedPtr<FJsonObject>& P)
 {
-    FString Path, GraphName;
-    if (!P->TryGetStringField(TEXT("path"), Path) || Path.IsEmpty()) return FHaybaHandlerResult::Err(TEXT("blueprint_inspect_graph: missing path"));
-    P->TryGetStringField(TEXT("graph_name"), GraphName);
+    FHaybaParamReader R(P, TEXT("blueprint_inspect_graph"));
+    const FString Path = R.RequiredString(TEXT("path"));
+    const FString GraphName = R.OptionalString(TEXT("graph_name"));
+    const int32 Offset = R.OptionalIntInRange(TEXT("offset"), 0, 0, MAX_int32);
+    const int32 Limit = R.OptionalIntInRange(TEXT("limit"), HaybaGraphPageMax, 1, HaybaGraphPageMax);
+    const int32 EdgeOffset = R.OptionalIntInRange(TEXT("edge_offset"), 0, 0, MAX_int32);
+    const int32 EdgeLimit = R.OptionalIntInRange(TEXT("edge_limit"), HaybaGraphPageMax, 1, HaybaGraphPageMax);
+    if (R.HasErrors()) return FHaybaHandlerResult::Err(R.ErrorMessage());
     UBlueprint* BP = LoadBPByPath(Path); if (!BP) return FHaybaHandlerResult::Err(BlueprintNotFoundError(TEXT("blueprint_inspect_graph"), Path));
     UEdGraph* Graph = HaybaFindGraph(BP, GraphName); if (!Graph) return FHaybaHandlerResult::Err(TEXT("blueprint_inspect_graph: graph not found"));
-    TArray<TSharedPtr<FJsonValue>> Nodes, Edges;
+
+    // Every edge in a fixed order (node order, then output pin order, then link order) so edge pages are stable.
+    struct FEdge { const UEdGraphNode* From; const UEdGraphPin* FromPin; const UEdGraphPin* To; };
+    TArray<UEdGraphNode*> AllNodes;
+    TArray<FEdge> AllEdges;
     for (UEdGraphNode* Node : Graph->Nodes)
     {
-        Nodes.Add(MakeShared<FJsonValueObject>(HaybaDescribeNode(Node).ToSharedRef()));
+        if (!Node) continue;
+        AllNodes.Add(Node);
         for (UEdGraphPin* Pin : Node->Pins)
         {
             if (!Pin || Pin->Direction != EGPD_Output) continue;
             for (UEdGraphPin* Linked : Pin->LinkedTo)
-            {
-                if (!Linked) continue;
-                TSharedPtr<FJsonObject> Edge=MakeShared<FJsonObject>(); Edge->SetStringField(TEXT("from_node"),Node->NodeGuid.ToString()); Edge->SetStringField(TEXT("from_pin"),Pin->PinName.ToString()); Edge->SetStringField(TEXT("to_node"),Linked->GetOwningNode()->NodeGuid.ToString()); Edge->SetStringField(TEXT("to_pin"),Linked->PinName.ToString()); Edges.Add(MakeShared<FJsonValueObject>(Edge.ToSharedRef()));
-            }
+                if (Linked && Linked->GetOwningNode()) AllEdges.Add({ Node, Pin, Linked });
         }
     }
-    TSharedPtr<FJsonObject> Out=MakeShared<FJsonObject>(); Out->SetStringField(TEXT("path"),BP->GetPathName()); Out->SetStringField(TEXT("graph"),Graph->GetName()); Out->SetArrayField(TEXT("nodes"),Nodes); Out->SetArrayField(TEXT("edges"),Edges); Out->SetNumberField(TEXT("node_count"),Nodes.Num()); Out->SetNumberField(TEXT("edge_count"),Edges.Num()); Out->SetBoolField(TEXT("dirty"),BP->GetOutermost()->IsDirty()); return FHaybaHandlerResult::Ok(Out);
+    int32 NodeBegin, NodeEnd, EdgeBegin, EdgeEnd;
+    TSharedPtr<FJsonObject> Page = MakeShared<FJsonObject>();
+    Page->SetObjectField(TEXT("nodes"), HaybaPage(AllNodes.Num(), Offset, Limit, NodeBegin, NodeEnd));
+    Page->SetObjectField(TEXT("edges"), HaybaPage(AllEdges.Num(), EdgeOffset, EdgeLimit, EdgeBegin, EdgeEnd));
+
+    TArray<TSharedPtr<FJsonValue>> Nodes, Edges;
+    for (int32 I = NodeBegin; I < NodeEnd; ++I)
+        Nodes.Add(MakeShared<FJsonValueObject>(HaybaDescribeNode(AllNodes[I]).ToSharedRef()));
+    for (int32 I = EdgeBegin; I < EdgeEnd; ++I)
+    {
+        TSharedPtr<FJsonObject> Edge = MakeShared<FJsonObject>();
+        Edge->SetStringField(TEXT("from_node"), AllEdges[I].From->NodeGuid.ToString());
+        Edge->SetStringField(TEXT("from_pin"), AllEdges[I].FromPin->PinName.ToString());
+        Edge->SetStringField(TEXT("to_node"), AllEdges[I].To->GetOwningNode()->NodeGuid.ToString());
+        Edge->SetStringField(TEXT("to_pin"), AllEdges[I].To->PinName.ToString());
+        Edges.Add(MakeShared<FJsonValueObject>(Edge.ToSharedRef()));
+    }
+    TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
+    Out->SetStringField(TEXT("path"), BP->GetPathName());
+    Out->SetStringField(TEXT("graph"), Graph->GetName());
+    Out->SetArrayField(TEXT("nodes"), Nodes);
+    Out->SetArrayField(TEXT("edges"), Edges);
+    Out->SetNumberField(TEXT("node_count"), AllNodes.Num());
+    Out->SetNumberField(TEXT("edge_count"), AllEdges.Num());
+    Out->SetObjectField(TEXT("page"), Page);
+    Out->SetBoolField(TEXT("dirty"), BP->GetOutermost()->IsDirty());
+    return FHaybaHandlerResult::Ok(Out);
 }
 
 FHaybaHandlerResult FHaybaMCPBlueprintHandler::Document(const TSharedPtr<FJsonObject>& P)
@@ -2776,6 +2852,8 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::MeasureNodes(const TSharedPtr<FJs
     FHaybaParamReader R(P, TEXT("blueprint_measure_nodes"));
     const FString Path = R.RequiredString(TEXT("path"));
     const FString GraphName = R.OptionalString(TEXT("graph_name"));
+    const int32 Offset = R.OptionalIntInRange(TEXT("offset"), 0, 0, MAX_int32);
+    const int32 Limit = R.OptionalIntInRange(TEXT("limit"), HaybaGraphPageMax, 1, HaybaGraphPageMax);
     if (R.HasErrors()) return FHaybaHandlerResult::Err(R.ErrorMessage());
 
     UBlueprint* BP = nullptr;
@@ -2795,10 +2873,13 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::MeasureNodes(const TSharedPtr<FJs
         ItemBoxes.Add(Boxes.FindRef(N));
         IsComment.Add(N->IsA<UEdGraphNode_Comment>());
     }
+    // Owners need every box; only the page is reported.
     const TArray<int32> Owners = HaybaBlueprintOps::AssignOwners(ItemBoxes, IsComment);
+    int32 Begin, End;
+    TSharedPtr<FJsonObject> Page = HaybaPage(Items.Num(), Offset, Limit, Begin, End);
 
     TArray<TSharedPtr<FJsonValue>> Nodes;
-    for (int32 I = 0; I < Items.Num(); ++I)
+    for (int32 I = Begin; I < End; ++I)
     {
         TSharedPtr<FJsonObject> Item = MakeShared<FJsonObject>();
         Item->SetStringField(TEXT("node_id"), Items[I]->NodeGuid.ToString());
@@ -2812,7 +2893,8 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::MeasureNodes(const TSharedPtr<FJs
     Out->SetStringField(TEXT("graph"), Graph->GetName());
     Out->SetBoolField(TEXT("measured"), bMeasured);
     Out->SetArrayField(TEXT("nodes"), Nodes);
-    Out->SetNumberField(TEXT("node_count"), Nodes.Num());
+    Out->SetNumberField(TEXT("node_count"), Items.Num());
+    Out->SetObjectField(TEXT("page"), Page);
     return FHaybaHandlerResult::Ok(Out);
 }
 
