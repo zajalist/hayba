@@ -4670,6 +4670,9 @@
       "has_ts_wrapper": false,
       "notes": "Compiles an ANIMATION blueprint (ABP) — the animation state-machine asset, not an ordinary class. Reports the compiler errors and warnings. Every anim_blueprint_* write leaves the asset needing this, and an uncompiled ABP keeps running its previously generated class, so state-machine edits look like they did nothing."
     },
+    "anim_blueprint_add_node_function": {"aliases":[],"handler_cpp":"FHaybaMCPAnimationHandler::AddNodeFunction","params":[{"name":"path","type":"string","required":true,"description":"Object path of the anim blueprint"},{"name":"name","type":"string","required":true,"description":"Function name; a name the blueprint already uses is refused before anything is created"}],"returns":{"shape":"object","fields":[{"name":"function_name","type":"string"},{"name":"graph","type":"string"},{"name":"entry_node_id","type":"string"},{"name":"inputs","type":"array","description":"[{name, type, by_ref, const}]: Context (AnimUpdateContext) and Node (AnimNodeReference), both const by reference"},{"name":"thread_safe","type":"boolean"},{"name":"bindable","type":"boolean","description":"the compiled function matches Prototype_ThreadSafeAnimUpdateCall and is BlueprintThreadSafe"},{"name":"compiled","type":"boolean"},{"name":"error_count","type":"integer"},{"name":"warning_count","type":"integer"},{"name":"errors","type":"array"},{"name":"warnings","type":"array"},{"name":"verified","type":"boolean"},{"name":"dirty","type":"boolean"}]},"agent_callable":true,"has_ts_wrapper":false,"notes":"Creates an anim node function in an animation blueprint the way the details panel's Create Binding does: signature (const FAnimUpdateContext& Context, const FAnimNodeReference& Node) copied from the engine prototype, marked thread safe, then compiles. Bind it to a node's On Initial Update / On Become Relevant / On Update with anim_graph_node_bind_function; build its body with blueprint_add_node (graph_name = the function name), using thread-safe calls only."},
+    "anim_graph_node_bind_function": {"aliases":[],"handler_cpp":"FHaybaMCPAnimationHandler::BindNodeFunction","params":[{"name":"path","type":"string","required":true,"description":"Object path of the anim blueprint"},{"name":"node","type":"string","required":true,"description":"An anim graph node's GUID (from blueprint_inspect_graph) or object name, or a state's name (binds on the state's result node)"},{"name":"slot","type":"string","required":true,"description":"initial_update, become_relevant or update; a state also has state_entry, state_fully_blended_in, state_exit, state_fully_blended_out"},{"name":"function","type":"string","required":true,"description":"A function of this blueprint with the anim node signature, marked thread safe (anim_blueprint_add_node_function makes one)"},{"name":"graph_name","type":"string","required":false,"description":"Only search this graph (the AnimGraph, a state machine or a state)"}],"returns":{"shape":"object","fields":[{"name":"node_id","type":"string"},{"name":"node_class","type":"string"},{"name":"graph","type":"string"},{"name":"slot","type":"string"},{"name":"property","type":"string","description":"e.g. UpdateFunction"},{"name":"bound_function","type":"string"},{"name":"resolves_after_compile","type":"boolean"},{"name":"compiled","type":"boolean"},{"name":"error_count","type":"integer"},{"name":"warning_count","type":"integer"},{"name":"errors","type":"array"},{"name":"warnings","type":"array"},{"name":"verified","type":"boolean"},{"name":"dirty","type":"boolean"}]},"agent_callable":true,"has_ts_wrapper":false,"notes":"Binds a blueprint function to an anim graph node's (or a state's) function slot, the FMemberReference editor Python cannot set, then compiles. A function whose signature is not (const FAnimUpdateContext&, const FAnimNodeReference&) or that is not thread safe is refused before anything changes, with the reason; an unknown slot is refused with the node's real slots."},
+    "blendspace_set_samples": {"aliases":[],"handler_cpp":"FHaybaMCPAnimationHandler::BlendSpaceSetSamples","params":[{"name":"path","type":"string","required":true,"description":"Object path of a BlendSpace or BlendSpace1D"},{"name":"samples","type":"array","required":true,"description":"1-256 of {anim, x, y}; anim is an AnimSequence path on the blend space's skeleton; y is required on a 2D blend space and ignored on 1D. Replaces every existing sample"},{"name":"axes","type":"array","required":false,"description":"[{name?, min?, max?, grid_divisions?}] for axis X (and Y on 2D); every sample must then lie inside them"}],"returns":{"shape":"object","fields":[{"name":"path","type":"string"},{"name":"kind","type":"string","description":"1d or 2d"},{"name":"samples","type":"array","description":"[{anim, x, y, valid}] as the blend space now holds them"},{"name":"sample_count","type":"integer"},{"name":"axes","type":"array","description":"[{name, min, max, grid_divisions}]"},{"name":"verified","type":"boolean"},{"name":"dirty","type":"boolean"}]},"agent_callable":true,"has_ts_wrapper":false,"notes":"Replaces a blend space's samples, and optionally its axis names and ranges, in one call, then re-triangulates. Every sample is validated first (animation exists, same skeleton, matching additive type, unique position, inside the given axes) so a bad request changes nothing; if the engine still refuses one, the previous samples and axes are restored. Leaves the asset dirty, not saved."},
     "physics_set_simulate": {
       "aliases": [],
       "handler_cpp": "FHaybaMCPPhysicsHandler::PhysicsSetSimulate",
@@ -5032,11 +5035,12 @@
           "required": true,
           "description": "A name already used by this blueprint is refused before anything is created"
         },
-        { "name": "inputs", "type": "array", "required": false, "description": "[{name, type, container?, map_value_type?}], type grammar as blueprint_add_variable" },
+        { "name": "inputs", "type": "array", "required": false, "description": "[{name, type, container?, map_value_type?, by_ref?, const?}], type grammar as blueprint_add_variable. by_ref and const make a const-by-reference input; an anim node function needs Context (struct:/Script/Engine.AnimUpdateContext) and Node (struct:/Script/Engine.AnimNodeReference), both by_ref and const" },
         { "name": "outputs", "type": "array", "required": false, "description": "[{name, type, container?, map_value_type?}]; a return node is created for them" },
         { "name": "locals", "type": "array", "required": false, "description": "[{name, type, default_value?}] local variables" },
         { "name": "pure", "type": "boolean", "required": false, "default": false },
-        { "name": "const", "type": "boolean", "required": false, "default": false }
+        { "name": "const", "type": "boolean", "required": false, "default": false },
+        { "name": "thread_safe", "type": "boolean", "required": false, "default": false, "description": "mark the function BlueprintThreadSafe (FKismetUserDeclaredFunctionMetadata.bThreadSafe, unreachable from editor Python); anim node functions need it" }
       ],
       "returns": {
         "shape": "object",
@@ -5056,12 +5060,14 @@
             "name": "compile_errors",
             "type": "array",
             "description": "Present when the compile failed"
-          }
+          },
+          { "name": "thread_safe", "type": "boolean", "description": "read back from the compiled function's BlueprintThreadSafe metadata" },
+          { "name": "verified", "type": "boolean" }
         ]
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Adds a function graph with its signature (typed inputs, outputs, locals, pure/const) in one call and recompiles in C++, replacing editor-Python create_and_edit_function_graph + add_graph_*_parameter calls. A name already taken is refused before anything is created, and every type is resolved first, so a bad type changes nothing. Check compiled_clean and pins_created."
+      "notes": "Adds a function graph with its signature (typed inputs, outputs, locals, pure/const, thread_safe, const-by-reference inputs) in one call and recompiles in C++, replacing editor-Python create_and_edit_function_graph + add_graph_*_parameter calls. A name already taken is refused before anything is created, and every type is resolved first, so a bad type changes nothing. Check compiled_clean and pins_created."
     },
     "blueprint_document": {
       "aliases": [],
@@ -5090,10 +5096,10 @@
     },
     "blueprint_inspect_graph": {
       "aliases": [], "handler_cpp": "FHaybaMCPBlueprintHandler::InspectGraph",
-      "params": [{"name":"path","type":"string","required":true},{"name":"graph_name","type":"string","required":false}],
-      "returns": {"shape":"object","fields":[{"name":"nodes","type":"array"},{"name":"edges","type":"array"},{"name":"dirty","type":"boolean"}]},
+      "params": [{"name":"path","type":"string","required":true},{"name":"graph_name","type":"string","required":false},{"name":"offset","type":"integer","required":false,"default":0,"description":"first node of the page"},{"name":"limit","type":"integer","required":false,"default":50,"description":"nodes per page, 1-50 (the reply cap)"},{"name":"edge_offset","type":"integer","required":false,"default":0,"description":"first edge of the page"},{"name":"edge_limit","type":"integer","required":false,"default":50,"description":"edges per page, 1-50"}],
+      "returns": {"shape":"object","fields":[{"name":"nodes","type":"array","description":"this page: {node_id, title, pins:[{name, direction, type, default_value?, default_object?, default_text?}]}"},{"name":"edges","type":"array","description":"this page: {from_node, from_pin, to_node, to_pin}"},{"name":"node_count","type":"integer","description":"total nodes in the graph"},{"name":"edge_count","type":"integer","description":"total edges in the graph"},{"name":"page","type":"object","description":"{nodes:{offset, returned, total, next_offset}, edges:{...}}; next_offset is null on the last page"},{"name":"dirty","type":"boolean"}]},
       "agent_callable": true, "has_ts_wrapper": false,
-      "notes": "Read-only exact graph export. Returns stable node GUIDs, pin names/directions/types, every edge, counts, and dirty state. Use this before adding or wiring nodes."
+      "notes": "Read-only exact graph export. Returns stable node GUIDs, pin names/directions/types and the pins' literal default values, edges, totals, and dirty state. Replies are capped at 50 items per array, so nodes and edges come in pages: keep calling with offset = page.nodes.next_offset (and edge_offset = page.edges.next_offset) until it is null. Use this before adding or wiring nodes."
     },
     "blueprint_add_node": {
       "aliases": [], "handler_cpp": "FHaybaMCPBlueprintHandler::AddNode",
@@ -5133,9 +5139,9 @@
     },
     "blueprint_measure_nodes": {
       "aliases": [], "handler_cpp":"FHaybaMCPBlueprintHandler::MeasureNodes",
-      "params":[{"name":"path","type":"string","required":true},{"name":"graph_name","type":"string","required":false}],
-      "returns":{"shape":"object","fields":[{"name":"graph","type":"string"},{"name":"measured","type":"boolean","description":"false when Slate is unavailable and sizes are estimates"},{"name":"nodes","type":"array","description":"{node_id, title, rect:[x,y,w,h], comment, in_comment}"},{"name":"node_count","type":"integer"}]},"agent_callable":true,"has_ts_wrapper":false,
-      "notes":"Read-only. Returns every Blueprint graph node's REAL rendered rectangle, measured from a private off-screen graph panel at 1:1 zoom (node sizes exist only in the editor's Slate widgets, so estimates clip), plus which comment box each node starts in. Feed it to a layout planner, then apply with blueprint_move_nodes."
+      "params":[{"name":"path","type":"string","required":true},{"name":"graph_name","type":"string","required":false},{"name":"offset","type":"integer","required":false,"default":0,"description":"first node of the page"},{"name":"limit","type":"integer","required":false,"default":50,"description":"nodes per page, 1-50 (the reply cap)"}],
+      "returns":{"shape":"object","fields":[{"name":"graph","type":"string"},{"name":"measured","type":"boolean","description":"false when Slate is unavailable and sizes are estimates"},{"name":"nodes","type":"array","description":"this page: {node_id, title, rect:[x,y,w,h], comment, in_comment}"},{"name":"node_count","type":"integer","description":"total nodes in the graph"},{"name":"page","type":"object","description":"{offset, returned, total, next_offset}; next_offset is null on the last page"}]},"agent_callable":true,"has_ts_wrapper":false,
+      "notes":"Read-only. Returns every Blueprint graph node's REAL rendered rectangle, measured from a private off-screen graph panel at 1:1 zoom (node sizes exist only in the editor's Slate widgets, so estimates clip), plus which comment box each node starts in. Pages of up to 50 nodes: call again with offset = page.next_offset until it is null. Feed it to a layout planner, then apply with blueprint_move_nodes."
     },
     "blueprint_fit_comments": {
       "aliases": [], "handler_cpp":"FHaybaMCPBlueprintHandler::FitComments",

@@ -20,4 +20,7 @@ private:
     FHaybaHandlerResult AddTransition(const TSharedPtr<FJsonObject>& P);
     FHaybaHandlerResult SetCondition(const TSharedPtr<FJsonObject>& P);
     FHaybaHandlerResult Compile(const TSharedPtr<FJsonObject>& P);
+    FHaybaHandlerResult AddNodeFunction(const TSharedPtr<FJsonObject>& P);
+    FHaybaHandlerResult BindNodeFunction(const TSharedPtr<FJsonObject>& P);
+    FHaybaHandlerResult BlendSpaceSetSamples(const TSharedPtr<FJsonObject>& P);
 };

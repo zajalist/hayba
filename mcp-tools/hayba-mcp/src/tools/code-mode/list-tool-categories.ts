@@ -182,13 +182,16 @@ const DOMAINS: ReadonlyArray<{ domain: string; command_count: number; commands: 
   // Listing them made the catalogue report 11 capabilities that did not exist.
   {
     domain: 'anim',
-    command_count: 5,
+    command_count: 8,
     commands: [
       'anim_blueprint_get_info',
       'anim_blueprint_add_state',
       'anim_blueprint_add_transition',
       'anim_blueprint_set_condition',
       'anim_blueprint_compile',
+      'anim_blueprint_add_node_function',
+      'anim_graph_node_bind_function',
+      'blendspace_set_samples',
     ],
   },
   { domain: 'audio', command_count: 3, commands: ['audio_play', 'audio_list', 'audio_set_volume'] },
