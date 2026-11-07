@@ -10,7 +10,8 @@ describe('Blueprint event-graph authoring contract', () => {
   it('exports exact nodes, pins and edges before mutation', () => {
     expect(source).toContain('blueprint_inspect_graph');
     expect(source).toContain('HaybaDescribeNode(Node)');
-    expect(source).toContain('Linked->GetOwningNode()->NodeGuid');
+    // Edges name their target by the linked pin's owning node GUID (paged since restart 6, so the variable moved).
+    expect(source).toMatch(/(Linked|\.To)->GetOwningNode\(\)->NodeGuid/);
   });
 
   it.each(['branch', 'select', 'timer_by_function', 'call_function'])(
