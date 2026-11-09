@@ -360,8 +360,12 @@ const descriptors: ToolDescriptor[] = [
   {
     name: 'audio_active_sounds',
     description:
-      'Inspect live active sounds and physical voice usage from the main audio device, including component ids, asset paths, effective volume/pitch, looping, pause, virtualization/audibility, owner, and managed-component count.',
-    schema: { include_preview: z.boolean().default(false), limit: z.number().int().min(1).max(2048).default(256) },
+      'Inspect live active sounds and physical voice usage on the PIE world audio device while PIE runs (else the editor world; world: auto|pie|editor picks explicitly), including component ids, asset paths, effective volume/pitch, looping, pause, virtualization/audibility, owner, and managed-component count.',
+    schema: {
+      include_preview: z.boolean().default(false),
+      limit: z.number().int().min(1).max(2048).default(256),
+      world: z.enum(['auto', 'pie', 'editor']).default('auto').describe('Whose audio device to read: auto = the PIE world while PIE runs, else the editor world'),
+    },
     meta: {
       cost: 'low',
       effects: [],
@@ -371,12 +375,16 @@ const descriptors: ToolDescriptor[] = [
     handler: ueTool(
       'audio_active_sounds',
       z
-        .object({ include_preview: z.boolean().default(false), limit: z.number().int().min(1).max(2048).default(256) })
+        .object({
+          include_preview: z.boolean().default(false),
+          limit: z.number().int().min(1).max(2048).default(256),
+          world: z.enum(['auto', 'pie', 'editor']).default('auto'),
+        })
         .strict(),
     ),
     cost: 'low',
     returns:
-      '{active_sound_count, active_voice_count, virtual_sound_count, managed_component_count, truncated, sounds:[...]}',
+      '{world, audio_device_id, active_sound_count, active_voice_count, virtual_sound_count, managed_component_count, truncated, sounds:[...]}',
   },
   {
     name: 'audio_meter_start',

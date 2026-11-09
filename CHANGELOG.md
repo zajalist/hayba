@@ -91,6 +91,10 @@ All notable changes to Hayba MCP Toolkit are documented here. Format based on [K
   spend its Approve.
 
 ### Fixed
+- `audio_active_sounds` reads the audio device of the world that is playing: during
+  PIE it listed nothing, because it always read the engine main device while PIE plays
+  on its own world device. `world: auto|pie|editor` (auto = PIE while PIE runs); the
+  reply adds `world` and `audio_device_id`.
 - UI slot values that do not parse are now reported, not defaulted. An
   unrecognised alignment used to become Fill and an unparsed padding zero, both
   reported as applied. Alignment now also takes `HAlign_*` / `VAlign_*` and qualified
