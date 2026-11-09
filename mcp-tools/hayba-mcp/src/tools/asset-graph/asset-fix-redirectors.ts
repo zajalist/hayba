@@ -15,6 +15,12 @@ export const schema = z.object({
     .string()
     .optional()
     .describe('Folder to scan, e.g. "/Game/UI". Omit to scan the whole project.'),
+  unreferenced: z
+    .enum(['delete', 'keep'])
+    .optional()
+    .describe(
+      'What to do with redirectors nothing references once their referencers are re-pointed and saved: "delete" (default) or "keep". Never opens a dialog either way.',
+    ),
 });
 
 export const assetFixRedirectorsHandler: ToolHandler = ueTool('asset_fix_redirectors', schema);

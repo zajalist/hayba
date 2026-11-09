@@ -600,10 +600,23 @@ bool FHaybaMCPModule::StartTcpServer()
     // can run side-by-side without EADDRINUSE collisions. The first instance
     // claims 52342; subsequent ones walk forward. Heartbeat written to disk
     // so the Node MCP server can discover the right port.
-    constexpr int32 kPortFirst = 52342;
-    constexpr int32 kPortLast  = 52350;
+    int32 PortFirst = 52342;
+    int32 PortLast  = 52350;
+    // HAYBA_MCP_PORT pins the port: bind exactly that one or fail, never walk. A scratch editor started with it
+    // (52400+) can then never take 52342 from the main editor when both start at once.
+    const FString PinnedPort = FPlatformMisc::GetEnvironmentVariable(TEXT("HAYBA_MCP_PORT")).TrimStartAndEnd();
+    if (!PinnedPort.IsEmpty())
+    {
+        const int32 Pinned = PinnedPort.IsNumeric() ? FCString::Atoi(*PinnedPort) : 0;
+        if (Pinned < 1024 || Pinned > 65535)
+        {
+            UE_LOG(LogHaybaMCP, Error, TEXT("Failed to start TCP server: HAYBA_MCP_PORT='%s' is not a port in 1024-65535"), *PinnedPort);
+            return false;
+        }
+        PortFirst = PortLast = Pinned;
+    }
     int32 ChosenPort = INDEX_NONE;
-    for (int32 P = kPortFirst; P <= kPortLast; ++P)
+    for (int32 P = PortFirst; P <= PortLast; ++P)
     {
         TcpServer = MakeShared<FHaybaMCPTcpServer, ESPMode::ThreadSafe>(P);
         TcpServer->SetCommandHandler(CommandHandler);
@@ -617,7 +630,8 @@ bool FHaybaMCPModule::StartTcpServer()
     }
     if (ChosenPort == INDEX_NONE)
     {
-        UE_LOG(LogHaybaMCP, Error, TEXT("Failed to start TCP server: no free port in %d-%d"), kPortFirst, kPortLast);
+        UE_LOG(LogHaybaMCP, Error, TEXT("Failed to start TCP server: no free port in %d-%d%s"), PortFirst, PortLast,
+            PinnedPort.IsEmpty() ? TEXT("") : TEXT(" (pinned by HAYBA_MCP_PORT; not walking to another port)"));
         return false;
     }
     UE_LOG(LogHaybaMCP, Log, TEXT("TCP server started on port %d"), TcpPort);
