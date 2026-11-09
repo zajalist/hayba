@@ -1077,15 +1077,31 @@ namespace
         TMap<FString, TWeakObjectPtr<UAudioComponent>>& Components)
     {
         if (!GEngine) return FHaybaHandlerResult::Err(TEXT("audio_active_sounds: GEngine is unavailable"));
-        FAudioDeviceHandle Device = GEngine->GetMainAudioDevice();
-        if (!Device.IsValid()) return FHaybaHandlerResult::Err(TEXT("audio_active_sounds: no main audio device"));
         bool bIncludePreview = false;
         int32 Limit = 256;
+        FString WorldChoice = TEXT("auto");
         if (P.IsValid())
         {
             P->TryGetBoolField(TEXT("include_preview"), bIncludePreview);
             P->TryGetNumberField(TEXT("limit"), Limit);
+            P->TryGetStringField(TEXT("world"), WorldChoice);
         }
+        // PIE plays on its own world's audio device, so the engine's main device
+        // listed nothing during PIE. Read the device of the world the caller means:
+        // auto = the PIE world when one is running, else the editor world.
+        UWorld* World = nullptr;
+        WorldChoice = WorldChoice.ToLower();
+        if (WorldChoice == TEXT("auto")) World = ActiveAudioWorld();
+        else if (WorldChoice == TEXT("pie"))
+        {
+            World = GEditor ? GEditor->PlayWorld.Get() : nullptr;
+            if (!World) return FHaybaHandlerResult::Err(TEXT("audio_active_sounds: world \"pie\" was asked for but no Play-In-Editor session is running"));
+        }
+        else if (WorldChoice == TEXT("editor")) World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
+        else return FHaybaHandlerResult::Err(TEXT("audio_active_sounds: world must be auto, pie or editor"));
+        FAudioDeviceHandle Device = World ? World->GetAudioDevice() : FAudioDeviceHandle();
+        if (!Device.IsValid())
+            return FHaybaHandlerResult::Err(FString::Printf(TEXT("audio_active_sounds: the %s world has no audio device"), *WorldKind(World)));
         Limit = FMath::Clamp(Limit, 1, 2048);
 
         TArray<TSharedPtr<FJsonValue>> Sounds;
@@ -1111,6 +1127,8 @@ namespace
         for (auto It = Components.CreateIterator(); It; ++It) if (!It.Value().IsValid()) It.RemoveCurrent();
 
         auto Out = MakeShared<FJsonObject>();
+        Out->SetStringField(TEXT("world"), WorldKind(World));
+        Out->SetNumberField(TEXT("audio_device_id"), Device.GetDeviceID());
         Out->SetNumberField(TEXT("active_sound_count"), Sounds.Num());
         Out->SetNumberField(TEXT("active_voice_count"), Device->GetNumActiveSources());
         Out->SetNumberField(TEXT("virtual_sound_count"), VirtualCount);
