@@ -53,6 +53,8 @@
 #include "UObject/GarbageCollection.h"
 #include "Engine/Blueprint.h"
 #include "HaybaMCPParams.h"
+#include "PackageTools.h"
+#include "UObject/ObjectRedirector.h"
 
 #if PLATFORM_WINDOWS
 #include "Windows/AllowWindowsPlatformTypes.h"
@@ -86,6 +88,11 @@ TArray<FString> FHaybaMCPAssetHandler::GetCommands() const
 
 FHaybaHandlerResult FHaybaMCPAssetHandler::Handle(const FString& Cmd, const TSharedPtr<FJsonObject>& P)
 {
+    // No asset command may open a modal (HaybaMCPAssetGuard.h): engine prompts reached from here (asset_move's
+    // "referenced by code, continue?", checkout / make-writable / save questions) answer their default instead.
+    // Never call IAssetTools::FixupReferencers under this: its report is an SModalEditorDialog, and a cancelled one
+    // trips a check on its unset result (see AssetFixRedirectors).
+    TGuardValue<bool> NoModals(GIsRunningUnattendedScript, true);
     if (Cmd == TEXT("asset_search"))         return AssetSearch(P);
     if (Cmd == TEXT("asset_registry_query")) return AssetRegistryQuery(P);
     if (Cmd == TEXT("asset_get_info"))       return AssetGetInfo(P);
@@ -2318,6 +2325,12 @@ FHaybaHandlerResult FHaybaMCPAssetHandler::AssetValidate(const TSharedPtr<FJsonO
     return FHaybaHandlerResult::Ok(Out);
 }
 
+// Why a rename or move can be refused: Handle() answers engine prompts with their default instead of opening them.
+static const TCHAR* RenameRefusedHint = TEXT("Nothing was renamed. The engine refused it; see the Output Log (LogAssetTools). ")
+    TEXT("Hayba answers engine prompts with their default rather than open a dialog on the game thread, so a rename the ")
+    TEXT("engine wants confirmed (the asset is referenced by native code or config: 'Continue with rename?'; a read-only ")
+    TEXT("or checked-out file) is refused instead of waiting for a click.");
+
 FHaybaHandlerResult FHaybaMCPAssetHandler::AssetRename(const TSharedPtr<FJsonObject>& P)
 {
     FString Path, NewName;
@@ -2336,7 +2349,7 @@ FHaybaHandlerResult FHaybaMCPAssetHandler::AssetRename(const TSharedPtr<FJsonObj
 
     bool bRenamed = UEditorAssetLibrary::RenameAsset(Path, NewPath);
     if (!bRenamed)
-        return FHaybaHandlerResult::Err(FString::Printf(TEXT("asset_rename: RenameAsset failed (%s -> %s)"), *Path, *NewPath));
+        return FHaybaHandlerResult::Err(FString::Printf(TEXT("asset_rename: RenameAsset failed (%s -> %s). %s"), *Path, *NewPath, RenameRefusedHint));
 
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
     Out->SetStringField(TEXT("old_path"), Path);
@@ -2375,16 +2388,33 @@ FHaybaHandlerResult FHaybaMCPAssetHandler::AssetMove(const TSharedPtr<FJsonObjec
     Out->SetBoolField(TEXT("ok"), bOk);
     Out->SetStringField(TEXT("old_path"), Path);
     Out->SetStringField(TEXT("new_path"), NewPackage);
-    if (!bOk) return FHaybaHandlerResult::Err(FString::Printf(TEXT("asset_move: RenameAssets failed (%s)"), *Path));
+    if (!bOk) return FHaybaHandlerResult::Err(FString::Printf(TEXT("asset_move: RenameAssets failed (%s). %s"), *Path, RenameRefusedHint));
     return FHaybaHandlerResult::Ok(Out);
 }
 
+// Re-point everything that references a redirector at its target, then delete the redirectors nothing references
+// any more (unreferenced:"delete", the default) or leave them in place ("keep").
+//
+// This deliberately does not call IAssetTools::FixupReferencers. In UE 5.8 that always ends in the modal
+// "Redirector Update Report", whatever ERedirectFixupMode says, which held the shared editor's game thread until
+// someone clicked it; with GIsRunningUnattendedScript set the report is cancelled instead and its unset result trips a
+// check. What follows is that function's work without its dialogs: load the referencers, fix their soft paths, save
+// them, confirm on the registry that nothing references the redirector any more, then delete it.
 FHaybaHandlerResult FHaybaMCPAssetHandler::AssetFixRedirectors(const TSharedPtr<FJsonObject>& P)
 {
     FString Path = TEXT("/Game");
     P->TryGetStringField(TEXT("path"), Path);
+    FString Unreferenced = TEXT("delete");
+    P->TryGetStringField(TEXT("unreferenced"), Unreferenced);
+    if (Unreferenced != TEXT("delete") && Unreferenced != TEXT("keep"))
+        return FHaybaHandlerResult::Err(TEXT("asset_fix_redirectors: unreferenced must be \"delete\" (the default) or \"keep\". Nothing was changed."));
+    const bool bDelete = Unreferenced == TEXT("delete");
+    if (GEditor && GEditor->IsPlaySessionInProgress())
+        return FHaybaHandlerResult::Err(TEXT("asset_fix_redirectors: a Play-In-Editor session is running; stop it first. Nothing was changed."));
 
     IAssetRegistry& Reg = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry").Get();
+    if (Reg.IsLoadingAssets())
+        return FHaybaHandlerResult::Err(TEXT("asset_fix_redirectors: the asset registry is still discovering assets, so referencers are not known yet; retry when it finishes. Nothing was changed."));
     FARFilter Filter;
     Filter.bRecursivePaths = true;
     Filter.bRecursiveClasses = true;
@@ -2393,19 +2423,163 @@ FHaybaHandlerResult FHaybaMCPAssetHandler::AssetFixRedirectors(const TSharedPtr<
     TArray<FAssetData> Redirectors;
     Reg.GetAssets(Filter, Redirectors);
 
-    TArray<UObjectRedirector*> Objs;
-    for (const FAssetData& AD : Redirectors)
-        if (UObjectRedirector* R = Cast<UObjectRedirector>(AD.GetAsset())) Objs.Add(R);
-
-    if (Objs.Num() > 0)
+    struct FFound
     {
-        FAssetToolsModule& M = FModuleManager::LoadModuleChecked<FAssetToolsModule>("AssetTools");
-        M.Get().FixupReferencers(Objs);
+        TStrongObjectPtr<UObjectRedirector> Object;
+        FString Path;
+        FName Package;
+        TSharedPtr<FJsonObject> Entry;
+    };
+    TArray<FFound> Found;
+    for (const FAssetData& AD : Redirectors)
+    {
+        if (UObjectRedirector* R = Cast<UObjectRedirector>(AD.GetAsset()))
+        {
+            FFound& F = Found.AddDefaulted_GetRef();
+            F.Object.Reset(R);
+            F.Path = AD.GetObjectPathString();
+            F.Package = AD.PackageName;
+        }
+    }
+
+    // Load every referencing package. Failures are kept per package and reported against each redirector it blocks.
+    TMap<FName, UPackage*> ToSave;
+    TMap<FName, FString> Blocked;
+    TArray<TWeakObjectPtr<UPackage>> LoadedHere;
+    TMap<FSoftObjectPath, FSoftObjectPath> SoftRedirects;
+    TArray<FString> ScanPaths;
+    for (FFound& F : Found)
+    {
+        UObject* Target = F.Object->DestinationObject;
+        F.Entry = MakeShared<FJsonObject>();
+        F.Entry->SetStringField(TEXT("redirector"), F.Path);
+        F.Entry->SetStringField(TEXT("target"), Target ? Target->GetPathName() : FString());
+        if (!Target) continue;  // a broken redirector: re-pointing its referencers would point them at nothing
+        const FSoftObjectPath From(F.Object.Get()), To(Target);
+        SoftRedirects.Add(From, To);
+        if (Cast<UBlueprint>(Target))
+        {
+            SoftRedirects.Add(FSoftObjectPath(From.ToString() + TEXT("_C")), FSoftObjectPath(To.ToString() + TEXT("_C")));
+            SoftRedirects.Add(FSoftObjectPath(FString::Printf(TEXT("%s.Default__%s_C"), *From.GetLongPackageName(), *From.GetAssetName())),
+                FSoftObjectPath(FString::Printf(TEXT("%s.Default__%s_C"), *To.GetLongPackageName(), *To.GetAssetName())));
+        }
+        ScanPaths.AddUnique(FPackageName::GetLongPackagePath(F.Package.ToString()) / TEXT(""));
+
+        TArray<FName> Referencers;
+        Reg.GetReferencers(F.Package, Referencers);
+        F.Entry->SetNumberField(TEXT("referencer_count"), Referencers.Num());
+        for (const FName Ref : Referencers)
+        {
+            ScanPaths.AddUnique(FPackageName::GetLongPackagePath(Ref.ToString()) / TEXT(""));
+            if (ToSave.Contains(Ref) || Blocked.Contains(Ref)) continue;
+            UPackage* Pkg = FindPackage(nullptr, *Ref.ToString());
+            if (!Pkg && (Pkg = LoadPackage(nullptr, *Ref.ToString(), LOAD_None)) != nullptr) LoadedHere.Add(Pkg);
+            FString File;
+            if (!Pkg) Blocked.Add(Ref, TEXT("could not be loaded"));
+            else if (Pkg->HasAnyPackageFlags(PKG_CompiledIn)) Blocked.Add(Ref, TEXT("is native code; change the reference in source"));
+            else if (FPackageName::DoesPackageExist(Ref.ToString(), &File) && IFileManager::Get().IsReadOnly(*File))
+                Blocked.Add(Ref, TEXT("its file is read-only (locked by source control or LFS?)"));
+            else ToSave.Add(Ref, Pkg);
+        }
+    }
+
+    // As the engine does: keep the loaded referencers' objects alive until they are saved.
+    TArray<UPackage*> Packages;
+    ToSave.GenerateValueArray(Packages);
+    TArray<TStrongObjectPtr<UObject>> Rooted;
+    for (UPackage* Pkg : Packages)
+    {
+        ForEachObjectWithPackage(Pkg, [&Rooted](UObject* Object) { Rooted.Emplace(Object); return true; },
+            EGetObjectsFlags::None, RF_Standalone, EInternalObjectFlags::RootSet);
+    }
+    // Soft paths only in the packages saved below; the engine also rewrites every dirty package, which would dirty
+    // other agents' unsaved work without saving it.
+    if (Packages.Num() > 0) IAssetTools::Get().RenameReferencingSoftObjectPaths(Packages, SoftRedirects);
+
+    TArray<FString> Saved;
+    for (const TPair<FName, UPackage*>& It : ToSave)
+    {
+        if (UEditorLoadingAndSavingUtils::SavePackages({ It.Value }, /*bOnlyDirty=*/false)) Saved.Add(It.Key.ToString());
+        else Blocked.Add(It.Key, TEXT("failed to save; see the Output Log"));
+    }
+    Rooted.Empty();
+    Reg.ScanPathsSynchronous(ScanPaths, /*bForceRescan=*/true);
+
+    // Fixed means the registry, rescanned after the saves, shows nothing referencing the redirector any more.
+    int32 FixedCount = 0;
+    TArray<UObject*> ToDelete;
+    for (FFound& F : Found)
+    {
+        if (!F.Object->DestinationObject)
+        {
+            F.Entry->SetBoolField(TEXT("fixed"), false);
+            F.Entry->SetStringField(TEXT("reason"), TEXT("points at nothing (its target is missing); left alone"));
+            continue;
+        }
+        TArray<FName> Still;
+        Reg.GetReferencers(F.Package, Still);
+        F.Entry->SetBoolField(TEXT("fixed"), Still.Num() == 0);
+        if (Still.Num() > 0)
+        {
+            TArray<TSharedPtr<FJsonValue>> Why;
+            for (const FName Ref : Still)
+            {
+                const FString* Reason = Blocked.Find(Ref);
+                Why.Add(MakeShared<FJsonValueString>(Ref.ToString() + TEXT(": ") + (Reason ? *Reason : FString(TEXT("still references it after saving")))));
+            }
+            F.Entry->SetArrayField(TEXT("still_referenced_by"), Why);
+            continue;
+        }
+        ++FixedCount;
+        if (!bDelete) continue;
+        // The engine's delete set: every redirector in the package, and the package itself when nothing else is in it.
+        UPackage* Pkg = F.Object->GetOutermost();
+        bool bOtherAsset = false;
+        ForEachObjectWithOuter(Pkg, [&ToDelete, &bOtherAsset](UObject* Object)
+        {
+            if (UObjectRedirector* R = Cast<UObjectRedirector>(Object)) { R->RemoveFromRoot(); ToDelete.AddUnique(R); }
+            else bOtherAsset = true;
+        });
+        if (!bOtherAsset) { Pkg->RemoveFromRoot(); ToDelete.AddUnique(Pkg); }
+    }
+    for (FFound& F : Found) F.Object.Reset();  // as the engine does, drop our references before deleting
+    if (ToDelete.Num() > 0) ObjectTools::DeleteObjects(ToDelete, /*bShowConfirmation=*/false);
+
+    int32 DeletedCount = 0;
+    TArray<TSharedPtr<FJsonValue>> Report;
+    for (const FFound& F : Found)
+    {
+        const FString File = PackageFileOnDisk(F.Path);
+        const bool bGone = !File.IsEmpty() && !IFileManager::Get().FileExists(*File);
+        DeletedCount += bGone;
+        F.Entry->SetBoolField(TEXT("deleted"), bGone);
+        Report.Add(MakeShared<FJsonValueObject>(F.Entry));
     }
 
     auto Out = MakeShared<FJsonObject>();
-    Out->SetNumberField(TEXT("fixed_count"), Objs.Num());
+    // Unload what this call loaded, as the engine does; its error goes in the reply instead of a dialog.
+    TArray<UPackage*> Unload;
+    for (const TWeakObjectPtr<UPackage>& Pkg : LoadedHere) if (Pkg.IsValid()) Unload.Add(Pkg.Get());
+    FText UnloadError;
+    if (Unload.Num() > 0 && !UPackageTools::UnloadPackages(Unload, UnloadError, /*bUnloadDirtyPackages=*/true))
+        Out->SetStringField(TEXT("unload_warning"), UnloadError.ToString());
+
     Out->SetStringField(TEXT("path"), Path);
+    Out->SetStringField(TEXT("unreferenced"), bDelete ? TEXT("delete") : TEXT("keep"));
+    Out->SetNumberField(TEXT("redirector_count"), Found.Num());
+    Out->SetNumberField(TEXT("fixed_count"), FixedCount);
+    Out->SetNumberField(TEXT("deleted_count"), DeletedCount);
+    Out->SetNumberField(TEXT("kept_count"), Found.Num() - DeletedCount);
+    TArray<TSharedPtr<FJsonValue>> SavedJson;
+    for (const FString& S : Saved) SavedJson.Add(MakeShared<FJsonValueString>(S));
+    Out->SetArrayField(TEXT("saved_packages"), SavedJson);
+    Out->SetArrayField(TEXT("redirectors"), Report);
+    const bool bAllDone = FixedCount == Found.Num() && (!bDelete || DeletedCount == Found.Num());
+    Out->SetBoolField(TEXT("ok"), bAllDone);
+    if (!bAllDone)
+        Out->SetStringField(TEXT("warning"), FString::Printf(
+            TEXT("%d of %d redirectors were not fixed, and %d fixed ones are still on disk; see still_referenced_by / reason per redirector, and the Output Log."),
+            Found.Num() - FixedCount, Found.Num(), bDelete ? FixedCount - DeletedCount : 0));
     return FHaybaHandlerResult::Ok(Out);
 }
 
