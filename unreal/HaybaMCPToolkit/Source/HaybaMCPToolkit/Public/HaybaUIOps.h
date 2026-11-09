@@ -13,6 +13,9 @@
 #include "CoreMinimal.h"
 #include "Dom/JsonObject.h"
 #include "HaybaMCPParams.h"
+#include "Layout/Margin.h"
+#include "Types/SlateEnums.h"
+#include "Components/SlateWrapperTypes.h"
 
 namespace HaybaUIOps
 {
@@ -157,4 +160,23 @@ namespace HaybaUIOps
      *  is the difference between "your property names are wrong" and a bare
      *  failure the caller can only respond to by guessing. */
     FString NothingAppliedError(const FSetPropertiesResult& Result);
+
+    // ── Slot value parsing ────────────────────────────────────────────────
+    //
+    // These used to fall back silently: an unrecognised alignment became Fill and
+    // an unparsed padding became zero, so "VAlign_Bottom" or "(Left=8,...)" reported
+    // success and changed the slot to something nobody asked for. Each now says
+    // whether it understood the value; the handler reports the key otherwise.
+
+    /** "Center", "center", "HAlign_Center", "EHorizontalAlignment::HAlign_Center". */
+    bool TryParseHAlign(const FString& In, EHorizontalAlignment& Out);
+    /** "Bottom", "VAlign_Bottom", "EVerticalAlignment::VAlign_Bottom". */
+    bool TryParseVAlign(const FString& In, EVerticalAlignment& Out);
+    /** A number (uniform), [all], [horizontal, vertical], [left, top, right, bottom],
+     *  {left|Left, top|Top, right|Right, bottom|Bottom}, or the UE text form
+     *  "(Left=8,Top=4,Right=8,Bottom=4)". */
+    bool TryParseMargin(const TSharedPtr<FJsonValue>& Value, FMargin& Out);
+    /** Box-slot size: "auto"/"automatic", "fill" (weight 1), a number (fill weight;
+     *  0 = auto), or {rule:"fill"|"auto", value}. */
+    bool TryParseChildSize(const TSharedPtr<FJsonValue>& Value, FSlateChildSize& Out);
 }
