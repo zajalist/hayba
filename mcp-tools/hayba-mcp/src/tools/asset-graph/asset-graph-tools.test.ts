@@ -56,6 +56,12 @@ describe('arguments survive the trip', () => {
     await assetMoveHandler({ path: '/Game/Props/SM_Rock', target_dir: '/Game/Env' }, session);
     expect(ue.paramsFor('asset_move')).toMatchObject({ target_dir: '/Game/Env' });
   });
+
+  it('fix_redirectors forwards unreferenced: "keep" (dropping it would delete what the caller asked to keep)', async () => {
+    ue = scriptedUe().replies('asset_fix_redirectors', { ok: true });
+    await assetFixRedirectorsHandler({ path: '/Game/UI', unreferenced: 'keep' }, session);
+    expect(ue.paramsFor('asset_fix_redirectors')).toMatchObject({ path: '/Game/UI', unreferenced: 'keep' });
+  });
 });
 
 describe('bad arguments never reach the engine', () => {
@@ -76,6 +82,13 @@ describe('bad arguments never reach the engine', () => {
   it('rename refuses an empty new_name rather than renaming to nothing', async () => {
     ue = scriptedUe().replies('asset_rename', { ok: true });
     const r = await assetRenameHandler({ path: '/Game/A', new_name: '' }, session);
+    expect(r.isError).toBe(true);
+    expect(ue.calls).toHaveLength(0);
+  });
+
+  it('fix_redirectors refuses an unreferenced choice other than delete or keep', async () => {
+    ue = scriptedUe().replies('asset_fix_redirectors', { ok: true });
+    const r = await assetFixRedirectorsHandler({ unreferenced: 'prompt' }, session);
     expect(r.isError).toBe(true);
     expect(ue.calls).toHaveLength(0);
   });

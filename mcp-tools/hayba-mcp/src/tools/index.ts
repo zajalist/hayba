@@ -2965,11 +2965,12 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
   {
     name: 'asset_fix_redirectors',
     description:
-      'Collapse the redirector stubs left behind by renames and moves. USE_WHEN: after a batch of asset_rename / asset_move calls — redirectors that survive into a cook are wasted work and confuse later reference lookups.',
+      'Collapse the redirector stubs left behind by renames and moves: loads and saves every asset that references one (unsaved edits in those assets are saved too), then deletes the redirectors nothing references (unreferenced:"keep" leaves them). Runs unattended, never opens the engine\'s Redirector Update Report. USE_WHEN: after a batch of asset_rename / asset_move calls — redirectors that survive into a cook are wasted work and confuse later reference lookups.',
     meta: assetFixRedirectorsMeta,
     handler: assetFixRedirectorsHandler,
     cost: 'medium',
-    returns: '{fixed_count, path}',
+    returns:
+      '{ok, path, unreferenced, redirector_count, fixed_count, deleted_count, kept_count, saved_packages[], redirectors[{redirector, target, fixed, deleted, still_referenced_by?}], warning?}',
     niche: ASSETGRAPH,
     schema: assetFixRedirectorsSchema.shape,
   },
