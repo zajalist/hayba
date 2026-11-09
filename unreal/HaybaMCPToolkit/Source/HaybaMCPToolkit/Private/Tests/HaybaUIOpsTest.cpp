@@ -394,4 +394,47 @@ bool FHaybaUIOpsShapeSetPropertiesTest::RunTest(const FString&)
     return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FHaybaUIOpsSlotValuesTest,
+    "Hayba.MCP.UIOps.SlotValues",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+// The old parsers fell back silently: an unknown alignment became Fill and an
+// unparsed padding became zero, both reported as applied (WBP_Phone, 2026-11).
+bool FHaybaUIOpsSlotValuesTest::RunTest(const FString&)
+{
+    using namespace HaybaUIOps;
+    EVerticalAlignment V = VAlign_Fill;
+    TestTrue(TEXT("prefixed form"), TryParseVAlign(TEXT("VAlign_Bottom"), V) && V == VAlign_Bottom);
+    TestTrue(TEXT("qualified form"), TryParseVAlign(TEXT("EVerticalAlignment::VAlign_Top"), V) && V == VAlign_Top);
+    TestTrue(TEXT("plain lowercase"), TryParseVAlign(TEXT("center"), V) && V == VAlign_Center);
+    TestFalse(TEXT("nonsense is refused, not Fill"), TryParseVAlign(TEXT("middle-ish"), V));
+    EHorizontalAlignment H = HAlign_Fill;
+    TestTrue(TEXT("HAlign_Right"), TryParseHAlign(TEXT("HAlign_Right"), H) && H == HAlign_Right);
+    TestFalse(TEXT("a vertical word is not horizontal"), TryParseHAlign(TEXT("Bottom"), H));
+
+    // Values are wrapped in an object: a bare scalar is not a valid JSON root for every reader.
+    auto J = [](const FString& Text)
+    {
+        TSharedPtr<FJsonObject> Obj;
+        FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(TEXT("{\"v\":") + Text + TEXT("}")), Obj);
+        return Obj.IsValid() ? Obj->TryGetField(TEXT("v")) : TSharedPtr<FJsonValue>();
+    };
+    FMargin M;
+    TestTrue(TEXT("UE text form"), TryParseMargin(J(TEXT("\"(Left=8,Top=4,Right=8,Bottom=2)\"")), M) && M == FMargin(8, 4, 8, 2));
+    TestTrue(TEXT("[h, v]"), TryParseMargin(J(TEXT("[6, 3]")), M) && M == FMargin(6, 3));
+    TestTrue(TEXT("[l, t, r, b]"), TryParseMargin(J(TEXT("[1, 2, 3, 4]")), M) && M == FMargin(1, 2, 3, 4));
+    TestTrue(TEXT("capitalised keys"), TryParseMargin(J(TEXT("{\"Left\":5,\"Bottom\":7}")), M) && M == FMargin(5, 0, 0, 7));
+    TestTrue(TEXT("explicit zero clears"), TryParseMargin(J(TEXT("0")), M) && M == FMargin(0));
+    TestFalse(TEXT("three numbers are ambiguous"), TryParseMargin(J(TEXT("[1, 2, 3]")), M));
+    TestFalse(TEXT("unknown key refused"), TryParseMargin(J(TEXT("{\"middle\":1}")), M));
+
+    FSlateChildSize S;
+    TestTrue(TEXT("auto"), TryParseChildSize(J(TEXT("\"auto\"")), S) && S.SizeRule == ESlateSizeRule::Automatic);
+    TestTrue(TEXT("fill weight"), TryParseChildSize(J(TEXT("2")), S) && S.SizeRule == ESlateSizeRule::Fill && S.Value == 2.f);
+    TestTrue(TEXT("object form"), TryParseChildSize(J(TEXT("{\"rule\":\"fill\",\"value\":0.5}")), S) && S.Value == 0.5f);
+    TestFalse(TEXT("nonsense refused"), TryParseChildSize(J(TEXT("\"huge\"")), S));
+    return true;
+}
+
 #endif // WITH_DEV_AUTOMATION_TESTS

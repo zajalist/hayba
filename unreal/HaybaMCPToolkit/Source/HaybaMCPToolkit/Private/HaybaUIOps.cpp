@@ -245,3 +245,121 @@ namespace HaybaUIOps
         }
     }
 }
+
+namespace HaybaUIOps
+{
+    namespace
+    {
+        /** Lowercase, without an "EEnum::" qualifier or the given "halign_"-style prefix. */
+        FString BareEnumWord(const FString& In, const TCHAR* Prefix)
+        {
+            FString S = In.TrimStartAndEnd().ToLower();
+            int32 Sep = INDEX_NONE;
+            if (S.FindLastChar(TEXT(':'), Sep)) S = S.Mid(Sep + 1);
+            S.RemoveFromStart(Prefix);
+            return S;
+        }
+
+        bool NumberOf(const TSharedPtr<FJsonValue>& V, double& Out)
+        {
+            if (!V.IsValid() || V->Type != EJson::Number) return false;
+            Out = V->AsNumber();
+            return FMath::IsFinite(Out);
+        }
+    }
+
+    bool TryParseHAlign(const FString& In, EHorizontalAlignment& Out)
+    {
+        const FString S = BareEnumWord(In, TEXT("halign_"));
+        if (S == TEXT("fill"))   { Out = HAlign_Fill;   return true; }
+        if (S == TEXT("left"))   { Out = HAlign_Left;   return true; }
+        if (S == TEXT("center") || S == TEXT("centre")) { Out = HAlign_Center; return true; }
+        if (S == TEXT("right"))  { Out = HAlign_Right;  return true; }
+        return false;
+    }
+
+    bool TryParseVAlign(const FString& In, EVerticalAlignment& Out)
+    {
+        const FString S = BareEnumWord(In, TEXT("valign_"));
+        if (S == TEXT("fill"))   { Out = VAlign_Fill;   return true; }
+        if (S == TEXT("top"))    { Out = VAlign_Top;    return true; }
+        if (S == TEXT("center") || S == TEXT("centre")) { Out = VAlign_Center; return true; }
+        if (S == TEXT("bottom")) { Out = VAlign_Bottom; return true; }
+        return false;
+    }
+
+    bool TryParseMargin(const TSharedPtr<FJsonValue>& Value, FMargin& Out)
+    {
+        if (!Value.IsValid()) return false;
+        double N = 0.0;
+        if (NumberOf(Value, N)) { Out = FMargin((float)N); return true; }
+        if (Value->Type == EJson::Array)
+        {
+            const TArray<TSharedPtr<FJsonValue>>& A = Value->AsArray();
+            TArray<float> F;
+            for (const TSharedPtr<FJsonValue>& E : A)
+            {
+                if (!NumberOf(E, N)) return false;
+                F.Add((float)N);
+            }
+            if (F.Num() == 1) { Out = FMargin(F[0]); return true; }
+            if (F.Num() == 2) { Out = FMargin(F[0], F[1]); return true; }          // horizontal, vertical
+            if (F.Num() == 4) { Out = FMargin(F[0], F[1], F[2], F[3]); return true; }
+            return false;
+        }
+        if (Value->Type == EJson::Object)
+        {
+            const TSharedPtr<FJsonObject> O = Value->AsObject();
+            float Edges[4] = { 0.f, 0.f, 0.f, 0.f };
+            bool bAny = false;
+            const TCHAR* Names[4] = { TEXT("left"), TEXT("top"), TEXT("right"), TEXT("bottom") };
+            for (const auto& Pair : O->Values)
+            {
+                const FString Key = FString(Pair.Key).ToLower();
+                int32 Index = INDEX_NONE;
+                for (int32 I = 0; I < 4; ++I) if (Key == Names[I]) Index = I;
+                if (Index == INDEX_NONE || !NumberOf(Pair.Value, N)) return false;
+                Edges[Index] = (float)N;
+                bAny = true;
+            }
+            if (!bAny) return false;
+            Out = FMargin(Edges[0], Edges[1], Edges[2], Edges[3]);
+            return true;
+        }
+        if (Value->Type == EJson::String)
+        {
+            // UE's text form, as the Details panel copies it: (Left=8,Top=4,Right=8,Bottom=4)
+            const FString S = Value->AsString();
+            float L = 0.f, T = 0.f, R = 0.f, B = 0.f;
+            const bool bL = FParse::Value(*S, TEXT("Left="), L), bT = FParse::Value(*S, TEXT("Top="), T);
+            const bool bR = FParse::Value(*S, TEXT("Right="), R), bB = FParse::Value(*S, TEXT("Bottom="), B);
+            if (bL || bT || bR || bB) { Out = FMargin(L, T, R, B); return true; }
+            if (S.IsNumeric()) { Out = FMargin(FCString::Atof(*S)); return true; }
+        }
+        return false;
+    }
+
+    bool TryParseChildSize(const TSharedPtr<FJsonValue>& Value, FSlateChildSize& Out)
+    {
+        if (!Value.IsValid()) return false;
+        double N = 0.0;
+        if (NumberOf(Value, N))
+        {
+            Out.SizeRule = N > 0.0 ? ESlateSizeRule::Fill : ESlateSizeRule::Automatic;
+            Out.Value = N > 0.0 ? (float)N : 1.f;
+            return true;
+        }
+        FString Rule;
+        double Weight = 1.0;
+        if (Value->Type == EJson::String) Rule = Value->AsString();
+        else if (Value->Type == EJson::Object)
+        {
+            Value->AsObject()->TryGetStringField(TEXT("rule"), Rule);
+            Value->AsObject()->TryGetNumberField(TEXT("value"), Weight);
+        }
+        Rule = Rule.TrimStartAndEnd().ToLower();
+        if (Rule == TEXT("auto") || Rule == TEXT("automatic")) { Out.SizeRule = ESlateSizeRule::Automatic; Out.Value = 1.f; return true; }
+        if (Rule == TEXT("fill")) { Out.SizeRule = ESlateSizeRule::Fill; Out.Value = (float)Weight; return true; }
+        return false;
+    }
+}

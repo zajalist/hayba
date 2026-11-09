@@ -25,6 +25,7 @@
 #include "K2Node_DynamicCast.h"
 #include "K2Node_Select.h"
 #include "K2Node_CustomEvent.h"
+#include "K2Node_InputKey.h"
 #include "K2Node_MacroInstance.h"
 #include "K2Node_BreakStruct.h"
 #include "K2Node_MakeStruct.h"
@@ -812,6 +813,7 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::AddNode(const TSharedPtr<FJsonObj
         TEXT("/Engine/EditorBlueprintResources/StandardMacros.StandardMacros"));
     const FString StructPath = ParamR.OptionalString(TEXT("struct_path"));
     const FString DispatcherName = ParamR.OptionalString(TEXT("dispatcher_name"));
+    const FString KeyName = ParamR.OptionalString(TEXT("key"), FString(), 128);
     if (ParamR.HasErrors()) return FHaybaHandlerResult::Err(ParamR.ErrorMessage());
 
     // Config-free node classes: placing them needs nothing but the class. Loaded by
@@ -834,7 +836,7 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::AddNode(const TSharedPtr<FJsonObj
         TEXT("call_function"), TEXT("branch"), TEXT("select"), TEXT("timer_by_function"),
         TEXT("variable_get"), TEXT("variable_set"), TEXT("cast"), TEXT("custom_event"),
         TEXT("macro"), TEXT("break_struct"), TEXT("make_struct"), TEXT("call_dispatcher"),
-        TEXT("message"), TEXT("function_entry"), TEXT("function_result"),
+        TEXT("message"), TEXT("function_entry"), TEXT("function_result"), TEXT("input_key"),
     };
     if (!SupportedNodeTypes.Contains(NodeType) && !SimpleNodeClasses.Contains(NodeType))
     {
@@ -931,6 +933,33 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::AddNode(const TSharedPtr<FJsonObj
                 TEXT("blueprint_add_node: %s needs a function graph; '%s' is not one. Pass graph_name of a function."),
                 *NodeType, *Graph->GetName()));
         return Place(NewObject<UK2Node_FunctionResult>(Graph));
+    }
+
+    // A key event (Pressed / Released / Key pins), the palette's Input > Keyboard/Mouse Events.
+    if (NodeType == TEXT("input_key"))
+    {
+        const FKey Key{ FName(*KeyName) };
+        if (KeyName.IsEmpty() || !Key.IsValid())
+            return FHaybaHandlerResult::Err(FString::Printf(
+                TEXT("blueprint_add_node: input_key needs key, a valid key name such as LeftMouseButton, MouseWheelUp, SpaceBar or E (got '%s')"), *KeyName));
+        if (!BP->UbergraphPages.Contains(Graph))
+            return FHaybaHandlerResult::Err(TEXT("blueprint_add_node: input key events live in an event graph, not a function graph"));
+        // One event per key: a second one for the same key is a compile error.
+        for (UEdGraphNode* N : Graph->Nodes)
+        {
+            if (const UK2Node_InputKey* Existing = Cast<UK2Node_InputKey>(N); Existing && Existing->InputKey == Key)
+            {
+                TSharedPtr<FJsonObject> Found = HaybaDescribeNode(N);
+                Found->SetStringField(TEXT("graph"), Graph->GetName());
+                Found->SetStringField(TEXT("node_type"), NodeType);
+                Found->SetBoolField(TEXT("already_existed"), true);
+                Found->SetBoolField(TEXT("verified"), true);
+                return FHaybaHandlerResult::Ok(Found);
+            }
+        }
+        UK2Node_InputKey* Node = NewObject<UK2Node_InputKey>(Graph);
+        Node->InputKey = Key;
+        return Place(Node);
     }
 
     if (NodeType == TEXT("custom_event"))
@@ -1202,6 +1231,10 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::SetPinDefault(const TSharedPtr<FJ
         || Pin->PinType.PinCategory == UEdGraphSchema_K2::PC_Class;
     const bool bSoftObjectPin = Pin->PinType.PinCategory == UEdGraphSchema_K2::PC_SoftObject
         || Pin->PinType.PinCategory == UEdGraphSchema_K2::PC_SoftClass;
+    // Text pins store their literal in DefaultTextValue, not DefaultValue; setting and
+    // verifying DefaultValue made every text literal report verified:false.
+    const bool bTextPin = Pin->PinType.PinCategory == UEdGraphSchema_K2::PC_Text;
+    const FText TextValue = FText::FromString(Value);
 
     // Object/class pins take an asset reference rather than a string literal.
     if (bHardObjectPin || bSoftObjectPin)
@@ -1220,9 +1253,9 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::SetPinDefault(const TSharedPtr<FJ
 
     const FString ValidationError = Schema->IsPinDefaultValid(
         Pin,
-        bHardObjectPin ? FString() : Value,
+        (bHardObjectPin || bTextPin) ? FString() : Value,
         bHardObjectPin ? ResolvedDefaultObject : nullptr,
-        FText::GetEmpty());
+        bTextPin ? TextValue : FText::GetEmpty());
     if (!ValidationError.IsEmpty())
     {
         return FHaybaHandlerResult::Err(FString::Printf(
@@ -1236,6 +1269,7 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::SetPinDefault(const TSharedPtr<FJ
     // The schema setters return void in UE 5.8, so their only trustworthy
     // outcome is the readback below.
     if (bHardObjectPin) Schema->TrySetDefaultObject(*Pin, ResolvedDefaultObject);
+    else if (bTextPin)  Schema->TrySetDefaultText(*Pin, TextValue);
     else                Schema->TrySetDefaultValue(*Pin, Value);
 
     MarkStructural(BP);
@@ -1243,9 +1277,10 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::SetPinDefault(const TSharedPtr<FJ
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
     Out->SetStringField(TEXT("node_id"), NodeId);
     Out->SetStringField(TEXT("pin_name"), PinName);
-    Out->SetStringField(TEXT("applied"), Pin->DefaultObject ? Pin->DefaultObject->GetPathName() : Pin->DefaultValue);
-    const bool bVerified = bHardObjectPin
-        ? Pin->DefaultObject == ResolvedDefaultObject
+    Out->SetStringField(TEXT("applied"), Pin->DefaultObject ? Pin->DefaultObject->GetPathName()
+        : bTextPin ? Pin->DefaultTextValue.ToString() : Pin->DefaultValue);
+    const bool bVerified = bHardObjectPin ? Pin->DefaultObject == ResolvedDefaultObject
+        : bTextPin ? Pin->DefaultTextValue.ToString() == Value
         : Pin->DefaultValue == Value;
     Out->SetBoolField(TEXT("verified"), bVerified);
     if (!bVerified)

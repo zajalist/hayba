@@ -91,6 +91,15 @@ All notable changes to Hayba MCP Toolkit are documented here. Format based on [K
   spend its Approve.
 
 ### Fixed
+- UI slot values that do not parse are now reported, not defaulted. An
+  unrecognised alignment used to become Fill and an unparsed padding zero, both
+  reported as applied. Alignment now also takes `HAlign_*` / `VAlign_*` and qualified
+  forms; padding takes a number, `[h, v]`, `[l, t, r, b]`, `{left|Left, ...}` or
+  `(Left=..,Top=..,Right=..,Bottom=..)`; box slots take `size` (auto / fill / weight).
+  Anything else lands in `unknown_slot_props`, which `ui_add_element` now reports too.
+- `blueprint_add_node` adds `input_key` (key event: Pressed / Released / Key pins;
+  one per key per graph), and `blueprint_set_pin_default` sets Text pins (SetText
+  InText) through `DefaultTextValue`, so text literals verify instead of failing.
 - `seq_inspect`, `seq_list_bindings` and `seq_camera_cut` pass the python_run
   policy again (no `try`/`with`; HCR-TIME-001 refused every sequencer tool) and use
   the UE 5.8 scripting names (`get_tracks`/`find_tracks_by_type`; `get_master_tracks`
