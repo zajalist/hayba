@@ -223,7 +223,6 @@ FHaybaHandlerResult FHaybaMCPEditorHandler::StartPIE(const TSharedPtr<FJsonObjec
 {
     if (!GEditor)
         return FHaybaHandlerResult::Err(TEXT("GEditor is null"));
-
     // Never queue a session that would open a modal on the next tick.
     const TArray<FHaybaPlayModalRisk> Risks = FindPlayModalRisks();
     if (Risks.Num() > 0)

@@ -9,6 +9,7 @@
 #include "Kismet2/KismetEditorUtilities.h"
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "Kismet2/CompilerResultsLog.h"
+#include "Kismet2/Kismet2NameValidators.h"
 #include "Logging/TokenizedMessage.h"
 #include "Engine/Blueprint.h"
 #include "Engine/BlueprintGeneratedClass.h"
@@ -679,6 +680,20 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::GetInfo(const TSharedPtr<FJsonObj
     return FHaybaHandlerResult::Ok(Out);
 }
 
+/** An error if Name is already a variable, component, function, event or graph of BP or a parent class. A clash
+ *  compiles to "Name collision" and leaves the class failing to compile, and the next PIE start then opened UE's modal
+ *  compile-error prompt: a production project's editor froze for 6 h (BP_RoomAudio, function "Presence" vs component "Presence",
+ *  2026-11-09). FKismetNameValidator is the check the editor's own add and rename UI runs. */
+static FString MemberNameTaken(const UBlueprint* BP, const TCHAR* Cmd, const FString& Name)
+{
+    const EValidatorResult Result = FKismetNameValidator(BP).IsValid(FName(*Name));
+    if (Result == EValidatorResult::Ok) return FString();
+    return FString::Printf(TEXT(
+        "%s refused [HCR-BP-NAME-001]: '%s': %s A new member must not share a name with a variable, component, function, event or graph "
+        "of this Blueprint or its parent classes; the class would stop compiling. Nothing was changed."),
+        Cmd, *Name, *INameValidatorInterface::GetErrorString(Name, Result));
+}
+
 FHaybaHandlerResult FHaybaMCPBlueprintHandler::AddComponent(const TSharedPtr<FJsonObject>& P)
 {
     FString Path, CompClassPath, CompName;
@@ -706,6 +721,8 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::AddComponent(const TSharedPtr<FJs
                 *CompName));
         }
     }
+    const FString Taken = MemberNameTaken(BP, TEXT("blueprint_add_component"), CompName);
+    if (!Taken.IsEmpty()) return FHaybaHandlerResult::Err(Taken);
 
     USCS_Node* Node = BP->SimpleConstructionScript->CreateNode(CompClass, FName(*CompName));
     if (!Node) return FHaybaHandlerResult::Err(TEXT("blueprint_add_component: CreateNode failed"));
@@ -763,6 +780,11 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::AddVariable(const TSharedPtr<FJso
             TEXT("blueprint_add_variable: '%s' exists with a different type; nothing was changed. Retyping is not done in place."), *VarName));
 
     const bool bCreated = !Existing;
+    if (bCreated)
+    {
+        const FString Taken = MemberNameTaken(BP, TEXT("blueprint_add_variable"), VarName);
+        if (!Taken.IsEmpty()) return FHaybaHandlerResult::Err(Taken);
+    }
     if (bCreated && !FBlueprintEditorUtils::AddMemberVariable(BP, Name, PinType, DefaultValue))
         return FHaybaHandlerResult::Err(TEXT("blueprint_add_variable: AddMemberVariable refused the name or type; nothing was changed"));
 
@@ -890,6 +912,8 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::AddFunction(const TSharedPtr<FJso
         }
         const FString Conflict = HaybaBlueprintOps::FunctionNameConflict(Names, FuncName);
         if (!Conflict.IsEmpty()) return FHaybaHandlerResult::Err(Conflict);
+        const FString Taken = MemberNameTaken(BP, TEXT("blueprint_add_function"), FuncName);
+        if (!Taken.IsEmpty()) return FHaybaHandlerResult::Err(Taken);
     }
 
     UEdGraph* NewGraph = FBlueprintEditorUtils::CreateNewGraph(
