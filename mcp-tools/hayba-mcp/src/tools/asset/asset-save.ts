@@ -21,6 +21,12 @@ export const schema = z.object({
     .min(1)
     .max(64)
     .describe('1-64 /Game/ asset paths, e.g. /Game/FoA/Mat/M_Sand or /Game/FoA/Mat/M_Sand.M_Sand'),
+  force: z
+    .boolean()
+    .optional()
+    .describe(
+      'Save even if the package is not dirty. Use it after edits that do not mark packages dirty (editor-Python AnimationLibrary notify tracks and events); without it those land in skipped_not_dirty and never reach disk.',
+    ),
 });
 
 export const assetSaveHandler: ToolHandler = ueTool('asset_save', schema);

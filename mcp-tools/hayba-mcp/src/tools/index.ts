@@ -2247,11 +2247,11 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
   {
     name: 'asset_save',
     description:
-      'Save named assets to disk natively (C++, no editor Python). Each path is saved only if it is loaded and dirty, then verified clean in memory with a fresh file on disk; saved[], skipped[] and failed[] say what happened to each. Refuses maps (use level_save), read-only files, Blueprints mid-compile, and PIE. There is no save-everything mode: other agents share this editor.',
+      'Save named assets to disk natively (C++, no editor Python). Each path is saved only if it is loaded and dirty (force:true saves a clean one too; skipped_not_dirty lists the clean ones it skipped), then verified clean in memory with a fresh file on disk; saved[], skipped[] and failed[] say what happened to each. Refuses maps (use level_save), read-only files, Blueprints mid-compile, and PIE. There is no save-everything mode: other agents share this editor.',
     meta: assetSaveMeta,
     handler: assetSaveHandler,
     cost: 'low',
-    returns: '{ok, saved[], saved_count, skipped[{path,reason}], failed[{path,reason}], verified}',
+    returns: '{ok, saved[], saved_count, skipped[{path,reason}], skipped_not_dirty[], failed[{path,reason}], verified}',
     schema: assetSaveSchema.shape,
   },
   {

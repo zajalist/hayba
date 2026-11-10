@@ -91,6 +91,10 @@ All notable changes to Hayba MCP Toolkit are documented here. Format based on [K
   spend its Approve.
 
 ### Fixed
+- `asset_save` takes `force: true`, which saves a package even when it is not dirty, and its reply lists
+  every package it skipped as clean in `skipped_not_dirty`. Editor-Python AnimationLibrary notify edits
+  (add_animation_notify_track / add_animation_notify_event) leave the package clean, so story's montage notify
+  changes were skipped as "not dirty" and never reached disk.
 - `blueprint_add_function`, `blueprint_add_variable` and `blueprint_add_component` refuse a name the
   Blueprint already uses for a variable, component, function, event or graph, here or in a parent class, and
   change nothing ([HCR-BP-NAME-001]). The clash used to compile to "Name collision" and leave the class broken (FoA's 6 h freeze,
