@@ -84,6 +84,16 @@ FString AHaybaMCPCaptureActor::CaptureToBase64(
         return Fail(FString::Printf(TEXT("pixel readback returned %d pixels, expected %lld"),
             Pixels.Num(), int64(SafeWidth) * int64(SafeHeight)));
     }
+    // A frame with every pixel exactly black is a capture that saw nothing (no scene in front of the camera, or a
+    // camera in the wrong place), not a dark scene; say so instead of returning it.
+    bool bAnyLight = false;
+    for (const FColor& C : Pixels)
+    {
+        if (C.R | C.G | C.B) { bAnyLight = true; break; }
+    }
+    if (!bAnyLight)
+        return Fail(FString::Printf(TEXT("the capture is entirely black (camera at %s, rotation %s): nothing was in view"),
+            *GetActorLocation().ToCompactString(), *GetActorRotation().ToCompactString()));
     if (!Lease->Advance(HaybaRenderSafety::EStage::Encoding, Error)) return Fail(Error);
     TArray64<uint8> Png;
     FImageUtils::PNGCompressImageArray(SafeWidth, SafeHeight, Pixels, Png);

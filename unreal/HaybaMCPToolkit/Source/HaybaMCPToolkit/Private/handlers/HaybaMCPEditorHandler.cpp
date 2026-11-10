@@ -13,6 +13,9 @@
 #include "Engine/Engine.h"
 #include "LevelEditor.h"
 #include "SLevelViewport.h"
+#include "LevelEditorViewport.h"
+#include "GameFramework/PlayerController.h"
+#include "Camera/PlayerCameraManager.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
 #include "Misc/PackageName.h"
@@ -206,10 +209,10 @@ FHaybaHandlerResult FHaybaMCPEditorHandler::Handle(const FString& Cmd, const TSh
     return FHaybaHandlerResult::Err(FString::Printf(TEXT("Unknown editor command: %s"), *Cmd));
 }
 
-AHaybaMCPCaptureActor* FHaybaMCPEditorHandler::GetOrSpawnCaptureActor() const
+AHaybaMCPCaptureActor* FHaybaMCPEditorHandler::GetOrSpawnCaptureActor(UWorld* InWorld) const
 {
     if (!GEditor) return nullptr;
-    UWorld* World = GEditor->GetEditorWorldContext().World();
+    UWorld* World = InWorld ? InWorld : GEditor->GetEditorWorldContext().World();
     if (!IsValid(World) || World->bIsTearingDown || IsEngineExitRequested()) return nullptr;
 
     for (TActorIterator<AHaybaMCPCaptureActor> It(World); It; ++It)
@@ -571,25 +574,51 @@ FHaybaHandlerResult FHaybaMCPEditorHandler::CaptureViewport(const TSharedPtr<FJs
     if (!Lease.IsValid())
         return FHaybaHandlerResult::Err(TEXT("editor_capture_viewport: ") + CaptureError);
 
-    AHaybaMCPCaptureActor* CaptureActor = GetOrSpawnCaptureActor();
-    if (!CaptureActor)
-        return FHaybaHandlerResult::Err(TEXT("Could not get or spawn capture actor"));
-
-    FViewport* VP = GEditor ? GEditor->GetActiveViewport() : nullptr;
+    // The camera: the PIE player's view while PIE runs (captured in the PIE world), else the level viewport the user
+    // last worked in, which exists even when the editor is in the background. GetActiveViewport() is the focused
+    // viewport: with PIE or another app in front it was not a level viewport, the capture sat at the origin looking
+    // at nothing, and the frame came back black with camera 0,0,0 (a production project, 2026-11-10 17:14).
+    if (!GEditor) return FHaybaHandlerResult::Err(TEXT("editor_capture_viewport: GEditor is not available"));
     FVector CamLoc = FVector::ZeroVector;
     FRotator CamRot = FRotator::ZeroRotator;
-
-    if (VP)
+    float Fov = 90.f;
+    UWorld* CaptureWorld = nullptr;
+    FString Source;
+    if (UWorld* Play = GEditor->PlayWorld.Get())
     {
-        FEditorViewportClient* Client = AsEditorViewportClient(VP);
-        if (Client)
+        if (APlayerController* PC = Play->GetFirstPlayerController())
         {
-            CamLoc = Client->GetViewLocation();
-            CamRot = Client->GetViewRotation();
-            CaptureActor->SetActorLocation(CamLoc);
-            CaptureActor->SetActorRotation(CamRot);
+            PC->GetPlayerViewPoint(CamLoc, CamRot);
+            if (PC->PlayerCameraManager) Fov = PC->PlayerCameraManager->GetFOVAngle();
+            CaptureWorld = Play;
+            Source = TEXT("pie_player");
         }
     }
+    if (!CaptureWorld)
+    {
+        FLevelEditorViewportClient* Client = GCurrentLevelEditingViewportClient;
+        if (!Client || !Client->IsPerspective())
+        {
+            Client = nullptr;
+            for (FLevelEditorViewportClient* Candidate : GEditor->GetLevelViewportClients())
+            {
+                if (Candidate && Candidate->IsPerspective()) { Client = Candidate; break; }
+            }
+        }
+        if (!Client)
+            return FHaybaHandlerResult::Err(TEXT("editor_capture_viewport: no perspective level viewport is open to capture from. Nothing was captured."));
+        CamLoc = Client->GetViewLocation();
+        CamRot = Client->GetViewRotation();
+        Fov = Client->ViewFOV;
+        CaptureWorld = GEditor->GetEditorWorldContext().World();
+        Source = TEXT("level_viewport");
+    }
+
+    AHaybaMCPCaptureActor* CaptureActor = GetOrSpawnCaptureActor(CaptureWorld);
+    if (!CaptureActor)
+        return FHaybaHandlerResult::Err(TEXT("Could not get or spawn capture actor"));
+    CaptureActor->SetActorLocationAndRotation(CamLoc, CamRot);
+    if (CaptureActor->Capture) CaptureActor->Capture->FOVAngle = Fov;
 
     FString Base64 = CaptureActor->CaptureToBase64(Width, Height, Lease, &CaptureError);
     if (Base64.IsEmpty())
@@ -610,7 +639,9 @@ FHaybaHandlerResult FHaybaMCPEditorHandler::CaptureViewport(const TSharedPtr<FJs
     RotArr.Add(MakeShareable(new FJsonValueNumber(CamRot.Roll)));
     CamObj->SetArrayField(TEXT("location"), LocArr);
     CamObj->SetArrayField(TEXT("rotation"), RotArr);
+    CamObj->SetNumberField(TEXT("fov"), Fov);
     Result->SetObjectField(TEXT("camera"), CamObj);
+    Result->SetStringField(TEXT("source"), Source);
 
     return FHaybaHandlerResult::Ok(Result);
 }

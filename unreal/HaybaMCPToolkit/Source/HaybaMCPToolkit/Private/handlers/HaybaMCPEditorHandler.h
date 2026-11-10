@@ -25,5 +25,5 @@ private:
     FHaybaHandlerResult GetPerformanceStats(const TSharedPtr<FJsonObject>& P);
     FHaybaHandlerResult SetViewportMode(const TSharedPtr<FJsonObject>& P);
 
-    AHaybaMCPCaptureActor* GetOrSpawnCaptureActor() const;
+    AHaybaMCPCaptureActor* GetOrSpawnCaptureActor(UWorld* World = nullptr) const;
 };
