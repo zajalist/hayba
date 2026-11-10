@@ -91,6 +91,10 @@ All notable changes to Hayba MCP Toolkit are documented here. Format based on [K
   spend its Approve.
 
 ### Fixed
+- `blueprint_add_node` gives a node its pins before `PostPlacedNewNode`, as UE's palette spawner does.
+  `spawn_actor_from_class` asserted at EdGraphNode.h:586 on every placement (its PostPlacedNewNode sets the
+  scale-method pin through FindPinChecked) and the SEH guard took the editor out of service. Its `class_path`
+  now sets the class to spawn; anything but a concrete Actor class is refused before the graph changes.
 - `asset_save` takes `force: true`, which saves a package even when it is not dirty, and its reply lists
   every package it skipped as clean in `skipped_not_dirty`. Editor-Python AnimationLibrary notify edits
   (add_animation_notify_track / add_animation_notify_event) leave the package clean, so story's montage notify

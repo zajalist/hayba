@@ -27,6 +27,8 @@
 #include "K2Node_Select.h"
 #include "K2Node_CustomEvent.h"
 #include "K2Node_InputKey.h"
+#include "K2Node_SpawnActorFromClass.h"
+#include "GameFramework/Actor.h"
 #include "K2Node_MacroInstance.h"
 #include "K2Node_BreakStruct.h"
 #include "K2Node_MakeStruct.h"
@@ -893,8 +895,10 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::AddNode(const TSharedPtr<FJsonObj
         Node->NodePosX = NX;
         Node->NodePosY = NY;
         Graph->AddNode(Node, false, false);
-        Node->PostPlacedNewNode();
+        // Pins first, then PostPlacedNewNode, as UE's palette spawner does (BlueprintNodeSpawner.cpp): some nodes
+        // set pin defaults there (SpawnActorFromClass's scale method, via FindPinChecked) and asserted otherwise.
         Node->AllocateDefaultPins();
+        Node->PostPlacedNewNode();
         MarkStructural(BP);
         TSharedPtr<FJsonObject> Out = HaybaDescribeNode(Node);
         Out->SetStringField(TEXT("graph"), Graph->GetName());
@@ -932,7 +936,35 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::AddNode(const TSharedPtr<FJsonObj
         UClass* NodeClass = LoadObject<UClass>(nullptr, **SimpleClassPath);
         if (!NodeClass || !NodeClass->IsChildOf(UK2Node::StaticClass()) || NodeClass->HasAnyClassFlags(CLASS_Abstract))
             return FHaybaHandlerResult::Err(FString::Printf(TEXT("blueprint_add_node: node class %s is not available in this editor"), **SimpleClassPath));
-        return Place(NewObject<UK2Node>(Graph, NodeClass));
+        // spawn_actor_from_class takes class_path as the class it spawns. Checked before anything changes.
+        UClass* SpawnClass = nullptr;
+        if (NodeType == TEXT("spawn_actor_from_class") && !ClassPath.IsEmpty())
+        {
+            SpawnClass = LoadObject<UClass>(nullptr, *ClassPath);
+            if (!SpawnClass || !SpawnClass->IsChildOf(AActor::StaticClass())
+                || SpawnClass->HasAnyClassFlags(CLASS_Abstract | CLASS_Deprecated | CLASS_NewerVersionExists))
+                return FHaybaHandlerResult::Err(FString::Printf(TEXT(
+                    "blueprint_add_node: spawn_actor_from_class class_path '%s' is not a concrete Actor class "
+                    "(e.g. /Script/CinematicCamera.CineCameraActor or /Game/X/BP_Y.BP_Y_C). Nothing was changed."), *ClassPath));
+        }
+        UK2Node* Node = NewObject<UK2Node>(Graph, NodeClass);
+        FHaybaHandlerResult Placed = Place(Node);
+        UK2Node_SpawnActorFromClass* Spawn = Cast<UK2Node_SpawnActorFromClass>(Node);
+        UEdGraphPin* ClassPin = Spawn && SpawnClass ? Spawn->GetClassPin() : nullptr;
+        if (ClassPin && Placed.Data.IsValid())
+        {
+            // Rebuilds the node's expose-on-spawn pins for the class, as picking it in the editor does.
+            GetDefault<UEdGraphSchema_K2>()->TrySetDefaultObject(*ClassPin, SpawnClass);
+            Placed.Data = HaybaDescribeNode(Node);
+            Placed.Data->SetStringField(TEXT("graph"), Graph->GetName());
+            Placed.Data->SetStringField(TEXT("node_type"), NodeType);
+            Placed.Data->SetStringField(TEXT("spawn_class"), SpawnClass->GetPathName());
+            Placed.Data->SetBoolField(TEXT("verified"), Graph->Nodes.Contains(Node) && Spawn->GetClassPin()
+                && Spawn->GetClassPin()->DefaultObject == SpawnClass);
+            Placed.Data->SetBoolField(TEXT("dirty"), BP->GetOutermost()->IsDirty());
+            Placed.Data->SetStringField(TEXT("note"), TEXT("Staged. Call blueprint_compile to apply."));
+        }
+        return Placed;
     }
 
     // Entry and result nodes belong to function graphs. The entry always exists, so it is
@@ -1189,8 +1221,8 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::AddNode(const TSharedPtr<FJsonObj
     Node->NodePosX = NX;
     Node->NodePosY = NY;
     Graph->AddNode(Node, false, false);
+    Node->AllocateDefaultPins();  // before PostPlacedNewNode, as in Place() above
     Node->PostPlacedNewNode();
-    Node->AllocateDefaultPins();
 
     MarkStructural(BP);
 
@@ -1689,8 +1721,8 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::AddEvent(const TSharedPtr<FJsonOb
     Node->NodePosX = X;
     Node->NodePosY = Y;
     Graph->AddNode(Node, false, false);
+    Node->AllocateDefaultPins();  // before PostPlacedNewNode, as in Place() above
     Node->PostPlacedNewNode();
-    Node->AllocateDefaultPins();
 
     MarkStructural(BP);
 
