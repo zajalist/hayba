@@ -42,13 +42,13 @@
 // treats set-to-value as idempotent), so it is NOT added to tool-executor's
 // NON_IDEMPOTENT set. The other four are reads.
 //
-// UNCERTAIN-API flags for the next live-validation pass (all wrapped defensively
-// so they degrade to a structured error rather than a silent wrong answer):
+// UNCERTAIN-API flags for the next live-validation pass (fallbacks chosen with
+// hasattr; anything else unexpected propagates as a python error):
 //   - mesh_get_lods: per-LOD tri/vert counts live on StaticMeshEditorSubsystem
 //     (get_lod_count / get_number_triangles / get_number_verts) in 5.7, formerly
 //     EditorStaticMeshLibrary. Both are probed; degrades to lod_count-only.
-//   - mesh_get_sockets: the `sockets` property vs get_sockets() vs
-//     get_socket_by_name enumeration varies; the `sockets` array is read first.
+//   - mesh_get_sockets: StaticMesh.Sockets is not python-exported, so names come
+//     from a transient StaticMeshComponent's get_all_socket_names + find_socket.
 //   - mesh_set_material_slot: assignment via the static_materials array
 //     (set_editor_property) vs StaticMeshEditorSubsystem.set_material — both
 //     probed.
@@ -60,18 +60,14 @@ import type { PyToolDescriptor } from '../py-tool-factory.js';
 
 // ── Shared Python helper: load + validate a StaticMesh from a content path ──────
 // No try/with in this block: native python_run policy HCR-TIME-001 refuses them,
-// so _find_sm returns (mesh, None) | (None, error) for explicit status.
-// _load_sm keeps the raising contract for tools that still catch it.
+// so _find_sm returns (mesh, None) | (None, error) for explicit status, and API
+// fallbacks are chosen with hasattr instead of try/except.
 const PY_MESH_HELPERS = [
   'def _find_sm(path):',
   '    obj = unreal.EditorAssetLibrary.load_asset(path) if unreal.EditorAssetLibrary.does_asset_exist(path) else None',
   '    if obj is None: return None, "asset not found: %s" % path',
   '    if not isinstance(obj, unreal.StaticMesh): return None, "not a StaticMesh: %s (%s)" % (path, type(obj).__name__)',
   '    return obj, None',
-  'def _load_sm(path):',
-  '    sm, msg = _find_sm(path)',
-  '    if sm is None: raise Exception(msg)',
-  '    return sm',
   'def _sm_subsystem():',
   '    return unreal.get_editor_subsystem(unreal.StaticMeshEditorSubsystem)',
 ].join('\n');
@@ -100,28 +96,24 @@ function meshGetSocketsScript(p: MeshGetSocketsParams): string {
   return [
     PY_MESH_HELPERS,
     `_path = ${pyStr(p.asset_path)}`,
-    'try:',
-    '    sm = _load_sm(_path)',
+    'sm, _msg = _find_sm(_path)',
+    'if sm is None:',
+    '    _err(_msg)',
+    'else:',
+    '    # StaticMesh.Sockets is a plain UPROPERTY() (not exported to python in 5.7/5.8), so list',
+    '    # the names through a transient component and resolve each with find_socket.',
+    '    comp = unreal.StaticMeshComponent()',
+    '    comp.set_static_mesh(sm)',
     '    socks = []',
-    '    raw = None',
-    '    try: raw = sm.get_editor_property("sockets")',
-    '    except Exception: raw = None',
-    '    if raw is None:',
-    '        try: raw = sm.sockets',
-    '        except Exception: raw = None',
-    '    for s in (raw or []):',
-    '        try:',
-    '            loc = s.relative_location; rot = s.relative_rotation; sc = s.relative_scale',
-    '            socks.append({"name": str(s.socket_name),',
-    '                          "location": [loc.x, loc.y, loc.z],',
-    '                          "rotation": [rot.roll, rot.pitch, rot.yaw],',
-    '                          "scale": [sc.x, sc.y, sc.z]})',
-    '        except Exception:',
-    '            try: socks.append({"name": str(s.socket_name)})',
-    '            except Exception: pass',
+    '    for n in comp.get_all_socket_names():',
+    '        s = sm.find_socket(n)',
+    '        if s is None: continue',
+    '        loc = s.relative_location; rot = s.relative_rotation; sc = s.relative_scale',
+    '        socks.append({"name": str(s.socket_name),',
+    '                      "location": [loc.x, loc.y, loc.z],',
+    '                      "rotation": [rot.roll, rot.pitch, rot.yaw],',
+    '                      "scale": [sc.x, sc.y, sc.z]})',
     '    _emit({"ok": True, "asset_path": _path, "sockets": socks, "count": len(socks)})',
-    'except Exception as _e:',
-    '    _err(_e)',
   ].join('\n');
 }
 
@@ -148,33 +140,25 @@ function meshGetLodsScript(p: MeshGetLodsParams): string {
   return [
     PY_MESH_HELPERS,
     `_path = ${pyStr(p.asset_path)}`,
-    'try:',
-    '    sm = _load_sm(_path)',
+    'sm, _msg = _find_sm(_path)',
+    'if sm is None:',
+    '    _err(_msg)',
+    'else:',
     '    sub = _sm_subsystem()',
+    '    lib = unreal.EditorStaticMeshLibrary if hasattr(unreal, "EditorStaticMeshLibrary") else None',
     '    lod_count = None',
-    '    try:',
-    '        if sub is not None: lod_count = sub.get_lod_count(sm)',
-    '    except Exception: lod_count = None',
-    '    if lod_count is None:',
-    '        try: lod_count = unreal.EditorStaticMeshLibrary.get_lod_count(sm)',
-    '        except Exception: lod_count = None',
+    '    if sub is not None and hasattr(sub, "get_lod_count"): lod_count = sub.get_lod_count(sm)',
+    '    elif lib is not None and hasattr(lib, "get_lod_count"): lod_count = lib.get_lod_count(sm)',
     '    lods = []',
     '    if lod_count:',
     '        for i in range(lod_count):',
     '            tri = None; vert = None',
-    '            try:',
-    '                if sub is not None:',
-    '                    tri = sub.get_number_triangles(sm, i); vert = sub.get_number_verts(sm, i)',
-    '            except Exception: pass',
-    '            if tri is None:',
-    '                try:',
-    '                    tri = unreal.EditorStaticMeshLibrary.get_number_triangles(sm, i)',
-    '                    vert = unreal.EditorStaticMeshLibrary.get_number_verts(sm, i)',
-    '                except Exception: pass',
+    '            if sub is not None and hasattr(sub, "get_number_triangles"):',
+    '                tri = sub.get_number_triangles(sm, i); vert = sub.get_number_verts(sm, i)',
+    '            elif lib is not None and hasattr(lib, "get_number_triangles"):',
+    '                tri = lib.get_number_triangles(sm, i); vert = lib.get_number_verts(sm, i)',
     '            lods.append({"lod": i, "triangles": tri, "vertices": vert})',
     '    _emit({"ok": True, "asset_path": _path, "lod_count": lod_count, "lods": lods})',
-    'except Exception as _e:',
-    '    _err(_e)',
   ].join('\n');
 }
 
@@ -201,24 +185,16 @@ function meshGetMaterialsScript(p: MeshGetMaterialsParams): string {
   return [
     PY_MESH_HELPERS,
     `_path = ${pyStr(p.asset_path)}`,
-    'try:',
-    '    sm = _load_sm(_path)',
+    'sm, _msg = _find_sm(_path)',
+    'if sm is None:',
+    '    _err(_msg)',
+    'else:',
     '    mats = []',
-    '    raw = []',
-    '    try: raw = sm.get_editor_property("static_materials")',
-    '    except Exception: raw = []',
-    '    for i, m in enumerate(raw or []):',
-    '        slot = None; mat_path = None',
-    '        try: slot = str(m.material_slot_name)',
-    '        except Exception: pass',
-    '        try:',
-    '            mi = m.material_interface',
-    '            if mi is not None: mat_path = mi.get_path_name()',
-    '        except Exception: pass',
-    '        mats.append({"slot_index": i, "slot_name": slot, "material": mat_path})',
+    '    for i, m in enumerate(sm.get_editor_property("static_materials") or []):',
+    '        mi = m.material_interface',
+    '        mats.append({"slot_index": i, "slot_name": str(m.material_slot_name),',
+    '                     "material": mi.get_path_name() if mi is not None else None})',
     '    _emit({"ok": True, "asset_path": _path, "materials": mats, "count": len(mats)})',
-    'except Exception as _e:',
-    '    _err(_e)',
   ].join('\n');
 }
 
@@ -284,38 +260,37 @@ function meshSetMaterialSlotScript(p: MeshSetMaterialSlotParams): string {
     `_path = ${pyStr(p.asset_path)}`,
     `_slot = ${p.slot_index}`,
     `_mat = ${pyStr(p.material_path)}`,
-    'try:',
-    '    sm = _load_sm(_path)',
-    '    mat = unreal.EditorAssetLibrary.load_asset(_mat)',
-    '    if mat is None: raise Exception("material not found: %s" % _mat)',
-    '    applied = False',
+    'sm, _msg = _find_sm(_path)',
+    'mat = unreal.EditorAssetLibrary.load_asset(_mat) if unreal.EditorAssetLibrary.does_asset_exist(_mat) else None',
+    'if _msg is None and mat is None: _msg = "material not found: %s" % _mat',
+    'if _msg is None and not isinstance(mat, unreal.MaterialInterface):',
+    '    _msg = "not a MaterialInterface: %s (%s)" % (_mat, type(mat).__name__)',
+    'if _msg is None:',
     '    sub = _sm_subsystem()',
-    '    try:',
-    '        if sub is not None:',
-    '            sub.set_material(sm, _slot, mat); applied = True',
-    '    except Exception: applied = False',
-    '    if not applied:',
+    '    if sub is not None and hasattr(sub, "set_material"):',
+    '        sub.set_material(sm, _slot, mat)',
+    '    else:',
     '        mats = sm.get_editor_property("static_materials")',
-    '        if _slot >= len(mats): raise Exception("slot_index %d out of range (%d slots)" % (_slot, len(mats)))',
-    '        mats[_slot].material_interface = mat',
-    '        sm.set_editor_property("static_materials", mats)',
-    '        applied = True',
+    '        if _slot >= len(mats): _msg = "slot_index %d out of range (%d slots)" % (_slot, len(mats))',
+    '        else:',
+    '            mats[_slot].material_interface = mat',
+    '            sm.set_editor_property("static_materials", mats)',
+    'if _msg is not None:',
+    '    _err(_msg)',
+    'else:',
+    '    applied = True',
     '    unreal.EditorAssetLibrary.save_asset(_path, only_if_is_dirty=False)',
     '    # Read back the applied slot to confirm.',
     '    readback = None',
-    '    try:',
-    '        rb = sm.get_editor_property("static_materials")',
-    '        if _slot < len(rb) and rb[_slot].material_interface is not None:',
-    '            readback = rb[_slot].material_interface.get_path_name()',
-    '    except Exception: pass',
+    '    rb = sm.get_editor_property("static_materials")',
+    '    if _slot < len(rb) and rb[_slot].material_interface is not None:',
+    '        readback = rb[_slot].material_interface.get_path_name()',
     '    # Bind ok to the read-back matching the requested asset — a set that silently',
     '    # no-ops (out-of-range slot the subsystem ignored, engine rejection) is a failure.',
     '    verified = (readback is not None and unreal.EditorAssetLibrary.load_asset(readback) == mat)',
     '    warnings = [] if verified else ["slot %d material readback (%s) does not match requested (%s) — write did not stick" % (_slot, readback, _mat)]',
     '    _emit({"ok": bool(applied and verified), "asset_path": _path, "slot_index": _slot,',
     '           "material": _mat, "applied": applied, "verified": verified, "readback": readback, "warnings": warnings})',
-    'except Exception as _e:',
-    '    _err(_e)',
   ].join('\n');
 }
 

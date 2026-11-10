@@ -1,4 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
+import { z } from 'zod';
+import { PY_PREAMBLE } from '../ue-python.js';
+import { scanPythonForCrashers } from '../guards/known-crashers.js';
 import { makePyToolHandler } from '../py-tool-factory.js';
 import { setDefaultSender, NON_IDEMPOTENT, type Sender } from '../tool-executor.js';
 import {
@@ -106,6 +109,19 @@ describe('mesh_set_material_slot', () => {
 
   it('is NOT classified NON_IDEMPOTENT (set-to-value is retry-safe)', () => {
     expect(NON_IDEMPOTENT.has('mesh_set_material_slot')).toBe(false);
+  });
+});
+
+describe('mesh templates pass the native python_run policy', () => {
+  // Strings and comments dropped first, like the native lexer (HCR-TIME-001 try/with, HCR-DYNAMIC-001 builtins).
+  const code = (src: string) => src.replace(/#[^\n]*|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'/g, "''");
+  const args: Record<string, Record<string, unknown>> = {
+    mesh_set_material_slot: { asset_path: '/Game/M', slot_index: 0, material_path: '/Game/Mat' },
+  };
+  it.each(meshPyDescriptors.map((d) => [d.name, d] as const))('%s', (name, d) => {
+    const full = `${PY_PREAMBLE}\n${d.buildScript(z.object(d.schema).parse(args[name] ?? { asset_path: '/Game/M' }))}`;
+    expect(scanPythonForCrashers(full)).toBeNull();
+    expect(code(full)).not.toMatch(/\b(try|with|except|finally|getattr|setattr|delattr|eval|exec|compile)\b/);
   });
 });
 

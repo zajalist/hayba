@@ -462,7 +462,8 @@ describe('foliage-domain factory catalog', () => {
     );
   });
 
-  it('every generated script carries the _err path', async () => {
+  // Native python_run refuses try/with (HCR-TIME-001) and dynamic builtins (HCR-DYNAMIC-001) before running anything.
+  it('no generated script uses try/with or a refused dynamic builtin', async () => {
     for (const d of foliagePyDescriptors) {
       const { sender, lastScript } = mockStdout(emit({ ok: true }));
       setDefaultSender(sender);
@@ -488,7 +489,11 @@ describe('foliage-domain factory catalog', () => {
       }
       if (d.name === 'foliage_clear_type') params.confirm = true;
       await makePyToolHandler(d)(params);
-      expect(lastScript()).toContain('_err(_e)');
+      const s = lastScript();
+      expect(s, d.name).not.toMatch(/^\s*(try|with|except|finally)\b/m);
+      expect(s, d.name).not.toMatch(
+        /\b(getattr|setattr|delattr|eval|exec|compile|__import__|globals|locals|vars|input|breakpoint)\s*\(/,
+      );
     }
   });
 });

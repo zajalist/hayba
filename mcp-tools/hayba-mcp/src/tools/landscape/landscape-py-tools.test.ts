@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { makePyToolHandler } from '../py-tool-factory.js';
 import { setDefaultSender, NON_IDEMPOTENT, type Sender } from '../tool-executor.js';
+import { scanPythonForCrashers } from '../guards/known-crashers.js';
 import {
   landscapeListDescriptor,
   landscapeInspectDescriptor,
@@ -54,7 +55,7 @@ describe('landscape_inspect', () => {
     setDefaultSender(sender);
     await makePyToolHandler(landscapeInspectDescriptor)({ actor_label: 'MyLand' });
     const s = lastScript();
-    expect(s).toContain('_resolve_landscape');
+    expect(s).toContain('_find_landscape');
     expect(s).toContain("_ref = 'MyLand'");
     expect(s).toContain('component_size_quads');
     expect(s).toContain('warnings');
@@ -207,7 +208,9 @@ describe('landscape-domain factory catalog', () => {
     expect(LANDSCAPE_NON_IDEMPOTENT).toEqual(['landscape_add_layer']);
   });
 
-  it('every _err path is present in generated scripts', async () => {
+  // Native python_run refuses try/with (HCR-TIME-001) and dynamic builtins (HCR-DYNAMIC-001), even when only referenced.
+  it('no generated script uses try/with or a policy-refused builtin', async () => {
+    const executable = (src: string) => src.replace(/#[^\n]*|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'/g, "''");
     for (const d of landscapePyDescriptors) {
       const { sender, lastScript } = mockStdout(emit({ ok: true }));
       setDefaultSender(sender);
@@ -218,7 +221,10 @@ describe('landscape-domain factory catalog', () => {
       if (d.name === 'landscape_set_nanite') { params.enable = true; }
       if (d.name === 'landscape_add_layer') { params.layer_name = 'X'; params.layer_info_path = '/Game/LI_X'; }
       await makePyToolHandler(d)(params);
-      expect(lastScript()).toContain('_err(_e)');
+      const s = lastScript();
+      expect(scanPythonForCrashers(s), d.name).toBeNull();
+      expect(executable(s), d.name).not.toMatch(/\b(try|with)\b/);
+      expect(executable(s), d.name).not.toMatch(/\b(exec|eval|compile|__import__|getattr|setattr|delattr|globals|locals|vars|input|breakpoint|exit|quit)\b/);
     }
   });
 });

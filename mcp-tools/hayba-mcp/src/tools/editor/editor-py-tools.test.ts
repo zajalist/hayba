@@ -1,4 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
+import { z } from 'zod';
+import { PY_PREAMBLE } from '../ue-python.js';
+import { scanPythonForCrashers } from '../guards/known-crashers.js';
 import { makePyToolHandler } from '../py-tool-factory.js';
 import { setDefaultSender, NON_IDEMPOTENT, type Sender } from '../tool-executor.js';
 import {
@@ -231,7 +234,40 @@ describe('reflect_class', () => {
     const s = lastScript();
     expect(s).toContain('_resolve_type');
     expect(s).toContain('get_default_object');
-    expect(s).toContain('__mro__');
+    expect(s).toContain('.mro()');
+    expect(s).toContain('if hasattr(unreal, "StaticMeshComponent"): return unreal.StaticMeshComponent');
+  });
+
+  it('never turns a non-identifier class_path into code', () => {
+    const s = reflectClassDescriptor.buildScript({ class_path: 'X); import os; (' } as never);
+    expect(s).not.toContain('unreal.X');
+    expect(s.replace(/'(?:\\.|[^'\\\n])*'/g, "''")).not.toContain('import os');
+  });
+});
+
+// Native python_run refuses try/with (HCR-TIME-001), dynamic builtins and object-graph
+// names (HCR-DYNAMIC-001) before running anything; see actor-py-no-try.test.ts.
+describe('editor python_run templates pass the native policy', () => {
+  const executable = (src: string) => src.replace(/#[^\n]*|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'/g, "''");
+  const params: Record<string, Record<string, unknown>> = {
+    editor_get_camera: {},
+    editor_cvar_get: { name: 'r.X' },
+    editor_cvar_set: { name: 'r.X', value: 1 },
+    selection_get: {},
+    asset_inspect: { asset_path: '/Game/A' },
+    outliner_tree: { folder: 'B', class_filter: 'C', name_filter: 'n' },
+    object_inspect: { target: '/Game/A', filter: 'x' },
+    object_exists: { target: 'Lamp' },
+    content_browser_sync: { asset_paths: ['/Game/A'] },
+    reflect_search_types: { query: 'Mesh' },
+    reflect_class: { class_path: 'EStaticMeshComponent' },
+  };
+  it.each(editorPyDescriptors.map((d) => [d.name, d] as const))('%s', (name, d) => {
+    const full = `${PY_PREAMBLE}\n${d.buildScript(z.object(d.schema).parse(params[name]) as never)}`;
+    expect(executable(full)).not.toMatch(
+      /\b(try|with|getattr|setattr|delattr|eval|exec|compile|vars|globals|locals|__mro__|__bases__|__subclasses__)\b/,
+    );
+    expect(scanPythonForCrashers(full)).toBeNull();
   });
 });
 

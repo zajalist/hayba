@@ -2,7 +2,7 @@
  * face, 2026-11-10: actor_find was refused by python_run's own policy (HCR-TIME-001, "try statement"). The policy is
  * right: a try/except or with block can keep running after CPython disables the cooperative deadline hook, so native
  * python_run refuses them. The tool's template was wrong. No actor template may contain one, and no other python_run
- * template file may add one (the files still pending conversion are listed and may only shrink).
+ * template file may add one.
  */
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -49,14 +49,8 @@ describe('actor python_run templates never use try or with', () => {
   }
 });
 
-describe('no new python_run template file adds a try or with', () => {
+describe('no python_run template file has a try or with', () => {
   const tools = join(dirname(fileURLToPath(import.meta.url)), '..');
-  // Still to convert (each contains template lines with try or with). Remove a file once it is converted.
-  const PENDING = new Set([
-    'asset/asset-py-tools.ts', 'editor/editor-py-tools.ts', 'foliage/foliage-py-tools.ts',
-    'landscape/landscape-py-tools.ts', 'lighting/lighting-py-tools.ts', 'mesh/mesh-py-tools.ts',
-    'niagara/niagara-py-tools.ts', 'sequencer/sequencer-py-tools.ts', 'water/water-py-tools.ts',
-  ]);
   const files: string[] = [];
   for (const dir of readdirSync(tools)) {
     const full = join(tools, dir);
@@ -66,7 +60,7 @@ describe('no new python_run template file adds a try or with', () => {
   it('finds the template files', () => {
     expect(files).toContain('actor/actor-py-tools.ts');
   });
-  for (const file of files.filter((f) => !PENDING.has(f))) {
+  for (const file of files) {
     it(`${file} has no template line starting a try or with block`, () => {
       const src = readFileSync(join(tools, file), 'utf8');
       expect(src).not.toMatch(/^\s*'\s*(try:|with\s)/m);
