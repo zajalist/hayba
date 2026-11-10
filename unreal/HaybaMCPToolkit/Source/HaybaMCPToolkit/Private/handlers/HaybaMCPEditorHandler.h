@@ -6,6 +6,7 @@ class AHaybaMCPCaptureActor;
 class FHaybaMCPEditorHandler : public IHaybaMCPHandler
 {
 public:
+    virtual ~FHaybaMCPEditorHandler() override;
     virtual FString GetDomain() const override { return TEXT("editor"); }
     virtual TArray<FString> GetCommands() const override;
     virtual FHaybaHandlerResult Handle(const FString& Cmd, const TSharedPtr<FJsonObject>& Params) override;
@@ -24,6 +25,11 @@ private:
     FHaybaHandlerResult LiveCompile(const TSharedPtr<FJsonObject>& P);
     FHaybaHandlerResult GetPerformanceStats(const TSharedPtr<FJsonObject>& P);
     FHaybaHandlerResult SetViewportMode(const TSharedPtr<FJsonObject>& P);
+    FHaybaHandlerResult SetRenderWhileHidden(const TSharedPtr<FJsonObject>& P);
 
     AHaybaMCPCaptureActor* GetOrSpawnCaptureActor(UWorld* World = nullptr) const;
+
+    /** Owners holding editor_set_render_while_hidden on; the throttle override is registered while any does. */
+    TSet<FString> RenderWhileHiddenHolders;
+    FDelegateHandle RenderWhileHiddenHandle;
 };

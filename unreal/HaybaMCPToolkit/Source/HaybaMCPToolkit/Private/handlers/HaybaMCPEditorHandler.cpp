@@ -14,6 +14,7 @@
 #include "LevelEditor.h"
 #include "SLevelViewport.h"
 #include "HaybaMCPViewport.h"
+#include "HaybaMCPLeaseManager.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
 #include "Misc/PackageName.h"
@@ -167,7 +168,8 @@ TArray<FString> FHaybaMCPEditorHandler::GetCommands() const
         TEXT("editor_live_compile"),
         TEXT("editor_get_performance_stats"),
         TEXT("editor_set_viewport_mode"),
-        TEXT("editor_focus_actor")
+        TEXT("editor_focus_actor"),
+        TEXT("editor_set_render_while_hidden")
     };
 }
 
@@ -186,7 +188,75 @@ FHaybaHandlerResult FHaybaMCPEditorHandler::Handle(const FString& Cmd, const TSh
     if (Cmd == TEXT("editor_get_performance_stats")) return GetPerformanceStats(Params);
     if (Cmd == TEXT("editor_set_viewport_mode")) return SetViewportMode(Params);
     if (Cmd == TEXT("editor_focus_actor"))       return FocusActor(Params);
+    if (Cmd == TEXT("editor_set_render_while_hidden")) return SetRenderWhileHidden(Params);
     return FHaybaHandlerResult::Err(FString::Printf(TEXT("Unknown editor command: %s"), *Cmd));
+}
+
+static void RemoveThrottleOverride(FDelegateHandle& Handle)
+{
+    if (GEditor && Handle.IsValid())
+    {
+        GEditor->ShouldDisableCPUThrottlingDelegates.RemoveAll(
+            [&Handle](const UEditorEngine::FShouldDisableCPUThrottling& D) { return D.GetHandle() == Handle; });
+    }
+    Handle.Reset();
+}
+
+FHaybaMCPEditorHandler::~FHaybaMCPEditorHandler()
+{
+    RemoveThrottleOverride(RenderWhileHiddenHandle);
+}
+
+// A minimized editor ticks at 3 fps: UEditorEngine::ShouldThrottleCPUUsage throttles while AreAllWindowsHidden() even
+// with bThrottleCPUWhenNotForeground off, so lane PIE bursts crawled whenever the user minimized it (a production project, 2026-11-10).
+// The engine's own override is a ShouldDisableCPUThrottlingDelegates entry. It is held per owner, so one lane letting
+// go never throttles another lane mid-burst, and it is registered only while someone holds it.
+FHaybaHandlerResult FHaybaMCPEditorHandler::SetRenderWhileHidden(const TSharedPtr<FJsonObject>& P)
+{
+    const FString BadParams = HaybaUnknownParamsError(P, TEXT("editor_set_render_while_hidden"), { TEXT("allow") });
+    if (!BadParams.IsEmpty()) return FHaybaHandlerResult::Err(BadParams);
+    bool bAllow = false;
+    if (!P.IsValid() || !P->TryGetBoolField(TEXT("allow"), bAllow))
+        return FHaybaHandlerResult::Err(TEXT("editor_set_render_while_hidden: allow (true or false) is required. Nothing was changed."));
+    if (!GEditor) return FHaybaHandlerResult::Err(TEXT("editor_set_render_while_hidden: GEditor is not available. Nothing was changed."));
+
+    const FString Owner = FHaybaMCPLeaseManager::Get().EffectiveOwner();
+    const bool bWasActive = RenderWhileHiddenHandle.IsValid();
+    if (bAllow) RenderWhileHiddenHolders.Add(Owner);
+    else RenderWhileHiddenHolders.Remove(Owner);
+
+    if (RenderWhileHiddenHolders.Num() > 0 && !RenderWhileHiddenHandle.IsValid())
+    {
+        UEditorEngine::FShouldDisableCPUThrottling Override =
+            UEditorEngine::FShouldDisableCPUThrottling::CreateLambda([]() { return true; });
+        RenderWhileHiddenHandle = Override.GetHandle();
+        GEditor->ShouldDisableCPUThrottlingDelegates.Add(MoveTemp(Override));
+    }
+    else if (RenderWhileHiddenHolders.Num() == 0)
+    {
+        RemoveThrottleOverride(RenderWhileHiddenHandle);
+    }
+    const bool bActive = RenderWhileHiddenHandle.IsValid();
+
+    TArray<FString> Holders = RenderWhileHiddenHolders.Array();
+    Holders.Sort();
+    UE_LOG(LogHaybaMCPEditor, Log, TEXT("editor_set_render_while_hidden: %s %s; holders [%s]; throttling while hidden is %s"),
+        *Owner, bAllow ? TEXT("holds") : TEXT("released"), *FString::Join(Holders, TEXT(", ")),
+        bActive ? TEXT("off") : TEXT("back to the editor default"));
+
+    TArray<TSharedPtr<FJsonValue>> HolderValues;
+    for (const FString& H : Holders) HolderValues.Add(MakeShared<FJsonValueString>(H));
+    auto Out = MakeShared<FJsonObject>();
+    Out->SetBoolField(TEXT("allow"), bAllow);
+    Out->SetStringField(TEXT("owner"), Owner);
+    Out->SetArrayField(TEXT("holders"), HolderValues);
+    Out->SetBoolField(TEXT("active"), bActive);
+    Out->SetBoolField(TEXT("previous_active"), bWasActive);
+    Out->SetBoolField(TEXT("throttled_now"), GEditor->ShouldThrottleCPUUsage());
+    Out->SetStringField(TEXT("note"), bActive
+        ? TEXT("The editor ticks at full rate while minimized or unfocused until every holder sends allow:false.")
+        : TEXT("No holder left: the editor throttles to 3 fps again when all its windows are hidden."));
+    return FHaybaHandlerResult::Ok(Out);
 }
 
 AHaybaMCPCaptureActor* FHaybaMCPEditorHandler::GetOrSpawnCaptureActor(UWorld* InWorld) const

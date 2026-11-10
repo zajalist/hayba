@@ -4110,6 +4110,12 @@
       "returns":{"shape":"object","fields":[{"name":"enabled","type":"boolean"},{"name":"unfocused_volume_multiplier","type":"number"},{"name":"previous","type":"object"},{"name":"has_focus","type":"boolean"},{"name":"verified","type":"boolean"}]},
       "agent_callable":true,"has_ts_wrapper":true,"notes":"Sets ULevelEditorMiscSettings bAllowBackgroundAudio and the FApp unfocused volume multiplier in memory (never saved to config) so an unfocused editor keeps rendering audio; returns previous for restore."
     },
+    "editor_set_render_while_hidden": {
+      "aliases": [], "handler_cpp": "FHaybaMCPEditorHandler::Handle",
+      "params":[{"name":"allow","type":"boolean","required":true,"description":"true holds full-rate ticking for this owner; false releases this owner's hold"}],
+      "returns":{"shape":"object","fields":[{"name":"allow","type":"boolean"},{"name":"owner","type":"string"},{"name":"holders","type":"array"},{"name":"active","type":"boolean"},{"name":"previous_active","type":"boolean"},{"name":"throttled_now","type":"boolean"}]},
+      "agent_callable":true,"has_ts_wrapper":false,"notes":"Keeps a minimized or unfocused editor ticking at full rate instead of 3 fps (UEditorEngine::ShouldThrottleCPUUsage throttles whenever all windows are hidden), so PIE bursts on a background editor run at speed. Held per owner: the throttle override stays registered until every holder sends allow:false. Default off; in memory only. Turn it on for the burst and off after."
+    },
     "net_debug": {
       "aliases": [],
       "handler_cpp": "FHaybaMCPNetworkHandler::Handle",
