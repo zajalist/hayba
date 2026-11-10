@@ -584,6 +584,16 @@ FHaybaMCPLeaseManager::FRequiredAccess FHaybaMCPLeaseManager::ResolveRequiredAcc
 			return Out;
 		}
 	}
+	else if (Cmd == TEXT("python_exec_file"))
+	{
+		// A trusted project script has no lexical tier: declared resources scope it
+		// (WriteScoped), an undeclared run may touch anything (Global).
+		if (!ParseClaims(Params, /*bDefaultExclusive=*/true, Out.Declared, Out.ClaimError))
+		{
+			Out.Declared.Reset();
+		}
+		Out.Class = HaybaMCPAccess::ClassifyPythonExecFile(Out.Declared.Num() > 0);
+	}
 	if (Out.Declared.Num() == 0)
 	{
 		// An asset writer names its asset in its own request (S1).
@@ -723,7 +733,20 @@ FHaybaMCPLeaseManager::FVerdict FHaybaMCPLeaseManager::CheckCommandFacts(
 	Verdict.Detail = Detail;
 	Verdict.Code = Code;
 	Verdict.Reason = bRedactedOnly ? EReason::None : Decision.Reason;
-	if (Decision.Verdict == EVerdict::Refuse)
+	// PIE takes over the whole editor, so starting it under another owner's exclusive global
+	// lease is refused even under Advisory enforcement: a lane once started a real PIE inside
+	// another lane's EXCLUSIVE lease because advisory mode only warned.
+	const bool bPieUnderExclusiveGlobal = Holder && Cmd == TEXT("editor_start_pie")
+		&& Holder->Locks.ContainsByPredicate([](const HaybaMCPAccess::FLock& L)
+		{
+			return L.Key == TEXT("global") && L.Mode == HaybaMCPAccess::ELockMode::Exclusive;
+		});
+	if (bPieUnderExclusiveGlobal && Decision.Verdict != EVerdict::Refuse)
+	{
+		Detail->SetStringField(TEXT("enforcement"), TEXT("enforced_for_pie"));
+		Verdict.Message += TEXT(". PIE is never started under another owner's exclusive global lease, even with advisory enforcement.");
+	}
+	if (Decision.Verdict == EVerdict::Refuse || bPieUnderExclusiveGlobal)
 	{
 		Verdict.bRefuse = true;
 	}

@@ -2730,6 +2730,8 @@ FHaybaHandlerResult FHaybaMCPAssetHandler::AssetGetReferencers(const TSharedPtr<
 // ---------------------------------------------------------------------------
 FHaybaHandlerResult FHaybaMCPAssetHandler::AssetSave(const TSharedPtr<FJsonObject>& P)
 {
+    const FString BadParams = HaybaUnknownParamsError(P, TEXT("asset_save"), { TEXT("asset_paths"), TEXT("force") });
+    if (!BadParams.IsEmpty()) return FHaybaHandlerResult::Err(BadParams);
     FHaybaParamReader R(P, TEXT("asset_save"));
     const TArray<TSharedPtr<FJsonValue>>* Paths = R.RequiredArray(TEXT("asset_paths"), 1, 64);
     // Some editor-Python edits (AnimationLibrary notify tracks and events) leave the package clean, so a

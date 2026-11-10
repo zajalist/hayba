@@ -3,6 +3,7 @@
 #include "CoreGlobals.h"
 #include "HaybaMCPUnattendedProbe.h"
 #include "HaybaEditorOps.h"
+#include "HaybaMCPParams.h"
 #include "HaybaMCPCaptureActor.h"
 #include "HaybaMCPRenderSafety.h"
 #include "HaybaMCPEditorHealth.h"
@@ -223,6 +224,12 @@ FHaybaHandlerResult FHaybaMCPEditorHandler::StartPIE(const TSharedPtr<FJsonObjec
 {
     if (!GEditor)
         return FHaybaHandlerResult::Err(TEXT("GEditor is null"));
+    const FString BadParams = HaybaUnknownParamsError(P, TEXT("editor_start_pie"), { TEXT("single_step") });
+    if (!BadParams.IsEmpty()) return FHaybaHandlerResult::Err(BadParams);
+    bool bSingleStep = false;
+    if (P.IsValid() && P->TryGetBoolField(TEXT("single_step"), bSingleStep) && bSingleStep)
+        return FHaybaHandlerResult::Err(TEXT("editor_start_pie refused [HCR-PARAM-002]: single_step:true is not supported (it was ignored before). PIE was not started."));
+
     // Never queue a session that would open a modal on the next tick.
     const TArray<FHaybaPlayModalRisk> Risks = FindPlayModalRisks();
     if (Risks.Num() > 0)
@@ -268,6 +275,8 @@ FHaybaHandlerResult FHaybaMCPEditorHandler::StopPIE(const TSharedPtr<FJsonObject
 {
     if (!GEditor)
         return FHaybaHandlerResult::Err(TEXT("GEditor is null"));
+    const FString BadParams = HaybaUnknownParamsError(P, TEXT("editor_stop_pie"), {});
+    if (!BadParams.IsEmpty()) return FHaybaHandlerResult::Err(BadParams);
 
     TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
     if (!GEditor->PlayWorld && GEditor->IsPlaySessionRequestQueued())

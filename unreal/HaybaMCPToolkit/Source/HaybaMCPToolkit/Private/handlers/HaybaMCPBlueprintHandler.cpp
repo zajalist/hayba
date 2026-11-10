@@ -558,6 +558,9 @@ static TSharedPtr<FJsonObject> HaybaDescribeSignature(const UFunction* Fn)
 FHaybaHandlerResult FHaybaMCPBlueprintHandler::Create(const TSharedPtr<FJsonObject>& P)
 {
     FString ParentPath, PkgPath, Name;
+    const FString BadParams = HaybaUnknownParamsError(P, TEXT("blueprint_create"),
+        { TEXT("parent_class_path"), TEXT("package_path"), TEXT("name") });
+    if (!BadParams.IsEmpty()) return FHaybaHandlerResult::Err(BadParams);
     FHaybaParamReader ParamR(P, TEXT("blueprint_create"));
     ParentPath = ParamR.RequiredString(TEXT("parent_class_path"));
     PkgPath = ParamR.RequiredString(TEXT("package_path"));
@@ -699,6 +702,9 @@ static FString MemberNameTaken(const UBlueprint* BP, const TCHAR* Cmd, const FSt
 FHaybaHandlerResult FHaybaMCPBlueprintHandler::AddComponent(const TSharedPtr<FJsonObject>& P)
 {
     FString Path, CompClassPath, CompName;
+    const FString BadParams = HaybaUnknownParamsError(P, TEXT("blueprint_add_component"),
+        { TEXT("path"), TEXT("component_class_path"), TEXT("component_name") });
+    if (!BadParams.IsEmpty()) return FHaybaHandlerResult::Err(BadParams);
     FHaybaParamReader ParamR(P, TEXT("blueprint_add_component"));
     Path = ParamR.RequiredString(TEXT("path"));
     CompClassPath = ParamR.RequiredString(TEXT("component_class_path"));
@@ -744,6 +750,11 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::AddComponent(const TSharedPtr<FJs
 }
 FHaybaHandlerResult FHaybaMCPBlueprintHandler::AddVariable(const TSharedPtr<FJsonObject>& P)
 {
+    const FString BadParams = HaybaUnknownParamsError(P, TEXT("blueprint_add_variable"),
+        { TEXT("path"), TEXT("variable_name"), TEXT("variable_type"), TEXT("container"), TEXT("map_value_type"),
+          TEXT("default_value"), TEXT("category"), TEXT("tooltip"), TEXT("instance_editable"), TEXT("expose_on_spawn"),
+          TEXT("read_only"), TEXT("update_existing") });
+    if (!BadParams.IsEmpty()) return FHaybaHandlerResult::Err(BadParams);
     FHaybaParamReader ParamR(P, TEXT("blueprint_add_variable"));
     const FString Path = ParamR.RequiredString(TEXT("path"));
     const FString VarName = ParamR.RequiredString(TEXT("variable_name"), 256);
@@ -868,6 +879,10 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::AddVariable(const TSharedPtr<FJso
 
 FHaybaHandlerResult FHaybaMCPBlueprintHandler::AddFunction(const TSharedPtr<FJsonObject>& P)
 {
+    const FString BadParams = HaybaUnknownParamsError(P, TEXT("blueprint_add_function"),
+        { TEXT("path"), TEXT("function_name"), TEXT("inputs"), TEXT("outputs"), TEXT("locals"), TEXT("pure"),
+          TEXT("const"), TEXT("thread_safe") });
+    if (!BadParams.IsEmpty()) return FHaybaHandlerResult::Err(BadParams);
     FHaybaParamReader ParamR(P, TEXT("blueprint_add_function"));
     const FString Path = ParamR.RequiredString(TEXT("path"));
     const FString FuncName = ParamR.RequiredString(TEXT("function_name"), 256);
