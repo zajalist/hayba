@@ -4094,15 +4094,21 @@
     },
     "audio_recording_start": {
       "aliases": [], "handler_cpp": "FHaybaMCPAudioHandler::Handle",
-      "params":[{"name":"submix_path","type":"string","required":false},{"name":"expected_duration","type":"number","required":false,"default":10}],
-      "returns":{"shape":"object","fields":[{"name":"submix","type":"string"},{"name":"expected_duration","type":"number"},{"name":"recording_state","type":"string"}]},
+      "params":[{"name":"submix_path","type":"string","required":false},{"name":"world","type":"string","required":false,"default":"auto","description":"auto|pie|editor: whose audio device"},{"name":"expected_duration","type":"number","required":false,"default":10}],
+      "returns":{"shape":"object","fields":[{"name":"submix","type":"string"},{"name":"world","type":"string"},{"name":"audio_device_id","type":"integer"},{"name":"expected_duration","type":"number"},{"name":"recording_state","type":"string"}]},
       "agent_callable":true,"has_ts_wrapper":true,"notes":"Starts tracked Audio Mixer capture of master or one submix; fails cleanly when Audio Mixer is unavailable."
     },
     "audio_recording_stop": {
       "aliases": [], "handler_cpp": "FHaybaMCPAudioHandler::Handle",
-      "params":[{"name":"submix_path","type":"string","required":false},{"name":"filename","type":"string","required":true},{"name":"relative_path","type":"string","required":false,"default":"","description":"Subfolder under Saved/BouncedWavFiles; absolute/.. rejected"}],
-      "returns":{"shape":"object","fields":[{"name":"submix","type":"string"},{"name":"recording_state","type":"string"},{"name":"wav_path","type":"string"},{"name":"sample_count","type":"integer"},{"name":"channel_count","type":"integer"},{"name":"sample_rate","type":"number"},{"name":"duration_seconds","type":"number"}]},
+      "params":[{"name":"submix_path","type":"string","required":false},{"name":"world","type":"string","required":false,"default":"auto","description":"auto|pie|editor: whose audio device"},{"name":"filename","type":"string","required":true},{"name":"relative_path","type":"string","required":false,"default":"","description":"Subfolder under Saved/BouncedWavFiles; absolute/.. rejected"}],
+      "returns":{"shape":"object","fields":[{"name":"submix","type":"string"},{"name":"recording_state","type":"string"},{"name":"wav_path","type":"string"},{"name":"sample_count","type":"integer"},{"name":"channel_count","type":"integer"},{"name":"sample_rate","type":"number"},{"name":"duration_seconds","type":"number"},{"name":"peak","type":"number"},{"name":"peak_dbfs","type":"number"},{"name":"rms","type":"number"},{"name":"silent","type":"boolean"},{"name":"world","type":"string"},{"name":"audio_device_id","type":"integer"}]},
       "agent_callable":true,"has_ts_wrapper":true,"notes":"Stops capture and uses UE's synchronous PCM writer. Zero samples, writer failure, or absent WAV is an outer command error."
+    },
+    "editor_set_background_audio": {
+      "aliases": [], "handler_cpp": "FHaybaMCPAudioHandler::Handle",
+      "params":[{"name":"enabled","type":"boolean","required":true},{"name":"unfocused_volume_multiplier","type":"number","required":false,"description":"0..1; default 1 when enabling, unchanged when disabling"}],
+      "returns":{"shape":"object","fields":[{"name":"enabled","type":"boolean"},{"name":"unfocused_volume_multiplier","type":"number"},{"name":"previous","type":"object"},{"name":"has_focus","type":"boolean"},{"name":"verified","type":"boolean"}]},
+      "agent_callable":true,"has_ts_wrapper":true,"notes":"Sets ULevelEditorMiscSettings bAllowBackgroundAudio and the FApp unfocused volume multiplier in memory (never saved to config) so an unfocused editor keeps rendering audio; returns previous for restore."
     },
     "net_debug": {
       "aliases": [],
