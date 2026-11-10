@@ -13,9 +13,7 @@
 #include "Engine/Engine.h"
 #include "LevelEditor.h"
 #include "SLevelViewport.h"
-#include "LevelEditorViewport.h"
-#include "GameFramework/PlayerController.h"
-#include "Camera/PlayerCameraManager.h"
+#include "HaybaMCPViewport.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
 #include "Misc/PackageName.h"
@@ -95,24 +93,6 @@ static TArray<FHaybaPlayModalRisk> FindPlayModalRisks()
     }
     Risks.Sort([](const FHaybaPlayModalRisk& A, const FHaybaPlayModalRisk& B) { return A.Asset < B.Asset; });
     return Risks;
-}
-
-// Safely resolve a viewport's client to an FEditorViewportClient. FViewportClient
-// has no RTTI, so the old StaticCast<FEditorViewportClient*>(VP->GetClient())
-// blindly reinterpreted whatever client the viewport had — for a PIE or a
-// non-level editor viewport (material/BP preview) that is NOT an
-// FEditorViewportClient, and the first virtual call crashed. Confirm identity
-// against the engine's registered editor viewport clients before trusting it.
-static FEditorViewportClient* AsEditorViewportClient(FViewport* VP)
-{
-    if (!VP || !GEditor) return nullptr;
-    FViewportClient* Raw = VP->GetClient();
-    if (!Raw) return nullptr;
-    for (FEditorViewportClient* EVC : GEditor->GetAllViewportClients())
-    {
-        if (EVC == Raw) return EVC;  // pointer identity: Raw really is this editor client
-    }
-    return nullptr;
 }
 
 // Read the most-recent project .log file into a line array using a SHARED read.
@@ -448,13 +428,9 @@ FHaybaHandlerResult FHaybaMCPEditorHandler::SetCamera(const TSharedPtr<FJsonObje
         (*LocArr)[2]->AsNumber()
     );
 
-    FViewport* VP = GEditor->GetActiveViewport();
-    if (!VP)
-        return FHaybaHandlerResult::Err(TEXT("No active viewport"));
-
-    FEditorViewportClient* Client = AsEditorViewportClient(VP);
-    if (!Client)
-        return FHaybaHandlerResult::Err(TEXT("No editor viewport client"));
+    FString ViewportError;
+    FLevelEditorViewportClient* Client = HaybaViewport::LevelViewportToChange(TEXT("editor_set_camera"), ViewportError);
+    if (!Client) return FHaybaHandlerResult::Err(ViewportError);
 
     Client->SetViewLocation(Location);
 
@@ -526,10 +502,9 @@ FHaybaHandlerResult FHaybaMCPEditorHandler::FocusActor(const TSharedPtr<FJsonObj
     const FVector Location = Origin - ViewDir * (Radius * DistScale);
     const FRotator Rotation = (Origin - Location).Rotation(); // look at centre, roll = 0
 
-    FViewport* VP = GEditor->GetActiveViewport();
-    if (!VP) return FHaybaHandlerResult::Err(TEXT("editor_focus_actor: no active viewport"));
-    FEditorViewportClient* Client = AsEditorViewportClient(VP);
-    if (!Client) return FHaybaHandlerResult::Err(TEXT("editor_focus_actor: no editor viewport client"));
+    FString ViewportError;
+    FLevelEditorViewportClient* Client = HaybaViewport::LevelViewportToChange(TEXT("editor_focus_actor"), ViewportError);
+    if (!Client) return FHaybaHandlerResult::Err(ViewportError);
 
     Client->SetViewLocation(Location);
     Client->SetViewRotation(Rotation);
@@ -578,41 +553,15 @@ FHaybaHandlerResult FHaybaMCPEditorHandler::CaptureViewport(const TSharedPtr<FJs
     // last worked in, which exists even when the editor is in the background. GetActiveViewport() is the focused
     // viewport: with PIE or another app in front it was not a level viewport, the capture sat at the origin looking
     // at nothing, and the frame came back black with camera 0,0,0 (a production project, 2026-11-10 17:14).
-    if (!GEditor) return FHaybaHandlerResult::Err(TEXT("editor_capture_viewport: GEditor is not available"));
-    FVector CamLoc = FVector::ZeroVector;
-    FRotator CamRot = FRotator::ZeroRotator;
-    float Fov = 90.f;
-    UWorld* CaptureWorld = nullptr;
-    FString Source;
-    if (UWorld* Play = GEditor->PlayWorld.Get())
-    {
-        if (APlayerController* PC = Play->GetFirstPlayerController())
-        {
-            PC->GetPlayerViewPoint(CamLoc, CamRot);
-            if (PC->PlayerCameraManager) Fov = PC->PlayerCameraManager->GetFOVAngle();
-            CaptureWorld = Play;
-            Source = TEXT("pie_player");
-        }
-    }
-    if (!CaptureWorld)
-    {
-        FLevelEditorViewportClient* Client = GCurrentLevelEditingViewportClient;
-        if (!Client || !Client->IsPerspective())
-        {
-            Client = nullptr;
-            for (FLevelEditorViewportClient* Candidate : GEditor->GetLevelViewportClients())
-            {
-                if (Candidate && Candidate->IsPerspective()) { Client = Candidate; break; }
-            }
-        }
-        if (!Client)
-            return FHaybaHandlerResult::Err(TEXT("editor_capture_viewport: no perspective level viewport is open to capture from. Nothing was captured."));
-        CamLoc = Client->GetViewLocation();
-        CamRot = Client->GetViewRotation();
-        Fov = Client->ViewFOV;
-        CaptureWorld = GEditor->GetEditorWorldContext().World();
-        Source = TEXT("level_viewport");
-    }
+    HaybaViewport::FView View;
+    FString ViewError;
+    if (!HaybaViewport::CurrentView(View, ViewError))
+        return FHaybaHandlerResult::Err(TEXT("editor_capture_viewport: ") + ViewError + TEXT(". Nothing was captured."));
+    const FVector CamLoc = View.Location;
+    const FRotator CamRot = View.Rotation;
+    const float Fov = View.Fov;
+    UWorld* CaptureWorld = View.World;
+    const FString Source = View.Source;
 
     AHaybaMCPCaptureActor* CaptureActor = GetOrSpawnCaptureActor(CaptureWorld);
     if (!CaptureActor)
@@ -875,13 +824,9 @@ FHaybaHandlerResult FHaybaMCPEditorHandler::SetViewportMode(const TSharedPtr<FJs
     if (!GEditor)
         return FHaybaHandlerResult::Err(TEXT("GEditor is null"));
 
-    FViewport* VP = GEditor->GetActiveViewport();
-    if (!VP)
-        return FHaybaHandlerResult::Err(TEXT("No active viewport"));
-
-    FEditorViewportClient* Client = AsEditorViewportClient(VP);
-    if (!Client)
-        return FHaybaHandlerResult::Err(TEXT("No editor viewport client"));
+    FString ViewportError;
+    FLevelEditorViewportClient* Client = HaybaViewport::LevelViewportToChange(TEXT("editor_set_viewport_mode"), ViewportError);
+    if (!Client) return FHaybaHandlerResult::Err(ViewportError);
 
     Client->SetViewMode(ModeIndex);
 
