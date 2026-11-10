@@ -2732,13 +2732,16 @@ FHaybaHandlerResult FHaybaMCPAssetHandler::AssetSave(const TSharedPtr<FJsonObjec
 {
     FHaybaParamReader R(P, TEXT("asset_save"));
     const TArray<TSharedPtr<FJsonValue>>* Paths = R.RequiredArray(TEXT("asset_paths"), 1, 64);
+    // Some editor-Python edits (AnimationLibrary notify tracks and events) leave the package clean, so a
+    // dirty-only save skipped them and the edit never reached disk.
+    const bool bForce = R.OptionalBool(TEXT("force"), false);
     if (R.HasErrors()) return FHaybaHandlerResult::Err(R.ErrorMessage());
     if (GEditor && GEditor->IsPlaySessionInProgress())
         return FHaybaHandlerResult::Err(TEXT("asset_save: a Play-In-Editor session is running; stop it first. Nothing was saved."));
     if (UE::IsSavingPackage() || IsGarbageCollecting())
         return FHaybaHandlerResult::Err(TEXT("asset_save: the editor is already saving or collecting garbage; retry in a moment. Nothing was saved."));
 
-    TArray<TSharedPtr<FJsonValue>> Saved, Skipped, Failed;
+    TArray<TSharedPtr<FJsonValue>> Saved, Skipped, Failed, NotDirty;
     auto Note = [](TArray<TSharedPtr<FJsonValue>>& List, const FString& Path, const FString& Reason)
     {
         TSharedPtr<FJsonObject> Entry = MakeShared<FJsonObject>();
@@ -2762,7 +2765,12 @@ FHaybaHandlerResult FHaybaMCPAssetHandler::AssetSave(const TSharedPtr<FJsonObjec
         UPackage* Package = FindPackage(nullptr, *PackageName);
         if (!Package) { Note(Skipped, Path, TEXT("not loaded, so nothing in memory to save")); continue; }
         if (Package->ContainsMap()) { Note(Failed, Path, TEXT("is a map; save levels with level_save")); continue; }
-        if (!Package->IsDirty()) { Note(Skipped, Path, TEXT("already saved (not dirty)")); continue; }
+        if (!bForce && !Package->IsDirty())
+        {
+            Note(Skipped, Path, TEXT("not dirty, so not saved; pass force:true if it was changed by something that does not mark packages dirty"));
+            NotDirty.Add(MakeShared<FJsonValueString>(Path));
+            continue;
+        }
 
         // A Blueprint mid-compile would serialize a half-built class.
         bool bCompiling = false;
@@ -2809,6 +2817,7 @@ FHaybaHandlerResult FHaybaMCPAssetHandler::AssetSave(const TSharedPtr<FJsonObjec
     Out->SetArrayField(TEXT("saved"), Saved);
     Out->SetNumberField(TEXT("saved_count"), Saved.Num());
     Out->SetArrayField(TEXT("skipped"), Skipped);
+    Out->SetArrayField(TEXT("skipped_not_dirty"), NotDirty);
     Out->SetArrayField(TEXT("failed"), Failed);
     Out->SetBoolField(TEXT("verified"), Failed.Num() == 0);
     return FHaybaHandlerResult::Ok(Out);
