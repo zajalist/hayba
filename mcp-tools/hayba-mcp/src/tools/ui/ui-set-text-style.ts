@@ -64,28 +64,24 @@ export const uiSetTextStyleHandler: ToolHandler = async (args) => {
   if (color !== undefined) properties.ColorAndOpacity = color;
   if (justification !== undefined) properties.Justification = justification;
 
-  if (font_asset !== undefined || size !== undefined || typeface !== undefined || letter_spacing !== undefined) {
-    const font: Record<string, unknown> = {};
-    if (font_asset !== undefined) font.FontObject = font_asset;
-    if (size !== undefined) font.Size = size;
-    if (typeface !== undefined) font.TypefaceFontName = typeface;
-    if (letter_spacing !== undefined) font.LetterSpacing = letter_spacing;
-    properties.Font = font;
-  }
-
+  // Partial structs: only the given fields are written, so a size change keeps the outline. The outline lives in
+  // the font (FSlateFontInfo.OutlineSettings) and the shadow is two TextBlock properties; the old top-level
+  // OutlineSettings / ShadowSettings keys were rejected by UE and never applied.
+  const font: Record<string, unknown> = {};
+  if (font_asset !== undefined) font.FontObject = font_asset;
+  if (size !== undefined) font.Size = size;
+  if (typeface !== undefined) font.TypefaceFontName = typeface;
+  if (letter_spacing !== undefined) font.LetterSpacing = letter_spacing;
   if (outline_size !== undefined || outline_color !== undefined) {
     const outline: Record<string, unknown> = {};
     if (outline_size !== undefined) outline.OutlineSize = outline_size;
     if (outline_color !== undefined) outline.OutlineColor = outline_color;
-    properties.OutlineSettings = outline;
+    font.OutlineSettings = outline;
   }
+  if (Object.keys(font).length) properties.Font = font;
 
-  if (shadow_offset !== undefined || shadow_color !== undefined) {
-    const shadow: Record<string, unknown> = {};
-    if (shadow_offset !== undefined) shadow.ShadowOffset = shadow_offset;
-    if (shadow_color !== undefined) shadow.ShadowColorAndOpacity = shadow_color;
-    properties.ShadowSettings = shadow;
-  }
+  if (shadow_offset !== undefined) properties.ShadowOffset = { X: shadow_offset[0], Y: shadow_offset[1] };
+  if (shadow_color !== undefined) properties.ShadowColorAndOpacity = shadow_color;
 
   const data = await executeCommand('ui_set_widget_properties', {
     widget_blueprint_path,
