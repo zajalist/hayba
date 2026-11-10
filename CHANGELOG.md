@@ -99,6 +99,15 @@ All notable changes to Hayba MCP Toolkit are documented here. Format based on [K
   spend its Approve.
 
 ### Fixed
+- The ui_* MCP convenience tools are native commands too, so lanes calling Hayba over TCP (hayba_call,
+  ue_remote) no longer get "Unknown command": ui_set_text_style, ui_set_brush, ui_set_property,
+  ui_set_visibility, ui_set_slot_layout, ui_get_widget_info, ui_search_widgets and ui_move / remove / rename /
+  reparent / duplicate / replace_element take the MCP tools' parameters (and aliases and defaults). The
+  composites ui_copy_style, ui_set_default_font and ui_validate stay MCP-only.
+- `ui_set_text_style` outline and shadow now apply: the outline is written inside Font (FSlateFontInfo
+  OutlineSettings) and the shadow as the TextBlock's ShadowOffset / ShadowColorAndOpacity. The old top-level
+  OutlineSettings / ShadowSettings keys were rejected by UE, so outline_size, outline_color, shadow_offset and
+  shadow_color never took effect.
 - `blueprint_add_node` gives a node its pins before `PostPlacedNewNode`, as UE's palette spawner does.
   `spawn_actor_from_class` asserted at EdGraphNode.h:586 on every placement (its PostPlacedNewNode sets the
   scale-method pin through FindPinChecked) and the SEH guard took the editor out of service. Its `class_path`

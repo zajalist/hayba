@@ -437,4 +437,70 @@ bool FHaybaUIOpsSlotValuesTest::RunTest(const FString&)
     return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FHaybaUIOpsWrapperTranslateTest,
+    "Hayba.MCP.UIOps.WrapperTranslate",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FHaybaUIOpsWrapperTranslateTest::RunTest(const FString&)
+{
+    using namespace HaybaUIOps;
+    auto Parse = [](const TCHAR* Text)
+    {
+        TSharedPtr<FJsonObject> Obj;
+        FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Text), Obj);
+        return Obj;
+    };
+    FString Cmd, Error;
+    TSharedPtr<FJsonObject> Out;
+
+    // The UI lane's case: a size write must carry Font.Size only, never a whole OutlineSettings.
+    TestTrue(TEXT("text style translates"), TranslateWrapper(TEXT("ui_set_text_style"),
+        Parse(TEXT("{\"widget_blueprint_path\":\"/Game/W\",\"widget_name\":\"T\",\"size\":31}")), Cmd, Out, Error));
+    TestEqual(TEXT("to ui_set_widget_properties"), Cmd, FString(TEXT("ui_set_widget_properties")));
+    const TSharedPtr<FJsonObject>* Props = nullptr;
+    const TSharedPtr<FJsonObject>* Font = nullptr;
+    TestTrue(TEXT("Font.Size alone"), Out->TryGetObjectField(TEXT("properties"), Props)
+        && (*Props)->TryGetObjectField(TEXT("Font"), Font) && (*Font)->Values.Num() == 1 && (*Font)->HasField(TEXT("Size")));
+    TestFalse(TEXT("no outline written"), (*Props)->HasField(TEXT("OutlineSettings")));
+    // The outline belongs to the font, and the shadow is two TextBlock properties: the old top-level keys were rejected.
+    const TSharedPtr<FJsonObject>* Outline = nullptr;
+    TestTrue(TEXT("outline goes inside Font"), TranslateWrapper(TEXT("ui_set_text_style"),
+        Parse(TEXT("{\"widget_blueprint_path\":\"/Game/W\",\"widget_name\":\"T\",\"outline_size\":2,\"shadow_offset\":[1,2]}")), Cmd, Out, Error)
+        && Out->TryGetObjectField(TEXT("properties"), Props) && (*Props)->TryGetObjectField(TEXT("Font"), Font)
+        && (*Font)->TryGetObjectField(TEXT("OutlineSettings"), Outline) && (*Outline)->HasField(TEXT("OutlineSize")));
+    TestTrue(TEXT("shadow offset is a TextBlock property"), (*Props)->HasField(TEXT("ShadowOffset"))
+        && !(*Props)->HasField(TEXT("ShadowSettings")) && !(*Props)->HasField(TEXT("OutlineSettings")));
+
+    TestFalse(TEXT("nothing to set is refused"), TranslateWrapper(TEXT("ui_set_text_style"),
+        Parse(TEXT("{\"widget_blueprint_path\":\"/Game/W\",\"widget_name\":\"T\"}")), Cmd, Out, Error));
+    TestFalse(TEXT("a missing widget_name is refused"), TranslateWrapper(TEXT("ui_set_visibility"),
+        Parse(TEXT("{\"widget_blueprint_path\":\"/Game/W\",\"visibility\":\"Hidden\"}")), Cmd, Out, Error));
+
+    // ui_<op>_element passes its parameters through with the MCP tool's aliases and defaults.
+    TestTrue(TEXT("move translates"), TranslateWrapper(TEXT("ui_move_element"),
+        Parse(TEXT("{\"widget_blueprint_path\":\"/Game/W\",\"widget_name\":\"T\",\"new_index\":2}")), Cmd, Out, Error));
+    double Index = -1;
+    FString Operation;
+    TestTrue(TEXT("new_index becomes index"), Cmd == TEXT("ui_mutate_tree") && Out->TryGetNumberField(TEXT("index"), Index)
+        && Index == 2 && !Out->HasField(TEXT("new_index")) && Out->TryGetStringField(TEXT("operation"), Operation) && Operation == TEXT("move"));
+    bool bChildren = false;
+    TestTrue(TEXT("replace keeps children by default"), TranslateWrapper(TEXT("ui_replace_element"),
+        Parse(TEXT("{\"widget_blueprint_path\":\"/Game/W\",\"widget_name\":\"T\",\"new_class\":\"RichTextBlock\"}")), Cmd, Out, Error)
+        && Out->TryGetBoolField(TEXT("preserve_children"), bChildren) && bChildren);
+
+    // Slot anchors in the short form.
+    const TSharedPtr<FJsonObject>* Slot = nullptr;
+    const TArray<TSharedPtr<FJsonValue>>* Max = nullptr;
+    TestTrue(TEXT("anchors [4] split into min/max"), TranslateWrapper(TEXT("ui_set_slot_layout"),
+        Parse(TEXT("{\"widget_blueprint_path\":\"/Game/W\",\"widget_name\":\"T\",\"anchors\":[0,0,1,1]}")), Cmd, Out, Error)
+        && Out->TryGetObjectField(TEXT("slot_props"), Slot) && (*Slot)->TryGetArrayField(TEXT("anchors_max"), Max)
+        && Max->Num() == 2 && !(*Slot)->HasField(TEXT("anchors")));
+
+    TestTrue(TEXT("search becomes a flat query"), TranslateWrapper(TEXT("ui_search_widgets"),
+        Parse(TEXT("{\"widget_blueprint_path\":\"/Game/W\",\"widget_class\":\"TextBlock\"}")), Cmd, Out, Error)
+        && Cmd == TEXT("ui_query") && Out->HasField(TEXT("class_filter")) && Out->HasField(TEXT("flatten")));
+    return true;
+}
+
 #endif // WITH_DEV_AUTOMATION_TESTS

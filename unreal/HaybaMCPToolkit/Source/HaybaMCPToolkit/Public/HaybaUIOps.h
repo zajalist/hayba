@@ -179,4 +179,20 @@ namespace HaybaUIOps
     /** Box-slot size: "auto"/"automatic", "fill" (weight 1), a number (fill weight;
      *  0 = auto), or {rule:"fill"|"auto", value}. */
     bool TryParseChildSize(const TSharedPtr<FJsonValue>& Value, FSlateChildSize& Out);
+
+    // ── The MCP server's convenience tools, as native commands ─────────────
+    //
+    // ui_set_text_style, ui_set_brush, ui_move_element and the rest are TypeScript wrappers over three native
+    // commands. Lanes that call Hayba over TCP (hayba_call, ue_remote) got "Unknown command" for them, and the UI
+    // lane rewrote Font sizes by regex instead. These names are native too: the same parameters, translated exactly
+    // as the wrappers in mcp-tools/hayba-mcp/src/tools/ui/ translate them. Composites that run several commands
+    // (ui_copy_style, ui_set_default_font, ui_validate) stay MCP-only.
+
+    /** The wrapper names translated below. */
+    const TArray<FString>& WrapperCommands();
+
+    /** Translate a wrapper call to the native command it stands for. False with Error when the parameters are
+     *  wrong; OutCmd/OutParams are set on success. Pure: nothing is touched. */
+    bool TranslateWrapper(const FString& Cmd, const TSharedPtr<FJsonObject>& In, FString& OutCmd,
+        TSharedPtr<FJsonObject>& OutParams, FString& Error);
 }

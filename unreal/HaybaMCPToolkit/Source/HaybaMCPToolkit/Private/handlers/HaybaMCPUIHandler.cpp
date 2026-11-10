@@ -206,7 +206,7 @@ static const FSlateBrush* HaybaFindBrushProperty(UObject* Owner, const TCHAR* Pr
 
 TArray<FString> FHaybaMCPUIHandler::GetCommands() const
 {
-    return {
+    TArray<FString> Commands = {
         TEXT("ui_create_widget"),
         TEXT("ui_add_element"),
         TEXT("ui_set_widget_properties"),
@@ -224,6 +224,8 @@ TArray<FString> FHaybaMCPUIHandler::GetCommands() const
         TEXT("ui_report_findings"),
         TEXT("ui_render_widget_to_png"),
     };
+    Commands.Append(HaybaUIOps::WrapperCommands());
+    return Commands;
 }
 
 #if WITH_EDITOR
@@ -1269,6 +1271,13 @@ FHaybaHandlerResult FHaybaMCPUIHandler::Handle(const FString& Cmd, const TShared
     if (Cmd == TEXT("ui_measure_text"))        return HandleMeasureText(P);
     if (Cmd == TEXT("ui_report_findings"))     return HandleReportFindings(P);
     if (Cmd == TEXT("ui_render_widget_to_png")) return HandleRenderToPng(P);
+    if (HaybaUIOps::WrapperCommands().Contains(Cmd))
+    {
+        FString Native, Error;
+        TSharedPtr<FJsonObject> NativeParams;
+        if (!HaybaUIOps::TranslateWrapper(Cmd, P, Native, NativeParams, Error)) return FHaybaHandlerResult::Err(Error);
+        return Handle(Native, NativeParams);
+    }
 
     return FHaybaHandlerResult::Err(FString::Printf(TEXT("UIHandler: unknown command %s"), *Cmd));
 #endif
