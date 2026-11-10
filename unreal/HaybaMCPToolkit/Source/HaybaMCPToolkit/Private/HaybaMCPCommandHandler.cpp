@@ -520,6 +520,7 @@ static bool IsDestructiveCommand(const FString& Cmd)
         TEXT("audio_meter_stop"),
         TEXT("audio_recording_start"),
         TEXT("audio_recording_stop"),
+        TEXT("editor_set_background_audio"),
         // Sequencer / Niagara / MetaSound / GAS / UI / Input authoring
         TEXT("seq_create"),
         TEXT("niagara_spawn"),

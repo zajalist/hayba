@@ -5,6 +5,14 @@ All notable changes to Hayba MCP Toolkit are documented here. Format based on [K
 ## [Unreleased]
 
 ### Added
+- `editor_set_background_audio {enabled, unfocused_volume_multiplier?}`: lets an editor without focus keep
+  rendering audio (ULevelEditorMiscSettings bAllowBackgroundAudio and the FApp unfocused volume multiplier, in
+  memory only) and returns the previous values for restore. An unfocused editor zeroes its volume every tick, so
+  every PIE recording on an agent's editor was digital silence.
+- `audio_recording_start` / `audio_recording_stop` take `world: auto|pie|editor` and record that world's own
+  audio device (each PIE session has one; recordings are keyed per device). The stop reply adds `peak`,
+  `peak_dbfs`, `rms` and `silent`, with a `warning` naming the mute when the editor has no focus and background
+  audio is off; a take with no samples says how many sounds were active and why.
 - `blueprint_graph_batch`: up to 2048 Blueprint graph ops in one call
   (add_node, add_event, connect, set_pin, comment, move, remove, disconnect,
   fit_comments), with `ref` names linking ops. Each op runs through the
