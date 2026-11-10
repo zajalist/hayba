@@ -1,5 +1,6 @@
 #include "HaybaMCPEditorHandler.h"
 #include "HaybaEditorOps.h"
+#include "HaybaPlayGuard.h"
 #include "HaybaMCPCaptureActor.h"
 #include "HaybaMCPRenderSafety.h"
 #include "Editor.h"
@@ -173,6 +174,9 @@ FHaybaHandlerResult FHaybaMCPEditorHandler::StartPIE(const TSharedPtr<FJsonObjec
 {
     if (!GEditor)
         return FHaybaHandlerResult::Err(TEXT("GEditor is null"));
+    const FString Refusal = HaybaPlayGuard::RefusalFor(TEXT("editor_start_pie"));
+    if (!Refusal.IsEmpty())
+        return FHaybaHandlerResult::Err(Refusal);
 
     FRequestPlaySessionParams PlayParams;
     GEditor->RequestPlaySession(PlayParams);

@@ -91,6 +91,12 @@ All notable changes to Hayba MCP Toolkit are documented here. Format based on [K
   spend its Approve.
 
 ### Fixed
+- `blueprint_add_function`, `blueprint_add_variable` and `blueprint_add_component` refuse a name the
+  Blueprint already uses for a variable, component, function, event or graph, here or in a parent class, and
+  change nothing ([HCR-BP-NAME-001]). The clash used to compile to "Name collision" and leave the class broken (FoA's 6 h freeze,
+  BP_RoomAudio "Presence"). `editor_start_pie`, and `python_run` / `python_exec_file` scripts that call
+  `editor_request_begin_play` or `editor_play_simulate`, refuse with the list of loaded Blueprints that fail to
+  compile ([HCR-PIE-001]) instead of letting UE open its modal "Blueprint Asset Compilation Errors" prompt.
 - `audio_active_sounds` reads the audio device of the world that is playing: during
   PIE it listed nothing, because it always read the engine main device while PIE plays
   on its own world device. `world: auto|pie|editor` (auto = PIE while PIE runs); the
