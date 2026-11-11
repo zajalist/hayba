@@ -57,7 +57,7 @@
 //     |EditorActorSubsystem)
 //   UnrealEditorSubsystem.get_level_viewport_camera_info()
 //   unreal.SystemLibrary.get_console_variable_{int,float,bool}_value(name)
-//   unreal.SystemLibrary.execute_console_command(None, "name value")  (cvar set)
+//   cvar set: the native editor_run_console_command (python_run refuses execute_console_command, HCR-CONSOLE-001)
 //   unreal.AssetRegistryHelpers.get_asset_registry()
 //   unreal.EditorUtilityLibrary.get_selected_assets()
 //   unreal.EditorAssetLibrary.load_asset / does_asset_exist
@@ -84,7 +84,8 @@
 import { z } from 'zod';
 import { AssetPreparationPolicySchema } from '../workflows/contracts.js';
 import type { HaybaToolMeta } from '../hayba-tool-meta.js';
-import { pyStr } from '../ue-python.js';
+import { pyStr, runUePythonJson } from '../ue-python.js';
+import { executeCommand } from '../tool-executor.js';
 import type { PyToolDescriptor } from '../py-tool-factory.js';
 
 // ── Shared Python helpers (editor subsystems) ─────────────────────────────────
@@ -223,45 +224,76 @@ export const editorCvarGetDescriptor: PyToolDescriptor<typeof editorCvarGetSchem
 };
 
 // ── editor_cvar_set ───────────────────────────────────────────────────────────
+// Kismet has no cvar setters, so a set is a console command. It goes through the native editor_run_console_command
+// (plan-gated, global lease class) rather than unreal.SystemLibrary.execute_console_command, which python_run refuses
+// (HCR-CONSOLE-001). Name and value are one console token each, so the command can never carry a second command.
 export const editorCvarSetSchema = z.object({
-  name: z.string().min(1).describe('Console variable name, e.g. "r.ScreenPercentage"'),
-  value: z.union([z.number(), z.boolean(), z.string()]).describe('New value (number, bool, or string)'),
+  name: z.string().regex(/^[A-Za-z][A-Za-z0-9_.]*$/, 'a console variable name (letters, digits, _ and .)')
+    .describe('Console variable name, e.g. "r.ScreenPercentage"'),
+  value: z.union([z.number().finite(), z.boolean(), z.string().regex(/^[^\s|;"'`]+$/, 'one console token: no spaces, quotes, | or ;')])
+    .describe('New value (number, bool, or a string without spaces)'),
 });
 export type EditorCvarSetParams = z.infer<typeof editorCvarSetSchema>;
 
+const cvarValueString = (p: EditorCvarSetParams) =>
+  typeof p.value === 'boolean' ? (p.value ? '1' : '0') : String(p.value);
+
+// Step 1 (the descriptor's script): refuse an unknown name before anything is set.
 function editorCvarSetScript(p: EditorCvarSetParams): string {
-  const valStr = typeof p.value === 'boolean' ? (p.value ? '1' : '0') : String(p.value);
   return [
     PY_EDITOR_HELPERS,
     `_name = ${pyStr(p.name)}`,
-    `_val = ${pyStr(valStr)}`,
-    'unreal.SystemLibrary.execute_console_command(None, "%s %s" % (_name, _val))',
-    '# Read back (float getter is the most forgiving) to confirm the applied value.',
+    'if hasattr(unreal.SystemLibrary, "get_console_variable_string_value"):',
+    '    _before = unreal.SystemLibrary.get_console_variable_string_value(_name)',
+    '    if _before is None or str(_before) == "":',
+    '        _err("cvar not found: %s (empty string readback); nothing was set" % _name)',
+    '    else:',
+    '        _emit({"ok": True, "exists": True, "before": str(_before)})',
+    'else:',
+    '    _emit({"ok": True, "exists": None, "before": None})',
+  ].join('\n');
+}
+
+function editorCvarReadbackScript(p: EditorCvarSetParams): string {
+  return [
+    `_name = ${pyStr(p.name)}`,
+    '# The float getter is the most forgiving read-back; the string getter confirms the name is real.',
     'applied = unreal.SystemLibrary.get_console_variable_float_value(_name)',
-    '# Same existence caveat as editor_cvar_get: the float getter returns 0.0 for a',
-    '# nonexistent cvar, so a typo would otherwise look like a successful set-to-0.',
-    'verified = False; _ok = True',
-    'note = "no cvar-existence probe available on this engine build; applied may be a type-default if the name is wrong"',
+    'sv = None',
     'if hasattr(unreal.SystemLibrary, "get_console_variable_string_value"):',
     '    sv = unreal.SystemLibrary.get_console_variable_string_value(_name)',
-    '    verified = bool(sv is not None and str(sv) != "")',
-    '    note = None',
-    '    if not verified:',
-    '        note = "cvar not found after set (empty string readback) — the name is likely mistyped"',
-    '        _ok = False',  // definitive not-found → honest failure, not a silent set-to-0
-    '_emit({"ok": _ok, "name": _name, "requested": _val, "applied": applied, "verified": verified, "note": note})',
+    '_emit({"ok": True, "applied": applied, "string_value": sv})',
   ].join('\n');
+}
+
+// Step 2: set through the audited native command, then read the value back.
+async function editorCvarSetFinish(p: EditorCvarSetParams, raw: unknown): Promise<unknown> {
+  const pre = raw as { ok?: boolean; exists?: boolean | null };
+  if (!pre || pre.ok !== true) return raw;
+  const requested = cvarValueString(p);
+  await executeCommand('editor_run_console_command', { command: `${p.name} ${requested}` });
+  const rb = await runUePythonJson<{ applied?: number; string_value?: string | null }>(editorCvarReadbackScript(p), 30_000);
+  const verified = pre.exists === true && typeof rb?.string_value === 'string' && rb.string_value !== '';
+  return {
+    ok: true,
+    name: p.name,
+    requested,
+    applied: rb?.applied,
+    verified,
+    note: verified ? null : 'no cvar-existence probe on this engine build; applied may be a type-default if the name is wrong',
+  };
 }
 
 export const editorCvarSetDescriptor: PyToolDescriptor<typeof editorCvarSetSchema.shape> = {
   name: 'editor_cvar_set',
   description:
-    'Typed set of a console variable, with a float read-back of the applied value. CAVEAT: the float readback returns 0.0 for a nonexistent cvar, indistinguishable from a real set-to-0 — this tool also probes the string getter (when available on this engine build) and returns ok:false + verified:false + a note when the readback proves the cvar does not exist (mistyped name). When no existence probe is available it stays ok:true with verified:false. Idempotent (retry-safe). NOT a freeform console runner — use editor_run_console_command for arbitrary commands.',
+    'Typed set of a console variable: refuses an unknown name before setting anything (string-getter probe), sets it through the audited native editor_run_console_command (python_run refuses execute_console_command), then reads the applied value back as a float. name is a cvar identifier and value one console token (number, bool, or a string without spaces), so the command cannot carry a second command. When this engine build has no existence probe it stays ok:true with verified:false. Idempotent (retry-safe). NOT a freeform console runner — use editor_run_console_command for arbitrary commands.',
   cost: 'low',
   returns: '{ok, name, requested, applied, verified, note}',
   schema: editorCvarSetSchema.shape,
   meta: uiMeta,
   buildScript: editorCvarSetScript,
+  finish: editorCvarSetFinish,
   timeoutMs: 30_000,
 };
 

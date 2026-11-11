@@ -200,7 +200,8 @@ export const PYTHON_CRASH_RULES: readonly PythonCrashRule[] = [
   {
     code: 'HCR-CONSOLE-001',
     family: 'unaudited_console_execution',
-    patterns: ['execute_console_command(', 'fromunrealimportexecute_console_command'],
+    // '.execute_console_command' has no callable boundary: the method call and an attribute alias are how it is used.
+    patterns: ['execute_console_command(', '.execute_console_command', 'fromunrealimportexecute_console_command'],
     reason: 'it bypasses typed policy and can invoke fatal, blocking, world-switch, or shutdown console commands',
     alternative: 'use editor_run_console_command for audited commands or use a purpose-built typed MCP tool',
   },

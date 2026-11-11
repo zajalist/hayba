@@ -88,37 +88,63 @@ describe('editor_cvar_get', () => {
 });
 
 describe('editor_cvar_set', () => {
-  it('runs execute_console_command with a typed value and reads back', async () => {
-    const { sender, lastScript } = mockStdout(emit({ ok: true, name: 'r.X', requested: '50', applied: 50 }));
+  // A scripted editor: python_run answers the existence probe, then the read-back; the set is a native command.
+  function cvarEditor(exists: boolean) {
+    const calls: Array<{ cmd: string; params: Record<string, unknown> }> = [];
+    const sender: Sender = (async (cmd: string, params: Record<string, unknown>) => {
+      calls.push({ cmd, params });
+      if (cmd === 'editor_run_console_command') return { id: 'inmem', ok: true, data: { executed: true } };
+      const script = String(params.script ?? '');
+      const body = script.includes('get_console_variable_float_value')
+        ? { ok: true, applied: 50, string_value: '50' }
+        : exists ? { ok: true, exists: true, before: '100' } : { ok: false, error: 'cvar not found: r.Typo (empty string readback); nothing was set' };
+      return { id: 'inmem', ok: true, data: { ok: true, stdout: emit(body), stderr: '' } };
+    }) as Sender;
+    return { sender, calls };
+  }
+
+  it('sets through the audited native console command, never python execute_console_command', async () => {
+    const { sender, calls } = cvarEditor(true);
     setDefaultSender(sender);
     const res = await makePyToolHandler(editorCvarSetDescriptor)({ name: 'r.X', value: 50 });
     expect(res.isError).toBeUndefined();
-    const s = lastScript();
-    expect(s).toContain('execute_console_command');
-    expect(s).toContain("_val = '50'");
+    expect(calls.map((c) => c.cmd)).toEqual(['python_run', 'editor_run_console_command', 'python_run']);
+    expect(calls[1].params).toEqual({ command: 'r.X 50' });
+    for (const c of calls.filter((x) => x.cmd === 'python_run')) {
+      expect(String(c.params.script)).not.toContain('execute_console_command');
+      expect(scanPythonForCrashers(String(c.params.script))).toBeNull();
+    }
+    expect(JSON.parse(res.content[0].text)).toMatchObject({ ok: true, name: 'r.X', requested: '50', applied: 50, verified: true });
   });
 
   it('coerces a boolean value to 1/0', async () => {
-    const { sender, lastScript } = mockStdout(emit({ ok: true }));
+    const { sender, calls } = cvarEditor(true);
     setDefaultSender(sender);
     await makePyToolHandler(editorCvarSetDescriptor)({ name: 'r.Flag', value: true });
-    expect(lastScript()).toContain("_val = '1'");
+    expect(calls[1].params).toEqual({ command: 'r.Flag 1' });
+  });
+
+  it('refuses an unknown cvar before setting anything', async () => {
+    const { sender, calls } = cvarEditor(false);
+    setDefaultSender(sender);
+    const res = await makePyToolHandler(editorCvarSetDescriptor)({ name: 'r.Typo', value: 5 });
+    expect(calls.map((c) => c.cmd)).toEqual(['python_run']);
+    expect(res.content[0].text).toContain('cvar not found');
+  });
+
+  it('a name or value can never carry a second console command', async () => {
+    const { sender, calls } = cvarEditor(true);
+    setDefaultSender(sender);
+    for (const args of [{ name: 'r.X quit', value: 1 }, { name: 'r.X', value: '1 | quit' }, { name: 'r.X', value: '1;quit' },
+      { name: 'r.X', value: '1\nquit' }]) {
+      const res = await makePyToolHandler(editorCvarSetDescriptor)(args);
+      expect(res.isError, JSON.stringify(args)).toBe(true);
+    }
+    expect(calls).toEqual([]);
   });
 
   it('is NOT classified NON_IDEMPOTENT (retry-safe)', () => {
     expect(NON_IDEMPOTENT.has('editor_cvar_set')).toBe(false);
-  });
-
-  it('probes existence via the string getter so a typo does not read back as a silent success', async () => {
-    const { sender, lastScript } = mockStdout(emit({ ok: true, name: 'r.Typo', requested: '5', applied: 0, verified: false, note: 'cvar not found after set' }));
-    setDefaultSender(sender);
-    await makePyToolHandler(editorCvarSetDescriptor)({ name: 'r.Typo', value: 5 });
-    const s = lastScript();
-    expect(s).toContain('get_console_variable_string_value');
-    expect(s).toContain('verified');
-    // Honest failure: an empty-string readback (mistyped cvar) flips ok:false, not a silent set-to-0.
-    expect(s).toContain('_ok = False');
-    expect(s).toContain('"ok": _ok');
   });
 });
 

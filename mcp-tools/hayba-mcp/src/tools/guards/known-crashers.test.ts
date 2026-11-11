@@ -99,6 +99,15 @@ describe('known-crashers', () => {
     ).toBe('HCR-TIME-001');
   });
 
+  // 2026-11-10: the callable boundary meant for bare builtins skipped `.execute_console_command(`, so the way it is
+  // actually called (unreal.SystemLibrary.execute_console_command) ran unaudited console commands through python_run.
+  it('catches console execution called or aliased as a method', () => {
+    expect(scanPythonForCrashers('unreal.SystemLibrary.execute_console_command(None, "quit")')?.code).toBe('HCR-CONSOLE-001');
+    expect(scanPythonForCrashers('SL = unreal.SystemLibrary\nSL.execute_console_command(None, "quit")')?.code).toBe('HCR-CONSOLE-001');
+    expect(scanPythonForCrashers('run = unreal.SystemLibrary.execute_console_command\nrun(None, "quit")')?.code).toBe('HCR-CONSOLE-001');
+    expect(scanPythonForCrashers('my_execute_console_command_log = []')).toBeNull();
+  });
+
   it('does not classify policy vocabulary inside inert string literals', () => {
     expect(scanPythonForCrashers("module_name = 'importlib.util'; similarly_named_inspector = 1")).toBeNull();
   });
