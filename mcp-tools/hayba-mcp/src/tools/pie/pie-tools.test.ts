@@ -473,7 +473,7 @@ describe('cross-language contract with the C++ handler', () => {
     // slice would come back empty (and every assertion below would pass
     // vacuously — which is why 'the move helper was found' exists).
     const moveFn = cpp.slice(
-      cpp.lastIndexOf('FVector2D SendPointerMoveTo(const FVector2D& AbsTo)'),
+      cpp.lastIndexOf('FVector2D SendPointerMoveTo(const FVector2D& AbsTo, const FModifierKeysState& Mods)'),
       cpp.lastIndexOf('void SendHoverRefresh()'),
     );
 

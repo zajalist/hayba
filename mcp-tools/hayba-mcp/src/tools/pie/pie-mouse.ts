@@ -36,6 +36,10 @@ export const schema = z.object({
     .describe(
       'How x/y are read. "absolute" (default) is desktop pixels, which is what editor_pie_widget_tree reports. "viewport" is relative to the top-left of the game window; only use it if you measured from the window rather than the tree.',
     ),
+  modifiers: z
+    .array(z.enum(['shift', 'ctrl', 'alt', 'cmd']))
+    .optional()
+    .describe('Modifiers held for this input. Default none: the live keyboard is never read, so a user holding Alt cannot turn an injected key into an editor chord.'),
 });
 
 export const pieMouseHandler: ToolHandler = ueTool('editor_pie_mouse', schema);

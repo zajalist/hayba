@@ -3342,6 +3342,19 @@
           "type": "number",
           "required": false,
           "description": "Hold duration in ms before release"
+        },
+        {
+          "name": "modifiers",
+          "type": "array",
+          "required": false,
+          "description": "shift|ctrl|alt|cmd held for this input; default none (the live keyboard is never read)"
+        },
+        {
+          "name": "target",
+          "type": "string",
+          "required": false,
+          "default": "pie",
+          "description": "pie: focus the PIE game viewport first and refuse if it cannot; focused: whatever holds focus"
         }
       ],
       "returns": {
@@ -3409,6 +3422,12 @@
           "type": "number",
           "required": false,
           "description": "wheel notches for scroll (default 1, positive scrolls up)"
+        },
+        {
+          "name": "modifiers",
+          "type": "array",
+          "required": false,
+          "description": "shift|ctrl|alt|cmd held for this input; default none (the live keyboard is never read)"
         }
       ],
       "returns": {
@@ -3464,6 +3483,19 @@
           "type": "string",
           "required": true,
           "description": "text to type as character events (what text fields consume)"
+        },
+        {
+          "name": "modifiers",
+          "type": "array",
+          "required": false,
+          "description": "shift|ctrl|alt|cmd held for this input; default none (the live keyboard is never read)"
+        },
+        {
+          "name": "target",
+          "type": "string",
+          "required": false,
+          "default": "pie",
+          "description": "pie: focus the PIE game viewport first and refuse if it cannot; focused: whatever holds focus"
         }
       ],
       "returns": {
@@ -4115,6 +4147,12 @@
       "params":[{"name":"allow","type":"boolean","required":true,"description":"true holds full-rate ticking for this owner; false releases this owner's hold"}],
       "returns":{"shape":"object","fields":[{"name":"allow","type":"boolean"},{"name":"owner","type":"string"},{"name":"holders","type":"array"},{"name":"active","type":"boolean"},{"name":"previous_active","type":"boolean"},{"name":"throttled_now","type":"boolean"}]},
       "agent_callable":true,"has_ts_wrapper":false,"notes":"Keeps a minimized or unfocused editor ticking at full rate instead of 3 fps (UEditorEngine::ShouldThrottleCPUUsage throttles whenever all windows are hidden), so PIE bursts on a background editor run at speed. Held per owner: the throttle override stays registered until every holder sends allow:false. Default off; in memory only. Turn it on for the burst and off after."
+    },
+    "editor_get_keyboard_focus": {
+      "aliases": [], "handler_cpp": "FHaybaMCPPIEHandler::Handle",
+      "params":[],
+      "returns":{"shape":"object","fields":[{"name":"pie_running","type":"boolean"},{"name":"widget_type","type":"string"},{"name":"widget_id","type":"string"},{"name":"widget_path","type":"string"},{"name":"window_title","type":"string"},{"name":"is_pie_viewport","type":"boolean"},{"name":"in_pie_viewport","type":"boolean"},{"name":"pie_viewport","type":"object"}]},
+      "agent_callable":true,"has_ts_wrapper":false,"notes":"Read-only: which Slate widget holds keyboard focus right now (type, parent chain, window) and whether it is the PIE game viewport or inside it. Check it before sending keys, or when a key appeared to do nothing, to tell input that reached the game from input that reached the editor."
     },
     "net_debug": {
       "aliases": [],

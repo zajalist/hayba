@@ -45,4 +45,7 @@ private:
     TUniquePtr<FHaybaPIECaptureState> Capture;
     FTSTicker::FDelegateHandle CaptureTicker;
     bool TickCapture(float DeltaSeconds);
+
+    // Read-only: who receives keyboard input right now, and whether it is the PIE game viewport.
+    FHaybaHandlerResult GetKeyboardFocus(const TSharedPtr<FJsonObject>& P);
 };
