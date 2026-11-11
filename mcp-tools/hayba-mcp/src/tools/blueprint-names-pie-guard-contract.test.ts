@@ -26,7 +26,7 @@ describe('Blueprint add commands refuse a member name that is already taken', ()
 
   for (const [cmd, from, to, mutation] of [
     ['blueprint_add_component', 'FHaybaHandlerResult FHaybaMCPBlueprintHandler::AddComponent(', 'static bool HaybaResolvePinType(',
-      'SimpleConstructionScript->CreateNode('],
+      'SCS->CreateNode('],
     ['blueprint_add_variable', 'FHaybaHandlerResult FHaybaMCPBlueprintHandler::AddVariable(', 'FHaybaHandlerResult FHaybaMCPBlueprintHandler::AddFunction(',
       'FBlueprintEditorUtils::AddMemberVariable('],
     ['blueprint_add_function', 'FHaybaHandlerResult FHaybaMCPBlueprintHandler::AddFunction(', 'UK2Node_FunctionEntry* Entry = nullptr;',

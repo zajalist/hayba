@@ -2240,6 +2240,12 @@
           "name": "component_name",
           "type": "string",
           "required": true
+        },
+        {
+          "name": "parent",
+          "type": "string",
+          "required": false,
+          "description": "Scene component to attach under; default the existing scene root (it becomes the root only when the Blueprint has none)"
         }
       ],
       "returns": {
@@ -2248,7 +2254,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Add a component of a given class to a Blueprint's component tree. Changes are staged — blueprint_compile applies them, and nothing takes effect in the level until it does."
+      "notes": "Add a component of a given class to a Blueprint's component tree. A scene component attaches under `parent`, else under the existing scene root (never a second root); the reply has attached_to, became_root and the full hierarchy. Changes are staged — blueprint_compile applies them, and nothing takes effect in the level until it does."
     },
     "blueprint_add_variable": {
       "aliases": [],

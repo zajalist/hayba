@@ -699,17 +699,56 @@ static FString MemberNameTaken(const UBlueprint* BP, const TCHAR* Cmd, const FSt
         Cmd, *Name, *INameValidatorInterface::GetErrorString(Name, Result));
 }
 
+// The Blueprint's scene root as the SCS sees it: a root SCS node holding a scene component that hangs off nothing.
+static USCS_Node* SceneRootNode(USimpleConstructionScript* SCS)
+{
+    for (USCS_Node* N : SCS->GetRootNodes())
+    {
+        if (N && N->ComponentTemplate && N->ComponentTemplate->IsA<USceneComponent>()
+            && N->ParentComponentOrVariableName.IsNone())
+        {
+            return N;
+        }
+    }
+    return nullptr;
+}
+
+/** Every SCS node with its parent, so a caller sees the hierarchy it just produced. */
+static TArray<TSharedPtr<FJsonValue>> ScsHierarchyJson(USimpleConstructionScript* SCS)
+{
+    TArray<TSharedPtr<FJsonValue>> Out;
+    for (USCS_Node* N : SCS->GetAllNodes())
+    {
+        if (!N) continue;
+        TSharedPtr<FJsonObject> E = MakeShared<FJsonObject>();
+        E->SetStringField(TEXT("name"), N->GetVariableName().ToString());
+        E->SetStringField(TEXT("class"), N->ComponentClass ? N->ComponentClass->GetName() : FString());
+        FString Parent;
+        if (USCS_Node* PN = SCS->FindParentNode(N)) Parent = PN->GetVariableName().ToString();
+        else if (!N->ParentComponentOrVariableName.IsNone()) Parent = N->ParentComponentOrVariableName.ToString();
+        E->SetStringField(TEXT("parent"), Parent);
+        E->SetBoolField(TEXT("is_root"), Parent.IsEmpty() && N->ComponentTemplate && N->ComponentTemplate->IsA<USceneComponent>());
+        Out.Add(MakeShared<FJsonValueObject>(E));
+    }
+    return Out;
+}
+
+// Every component used to be added with SCS->AddNode, i.e. as a ROOT node: the first one became the actor's
+// RootComponent and its "relative" location acted as a world transform (UI's BP_ItemInspect rendered at the origin).
+// A scene component now attaches to `parent` when given, else to the existing scene root (an SCS root node, or the
+// native root the parent class creates); it becomes the root only when the Blueprint has none.
 FHaybaHandlerResult FHaybaMCPBlueprintHandler::AddComponent(const TSharedPtr<FJsonObject>& P)
 {
-    FString Path, CompClassPath, CompName;
+    FString Path, CompClassPath, CompName, ParentName;
     const FString BadParams = HaybaUnknownParamsError(P, TEXT("blueprint_add_component"),
-        { TEXT("path"), TEXT("component_class_path"), TEXT("component_name") });
+        { TEXT("path"), TEXT("component_class_path"), TEXT("component_name"), TEXT("parent") });
     if (!BadParams.IsEmpty()) return FHaybaHandlerResult::Err(BadParams);
     FHaybaParamReader ParamR(P, TEXT("blueprint_add_component"));
     Path = ParamR.RequiredString(TEXT("path"));
     CompClassPath = ParamR.RequiredString(TEXT("component_class_path"));
     CompName = ParamR.RequiredString(TEXT("component_name"));
     if (ParamR.HasErrors()) return FHaybaHandlerResult::Err(ParamR.ErrorMessage());
+    P->TryGetStringField(TEXT("parent"), ParentName);
 
     UBlueprint* BP = LoadBPByPath(Path);
     if (!BP) return FHaybaHandlerResult::Err(BlueprintNotFoundError(TEXT("blueprint_add_component"), Path));
@@ -732,9 +771,46 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::AddComponent(const TSharedPtr<FJs
     const FString Taken = MemberNameTaken(BP, TEXT("blueprint_add_component"), CompName);
     if (!Taken.IsEmpty()) return FHaybaHandlerResult::Err(Taken);
 
-    USCS_Node* Node = BP->SimpleConstructionScript->CreateNode(CompClass, FName(*CompName));
+    USimpleConstructionScript* SCS = BP->SimpleConstructionScript;
+    const bool bScene = CompClass->IsChildOf<USceneComponent>();
+    USCS_Node* ParentNode = nullptr;
+    USceneComponent* NativeRoot = nullptr;
+    if (!ParentName.IsEmpty())
+    {
+        if (!bScene)
+            return FHaybaHandlerResult::Err(TEXT("blueprint_add_component: parent was given but the component is not a scene component, so it cannot be attached; nothing was changed"));
+        ParentNode = SCS->FindSCSNode(FName(*ParentName));
+        if (!ParentNode || !ParentNode->ComponentTemplate || !ParentNode->ComponentTemplate->IsA<USceneComponent>())
+            return FHaybaHandlerResult::Err(FString::Printf(
+                TEXT("blueprint_add_component: parent '%s' is not a scene component of this Blueprint; nothing was changed"), *ParentName));
+    }
+    else if (bScene)
+    {
+        ParentNode = SceneRootNode(SCS);
+        if (!ParentNode && BP->GeneratedClass)
+        {
+            if (const AActor* CDO = Cast<AActor>(BP->GeneratedClass->GetDefaultObject()))
+                NativeRoot = CDO->GetRootComponent();
+        }
+    }
+
+    USCS_Node* Node = SCS->CreateNode(CompClass, FName(*CompName));
     if (!Node) return FHaybaHandlerResult::Err(TEXT("blueprint_add_component: CreateNode failed"));
-    BP->SimpleConstructionScript->AddNode(Node);
+    FString AttachedTo;
+    if (ParentNode)
+    {
+        ParentNode->AddChildNode(Node);
+        AttachedTo = ParentNode->GetVariableName().ToString();
+    }
+    else
+    {
+        if (NativeRoot)
+        {
+            Node->SetParent(NativeRoot);
+            AttachedTo = NativeRoot->GetName();
+        }
+        SCS->AddNode(Node);
+    }
     MarkStructural(BP);
 
     TArray<FString> Errors, Warnings;
@@ -742,6 +818,9 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::AddComponent(const TSharedPtr<FJs
 
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
     Out->SetStringField(TEXT("component_name"), CompName);
+    Out->SetStringField(TEXT("attached_to"), AttachedTo);
+    Out->SetBoolField(TEXT("became_root"), bScene && AttachedTo.IsEmpty());
+    Out->SetArrayField(TEXT("hierarchy"), ScsHierarchyJson(SCS));
     AttachCompileReport(Out, bClean, Errors, Warnings);
     Out->SetBoolField(TEXT("verified"), BP->SimpleConstructionScript
         && BP->SimpleConstructionScript->GetAllNodes().Contains(Node));
