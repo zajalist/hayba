@@ -50,15 +50,20 @@ describe('actor python_run templates never use try or with', () => {
 });
 
 describe('no python_run template file has a try or with', () => {
+  // Every source file under src/tools, not only *-py-tools.ts: pcg, introspect and others build python_run scripts too.
   const tools = join(dirname(fileURLToPath(import.meta.url)), '..');
   const files: string[] = [];
-  for (const dir of readdirSync(tools)) {
-    const full = join(tools, dir);
-    if (!statSync(full).isDirectory()) continue;
-    for (const f of readdirSync(full)) if (f.endsWith('-py-tools.ts')) files.push(`${dir}/${f}`);
-  }
+  const walk = (rel: string) => {
+    for (const f of readdirSync(join(tools, rel))) {
+      const r = rel ? `${rel}/${f}` : f;
+      if (statSync(join(tools, r)).isDirectory()) walk(r);
+      else if (f.endsWith('.ts') && !f.endsWith('.test.ts')) files.push(r);
+    }
+  };
+  walk('');
   it('finds the template files', () => {
-    expect(files).toContain('actor/actor-py-tools.ts');
+    for (const f of ['actor/actor-py-tools.ts', 'pcg/pcg-primitives.ts', 'introspect/hayba-introspect.ts',
+      'pcg/pcg-scatter-mesh.ts', 'pcg/pcg-cook-and-wait.ts']) expect(files).toContain(f);
   });
   for (const file of files) {
     it(`${file} has no template line starting a try or with block`, () => {
