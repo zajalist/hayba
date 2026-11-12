@@ -7,17 +7,19 @@ protocol across two language boundaries — see [`docs/ARCHITECTURE.md`](../../d
 and [`CONTEXT.md`](../../CONTEXT.md).
 
 - **Plugin:** `HaybaMCPToolkit` · Editor module · `LoadingPhase: PostEngineInit`
-- **Engine:** UE 5.7+ · depends on the `PCG` plugin
+- **Engine:** UE 5.9 (5.7 and 5.8 not tested for 0.4.1) · depends on the `PCG` plugin
 - **Version:** see `HaybaMCPToolkit.uplugin`
 
 ## Install
+
+For a step-by-step guide, see [INSTALL.md](../../INSTALL.md).
 
 Build the MCP server first (`npm install`, then
 `npm --prefix mcp-tools/hayba-mcp run build` from the repo root). Create
 `<YourProject>\Plugins` if it doesn't exist, then link this folder into it
 from an administrator prompt (or with Windows Developer Mode on), regenerate
 Visual Studio project
-files, and rebuild (Windows; UE 5.7 or 5.8; Visual Studio with the C++ toolchain your Unreal Engine version requires):
+files, and rebuild (Windows; UE 5.9; Visual Studio with the C++ toolchain your Unreal Engine version requires):
 
 ```bat
 mklink /D "<YourProject>\Plugins\HaybaMCPToolkit" "<repo>\unreal\HaybaMCPToolkit"

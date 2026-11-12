@@ -12,9 +12,10 @@ workspace (Chat, World and the six-tab layout), multi-agent editor leases,
 and the P0 editor safety train.
 
 ### Added
-- Unreal Engine 5.9 support. The plugin descriptors carry no engine pin, so
-  the same plugin loads on 5.7, 5.8 and 5.9; the capture component stays
-  visible because 5.9's `CaptureScene` refuses a hidden one.
+- Unreal Engine 5.9 support, and 5.9 is the tested engine for this release
+  (5.7 and 5.8 were not retested). The plugin descriptors carry no engine
+  pin, so Unreal does not ask about a version mismatch. The capture component
+  stays visible because 5.9's `CaptureScene` refuses a hidden one.
 - `python_exec_file {path, env?, resources?}` runs a trusted `.py` file from
   inside the project, outside `python_run`'s sandbox, as one SEH-guarded
   request with a private namespace. Off by default (Project Settings >
