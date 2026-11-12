@@ -141,7 +141,8 @@ describe('one __except in the plugin tree (ADR-0011)', () => {
     expect(code).not.toContain('ExecPythonGuarded');
     expect(raw).not.toMatch(/#include\s*<excpt\.h>/);
     expect([...code.matchAll(/ExecPythonCommandEx\(/g)]).toHaveLength(1);
-    expect([...code.matchAll(/RunPythonCommandGuarded\(PythonPlugin,/g)]).toHaveLength(5);
+    // python_run x5, python_exec_file x1.
+    expect([...code.matchAll(/RunPythonCommandGuarded\(PythonPlugin,/g)]).toHaveLength(6);
   });
 
   it('records a fault after the guard returned, never from the filter', () => {
