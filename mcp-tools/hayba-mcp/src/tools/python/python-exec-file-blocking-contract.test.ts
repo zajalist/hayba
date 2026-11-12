@@ -20,7 +20,7 @@ describe('python_exec_file refuses scripts that block the game thread on every c
   it('checks for the blocking calls before it executes anything', () => {
     const guard = execFile.indexOf('HCR-BLOCK-002');
     expect(guard).toBeGreaterThan(-1);
-    expect(guard).toBeLessThan(execFile.indexOf('ExecPythonGuarded(PythonPlugin, &RunCmd'));
+    expect(guard).toBeLessThan(execFile.indexOf('RunPythonCommandGuarded(PythonPlugin, &RunCmd'));
     for (const call of ['take_high_res_screenshot', 'finish_all_compilation']) {
       expect(execFile.slice(0, guard)).toContain(`TEXT("${call}")`);
     }

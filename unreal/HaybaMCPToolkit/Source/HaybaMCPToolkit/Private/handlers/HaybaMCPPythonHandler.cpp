@@ -2654,6 +2654,7 @@ bool FHaybaMCPPythonHandler::EnsurePspHotfix()
     const FString Dir = FPaths::ConvertRelativePathToFull(Plugin->GetBaseDir() / TEXT("Resources/Python"));
     FPythonCommandEx Cmd;
     Cmd.ExecutionMode = EPythonCommandExecutionMode::ExecuteFile;
+    Cmd.Flags |= EPythonCommandFlags::Unattended; // never a modal from Hayba's own Python
     Cmd.Command = FString::Printf(TEXT(
         "import sys, base64\n"
         "_p = base64.b64decode('%s').decode('utf-8')\n"
@@ -2767,6 +2768,7 @@ FHaybaHandlerResult FHaybaMCPPythonHandler::ExecFile(const TSharedPtr<FJsonObjec
 
     FPythonCommandEx RunCmd;
     RunCmd.ExecutionMode = EPythonCommandExecutionMode::ExecuteFile;
+    RunCmd.Flags |= EPythonCommandFlags::Unattended; // a project script must not park the game thread on a dialog
     RunCmd.Command = FString::Printf(TEXT(
         "import base64 as _b64, json as _json\n"
         "def _hayba_exec_file(req):\n"

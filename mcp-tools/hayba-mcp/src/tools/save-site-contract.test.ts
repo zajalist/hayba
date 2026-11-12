@@ -249,11 +249,12 @@ describe('no save or Python site can open a modal on the game thread', () => {
     expect(guard).toBeLessThan(body.indexOf('SaveCurrentLevel('));
   });
 
-  it('python_run sets EPythonCommandFlags::Unattended on every FPythonCommandEx before it runs', () => {
+  it('python_run, python_exec_file and the hotfix set EPythonCommandFlags::Unattended on every FPythonCommandEx before it runs', () => {
     const { code } = at(`${TOOLKIT}/Private/handlers/HaybaMCPPythonHandler.cpp`);
     expect(code).toContain('RunGuardedAt(EHaybaFaultSite::Python');
     const decls = [...code.matchAll(/FPythonCommandEx\s+(\w+)\s*;/g)];
-    expect(decls.map((m) => m[1])).toEqual(['RunCmd', 'E', 'OkCmd', 'TimeoutCmd', 'CleanupCmd']);
+    // python_run's five, then the PSP hotfix and python_exec_file.
+    expect(decls.map((m) => m[1])).toEqual(['RunCmd', 'E', 'OkCmd', 'TimeoutCmd', 'CleanupCmd', 'Cmd', 'RunCmd']);
     for (const decl of decls) {
       const name = decl[1]!;
       const from = decl.index!;

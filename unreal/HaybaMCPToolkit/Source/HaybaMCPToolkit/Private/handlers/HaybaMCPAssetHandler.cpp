@@ -1,4 +1,5 @@
 #include "HaybaMCPAssetHandler.h"
+#include "HaybaMCPSaveVerify.h"
 #include "HaybaMCPAssetRegistryQuery.h"
 #include "Json.h"
 #include "Editor.h"
@@ -2251,17 +2252,16 @@ FHaybaHandlerResult FHaybaMCPAssetHandler::AssetSave(const TSharedPtr<FJsonObjec
             continue;
         }
         // A read-only file would make the save fail, or prompt and stall the game thread.
-        if (IFileManager::Get().FileExists(*Filename) && IFileManager::Get().IsReadOnly(*Filename))
+        const TArray<FString> ReadOnly = HaybaSaveVerify::FindReadOnlyPackageFiles(Package);
+        if (ReadOnly.Num() > 0)
         {
-            Note(Failed, Path, TEXT("its .uasset is read-only (locked by source control or LFS?)"));
+            Note(Failed, Path, TEXT("read-only on disk; nothing was saved. ") + HaybaSaveVerify::MakeWritableHint(ReadOnly, FString()));
             continue;
         }
 
-        FSavePackageArgs Args;
-        Args.TopLevelFlags = RF_Public | RF_Standalone;
-        Args.SaveFlags = SAVE_NoError; // no modal error dialogs mid-command
         const FDateTime Before = FDateTime::UtcNow() - FTimespan::FromSeconds(2);
-        const bool bSaveReturned = UPackage::SavePackage(Package, nullptr, *Filename, Args);
+        // The toolkit's one raw SavePackage: SAVE_NoError, so no modal error dialog mid-command.
+        const bool bSaveReturned = HaybaSaveVerify::Detail::SavePackageNoError(Package, nullptr, Filename);
         // Verify the effect, not the reply: clean in memory and a fresh file on disk.
         const FDateTime Stamp = IFileManager::Get().GetTimeStamp(*Filename);
         if (bSaveReturned && !Package->IsDirty() && Stamp != FDateTime::MinValue() && Stamp >= Before)
