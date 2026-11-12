@@ -2538,10 +2538,14 @@ FHaybaHandlerResult FHaybaMCPAssetHandler::AssetFixRedirectors(const TSharedPtr<
     if (Packages.Num() > 0) IAssetTools::Get().RenameReferencingSoftObjectPaths(Packages, SoftRedirects);
 
     TArray<FString> Saved;
-    for (const TPair<FName, UPackage*>& It : ToSave)
     {
-        if (UEditorLoadingAndSavingUtils::SavePackages({ It.Value }, /*bOnlyDirty=*/false)) Saved.Add(It.Key.ToString());
-        else Blocked.Add(It.Key, TEXT("failed to save; see the Output Log"));
+        // As level_save does: a failed save reports instead of opening a dialog on the game thread.
+        TGuardValue<bool> UnattendedSave(GIsRunningUnattendedScript, true);
+        for (const TPair<FName, UPackage*>& It : ToSave)
+        {
+            if (UEditorLoadingAndSavingUtils::SavePackages({ It.Value }, /*bOnlyDirty=*/false)) Saved.Add(It.Key.ToString());
+            else Blocked.Add(It.Key, TEXT("failed to save; see the Output Log"));
+        }
     }
     Rooted.Empty();
     Reg.ScanPathsSynchronous(ScanPaths, /*bForceRescan=*/true);

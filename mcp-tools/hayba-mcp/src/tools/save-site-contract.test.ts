@@ -206,6 +206,9 @@ describe('save-site contract', () => {
       if (n > 0) counts[path] = n;
     }
     expect(counts).toEqual({
+      // asset_fix_redirectors saves the referencers it re-pointed (maps included), unattended,
+      // after a read-only check per package.
+      [`${TOOLKIT}/Private/handlers/HaybaMCPAssetHandler.cpp`]: 1,
       [`${TOOLKIT}/Private/handlers/HaybaMCPAudioHandler.cpp`]: 1,
       [`${TOOLKIT}/Private/handlers/HaybaMCPDataAssetHandler.cpp`]: 1,
       [`${TOOLKIT}/Private/handlers/HaybaMCPEditorHandler.cpp`]: 1,
