@@ -45,6 +45,13 @@ const HEAVY_OPS = new Set<string>([
   // src/tools/ui/*.ts), so registering it here covers all of them at once —
   // no per-tool timeout to keep in sync.
   'ui_mutate_tree',
+  // Asset delete — UEditorAssetLibrary::DeleteAsset force-loads the package,
+  // closes editors, and deletes on the game thread. Character / marketplace
+  // blueprints (e.g. ThirdPersonCharacter) routinely exceed the old `low`
+  // (2s) cost tier; the MCP client then reports a timeout while UE is still
+  // working, or a modal save/confirm prompt parks the game thread forever.
+  // Heavy tier + no auto-retry (same class as ui_mutate_tree / asset_import).
+  'asset_delete',
 ]);
 
 /** Register an additional command as a heavy (game-thread-blocking) op. */

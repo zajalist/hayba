@@ -30,8 +30,10 @@
 #include "HAL/PlatformProcess.h"
 #include "HAL/FileManager.h"
 #include "ObjectTools.h"
+#include "Subsystems/AssetEditorSubsystem.h"
 #include "AssetRegistry/AssetRegistryHelpers.h"
 #include "Misc/Base64.h"
+#include "Misc/CoreMisc.h"
 #include "IImageWrapperModule.h"
 #include "IImageWrapper.h"
 #include "Modules/ModuleManager.h"
@@ -1440,6 +1442,55 @@ static FString PackageFileOnDisk(const FString& AssetPath)
     return Filename;
 }
 
+/** Strip whitespace/newlines agents inject via line-wrapping. UE object paths
+ *  never contain whitespace; leaving it in breaks DoesAssetExist / load. */
+static FString NormalizeAssetObjectPath(const FString& In)
+{
+    FString Out;
+    Out.Reserve(In.Len());
+    for (TCHAR C : In)
+    {
+        if (!FChar::IsWhitespace(C))
+        {
+            Out.AppendChar(C);
+        }
+    }
+    return Out;
+}
+
+/** Force-delete one asset without raising a confirmation / save modal.
+ *
+ *  A modal on the game thread is the HaybaMCPAssetGuard hang class: the reply
+ *  never leaves the plugin, the MCP client times out, and every later request
+ *  queues behind the unanswered dialog. Prefer ObjectTools with
+ *  bShowConfirmation=false under GIsRunningUnattendedScript; fall back to
+ *  EditorAssetLibrary::DeleteAsset when the object is not yet loaded. */
+static bool ForceDeleteAssetNoModal(const FString& Path)
+{
+    // Suppress overwrite/save/confirm prompts for the duration of this call.
+    TGuardValue<bool> Unattended(GIsRunningUnattendedScript, true);
+
+    UObject* Obj = StaticLoadObject(UObject::StaticClass(), nullptr, *Path);
+    if (Obj && GEditor)
+    {
+        if (UAssetEditorSubsystem* Editors = GEditor->GetEditorSubsystem<UAssetEditorSubsystem>())
+        {
+            // Close without prompting — dirty state would otherwise raise a
+            // save dialog and park the game thread.
+            Editors->CloseAllEditorsForAsset(Obj);
+        }
+
+        TArray<UObject*> ToDelete;
+        ToDelete.Add(Obj);
+        const int32 NumDeleted = ObjectTools::ForceDeleteObjects(ToDelete, /*bShowConfirmation=*/false);
+        return NumDeleted > 0;
+    }
+
+    // Not in memory / load failed — still try the scripting utility (also a
+    // force delete). Unattended flag remains set via the guard above.
+    return UEditorAssetLibrary::DeleteAsset(Path);
+}
+
 FHaybaHandlerResult FHaybaMCPAssetHandler::AssetDelete(const TSharedPtr<FJsonObject>& P)
 {
     // Accept one path or many. Deleting a set is the real use, and doing it one
@@ -1448,15 +1499,16 @@ FHaybaHandlerResult FHaybaMCPAssetHandler::AssetDelete(const TSharedPtr<FJsonObj
     FString Single;
     if (P->TryGetStringField(TEXT("path"), Single) && !Single.IsEmpty())
     {
-        Paths.Add(Single);
+        const FString Clean = NormalizeAssetObjectPath(Single);
+        if (!Clean.IsEmpty()) Paths.Add(Clean);
     }
     const TArray<TSharedPtr<FJsonValue>>* Arr = nullptr;
     if (P->TryGetArrayField(TEXT("paths"), Arr) && Arr)
     {
         for (const TSharedPtr<FJsonValue>& V : *Arr)
         {
-            const FString S = V->AsString();
-            if (!S.IsEmpty()) Paths.Add(S);
+            const FString Clean = NormalizeAssetObjectPath(V->AsString());
+            if (!Clean.IsEmpty()) Paths.Add(Clean);
         }
     }
     if (Paths.Num() == 0)
@@ -1495,7 +1547,7 @@ FHaybaHandlerResult FHaybaMCPAssetHandler::AssetDelete(const TSharedPtr<FJsonObj
             continue;
         }
 
-        const bool bReported = UEditorAssetLibrary::DeleteAsset(Path);
+        const bool bReported = ForceDeleteAssetNoModal(Path);
         const bool bFileAfter = !File.IsEmpty() && IFileManager::Get().FileExists(*File);
 
         E->SetBoolField(TEXT("engine_reported_deleted"), bReported);

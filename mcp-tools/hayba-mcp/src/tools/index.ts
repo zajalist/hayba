@@ -2357,10 +2357,10 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
   {
     name: 'asset_delete',
     description:
-      'Permanently delete content assets, verifying on the FILESYSTEM that each file is gone. Pass `paths` to delete a set in one call. READ deleted_count, not requested — it counts .uasset files actually removed. NEVER verify a delete with does_asset_exist or asset_search: the asset registry can report an asset gone while its file is still on disk, and that is exactly how a batch delete reports success for files it never removed. Assets the registry has lost but whose files remain are reported as ORPHANED and must be removed from disk directly.',
+      'Permanently delete content assets, verifying on the FILESYSTEM that each file is gone. Pass `paths` to delete a set in one call. READ deleted_count, not requested — it counts .uasset files actually removed. NEVER verify a delete with does_asset_exist or asset_search: the asset registry can report an asset gone while its file is still on disk, and that is exactly how a batch delete reports success for files it never removed. Assets the registry has lost but whose files remain are reported as ORPHANED and must be removed from disk directly. Large blueprints (Character BPs, marketplace packs) can take tens of seconds — do not treat a transport timeout as proof the delete failed; check the filesystem / re-check status first.',
     meta: assetDeleteMeta,
     handler: assetDeleteHandler,
-    cost: 'low',
+    cost: 'high',
     returns:
       '{requested, deleted_count, still_on_disk_count, warning?, results:[{path, existed_on_disk, existed_in_registry, engine_reported_deleted, file_gone, deleted, file, reason?}]}',
     schema: {
