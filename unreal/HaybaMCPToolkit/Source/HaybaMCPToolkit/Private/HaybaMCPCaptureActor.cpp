@@ -26,8 +26,9 @@ AHaybaMCPCaptureActor::AHaybaMCPCaptureActor()
     Tags.Add(FName(TEXT("HaybaMCP_Internal")));
     if (Capture)
     {
-        Capture->SetVisibility(false, /*bPropagateToChildren=*/true);
-        Capture->bHiddenInGame = true;
+        // UE 5.9 CaptureScene requires a visible component; the owning actor remains hidden.
+        Capture->SetVisibility(true);
+        Capture->bHiddenInGame = false;
     }
 }
 
