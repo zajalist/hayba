@@ -1,5 +1,5 @@
 /**
- * a production project crash, 2026-11-05 23:37: material_set_property switched M_UI_SandText to MD_UI + translucent
+ * A production crash, 2026-11-05 23:37: material_set_property switched M_UI_SandText to MD_UI + translucent
  * while its shaders were still compiling for the old settings. The next render of the material (an
  * editor-autosave thumbnail) failed MaterialShader.cpp:2567 (ContainsShaderType) and killed the editor.
  * The handler must drop the stale compile before it mutates shader-deciding settings and recompile

@@ -1,5 +1,5 @@
 /**
- * a production project stall, 2026-11-06 00:39: a script's unreal.AutomationLibrary.take_high_res_screenshot ran
+ * A production stall, 2026-11-06 00:39: a script's unreal.AutomationLibrary.take_high_res_screenshot ran
  * FinishLoadingBeforeScreenshot -> SubmitRemainingJobsForWorld + FinishAllCompilation and held the shared
  * editor's game thread for 10 minutes. python_exec_file must refuse such scripts before it runs them.
  */

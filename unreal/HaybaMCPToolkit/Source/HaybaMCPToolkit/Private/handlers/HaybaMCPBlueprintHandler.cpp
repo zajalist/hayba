@@ -1244,7 +1244,7 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::AddNode(const TSharedPtr<FJsonObj
         return Place(Node);
     }
 
-    // Macro instances made by C++ the way the palette makes them. a production project's crash was editor
+    // Macro instances made by C++ the way the palette makes them. A production project's crash was editor
     // Python calling BlueprintEditorLibrary on a script-made macro node, not the node itself.
     if (NodeType == TEXT("macro"))
     {
@@ -2235,7 +2235,7 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::RemoveNode(const TSharedPtr<FJson
 
 // ---------------------------------------------------------------------------
 // Graph tidying and bulk authoring: comments, moves, removal, disconnects and a
-// batch that runs many of them in one call. a production project's lanes built graphs through
+// batch that runs many of them in one call. A production project's lanes built graphs through
 // editor Python because one MCP call per link was impractical; these replace
 // that path. All staging only: compile with blueprint_compile (or compile:true).
 // ---------------------------------------------------------------------------
