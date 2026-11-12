@@ -385,9 +385,14 @@ bool FHaybaMCPLeaseTableTest::RunTest(const FString& Parameters)
 	Confirm.ConfirmWithinSeconds = 30.0;
 	const FAcquireResult Unconfirmed = Table.Acquire(Confirm);
 	TestEqual(TEXT("an unconfirmed grant lives only the confirmation window"), Unconfirmed.ExpiresAt, Now + 30.0);
-	const FAcquireResult Confirmed = Table.Acquire(Confirm);
+	// A second, separate grant (the same owner asking again for the same resources is
+	// idempotent and would return the first lease).
+	HaybaMCPLease::FRequest ConfirmLater = MakeRequest(*this, TEXT("agent-g"), TEXT("asset:/Game/ConfirmLater"));
+	ConfirmLater.TtlSeconds = 600.0;
+	ConfirmLater.ConfirmWithinSeconds = 30.0;
+	const FAcquireResult Confirmed = Table.Acquire(ConfirmLater);
 	double Renewed = 0.0;
-	TestTrue(TEXT("its owner confirms by renewing"), Table.Renew(Confirmed.Token, TEXT("agent-f"), 600.0, Renewed, Error));
+	TestTrue(TEXT("its owner confirms by renewing"), Table.Renew(Confirmed.Token, TEXT("agent-g"), 600.0, Renewed, Error));
 	TestEqual(TEXT("a confirmed grant gets its full TTL"), Renewed, Now + 600.0);
 	Now += 31.0;
 	Table.Expire();
