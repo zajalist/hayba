@@ -14,6 +14,7 @@
 #include "HaybaMCPLeaseManager.h"
 #include "HaybaMCPEditorHealth.h"
 #include "HaybaMCPHealthPolicy.h"
+#include "HaybaPlayGuard.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogHaybaPython, Log, All);
 
@@ -170,6 +171,7 @@ namespace
             { TEXT("kill-9"), TEXT("HCR-EXIT-001"), TEXT("attempts to terminate the editor through a forbidden host-process path"), TEXT("use the typed editor shutdown workflow") },
             { TEXT("stop-process"), TEXT("HCR-EXIT-001"), TEXT("attempts to terminate the editor through a forbidden host-process path"), TEXT("use the typed editor shutdown workflow") },
             { TEXT("execute_console_command("), TEXT("HCR-CONSOLE-001"), TEXT("can execute fatal, blocking, world-switch, or shutdown console commands outside typed policy"), TEXT("use editor_run_console_command for audited commands or a typed MCP tool") },
+            { TEXT(".execute_console_command"), TEXT("HCR-CONSOLE-001"), TEXT("calls or aliases unaudited console execution as a method (unreal.SystemLibrary.execute_console_command)"), TEXT("use editor_run_console_command for audited commands or a typed MCP tool") },
             { TEXT("fromunrealimportexecute_console_command"), TEXT("HCR-CONSOLE-001"), TEXT("imports unaudited console execution under an arbitrary local name"), TEXT("use editor_run_console_command for audited commands or a typed MCP tool") },
             { TEXT("exec("), TEXT("HCR-DYNAMIC-001"), TEXT("can construct and execute a crash primitive that source preflight cannot inspect"), TEXT("write the intended operations directly in the submitted script") },
             { TEXT("eval("), TEXT("HCR-DYNAMIC-001"), TEXT("can construct and execute a crash primitive that source preflight cannot inspect"), TEXT("write the intended expression directly without dynamic evaluation") },
@@ -2149,6 +2151,16 @@ FHaybaHandlerResult FHaybaMCPPythonHandler::Handle(const FString& Cmd, const TSh
     return FHaybaHandlerResult::Err(FString::Printf(TEXT("Unknown python command: %s"), *Cmd));
 }
 
+// A script that starts PIE gets editor_start_pie's pre-check: UE's compile-error prompt before PIE is modal.
+static FString PlayStartRefusal(const FString& Source, const TCHAR* Cmd)
+{
+    for (const TCHAR* Call : { TEXT("editor_request_begin_play"), TEXT("editor_play_simulate") })
+    {
+        if (Source.Contains(Call, ESearchCase::IgnoreCase)) return HaybaPlayGuard::RefusalFor(Cmd);
+    }
+    return FString();
+}
+
 FHaybaHandlerResult FHaybaMCPPythonHandler::Run(const TSharedPtr<FJsonObject>& P)
 {
     // Validate required param
@@ -2184,6 +2196,12 @@ FHaybaHandlerResult FHaybaMCPPythonHandler::Run(const TSharedPtr<FJsonObject>& P
         return FHaybaHandlerResult::Err(FString::Printf(
             TEXT("python_run policy_blocked [%s]: matched '%s', which %s. Safe alternative: %s. Retry unchanged: forbidden. allow_unsafe is deprecated and ineffective; it never overrides an embedded-Python policy."),
             *FatalPolicyCode, *FatalPattern, *FatalReason, *FatalAlternative));
+    }
+
+    const FString PlayRefusal = PlayStartRefusal(Code, TEXT("python_run"));
+    if (!PlayRefusal.IsEmpty())
+    {
+        return FHaybaHandlerResult::Err(PlayRefusal);
     }
 
     // Classify
@@ -2728,6 +2746,11 @@ FHaybaHandlerResult FHaybaMCPPythonHandler::ExecFile(const TSharedPtr<FJsonObjec
                     "editor_capture_viewport / render_camera or a SceneCapture2D. allow_blocking:true overrides; hold EXCLUSIVE."),
                     *FullPath, Call));
             }
+        }
+        const FString PlayRefusal = PlayStartRefusal(Source, TEXT("python_exec_file"));
+        if (!PlayRefusal.IsEmpty())
+        {
+            return FHaybaHandlerResult::Err(PlayRefusal);
         }
     }
 

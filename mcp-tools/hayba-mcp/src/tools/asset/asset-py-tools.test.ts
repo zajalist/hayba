@@ -39,6 +39,19 @@ describe('asset_save (native C++)', () => {
     expect(calls).toEqual([{ cmd: 'asset_save', params: { asset_paths: ['/Game/A'] } }]);
   });
 
+  // Story's montage notify edits through editor Python left the package clean, so asset_save skipped them as
+  // "not dirty" and the edits never reached disk. force saves regardless of the dirty flag.
+  it('forwards force: true to the wire command', async () => {
+    const calls: Array<{ cmd: string; params: Record<string, unknown> }> = [];
+    setDefaultSender((async (cmd: string, params: Record<string, unknown>) => {
+      calls.push({ cmd, params });
+      return { id: 'inmem', ok: true, data: { ok: true, saved: ['/Game/A'], saved_count: 1, skipped: [], skipped_not_dirty: [], failed: [], verified: true } };
+    }) as Sender);
+    const res = await assetSaveHandler({ asset_paths: ['/Game/A'], force: true }, undefined as never);
+    expect(res.isError).toBeUndefined();
+    expect(calls).toEqual([{ cmd: 'asset_save', params: { asset_paths: ['/Game/A'], force: true } }]);
+  });
+
   it('has no save-everything mode: paths are required', async () => {
     setDefaultSender((async () => { throw new Error('must not reach the editor'); }) as Sender);
     expect((await assetSaveHandler({}, undefined as never)).isError).toBe(true);

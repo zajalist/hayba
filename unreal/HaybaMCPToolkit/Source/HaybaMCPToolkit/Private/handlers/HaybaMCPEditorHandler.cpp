@@ -3,6 +3,7 @@
 #include "CoreGlobals.h"
 #include "HaybaMCPUnattendedProbe.h"
 #include "HaybaEditorOps.h"
+#include "HaybaMCPParams.h"
 #include "HaybaMCPCaptureActor.h"
 #include "HaybaMCPRenderSafety.h"
 #include "HaybaMCPEditorHealth.h"
@@ -12,6 +13,8 @@
 #include "Engine/Engine.h"
 #include "LevelEditor.h"
 #include "SLevelViewport.h"
+#include "HaybaMCPViewport.h"
+#include "HaybaMCPLeaseManager.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
 #include "Misc/PackageName.h"
@@ -93,24 +96,6 @@ static TArray<FHaybaPlayModalRisk> FindPlayModalRisks()
     return Risks;
 }
 
-// Safely resolve a viewport's client to an FEditorViewportClient. FViewportClient
-// has no RTTI, so the old StaticCast<FEditorViewportClient*>(VP->GetClient())
-// blindly reinterpreted whatever client the viewport had — for a PIE or a
-// non-level editor viewport (material/BP preview) that is NOT an
-// FEditorViewportClient, and the first virtual call crashed. Confirm identity
-// against the engine's registered editor viewport clients before trusting it.
-static FEditorViewportClient* AsEditorViewportClient(FViewport* VP)
-{
-    if (!VP || !GEditor) return nullptr;
-    FViewportClient* Raw = VP->GetClient();
-    if (!Raw) return nullptr;
-    for (FEditorViewportClient* EVC : GEditor->GetAllViewportClients())
-    {
-        if (EVC == Raw) return EVC;  // pointer identity: Raw really is this editor client
-    }
-    return nullptr;
-}
-
 // Read the most-recent project .log file into a line array using a SHARED read.
 // UE holds the active editor log open for writing, so FFileHelper's default
 // exclusive read fails ("failed to read log file") even though the file exists
@@ -183,7 +168,8 @@ TArray<FString> FHaybaMCPEditorHandler::GetCommands() const
         TEXT("editor_live_compile"),
         TEXT("editor_get_performance_stats"),
         TEXT("editor_set_viewport_mode"),
-        TEXT("editor_focus_actor")
+        TEXT("editor_focus_actor"),
+        TEXT("editor_set_render_while_hidden")
     };
 }
 
@@ -202,13 +188,81 @@ FHaybaHandlerResult FHaybaMCPEditorHandler::Handle(const FString& Cmd, const TSh
     if (Cmd == TEXT("editor_get_performance_stats")) return GetPerformanceStats(Params);
     if (Cmd == TEXT("editor_set_viewport_mode")) return SetViewportMode(Params);
     if (Cmd == TEXT("editor_focus_actor"))       return FocusActor(Params);
+    if (Cmd == TEXT("editor_set_render_while_hidden")) return SetRenderWhileHidden(Params);
     return FHaybaHandlerResult::Err(FString::Printf(TEXT("Unknown editor command: %s"), *Cmd));
 }
 
-AHaybaMCPCaptureActor* FHaybaMCPEditorHandler::GetOrSpawnCaptureActor() const
+static void RemoveThrottleOverride(FDelegateHandle& Handle)
+{
+    if (GEditor && Handle.IsValid())
+    {
+        GEditor->ShouldDisableCPUThrottlingDelegates.RemoveAll(
+            [&Handle](const UEditorEngine::FShouldDisableCPUThrottling& D) { return D.GetHandle() == Handle; });
+    }
+    Handle.Reset();
+}
+
+FHaybaMCPEditorHandler::~FHaybaMCPEditorHandler()
+{
+    RemoveThrottleOverride(RenderWhileHiddenHandle);
+}
+
+// A minimized editor ticks at 3 fps: UEditorEngine::ShouldThrottleCPUUsage throttles while AreAllWindowsHidden() even
+// with bThrottleCPUWhenNotForeground off, so lane PIE bursts crawled whenever the user minimized it (a production project, 2026-11-10).
+// The engine's own override is a ShouldDisableCPUThrottlingDelegates entry. It is held per owner, so one lane letting
+// go never throttles another lane mid-burst, and it is registered only while someone holds it.
+FHaybaHandlerResult FHaybaMCPEditorHandler::SetRenderWhileHidden(const TSharedPtr<FJsonObject>& P)
+{
+    const FString BadParams = HaybaUnknownParamsError(P, TEXT("editor_set_render_while_hidden"), { TEXT("allow") });
+    if (!BadParams.IsEmpty()) return FHaybaHandlerResult::Err(BadParams);
+    bool bAllow = false;
+    if (!P.IsValid() || !P->TryGetBoolField(TEXT("allow"), bAllow))
+        return FHaybaHandlerResult::Err(TEXT("editor_set_render_while_hidden: allow (true or false) is required. Nothing was changed."));
+    if (!GEditor) return FHaybaHandlerResult::Err(TEXT("editor_set_render_while_hidden: GEditor is not available. Nothing was changed."));
+
+    const FString Owner = FHaybaMCPLeaseManager::Get().EffectiveOwner();
+    const bool bWasActive = RenderWhileHiddenHandle.IsValid();
+    if (bAllow) RenderWhileHiddenHolders.Add(Owner);
+    else RenderWhileHiddenHolders.Remove(Owner);
+
+    if (RenderWhileHiddenHolders.Num() > 0 && !RenderWhileHiddenHandle.IsValid())
+    {
+        UEditorEngine::FShouldDisableCPUThrottling Override =
+            UEditorEngine::FShouldDisableCPUThrottling::CreateLambda([]() { return true; });
+        RenderWhileHiddenHandle = Override.GetHandle();
+        GEditor->ShouldDisableCPUThrottlingDelegates.Add(MoveTemp(Override));
+    }
+    else if (RenderWhileHiddenHolders.Num() == 0)
+    {
+        RemoveThrottleOverride(RenderWhileHiddenHandle);
+    }
+    const bool bActive = RenderWhileHiddenHandle.IsValid();
+
+    TArray<FString> Holders = RenderWhileHiddenHolders.Array();
+    Holders.Sort();
+    UE_LOG(LogHaybaMCPEditor, Log, TEXT("editor_set_render_while_hidden: %s %s; holders [%s]; throttling while hidden is %s"),
+        *Owner, bAllow ? TEXT("holds") : TEXT("released"), *FString::Join(Holders, TEXT(", ")),
+        bActive ? TEXT("off") : TEXT("back to the editor default"));
+
+    TArray<TSharedPtr<FJsonValue>> HolderValues;
+    for (const FString& H : Holders) HolderValues.Add(MakeShared<FJsonValueString>(H));
+    auto Out = MakeShared<FJsonObject>();
+    Out->SetBoolField(TEXT("allow"), bAllow);
+    Out->SetStringField(TEXT("owner"), Owner);
+    Out->SetArrayField(TEXT("holders"), HolderValues);
+    Out->SetBoolField(TEXT("active"), bActive);
+    Out->SetBoolField(TEXT("previous_active"), bWasActive);
+    Out->SetBoolField(TEXT("throttled_now"), GEditor->ShouldThrottleCPUUsage());
+    Out->SetStringField(TEXT("note"), bActive
+        ? TEXT("The editor ticks at full rate while minimized or unfocused until every holder sends allow:false.")
+        : TEXT("No holder left: the editor throttles to 3 fps again when all its windows are hidden."));
+    return FHaybaHandlerResult::Ok(Out);
+}
+
+AHaybaMCPCaptureActor* FHaybaMCPEditorHandler::GetOrSpawnCaptureActor(UWorld* InWorld) const
 {
     if (!GEditor) return nullptr;
-    UWorld* World = GEditor->GetEditorWorldContext().World();
+    UWorld* World = InWorld ? InWorld : GEditor->GetEditorWorldContext().World();
     if (!IsValid(World) || World->bIsTearingDown || IsEngineExitRequested()) return nullptr;
 
     for (TActorIterator<AHaybaMCPCaptureActor> It(World); It; ++It)
@@ -223,6 +277,11 @@ FHaybaHandlerResult FHaybaMCPEditorHandler::StartPIE(const TSharedPtr<FJsonObjec
 {
     if (!GEditor)
         return FHaybaHandlerResult::Err(TEXT("GEditor is null"));
+    const FString BadParams = HaybaUnknownParamsError(P, TEXT("editor_start_pie"), { TEXT("single_step") });
+    if (!BadParams.IsEmpty()) return FHaybaHandlerResult::Err(BadParams);
+    bool bSingleStep = false;
+    if (P.IsValid() && P->TryGetBoolField(TEXT("single_step"), bSingleStep) && bSingleStep)
+        return FHaybaHandlerResult::Err(TEXT("editor_start_pie refused [HCR-PARAM-002]: single_step:true is not supported (it was ignored before). PIE was not started."));
 
     // Never queue a session that would open a modal on the next tick.
     const TArray<FHaybaPlayModalRisk> Risks = FindPlayModalRisks();
@@ -269,6 +328,8 @@ FHaybaHandlerResult FHaybaMCPEditorHandler::StopPIE(const TSharedPtr<FJsonObject
 {
     if (!GEditor)
         return FHaybaHandlerResult::Err(TEXT("GEditor is null"));
+    const FString BadParams = HaybaUnknownParamsError(P, TEXT("editor_stop_pie"), {});
+    if (!BadParams.IsEmpty()) return FHaybaHandlerResult::Err(BadParams);
 
     TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
     if (!GEditor->PlayWorld && GEditor->IsPlaySessionRequestQueued())
@@ -437,13 +498,9 @@ FHaybaHandlerResult FHaybaMCPEditorHandler::SetCamera(const TSharedPtr<FJsonObje
         (*LocArr)[2]->AsNumber()
     );
 
-    FViewport* VP = GEditor->GetActiveViewport();
-    if (!VP)
-        return FHaybaHandlerResult::Err(TEXT("No active viewport"));
-
-    FEditorViewportClient* Client = AsEditorViewportClient(VP);
-    if (!Client)
-        return FHaybaHandlerResult::Err(TEXT("No editor viewport client"));
+    FString ViewportError;
+    FLevelEditorViewportClient* Client = HaybaViewport::LevelViewportToChange(TEXT("editor_set_camera"), ViewportError);
+    if (!Client) return FHaybaHandlerResult::Err(ViewportError);
 
     Client->SetViewLocation(Location);
 
@@ -515,10 +572,9 @@ FHaybaHandlerResult FHaybaMCPEditorHandler::FocusActor(const TSharedPtr<FJsonObj
     const FVector Location = Origin - ViewDir * (Radius * DistScale);
     const FRotator Rotation = (Origin - Location).Rotation(); // look at centre, roll = 0
 
-    FViewport* VP = GEditor->GetActiveViewport();
-    if (!VP) return FHaybaHandlerResult::Err(TEXT("editor_focus_actor: no active viewport"));
-    FEditorViewportClient* Client = AsEditorViewportClient(VP);
-    if (!Client) return FHaybaHandlerResult::Err(TEXT("editor_focus_actor: no editor viewport client"));
+    FString ViewportError;
+    FLevelEditorViewportClient* Client = HaybaViewport::LevelViewportToChange(TEXT("editor_focus_actor"), ViewportError);
+    if (!Client) return FHaybaHandlerResult::Err(ViewportError);
 
     Client->SetViewLocation(Location);
     Client->SetViewRotation(Rotation);
@@ -563,25 +619,25 @@ FHaybaHandlerResult FHaybaMCPEditorHandler::CaptureViewport(const TSharedPtr<FJs
     if (!Lease.IsValid())
         return FHaybaHandlerResult::Err(TEXT("editor_capture_viewport: ") + CaptureError);
 
-    AHaybaMCPCaptureActor* CaptureActor = GetOrSpawnCaptureActor();
+    // The camera: the PIE player's view while PIE runs (captured in the PIE world), else the level viewport the user
+    // last worked in, which exists even when the editor is in the background. GetActiveViewport() is the focused
+    // viewport: with PIE or another app in front it was not a level viewport, the capture sat at the origin looking
+    // at nothing, and the frame came back black with camera 0,0,0 (a production project, 2026-11-10 17:14).
+    HaybaViewport::FView View;
+    FString ViewError;
+    if (!HaybaViewport::CurrentView(View, ViewError))
+        return FHaybaHandlerResult::Err(TEXT("editor_capture_viewport: ") + ViewError + TEXT(". Nothing was captured."));
+    const FVector CamLoc = View.Location;
+    const FRotator CamRot = View.Rotation;
+    const float Fov = View.Fov;
+    UWorld* CaptureWorld = View.World;
+    const FString Source = View.Source;
+
+    AHaybaMCPCaptureActor* CaptureActor = GetOrSpawnCaptureActor(CaptureWorld);
     if (!CaptureActor)
         return FHaybaHandlerResult::Err(TEXT("Could not get or spawn capture actor"));
-
-    FViewport* VP = GEditor ? GEditor->GetActiveViewport() : nullptr;
-    FVector CamLoc = FVector::ZeroVector;
-    FRotator CamRot = FRotator::ZeroRotator;
-
-    if (VP)
-    {
-        FEditorViewportClient* Client = AsEditorViewportClient(VP);
-        if (Client)
-        {
-            CamLoc = Client->GetViewLocation();
-            CamRot = Client->GetViewRotation();
-            CaptureActor->SetActorLocation(CamLoc);
-            CaptureActor->SetActorRotation(CamRot);
-        }
-    }
+    CaptureActor->SetActorLocationAndRotation(CamLoc, CamRot);
+    if (CaptureActor->Capture) CaptureActor->Capture->FOVAngle = Fov;
 
     FString Base64 = CaptureActor->CaptureToBase64(Width, Height, Lease, &CaptureError);
     if (Base64.IsEmpty())
@@ -602,7 +658,9 @@ FHaybaHandlerResult FHaybaMCPEditorHandler::CaptureViewport(const TSharedPtr<FJs
     RotArr.Add(MakeShareable(new FJsonValueNumber(CamRot.Roll)));
     CamObj->SetArrayField(TEXT("location"), LocArr);
     CamObj->SetArrayField(TEXT("rotation"), RotArr);
+    CamObj->SetNumberField(TEXT("fov"), Fov);
     Result->SetObjectField(TEXT("camera"), CamObj);
+    Result->SetStringField(TEXT("source"), Source);
 
     return FHaybaHandlerResult::Ok(Result);
 }
@@ -836,13 +894,9 @@ FHaybaHandlerResult FHaybaMCPEditorHandler::SetViewportMode(const TSharedPtr<FJs
     if (!GEditor)
         return FHaybaHandlerResult::Err(TEXT("GEditor is null"));
 
-    FViewport* VP = GEditor->GetActiveViewport();
-    if (!VP)
-        return FHaybaHandlerResult::Err(TEXT("No active viewport"));
-
-    FEditorViewportClient* Client = AsEditorViewportClient(VP);
-    if (!Client)
-        return FHaybaHandlerResult::Err(TEXT("No editor viewport client"));
+    FString ViewportError;
+    FLevelEditorViewportClient* Client = HaybaViewport::LevelViewportToChange(TEXT("editor_set_viewport_mode"), ViewportError);
+    if (!Client) return FHaybaHandlerResult::Err(ViewportError);
 
     Client->SetViewMode(ModeIndex);
 

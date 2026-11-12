@@ -13,7 +13,16 @@ export const meta: HaybaToolMeta = {
 export const schema = z.object({
   text: z
     .string()
-    .describe('Characters to send. They go to whatever holds keyboard focus, so click the field first.'),
+    .describe('Characters to send. With target "pie" they go to the focused widget inside the game viewport, so click the field first.'),
+  modifiers: z
+    .array(z.enum(['shift', 'ctrl', 'alt', 'cmd']))
+    .optional()
+    .describe('Modifiers held for this input. Default none: the live keyboard is never read, so a user holding Alt cannot turn an injected key into an editor chord.'),
+  target: z
+    .enum(['pie', 'focused'])
+    .optional()
+    .default('pie')
+    .describe('"pie" (default) puts keyboard focus inside the PIE game viewport first and refuses if it cannot, so the input never reaches the editor; "focused" sends to whatever holds focus.'),
 });
 
 export const pieTypeTextHandler: ToolHandler = ueTool('editor_pie_type_text', schema);

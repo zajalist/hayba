@@ -13,6 +13,9 @@
 #include "CoreMinimal.h"
 #include "Dom/JsonObject.h"
 #include "HaybaMCPParams.h"
+#include "Layout/Margin.h"
+#include "Types/SlateEnums.h"
+#include "Components/SlateWrapperTypes.h"
 
 namespace HaybaUIOps
 {
@@ -157,4 +160,39 @@ namespace HaybaUIOps
      *  is the difference between "your property names are wrong" and a bare
      *  failure the caller can only respond to by guessing. */
     FString NothingAppliedError(const FSetPropertiesResult& Result);
+
+    // ── Slot value parsing ────────────────────────────────────────────────
+    //
+    // These used to fall back silently: an unrecognised alignment became Fill and
+    // an unparsed padding became zero, so "VAlign_Bottom" or "(Left=8,...)" reported
+    // success and changed the slot to something nobody asked for. Each now says
+    // whether it understood the value; the handler reports the key otherwise.
+
+    /** "Center", "center", "HAlign_Center", "EHorizontalAlignment::HAlign_Center". */
+    bool TryParseHAlign(const FString& In, EHorizontalAlignment& Out);
+    /** "Bottom", "VAlign_Bottom", "EVerticalAlignment::VAlign_Bottom". */
+    bool TryParseVAlign(const FString& In, EVerticalAlignment& Out);
+    /** A number (uniform), [all], [horizontal, vertical], [left, top, right, bottom],
+     *  {left|Left, top|Top, right|Right, bottom|Bottom}, or the UE text form
+     *  "(Left=8,Top=4,Right=8,Bottom=4)". */
+    bool TryParseMargin(const TSharedPtr<FJsonValue>& Value, FMargin& Out);
+    /** Box-slot size: "auto"/"automatic", "fill" (weight 1), a number (fill weight;
+     *  0 = auto), or {rule:"fill"|"auto", value}. */
+    bool TryParseChildSize(const TSharedPtr<FJsonValue>& Value, FSlateChildSize& Out);
+
+    // ── The MCP server's convenience tools, as native commands ─────────────
+    //
+    // ui_set_text_style, ui_set_brush, ui_move_element and the rest are TypeScript wrappers over three native
+    // commands. Lanes that call Hayba over TCP (hayba_call, ue_remote) got "Unknown command" for them, and the UI
+    // lane rewrote Font sizes by regex instead. These names are native too: the same parameters, translated exactly
+    // as the wrappers in mcp-tools/hayba-mcp/src/tools/ui/ translate them. Composites that run several commands
+    // (ui_copy_style, ui_set_default_font, ui_validate) stay MCP-only.
+
+    /** The wrapper names translated below. */
+    const TArray<FString>& WrapperCommands();
+
+    /** Translate a wrapper call to the native command it stands for. False with Error when the parameters are
+     *  wrong; OutCmd/OutParams are set on success. Pure: nothing is touched. */
+    bool TranslateWrapper(const FString& Cmd, const TSharedPtr<FJsonObject>& In, FString& OutCmd,
+        TSharedPtr<FJsonObject>& OutParams, FString& Error);
 }

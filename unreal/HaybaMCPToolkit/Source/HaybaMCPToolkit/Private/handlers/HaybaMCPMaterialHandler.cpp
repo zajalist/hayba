@@ -29,6 +29,11 @@
 #include "MaterialEditingLibrary.h"
 #include "Materials/MaterialAttributeDefinitionMap.h"
 #include "Materials/MaterialParameterCollection.h"
+#include "Materials/MaterialExpressionCollectionParameter.h"
+#include "Materials/MaterialExpressionCustom.h"
+#include "ShaderCompiler.h"
+#include "RHIStrings.h"
+#include "HaybaMaterialLint.h"
 #include "StaticParameterSet.h"  // FStaticParameterSet, FStaticSwitchParameter (Task 5)
 #include "MaterialTypes.h"
 #include "Materials/MaterialFunction.h"
@@ -187,31 +192,27 @@ static bool HaybaPersistAsset(UObject* Asset, FString& OutError)
 
 static bool TryParseProperty(const FString& In, EMaterialProperty& Out)
 {
-    const FString S = In.ToLower();
-    if (S == TEXT("base_color"))            { Out = MP_BaseColor; return true; }
-    if (S == TEXT("metallic"))              { Out = MP_Metallic; return true; }
-    if (S == TEXT("specular"))              { Out = MP_Specular; return true; }
-    if (S == TEXT("roughness"))             { Out = MP_Roughness; return true; }
-    if (S == TEXT("emissive"))              { Out = MP_EmissiveColor; return true; }
-    if (S == TEXT("opacity"))               { Out = MP_Opacity; return true; }
-    if (S == TEXT("opacity_mask"))          { Out = MP_OpacityMask; return true; }
-    if (S == TEXT("normal"))                { Out = MP_Normal; return true; }
-    if (S == TEXT("world_position_offset")) { Out = MP_WorldPositionOffset; return true; }
-    if (S == TEXT("ambient_occlusion"))     { Out = MP_AmbientOcclusion; return true; }
-    if (S == TEXT("subsurface"))            { Out = MP_SubsurfaceColor; return true; }
-    // Task 2: extended connectable outputs
-    if (S == TEXT("pixel_depth_offset"))    { Out = MP_PixelDepthOffset; return true; }
-    if (S == TEXT("refraction"))            { Out = MP_Refraction; return true; }
-    if (S == TEXT("clear_coat"))            { Out = MP_CustomData0; return true; }
-    if (S == TEXT("clear_coat_roughness"))  { Out = MP_CustomData1; return true; }
-    if (S == TEXT("custom_data_0"))         { Out = MP_CustomData0; return true; }
-    if (S == TEXT("custom_data_1"))         { Out = MP_CustomData1; return true; }
-    if (S == TEXT("anisotropy"))            { Out = MP_Anisotropy; return true; }
-    if (S == TEXT("tangent"))               { Out = MP_Tangent; return true; }
-    if (S == TEXT("shading_model_from_node")) { Out = MP_ShadingModel; return true; }
-    // Substrate (from fix/ci-test-suite-green)
-    if (S == TEXT("front_material"))        { Out = MP_FrontMaterial; return true; }
-    if (S == TEXT("displacement"))          { Out = MP_Displacement; return true; }  // Nanite tessellation (needs material_set_property enable_tessellation=true)
+    // One spelling-insensitive table: base_color, BaseColor, MP_BaseColor and "base color"
+    // all match, as do the engine names (EmissiveColor) and the short forms (emissive).
+    FString S = In.TrimStartAndEnd().ToLower();
+    S.RemoveFromStart(TEXT("mp_"));
+    S.ReplaceInline(TEXT("_"), TEXT(""));
+    S.ReplaceInline(TEXT(" "), TEXT(""));
+    static const TMap<FString, EMaterialProperty> Names = {
+        { TEXT("basecolor"), MP_BaseColor }, { TEXT("metallic"), MP_Metallic }, { TEXT("specular"), MP_Specular },
+        { TEXT("roughness"), MP_Roughness }, { TEXT("emissive"), MP_EmissiveColor }, { TEXT("emissivecolor"), MP_EmissiveColor },
+        { TEXT("opacity"), MP_Opacity }, { TEXT("opacitymask"), MP_OpacityMask }, { TEXT("normal"), MP_Normal },
+        { TEXT("worldpositionoffset"), MP_WorldPositionOffset }, { TEXT("ambientocclusion"), MP_AmbientOcclusion },
+        { TEXT("subsurface"), MP_SubsurfaceColor }, { TEXT("subsurfacecolor"), MP_SubsurfaceColor },
+        { TEXT("pixeldepthoffset"), MP_PixelDepthOffset }, { TEXT("refraction"), MP_Refraction },
+        { TEXT("clearcoat"), MP_CustomData0 }, { TEXT("clearcoatroughness"), MP_CustomData1 },
+        { TEXT("customdata0"), MP_CustomData0 }, { TEXT("customdata1"), MP_CustomData1 },
+        { TEXT("anisotropy"), MP_Anisotropy }, { TEXT("tangent"), MP_Tangent },
+        { TEXT("shadingmodelfromnode"), MP_ShadingModel }, { TEXT("shadingmodel"), MP_ShadingModel },
+        // Substrate, and Nanite tessellation (needs material_set_property enable_tessellation=true)
+        { TEXT("frontmaterial"), MP_FrontMaterial }, { TEXT("displacement"), MP_Displacement },
+    };
+    if (const EMaterialProperty* Found = Names.Find(S)) { Out = *Found; return true; }
     return false;
 }
 
@@ -696,7 +697,12 @@ static FApplyNodePropsResult ApplyNodeProps(UMaterialExpression* Expr, const TSh
         if (UMaterialExpressionMaterialFunctionCall* Fc = Cast<UMaterialExpressionMaterialFunctionCall>(Expr))
             if (UMaterialFunction* Fn = LoadObject<UMaterialFunction>(nullptr, *FuncPath))
             {
-                Fc->SetMaterialFunction(Fn);
+                // Re-setting the SAME function would rebuild Outputs in the function's new
+                // order with no output fixup (SetMaterialFunction passes no old function), so
+                // existing links could land on the wrong pin. UpdateFromFunctionResource alone
+                // refreshes the pins and fixes links up by output id.
+                if (Fc->MaterialFunction != Fn)
+                    Fc->SetMaterialFunction(Fn);
                 // CRITICAL: rebuild FunctionInputs/FunctionOutputs now. Without this
                 // the call's pins stay empty until the editor opens/recompiles, so
                 // connect-by-name (and material_get_info.outputs[]) see nothing —
@@ -740,6 +746,35 @@ static FApplyNodePropsResult ApplyNodeProps(UMaterialExpression* Expr, const TSh
         if (Aliases.Contains(Key)) continue;
         if (HaybaReflection::SetProp(Expr, Key, Pair.Value)) R.Applied.Add(Key);
         else                                                 R.Unknown.Add(Key);
+    }
+
+    // The editor derives a collection parameter's ParameterId from its name in
+    // PostEditChangeProperty, which staged edits deliberately skip (below). Without the
+    // id the compile fails with "CollectionParameter has invalid parameter <Name>", so
+    // resolve it here from the collection, and report a name the collection lacks.
+    if (UMaterialExpressionCollectionParameter* CP = Cast<UMaterialExpressionCollectionParameter>(Expr))
+    {
+        CP->ParameterId = CP->Collection ? CP->Collection->GetParameterId(CP->ParameterName) : FGuid();
+        if (CP->Collection && !CP->ParameterName.IsNone() && !CP->ParameterId.IsValid())
+            R.Unknown.Add(FString::Printf(TEXT("ParameterName ('%s' is not a parameter of %s)"),
+                *CP->ParameterName.ToString(), *CP->Collection->GetName()));
+    }
+
+    // A Custom node's output pins come from AdditionalOutputs only through its
+    // PostEditChangeProperty (RebuildOutputs), also skipped here: without this the node
+    // keeps one output and material_connect_nodes refuses from_output_index 1+. Mirror it
+    // minus the broadcast, including its space-stripping of input names.
+    // shortcut: an OPEN material editor keeps its old pins (no GraphNode->ReconstructNode);
+    // editor-rules close the tab before graph edits; upgrade if agents must edit open graphs.
+    if (UMaterialExpressionCustom* Cu = Cast<UMaterialExpressionCustom>(Expr))
+    {
+        for (FCustomInput& In : Cu->Inputs)
+        {
+            FString Name = In.InputName.ToString();
+            if (Name.ReplaceInline(TEXT(" "), TEXT("")) > 0)
+                In.InputName = *Name;
+        }
+        Cu->RebuildOutputs();
     }
 
     // Do not broadcast PostEditChange for every staged node edit. Some editor
@@ -1609,6 +1644,12 @@ static TArray<TSharedPtr<FJsonValue>> SerializeMaterialExpressions(
             else
                 Entry->SetStringField(TEXT("parameter_name"), ParameterName.ToString());
             Entry->SetBoolField(TEXT("parameter_name_valid"), bParameterNameValid);
+            // A collection parameter also needs the id the compiler resolves it by.
+            if (const UMaterialExpressionCollectionParameter* CP = Cast<UMaterialExpressionCollectionParameter>(Expr))
+            {
+                Entry->SetBoolField(TEXT("collection_parameter_resolved"), CP->Collection && CP->ParameterId.IsValid()
+                    && CP->Collection->GetParameterId(CP->ParameterName) == CP->ParameterId);
+            }
 
             FMaterialParameterMetadata Metadata;
             const bool bMetadataAvailable = Expr->GetParameterValue(Metadata);
@@ -2698,11 +2739,22 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatSetProperty(const TSharedPtr<FJ
         else if (const FString* RealName = Aliases.Find(Key))
         {
             bHasOrdinarySetting = true;
+            // Short enum spellings ("UI", "Translucent", "DefaultLit") resolve to the
+            // enumerator, so every check below sees one canonical name.
+            TSharedPtr<FJsonValue> V = Pair.Value;
+            const UEnum* EnumForKey = Key == TEXT("domain") ? StaticEnum<EMaterialDomain>()
+                : Key == TEXT("blend_mode") ? StaticEnum<EBlendMode>()
+                : Key == TEXT("shading_model") ? StaticEnum<EMaterialShadingModel>() : nullptr;
+            if (EnumForKey && V.IsValid() && V->Type == EJson::String)
+            {
+                const FString Canonical = HaybaReflection::CanonicalEnumName(EnumForKey, V->AsString());
+                if (!Canonical.IsEmpty()) V = MakeShared<FJsonValueString>(Canonical);
+            }
             FProperty* Prop = Mat->GetClass()->FindPropertyByName(FName(**RealName));
             FString Reason;
             if (!Prop || !Prop->HasAnyPropertyFlags(CPF_Edit)
                 || Prop->HasAnyPropertyFlags(CPF_EditConst | CPF_Transient | CPF_Deprecated)
-                || !ValidateJsonForProperty(Prop, Pair.Value, Reason))
+                || !ValidateJsonForProperty(Prop, V, Reason))
             {
                 if (!Prop) Reason = TEXT("is not a mutable material property");
                 Problems.Add(FString::Printf(TEXT("properties.%s %s"), *InputKey, *Reason));
@@ -2712,7 +2764,7 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatSetProperty(const TSharedPtr<FJ
             const EJson ExpectedType =
                 (Key == TEXT("two_sided") || Key == TEXT("enable_tessellation")) ? EJson::Boolean :
                 (Key == TEXT("opacity_mask_clip_value")) ? EJson::Number : EJson::String;
-            if (!Pair.Value.IsValid() || Pair.Value->Type != ExpectedType)
+            if (!V.IsValid() || V->Type != ExpectedType)
             {
                 Problems.Add(FString::Printf(TEXT("properties.%s has the wrong JSON type"), *InputKey));
                 continue;
@@ -2727,17 +2779,17 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatSetProperty(const TSharedPtr<FJ
                     continue;
                 }
             }
-            else if (Key == TEXT("domain") && StaticEnum<EMaterialDomain>()->GetValueByNameString(Pair.Value->AsString()) == INDEX_NONE)
+            else if (Key == TEXT("domain") && StaticEnum<EMaterialDomain>()->GetValueByNameString(V->AsString()) == INDEX_NONE)
             {
                 Problems.Add(TEXT("properties.domain is not a valid material-domain enum value"));
                 continue;
             }
-            else if (Key == TEXT("blend_mode") && StaticEnum<EBlendMode>()->GetValueByNameString(Pair.Value->AsString()) == INDEX_NONE)
+            else if (Key == TEXT("blend_mode") && StaticEnum<EBlendMode>()->GetValueByNameString(V->AsString()) == INDEX_NONE)
             {
                 Problems.Add(TEXT("properties.blend_mode is not a valid blend-mode enum value"));
                 continue;
             }
-            else if (Key == TEXT("shading_model") && StaticEnum<EMaterialShadingModel>()->GetValueByNameString(Pair.Value->AsString()) == INDEX_NONE)
+            else if (Key == TEXT("shading_model") && StaticEnum<EMaterialShadingModel>()->GetValueByNameString(V->AsString()) == INDEX_NONE)
             {
                 Problems.Add(TEXT("properties.shading_model is not a valid shading-model enum value"));
                 continue;
@@ -2746,7 +2798,7 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatSetProperty(const TSharedPtr<FJ
             // Prove the exact reflection conversion against isolated storage.
             // The live material is untouched until every key has passed.
             Prop->CopyCompleteValue_InContainer(StagedMat, Mat);
-            if (!HaybaReflection::SetProp(StagedMat, *RealName, Pair.Value))
+            if (!HaybaReflection::SetProp(StagedMat, *RealName, V))
             {
                 Problems.Add(FString::Printf(TEXT("properties.%s failed while staging"), *InputKey));
                 continue;
@@ -2754,7 +2806,7 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatSetProperty(const TSharedPtr<FJ
             if (Key == TEXT("shading_model"))
             {
                 const EMaterialShadingModel Value = static_cast<EMaterialShadingModel>(
-                    StaticEnum<EMaterialShadingModel>()->GetValueByNameString(Pair.Value->AsString()));
+                    StaticEnum<EMaterialShadingModel>()->GetValueByNameString(V->AsString()));
                 StagedMat->SetShadingModel(Value);
             }
         }
@@ -3042,6 +3094,16 @@ static void CollectMaterialGraphProblems(
         UMaterialExpression* E = EP.Get();
         if (!E) continue;
 
+        // Prose in a Custom node compiles past the translator and fails later on the
+        // shader-compile thread, after material_compile has answered.
+        if (const UMaterialExpressionCustom* Custom = Cast<UMaterialExpressionCustom>(E))
+        {
+            const FString Lint = HaybaMaterialLint::LintCustomHlsl(Custom->Code);
+            if (!Lint.IsEmpty())
+                Out.Add(FString::Printf(TEXT("Custom node '%s' (%s) code %s. Fix the Code text (material_set_node) before compiling."),
+                    *E->GetName(), *Custom->Description, *Lint));
+        }
+
         if (UMaterialExpressionRerouteBase* RR = Cast<UMaterialExpressionRerouteBase>(E))
         {
             if (Consumed.Contains(E))
@@ -3082,6 +3144,37 @@ static void GatherMaterialPropertyInputs(UMaterial* Mat, TArray<FExpressionInput
     }
 }
 
+/** RecompileMaterial returns the translator's errors, but the platform shader compile runs
+ *  afterwards on worker threads, and its failures (the material then renders as the default)
+ *  only surface later. Wait, bounded, for this material's shader map on the editor's
+ *  shader platform and return its real errors. Pumps the shader compiler the way the
+ *  editor tick does, rather than FinishCompilation, which cannot be bounded. */
+static bool HaybaWaitForShaderMap(UMaterial* Mat, double TimeoutSeconds, TArray<FString>& OutErrors, bool& bTimedOut)
+{
+    bTimedOut = false;
+    FMaterialResource* Resource = Mat ? Mat->GetMaterialResource(GMaxRHIShaderPlatform) : nullptr;
+    if (!Resource) return false;
+    // RecompileMaterial's PostEditChange caches with EMaterialShaderPrecompileMode::None: the shader
+    // map is registered but no job is submitted (the editor compiles shaders on demand when something
+    // renders them), so IsCompilationFinished() was true at once and a broken permutation such as
+    // FPostProcessMaterialPS failed only later, after a clean report. Submit the pending jobs now,
+    // at the priority the editor itself uses when asked to compile, so the wait below sees them.
+    // shortcut: an ODSC editor releases the compiling id first, making this a no-op; a production project is not ODSC.
+    Resource->SubmitCompileJobs_GameThread(EShaderCompileJobPriority::High);
+    const double Deadline = FPlatformTime::Seconds() + TimeoutSeconds;
+    while (!Resource->IsCompilationFinished())
+    {
+        if (FPlatformTime::Seconds() > Deadline) { bTimedOut = true; break; }
+        if (GShaderCompilingManager) GShaderCompilingManager->ProcessAsyncResults(/*bLimitExecutionTime*/ true, /*bBlockOnGlobalShaderCompletion*/ false);
+        FPlatformProcess::Sleep(0.05f);
+        // A finished compile can swap the resource; re-resolve rather than hold a stale one.
+        Resource = Mat->GetMaterialResource(GMaxRHIShaderPlatform);
+        if (!Resource) return false;
+    }
+    OutErrors = Resource->GetCompileErrors();
+    return true;
+}
+
 FHaybaHandlerResult FHaybaMCPMaterialHandler::MatValidate(const TSharedPtr<FJsonObject>& P)
 {
     TArray<FString> Problems;
@@ -3103,6 +3196,37 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatValidate(const TSharedPtr<FJson
         TArray<FExpressionInput*> PropInputs;
         GatherMaterialPropertyInputs(Mat, PropInputs);
         CollectMaterialGraphProblems(Mat->GetExpressions(), PropInputs, Problems);
+
+        // compile:true goes on to the real platform shader compile (no save), so a
+        // material whose shaders fail is caught here instead of falling back in game.
+        bool bCompileRequested = false;
+        P->TryGetBoolField(TEXT("compile"), bCompileRequested);
+        if (bCompileRequested && Problems.Num() == 0)
+        {
+            struct FContext { UMaterial* Material; TArray<FString> Errors; bool bTimedOut = false; } Ctx{ Mat };
+            bool bCrashed = false;
+            HaybaSeh::RunGuarded(+[](void* Raw)
+            {
+                FContext* C = static_cast<FContext*>(Raw);
+                C->Errors = UMaterialEditingLibrary::RecompileMaterial(C->Material);
+                if (C->Errors.Num() == 0) HaybaWaitForShaderMap(C->Material, 30.0, C->Errors, C->bTimedOut);
+            }, &Ctx, bCrashed);
+            if (bCrashed)
+                Problems.Add(TEXT("a native fault occurred during the compile; restart the editor before another mutation"));
+            else if (Ctx.bTimedOut)
+                Problems.Add(TEXT("the platform shader compile was still running after 30 s; its result is unknown, so run material_validate {compile:true} again"));
+            Problems.Append(Ctx.Errors);
+            TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
+            Out->SetBoolField(TEXT("ok"), Problems.Num() == 0);
+            TArray<TSharedPtr<FJsonValue>> Arr;
+            for (const FString& Pr : Problems) Arr.Add(MakeShared<FJsonValueString>(Pr));
+            Out->SetArrayField(TEXT("problems"), Arr);
+            Out->SetBoolField(TEXT("compiled"), !bCrashed);
+            Out->SetStringField(TEXT("shader_platform"), LexToString(GMaxRHIShaderPlatform));
+            Out->SetBoolField(TEXT("shader_compile_timed_out"), Ctx.bTimedOut);
+            Out->SetBoolField(TEXT("saved"), false);
+            return FHaybaHandlerResult::Ok(Out);
+        }
     }
 
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
@@ -3264,10 +3388,36 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatCompile(const TSharedPtr<FJsonO
             return FHaybaHandlerResult::Ok(Bad);
         }
 
+        // The translator passing is not the shader compiling. Wait (bounded) for the platform
+        // shader map so its errors decide ok and the save, not a later silent fallback.
+        bool bShaderWaited = false, bShaderTimedOut = false;
+        if (CompileErrors.Num() == 0)
+        {
+            struct FWaitContext { UMaterial* Material; TArray<FString>* Errors; bool* bWaited; bool* bTimedOut; }
+                Wait{ Mat, &CompileErrors, &bShaderWaited, &bShaderTimedOut };
+            bool bWaitCrashed = false;
+            HaybaSeh::RunGuarded(+[](void* P)
+            {
+                FWaitContext* W = static_cast<FWaitContext*>(P);
+                *W->bWaited = HaybaWaitForShaderMap(W->Material, 30.0, *W->Errors, *W->bTimedOut);
+            }, &Wait, bWaitCrashed);
+            if (bWaitCrashed)
+            {
+                TSharedPtr<FJsonObject> Bad = MakeShared<FJsonObject>();
+                Bad->SetBoolField(TEXT("ok"), false);
+                Bad->SetBoolField(TEXT("saved"), false);
+                Bad->SetBoolField(TEXT("has_errors"), true);
+                Bad->SetBoolField(TEXT("compiled_clean"), false);
+                Bad->SetBoolField(TEXT("session_suspect"), true);
+                Bad->SetStringField(TEXT("error"), TEXT("material_compile: a native fault occurred while waiting for the shader compile; the material was not saved. Restart the editor before another mutation."));
+                return FHaybaHandlerResult::Ok(Bad);
+            }
+        }
+
         TArray<TSharedPtr<FJsonValue>> Errs;
         for (const FString& Error : CompileErrors) Errs.Add(MakeShared<FJsonValueString>(Error));
 
-        const bool bCompiledClean = CompileErrors.Num() == 0;
+        const bool bCompiledClean = CompileErrors.Num() == 0 && !bShaderTimedOut;
         FString SaveErr;
         bool bSaved = false;
         if (bCompiledClean)
@@ -3285,7 +3435,14 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatCompile(const TSharedPtr<FJsonO
         Out->SetBoolField(TEXT("compiled_clean"), bCompiledClean);
         Out->SetBoolField(TEXT("has_errors"), !bCompiledClean);
         Out->SetBoolField(TEXT("saved"), bSaved);
-        if (!bCompiledClean)
+        Out->SetStringField(TEXT("shader_platform"), LexToString(GMaxRHIShaderPlatform));
+        Out->SetBoolField(TEXT("shader_compile_waited"), bShaderWaited);
+        Out->SetBoolField(TEXT("shader_compile_timed_out"), bShaderTimedOut);
+        if (bShaderTimedOut)
+        {
+            Out->SetStringField(TEXT("error"), TEXT("material_compile: the platform shader compile was still running after 30 s, so whether it succeeds is unknown; the material was not saved. Call material_compile again (finished shaders are cached and return quickly)."));
+        }
+        else if (!bCompiledClean)
         {
             Out->SetStringField(TEXT("error"), TEXT("material_compile: shader compilation failed; the material was not saved. Fix data.errors, then retry."));
         }

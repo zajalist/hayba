@@ -331,7 +331,7 @@ describe('python read declarations (R-1)', () => {
     }
     // Fail closed: if the helper blocks stop parsing, this test must not pass on an empty list.
     expect(found['lighting/lighting-py-tools.ts']).toEqual(['_pp_write', '_set']);
-    expect(found['sequencer/sequencer-py-tools.ts']).toEqual(['_add_possessable']);
+    expect(found['sequencer/sequencer-py-tools.ts']).toEqual(['_add_possessable', '_binding_for_actor']);
     expect(found['water/water-py-tools.ts']).toEqual(['_mark_dirty']);
     expect(found['niagara/niagara-py-tools.ts']).toEqual(['_apply_var']);
     expect(found['foliage/foliage-py-tools.ts']).toEqual(['_set']);

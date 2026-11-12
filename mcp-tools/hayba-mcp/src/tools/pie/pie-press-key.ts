@@ -21,6 +21,15 @@ export const schema = z.object({
     .number()
     .optional()
     .describe('How long to hold before the scheduled release. The call does not block for this.'),
+  modifiers: z
+    .array(z.enum(['shift', 'ctrl', 'alt', 'cmd']))
+    .optional()
+    .describe('Modifiers held for this input. Default none: the live keyboard is never read, so a user holding Alt cannot turn an injected key into an editor chord.'),
+  target: z
+    .enum(['pie', 'focused'])
+    .optional()
+    .default('pie')
+    .describe('"pie" (default) puts keyboard focus inside the PIE game viewport first and refuses if it cannot, so the input never reaches the editor; "focused" sends to whatever holds focus.'),
 });
 
 export const piePressKeyHandler: ToolHandler = ueTool('editor_pie_press_key', schema);

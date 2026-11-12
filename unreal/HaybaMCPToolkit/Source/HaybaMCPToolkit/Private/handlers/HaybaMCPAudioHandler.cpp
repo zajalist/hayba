@@ -42,6 +42,8 @@
 #include "Sound/SoundMix.h"
 #include "Sound/SoundSubmix.h"
 #include "Sound/SoundWave.h"
+#include "Settings/LevelEditorMiscSettings.h"
+#include "Misc/App.h"
 #include "UObject/SoftObjectPath.h"
 
 namespace
@@ -1077,15 +1079,31 @@ namespace
         TMap<FString, TWeakObjectPtr<UAudioComponent>>& Components)
     {
         if (!GEngine) return FHaybaHandlerResult::Err(TEXT("audio_active_sounds: GEngine is unavailable"));
-        FAudioDeviceHandle Device = GEngine->GetMainAudioDevice();
-        if (!Device.IsValid()) return FHaybaHandlerResult::Err(TEXT("audio_active_sounds: no main audio device"));
         bool bIncludePreview = false;
         int32 Limit = 256;
+        FString WorldChoice = TEXT("auto");
         if (P.IsValid())
         {
             P->TryGetBoolField(TEXT("include_preview"), bIncludePreview);
             P->TryGetNumberField(TEXT("limit"), Limit);
+            P->TryGetStringField(TEXT("world"), WorldChoice);
         }
+        // PIE plays on its own world's audio device, so the engine's main device
+        // listed nothing during PIE. Read the device of the world the caller means:
+        // auto = the PIE world when one is running, else the editor world.
+        UWorld* World = nullptr;
+        WorldChoice = WorldChoice.ToLower();
+        if (WorldChoice == TEXT("auto")) World = ActiveAudioWorld();
+        else if (WorldChoice == TEXT("pie"))
+        {
+            World = GEditor ? GEditor->PlayWorld.Get() : nullptr;
+            if (!World) return FHaybaHandlerResult::Err(TEXT("audio_active_sounds: world \"pie\" was asked for but no Play-In-Editor session is running"));
+        }
+        else if (WorldChoice == TEXT("editor")) World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
+        else return FHaybaHandlerResult::Err(TEXT("audio_active_sounds: world must be auto, pie or editor"));
+        FAudioDeviceHandle Device = World ? World->GetAudioDevice() : FAudioDeviceHandle();
+        if (!Device.IsValid())
+            return FHaybaHandlerResult::Err(FString::Printf(TEXT("audio_active_sounds: the %s world has no audio device"), *WorldKind(World)));
         Limit = FMath::Clamp(Limit, 1, 2048);
 
         TArray<TSharedPtr<FJsonValue>> Sounds;
@@ -1111,6 +1129,8 @@ namespace
         for (auto It = Components.CreateIterator(); It; ++It) if (!It.Value().IsValid()) It.RemoveCurrent();
 
         auto Out = MakeShared<FJsonObject>();
+        Out->SetStringField(TEXT("world"), WorldKind(World));
+        Out->SetNumberField(TEXT("audio_device_id"), Device.GetDeviceID());
         Out->SetNumberField(TEXT("active_sound_count"), Sounds.Num());
         Out->SetNumberField(TEXT("active_voice_count"), Device->GetNumActiveSources());
         Out->SetNumberField(TEXT("virtual_sound_count"), VirtualCount);
@@ -1229,16 +1249,41 @@ namespace
         return FHaybaHandlerResult::Ok(Out);
     }
 
+    // The world whose audio device a recording uses: auto = the PIE world while PIE runs, else the editor world.
+    // Each PIE session gets its own device, so a recording is keyed by device and submix.
+    UWorld* RecordingWorld(const TSharedPtr<FJsonObject>& P, const TCHAR* Cmd, FString& OutError)
+    {
+        FString Choice = TEXT("auto");
+        if (P.IsValid()) P->TryGetStringField(TEXT("world"), Choice);
+        Choice = Choice.ToLower();
+        UWorld* World = nullptr;
+        if (Choice == TEXT("auto")) World = ActiveAudioWorld();
+        else if (Choice == TEXT("pie")) World = GEditor ? GEditor->PlayWorld.Get() : nullptr;
+        else if (Choice == TEXT("editor")) World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
+        else { OutError = FString::Printf(TEXT("%s: world must be auto, pie or editor"), Cmd); return nullptr; }
+        if (!World)
+            OutError = Choice == TEXT("pie")
+                ? FString::Printf(TEXT("%s: world \"pie\" was asked for but no Play-In-Editor session is running"), Cmd)
+                : FString::Printf(TEXT("%s: no active world"), Cmd);
+        return World;
+    }
+
+    FString DeviceRecordingKey(const UWorld* World, const USoundSubmix* Submix)
+    {
+        const FAudioDeviceHandle Device = World ? World->GetAudioDevice() : FAudioDeviceHandle();
+        return FString::Printf(TEXT("device %u: %s"), Device.IsValid() ? Device.GetDeviceID() : 0u, *RecordingKey(Submix));
+    }
+
     FHaybaHandlerResult RecordingStart(const TSharedPtr<FJsonObject>& P, TSet<FString>& Active)
     {
-        UWorld* World = ActiveAudioWorld();
-        if (!World) return FHaybaHandlerResult::Err(TEXT("audio_recording_start: no active world"));
+        FString Error;
+        UWorld* World = RecordingWorld(P, TEXT("audio_recording_start"), Error);
+        if (!World) return FHaybaHandlerResult::Err(Error);
         if (!FAudioDeviceManager::GetAudioMixerDeviceFromWorldContext(World))
             return FHaybaHandlerResult::Err(TEXT("audio_recording_start: current audio device is not an Audio Mixer device"));
-        FString Error;
         USoundSubmix* Submix = OptionalSubmix(P, Error);
         if (!Error.IsEmpty()) return FHaybaHandlerResult::Err(FString::Printf(TEXT("audio_recording_start: %s"), *Error));
-        const FString Key = RecordingKey(Submix);
+        const FString Key = DeviceRecordingKey(World, Submix);
         if (Active.Contains(Key)) return FHaybaHandlerResult::Err(FString::Printf(TEXT("audio_recording_start: recording already active for %s"), *Key));
         double ExpectedDuration = 10.0;
         if (P.IsValid()) P->TryGetNumberField(TEXT("expected_duration"), ExpectedDuration);
@@ -1247,23 +1292,37 @@ namespace
         UAudioMixerBlueprintLibrary::StartRecordingOutput(World, static_cast<float>(ExpectedDuration), Submix);
         Active.Add(Key);
         auto Out = MakeShared<FJsonObject>();
-        Out->SetStringField(TEXT("submix"), Key);
+        Out->SetStringField(TEXT("submix"), RecordingKey(Submix));
+        Out->SetStringField(TEXT("world"), WorldKind(World));
+        Out->SetNumberField(TEXT("audio_device_id"), World->GetAudioDevice().GetDeviceID());
         Out->SetNumberField(TEXT("expected_duration"), ExpectedDuration);
         Out->SetStringField(TEXT("recording_state"), TEXT("started"));
         return FHaybaHandlerResult::Ok(Out);
     }
 
+    // Why a take comes back empty or silent on an unattended editor, so silence is never mistaken for a working
+    // mix: without focus and with background audio off, UEditorEngine::Tick zeroes the volume multiplier.
+    FString MuteCause()
+    {
+        const bool bBackground = GetDefault<ULevelEditorMiscSettings>()->bAllowBackgroundAudio != 0;
+        if (FApp::HasFocus() || bBackground) return FString();
+        return TEXT("The editor has no focus and background audio is off, so UE mutes all output (and virtualizes "
+                    "inaudible sounds); call editor_set_background_audio {enabled:true} and record again.");
+    }
+
     FHaybaHandlerResult RecordingStop(const TSharedPtr<FJsonObject>& P, TSet<FString>& Active)
     {
-        UWorld* World = ActiveAudioWorld();
-        if (!World) return FHaybaHandlerResult::Err(TEXT("audio_recording_stop: no active world"));
+        FString Error;
+        UWorld* World = RecordingWorld(P, TEXT("audio_recording_stop"), Error);
+        if (!World) return FHaybaHandlerResult::Err(Error);
         Audio::FMixerDevice* Mixer = FAudioDeviceManager::GetAudioMixerDeviceFromWorldContext(World);
         if (!Mixer) return FHaybaHandlerResult::Err(TEXT("audio_recording_stop: current audio device is not an Audio Mixer device"));
-        FString Error;
         USoundSubmix* Submix = OptionalSubmix(P, Error);
         if (!Error.IsEmpty()) return FHaybaHandlerResult::Err(FString::Printf(TEXT("audio_recording_stop: %s"), *Error));
-        const FString Key = RecordingKey(Submix);
-        if (!Active.Contains(Key)) return FHaybaHandlerResult::Err(FString::Printf(TEXT("audio_recording_stop: no recording active for %s"), *Key));
+        const FString Key = DeviceRecordingKey(World, Submix);
+        if (!Active.Contains(Key))
+            return FHaybaHandlerResult::Err(FString::Printf(TEXT("audio_recording_stop: no recording active for %s (active: %s)"),
+                *Key, Active.IsEmpty() ? TEXT("none") : *FString::Join(Active.Array(), TEXT("; "))));
         FString Filename;
         if (!P->TryGetStringField(TEXT("filename"), Filename) || Filename.IsEmpty())
             return FHaybaHandlerResult::Err(TEXT("audio_recording_stop: filename is required"));
@@ -1280,7 +1339,16 @@ namespace
         Audio::FAlignedFloatBuffer& Buffer = Mixer->StopRecording(Submix, Channels, SampleRate);
         Active.Remove(Key);
         if (Buffer.Num() == 0)
-            return FHaybaHandlerResult::Err(TEXT("audio_recording_stop: Audio Mixer returned zero samples"));
+            return FHaybaHandlerResult::Err(FString::Printf(
+                TEXT("audio_recording_stop: Audio Mixer returned zero samples: nothing was rendered on %s (%d sounds active now; "
+                     "a device with nothing playing renders nothing). %s"), *Key, Mixer->GetActiveSounds().Num(), *MuteCause()));
+        float Peak = 0.0f;
+        double SumSquares = 0.0;
+        for (const float Sample : Buffer)
+        {
+            Peak = FMath::Max(Peak, FMath::Abs(Sample));
+            SumSquares += static_cast<double>(Sample) * Sample;
+        }
         Audio::TSampleBuffer<int16> Samples(Buffer, static_cast<int32>(Channels), static_cast<int32>(SampleRate));
         Audio::FSoundWavePCMWriter Writer;
         FString OutputPath;
@@ -1290,13 +1358,55 @@ namespace
             return FHaybaHandlerResult::Err(FString::Printf(TEXT("audio_recording_stop: writer returned success but file is absent: %s"), *OutputPath));
 
         auto Out = MakeShared<FJsonObject>();
-        Out->SetStringField(TEXT("submix"), Key);
+        Out->SetStringField(TEXT("submix"), RecordingKey(Submix));
+        Out->SetStringField(TEXT("world"), WorldKind(World));
+        Out->SetNumberField(TEXT("audio_device_id"), World->GetAudioDevice().GetDeviceID());
         Out->SetStringField(TEXT("recording_state"), TEXT("stopped"));
         Out->SetStringField(TEXT("wav_path"), FPaths::ConvertRelativePathToFull(OutputPath));
         Out->SetNumberField(TEXT("sample_count"), Buffer.Num());
         Out->SetNumberField(TEXT("channel_count"), Channels);
         Out->SetNumberField(TEXT("sample_rate"), SampleRate);
         Out->SetNumberField(TEXT("duration_seconds"), Buffer.Num() / FMath::Max(1.0f, Channels * SampleRate));
+        // Over the float mix, before the 16-bit WAV conversion. A peak of 0 is digital silence.
+        Out->SetNumberField(TEXT("peak"), Peak);
+        Out->SetNumberField(TEXT("peak_dbfs"), Peak > 0.0f ? 20.0f * FMath::LogX(10.0f, Peak) : -200.0f);
+        Out->SetNumberField(TEXT("rms"), FMath::Sqrt(SumSquares / Buffer.Num()));
+        Out->SetBoolField(TEXT("silent"), Peak == 0.0f);
+        const FString Cause = MuteCause();
+        if (Peak == 0.0f && !Cause.IsEmpty()) Out->SetStringField(TEXT("warning"), Cause);
+        return FHaybaHandlerResult::Ok(Out);
+    }
+
+    // An editor without focus sets FApp::SetVolumeMultiplier(0) every tick unless bAllowBackgroundAudio is set
+    // (UEditorEngine::Tick), so PIE recordings on an agent's unfocused editor were digital silence, and editor Python
+    // reaches neither switch. Changed in memory only, never written to the user's config: callers pass `previous`
+    // back to restore it.
+    FHaybaHandlerResult SetBackgroundAudio(const TSharedPtr<FJsonObject>& P)
+    {
+        bool bEnabled = false;
+        if (!P.IsValid() || !P->TryGetBoolField(TEXT("enabled"), bEnabled))
+            return FHaybaHandlerResult::Err(TEXT("editor_set_background_audio: enabled (true or false) is required. Nothing was changed."));
+        ULevelEditorMiscSettings* Settings = GetMutableDefault<ULevelEditorMiscSettings>();
+        const bool bWas = Settings->bAllowBackgroundAudio != 0;
+        const float WasUnfocused = FApp::GetUnfocusedVolumeMultiplier();
+        double Unfocused = bEnabled ? 1.0 : WasUnfocused;
+        P->TryGetNumberField(TEXT("unfocused_volume_multiplier"), Unfocused);
+        if (Unfocused < 0.0 || Unfocused > 1.0)
+            return FHaybaHandlerResult::Err(TEXT("editor_set_background_audio: unfocused_volume_multiplier must be in [0, 1]. Nothing was changed."));
+
+        Settings->bAllowBackgroundAudio = bEnabled;
+        FApp::SetUnfocusedVolumeMultiplier(static_cast<float>(Unfocused));
+
+        auto Previous = MakeShared<FJsonObject>();
+        Previous->SetBoolField(TEXT("allow_background_audio"), bWas);
+        Previous->SetNumberField(TEXT("unfocused_volume_multiplier"), WasUnfocused);
+        auto Out = MakeShared<FJsonObject>();
+        Out->SetBoolField(TEXT("enabled"), bEnabled);
+        Out->SetNumberField(TEXT("unfocused_volume_multiplier"), FApp::GetUnfocusedVolumeMultiplier());
+        Out->SetObjectField(TEXT("previous"), Previous);
+        Out->SetBoolField(TEXT("has_focus"), FApp::HasFocus());
+        Out->SetBoolField(TEXT("verified"), (Settings->bAllowBackgroundAudio != 0) == bEnabled);
+        Out->SetStringField(TEXT("note"), TEXT("In memory only; the editor applies it on its next tick. Pass previous back to restore."));
         return FHaybaHandlerResult::Ok(Out);
     }
 
@@ -1341,6 +1451,7 @@ TArray<FString> FHaybaMCPAudioHandler::GetCommands() const
         TEXT("audio_meter_stop"),
         TEXT("audio_recording_start"),
         TEXT("audio_recording_stop"),
+        TEXT("editor_set_background_audio"),
     };
 }
 
@@ -1361,5 +1472,6 @@ FHaybaHandlerResult FHaybaMCPAudioHandler::Handle(const FString& Cmd, const TSha
     if (Cmd == TEXT("audio_meter_stop")) return MeterStop(Params, ActiveAnalyzers);
     if (Cmd == TEXT("audio_recording_start")) return RecordingStart(Params, ActiveRecordings);
     if (Cmd == TEXT("audio_recording_stop")) return RecordingStop(Params, ActiveRecordings);
+    if (Cmd == TEXT("editor_set_background_audio")) return SetBackgroundAudio(Params);
     return FHaybaHandlerResult::Err(FString::Printf(TEXT("AudioHandler: unknown command %s"), *Cmd));
 }

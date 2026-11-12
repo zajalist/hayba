@@ -234,6 +234,14 @@ const submixTarget = {
   submix_path: assetPath.optional().describe('SoundSubmix to target; omit for the master output.'),
 };
 
+// Each PIE session has its own audio device; a recording is made on, and stopped from, one world's device.
+const recordingWorld = {
+  world: z
+    .enum(['auto', 'pie', 'editor'])
+    .default('auto')
+    .describe('Whose audio device to record: auto = the PIE world while PIE runs, else the editor world'),
+};
+
 const descriptors: ToolDescriptor[] = [
   {
     name: 'audio_asset_create',
@@ -360,8 +368,12 @@ const descriptors: ToolDescriptor[] = [
   {
     name: 'audio_active_sounds',
     description:
-      'Inspect live active sounds and physical voice usage from the main audio device, including component ids, asset paths, effective volume/pitch, looping, pause, virtualization/audibility, owner, and managed-component count.',
-    schema: { include_preview: z.boolean().default(false), limit: z.number().int().min(1).max(2048).default(256) },
+      'Inspect live active sounds and physical voice usage on the PIE world audio device while PIE runs (else the editor world; world: auto|pie|editor picks explicitly), including component ids, asset paths, effective volume/pitch, looping, pause, virtualization/audibility, owner, and managed-component count.',
+    schema: {
+      include_preview: z.boolean().default(false),
+      limit: z.number().int().min(1).max(2048).default(256),
+      world: z.enum(['auto', 'pie', 'editor']).default('auto').describe('Whose audio device to read: auto = the PIE world while PIE runs, else the editor world'),
+    },
     meta: {
       cost: 'low',
       effects: [],
@@ -371,12 +383,16 @@ const descriptors: ToolDescriptor[] = [
     handler: ueTool(
       'audio_active_sounds',
       z
-        .object({ include_preview: z.boolean().default(false), limit: z.number().int().min(1).max(2048).default(256) })
+        .object({
+          include_preview: z.boolean().default(false),
+          limit: z.number().int().min(1).max(2048).default(256),
+          world: z.enum(['auto', 'pie', 'editor']).default('auto'),
+        })
         .strict(),
     ),
     cost: 'low',
     returns:
-      '{active_sound_count, active_voice_count, virtual_sound_count, managed_component_count, truncated, sounds:[...]}',
+      '{world, audio_device_id, active_sound_count, active_voice_count, virtual_sound_count, managed_component_count, truncated, sounds:[...]}',
   },
   {
     name: 'audio_meter_start',
@@ -441,8 +457,8 @@ const descriptors: ToolDescriptor[] = [
   {
     name: 'audio_recording_start',
     description:
-      'Start in-memory Audio Mixer capture of the master output or one SoundSubmix. The matching stop command performs a synchronous, filesystem-verified WAV write.',
-    schema: { ...submixTarget, expected_duration: z.number().positive().max(3600).default(10) },
+      'Start in-memory Audio Mixer capture of the master output or one SoundSubmix on one world audio device (world: auto|pie|editor; each PIE session has its own). The matching stop command performs a synchronous, filesystem-verified WAV write. An unfocused editor records silence unless editor_set_background_audio is on.',
+    schema: { ...submixTarget, ...recordingWorld, expected_duration: z.number().positive().max(3600).default(10) },
     meta: {
       cost: 'low',
       effects: ['changes_audio_runtime'],
@@ -451,17 +467,20 @@ const descriptors: ToolDescriptor[] = [
     },
     handler: ueTool(
       'audio_recording_start',
-      z.object({ ...submixTarget, expected_duration: z.number().positive().max(3600).default(10) }).strict(),
+      z
+        .object({ ...submixTarget, ...recordingWorld, expected_duration: z.number().positive().max(3600).default(10) })
+        .strict(),
     ),
     cost: 'low',
-    returns: '{submix, expected_duration, recording_state:"started"}',
+    returns: '{submix, world, audio_device_id, expected_duration, recording_state:"started"}',
   },
   {
     name: 'audio_recording_stop',
     description:
-      'Stop a tracked master/submix capture and synchronously write a WAV beneath Saved/BouncedWavFiles. Returns the verified absolute path, sample count, channel count, sample rate, and duration; zero samples or an absent file is an error.',
+      'Stop a tracked master/submix capture and synchronously write a WAV beneath Saved/BouncedWavFiles. Returns the verified absolute path, sample count, channel count, sample rate, duration, and the peak / rms level (peak 0 = digital silence, with a warning naming the cause when the editor is muted for lack of focus); zero samples or an absent file is an error.',
     schema: {
       ...submixTarget,
+      ...recordingWorld,
       filename: z.string().min(1).describe('WAV basename; any supplied extension/directories are stripped.'),
       relative_path: z
         .string()
@@ -476,11 +495,40 @@ const descriptors: ToolDescriptor[] = [
     },
     handler: ueTool(
       'audio_recording_stop',
-      z.object({ ...submixTarget, filename: z.string().min(1), relative_path: z.string().default('') }).strict(),
+      z
+        .object({ ...submixTarget, ...recordingWorld, filename: z.string().min(1), relative_path: z.string().default('') })
+        .strict(),
     ),
     cost: 'medium',
     returns:
-      '{submix, recording_state:"stopped", wav_path, sample_count, channel_count, sample_rate, duration_seconds}',
+      '{submix, world, audio_device_id, recording_state:"stopped", wav_path, sample_count, channel_count, sample_rate, duration_seconds, peak, peak_dbfs, rms, silent, warning?}',
+  },
+  {
+    name: 'editor_set_background_audio',
+    description:
+      'Let the editor keep playing audio without focus (ULevelEditorMiscSettings bAllowBackgroundAudio, plus the FApp unfocused volume multiplier). An unfocused editor otherwise zeroes its output every tick, so PIE recordings on an unattended or background editor are digital silence. In memory only; returns previous so the caller can restore it.',
+    schema: {
+      enabled: z.boolean().describe('true lets audio play while the editor is in the background'),
+      unfocused_volume_multiplier: z
+        .number()
+        .min(0)
+        .max(1)
+        .optional()
+        .describe('FApp unfocused volume multiplier to set; default 1 when enabling, unchanged when disabling'),
+    },
+    meta: {
+      cost: 'low',
+      effects: ['changes_audio_runtime'],
+      when: 'recording or metering PIE audio on an editor that does not have focus (agents, scratch hosts)',
+      not_when: 'the editor is focused, or you will not restore the previous value afterwards on a shared editor',
+    },
+    handler: ueTool(
+      'editor_set_background_audio',
+      z.object({ enabled: z.boolean(), unfocused_volume_multiplier: z.number().min(0).max(1).optional() }).strict(),
+    ),
+    cost: 'low',
+    returns:
+      '{enabled, unfocused_volume_multiplier, previous:{allow_background_audio, unfocused_volume_multiplier}, has_focus, verified}',
   },
 ];
 
@@ -496,6 +544,7 @@ export const AUDIO_MUTATING_COMMANDS = [
   'audio_meter_stop',
   'audio_recording_start',
   'audio_recording_stop',
+  'editor_set_background_audio',
 ] as const;
 
 export const AUDIO_NON_IDEMPOTENT_COMMANDS = [

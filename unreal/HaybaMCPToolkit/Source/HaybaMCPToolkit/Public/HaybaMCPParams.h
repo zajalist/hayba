@@ -77,6 +77,31 @@ namespace HaybaParams
  * A caller who omitted two fields is told about both, once — rather than
  * fixing one, re-sending, and learning about the next.
  */
+/** An error naming the parameters Cmd does not take, or empty when every key is known. Mutating commands call it
+ *  first, so a misspelled or imagined flag is refused instead of silently ignored: story passed a "dry run" flag to
+ *  editor_start_pie on 2026-11-10 and got a real PIE inside another lane's exclusive lease. [HCR-PARAM-001] marks it
+ *  as refused before anything ran. */
+inline FString HaybaUnknownParamsError(const TSharedPtr<FJsonObject>& Params, const TCHAR* Cmd,
+    std::initializer_list<const TCHAR*> Known)
+{
+    if (!Params.IsValid()) return FString();
+    TArray<FString> Unknown;
+    for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : Params->Values)
+    {
+        // `transaction` is a router-level option every command takes (ParamsAllowEditorTransaction).
+        bool bKnown = Pair.Key.Equals(TEXT("transaction"), ESearchCase::CaseSensitive);
+        for (const TCHAR* Key : Known) bKnown |= Pair.Key.Equals(Key, ESearchCase::CaseSensitive);
+        if (!bKnown) Unknown.Add(Pair.Key);
+    }
+    if (Unknown.IsEmpty()) return FString();
+    Unknown.Sort();
+    TArray<FString> Accepted;
+    for (const TCHAR* Key : Known) Accepted.Add(Key);
+    return FString::Printf(TEXT("%s refused [HCR-PARAM-001]: unknown parameter(s) %s; it takes %s. Nothing was done."),
+        Cmd, *FString::Join(Unknown, TEXT(", ")),
+        Accepted.IsEmpty() ? TEXT("no parameters") : *FString::Join(Accepted, TEXT(", ")));
+}
+
 class FHaybaParamReader
 {
 public:

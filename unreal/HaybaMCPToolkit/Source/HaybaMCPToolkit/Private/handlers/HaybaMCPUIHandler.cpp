@@ -206,7 +206,7 @@ static const FSlateBrush* HaybaFindBrushProperty(UObject* Owner, const TCHAR* Pr
 
 TArray<FString> FHaybaMCPUIHandler::GetCommands() const
 {
-    return {
+    TArray<FString> Commands = {
         TEXT("ui_create_widget"),
         TEXT("ui_add_element"),
         TEXT("ui_set_widget_properties"),
@@ -224,6 +224,8 @@ TArray<FString> FHaybaMCPUIHandler::GetCommands() const
         TEXT("ui_report_findings"),
         TEXT("ui_render_widget_to_png"),
     };
+    Commands.Append(HaybaUIOps::WrapperCommands());
+    return Commands;
 }
 
 #if WITH_EDITOR
@@ -614,58 +616,6 @@ namespace
         return Existing == nullptr;
     }
 
-    static EHorizontalAlignment ParseHAlign(const FString& S)
-    {
-        const FString Low = S.ToLower();
-        if (Low == TEXT("fill"))   return HAlign_Fill;
-        if (Low == TEXT("left"))   return HAlign_Left;
-        if (Low == TEXT("center")) return HAlign_Center;
-        if (Low == TEXT("right"))  return HAlign_Right;
-        return HAlign_Fill;
-    }
-
-    static EVerticalAlignment ParseVAlign(const FString& S)
-    {
-        const FString Low = S.ToLower();
-        if (Low == TEXT("fill"))   return VAlign_Fill;
-        if (Low == TEXT("top"))    return VAlign_Top;
-        if (Low == TEXT("center")) return VAlign_Center;
-        if (Low == TEXT("bottom")) return VAlign_Bottom;
-        return VAlign_Fill;
-    }
-
-    static FMargin ParseMargin(const TSharedPtr<FJsonObject>& Props, const FString& Key)
-    {
-        const TArray<TSharedPtr<FJsonValue>>* Arr = nullptr;
-        if (Props->TryGetArrayField(Key, Arr) && Arr && Arr->Num() >= 4)
-        {
-            return FMargin(
-                (float)(*Arr)[0]->AsNumber(),
-                (float)(*Arr)[1]->AsNumber(),
-                (float)(*Arr)[2]->AsNumber(),
-                (float)(*Arr)[3]->AsNumber()
-            );
-        }
-        double Single = 0.0;
-        if (Props->TryGetNumberField(Key, Single))
-        {
-            return FMargin((float)Single);
-        }
-        // MCP callers naturally send named edges ({left, top, right, bottom});
-        // support that form alongside the original positional array.
-        const TSharedPtr<FJsonObject>* Obj = nullptr;
-        if (Props->TryGetObjectField(Key, Obj) && Obj && Obj->IsValid())
-        {
-            double Left = 0.0, Top = 0.0, Right = 0.0, Bottom = 0.0;
-            (*Obj)->TryGetNumberField(TEXT("left"), Left);
-            (*Obj)->TryGetNumberField(TEXT("top"), Top);
-            (*Obj)->TryGetNumberField(TEXT("right"), Right);
-            (*Obj)->TryGetNumberField(TEXT("bottom"), Bottom);
-            return FMargin((float)Left, (float)Top, (float)Right, (float)Bottom);
-        }
-        return FMargin(0.0f);
-    }
-
     static FVector2D ParseVec2(const TSharedPtr<FJsonObject>& Props, const FString& Key)
     {
         const TArray<TSharedPtr<FJsonValue>>* Arr = nullptr;
@@ -732,7 +682,7 @@ namespace
         }
         if (Slot->IsA<UHorizontalBoxSlot>() || Slot->IsA<UVerticalBoxSlot>())
         {
-            Keys.Add(TEXT("fill"));
+            AddAll({ TEXT("fill"), TEXT("size") });
         }
         if (Slot->IsA<UGridSlot>())
         {
@@ -743,16 +693,6 @@ namespace
             AddAll({ TEXT("row"), TEXT("column") });
         }
         return Keys;
-    }
-
-    /** Padding is set whenever the key is present, including an explicit zero.
-     *  The previous "only if non-zero" guard made it impossible to clear
-     *  padding — the call reported success and the margin stayed put. */
-    static bool TryApplyPadding(const TSharedPtr<FJsonObject>& Props, const FString& Key, FMargin& Out)
-    {
-        if (!Props->HasField(Key)) return false;
-        Out = ParseMargin(Props, Key);
-        return true;
     }
 
     /** Anchors accept every shape a caller might reasonably send:
@@ -795,35 +735,54 @@ namespace
     }
 
     /** Alignment shared by every slot type that exposes H/V alignment. */
+    /** Values the slot could not parse land in Bad, so they are reported as not
+     *  applied instead of becoming Fill / zero padding (the old silent fallbacks). */
     template <typename TSlot>
-    static void ApplyAlignments(TSlot* S, const TSharedPtr<FJsonObject>& Props)
+    static void ApplyAlignments(TSlot* S, const TSharedPtr<FJsonObject>& Props, TArray<FString>& Bad)
     {
-        FString HAlign, VAlign;
-        if (Props->TryGetStringField(TEXT("horizontal_alignment"), HAlign))
-            S->SetHorizontalAlignment(ParseHAlign(HAlign));
-        if (Props->TryGetStringField(TEXT("vertical_alignment"), VAlign))
-            S->SetVerticalAlignment(ParseVAlign(VAlign));
+        FString Text;
+        EHorizontalAlignment H;
+        EVerticalAlignment V;
+        if (Props->HasField(TEXT("horizontal_alignment")))
+        {
+            if (Props->TryGetStringField(TEXT("horizontal_alignment"), Text) && HaybaUIOps::TryParseHAlign(Text, H)) S->SetHorizontalAlignment(H);
+            else Bad.Add(TEXT("horizontal_alignment"));
+        }
+        if (Props->HasField(TEXT("vertical_alignment")))
+        {
+            if (Props->TryGetStringField(TEXT("vertical_alignment"), Text) && HaybaUIOps::TryParseVAlign(Text, V)) S->SetVerticalAlignment(V);
+            else Bad.Add(TEXT("vertical_alignment"));
+        }
     }
 
     template <typename TSlot>
-    static void ApplyPaddingAndAlignment(TSlot* S, const TSharedPtr<FJsonObject>& Props)
+    static void ApplyPaddingAndAlignment(TSlot* S, const TSharedPtr<FJsonObject>& Props, TArray<FString>& Bad)
     {
-        FMargin Pad;
-        if (TryApplyPadding(Props, TEXT("padding"), Pad)) S->SetPadding(Pad);
-        ApplyAlignments(S, Props);
+        // HasField, not "non-zero", so an explicit zero clears the padding.
+        if (Props->HasField(TEXT("padding")))
+        {
+            FMargin Pad;
+            if (HaybaUIOps::TryParseMargin(Props->TryGetField(TEXT("padding")), Pad)) S->SetPadding(Pad);
+            else Bad.Add(TEXT("padding"));
+        }
+        ApplyAlignments(S, Props, Bad);
     }
 
-    FSlotApplyResult ApplySlotPropsChecked(UPanelSlot* Slot, const TSharedPtr<FJsonObject>& Props);
-
-    void ApplySlotProps(UPanelSlot* Slot, const TSharedPtr<FJsonObject>& Props)
+    /** Box slots: "size" is the fill rule (auto / fill / weight), as in the designer. */
+    template <typename TSlot>
+    static void ApplyChildSize(TSlot* S, const TSharedPtr<FJsonObject>& Props, TArray<FString>& Bad)
     {
-        ApplySlotPropsChecked(Slot, Props);
+        if (!Props->HasField(TEXT("size"))) return;
+        FSlateChildSize Size;
+        if (HaybaUIOps::TryParseChildSize(Props->TryGetField(TEXT("size")), Size)) S->SetSize(Size);
+        else Bad.Add(TEXT("size"));
     }
 
     FSlotApplyResult ApplySlotPropsChecked(UPanelSlot* Slot, const TSharedPtr<FJsonObject>& Props)
     {
         FSlotApplyResult Result;
         if (!Slot || !Props.IsValid()) return Result;
+        TArray<FString> Bad;
 
         // CanvasPanelSlot
         if (UCanvasPanelSlot* CSlot = Cast<UCanvasPanelSlot>(Slot))
@@ -903,7 +862,8 @@ namespace
                 Sz.SizeRule = Fill > 0.0 ? ESlateSizeRule::Fill : ESlateSizeRule::Automatic;
                 HSlot->SetSize(Sz);
             }
-            ApplyPaddingAndAlignment(HSlot, Props);
+            ApplyChildSize(HSlot, Props, Bad);
+            ApplyPaddingAndAlignment(HSlot, Props, Bad);
         }
 
         if (UVerticalBoxSlot* VSlot = Cast<UVerticalBoxSlot>(Slot))
@@ -916,15 +876,16 @@ namespace
                 Sz.SizeRule = Fill > 0.0 ? ESlateSizeRule::Fill : ESlateSizeRule::Automatic;
                 VSlot->SetSize(Sz);
             }
-            ApplyPaddingAndAlignment(VSlot, Props);
+            ApplyChildSize(VSlot, Props, Bad);
+            ApplyPaddingAndAlignment(VSlot, Props, Bad);
         }
 
-        if (UOverlaySlot* OSlot = Cast<UOverlaySlot>(Slot))       ApplyPaddingAndAlignment(OSlot, Props);
-        if (UScrollBoxSlot* ScSlot = Cast<UScrollBoxSlot>(Slot))  ApplyPaddingAndAlignment(ScSlot, Props);
-        if (UBorderSlot* BSlot = Cast<UBorderSlot>(Slot))         ApplyPaddingAndAlignment(BSlot, Props);
-        if (USizeBoxSlot* SbSlot = Cast<USizeBoxSlot>(Slot))      ApplyPaddingAndAlignment(SbSlot, Props);
-        if (UWrapBoxSlot* WSlot = Cast<UWrapBoxSlot>(Slot))       ApplyPaddingAndAlignment(WSlot, Props);
-        if (UWidgetSwitcherSlot* WsSlot = Cast<UWidgetSwitcherSlot>(Slot)) ApplyPaddingAndAlignment(WsSlot, Props);
+        if (UOverlaySlot* OSlot = Cast<UOverlaySlot>(Slot))       ApplyPaddingAndAlignment(OSlot, Props, Bad);
+        if (UScrollBoxSlot* ScSlot = Cast<UScrollBoxSlot>(Slot))  ApplyPaddingAndAlignment(ScSlot, Props, Bad);
+        if (UBorderSlot* BSlot = Cast<UBorderSlot>(Slot))         ApplyPaddingAndAlignment(BSlot, Props, Bad);
+        if (USizeBoxSlot* SbSlot = Cast<USizeBoxSlot>(Slot))      ApplyPaddingAndAlignment(SbSlot, Props, Bad);
+        if (UWrapBoxSlot* WSlot = Cast<UWrapBoxSlot>(Slot))       ApplyPaddingAndAlignment(WSlot, Props, Bad);
+        if (UWidgetSwitcherSlot* WsSlot = Cast<UWidgetSwitcherSlot>(Slot)) ApplyPaddingAndAlignment(WsSlot, Props, Bad);
 
         // GridSlot
         if (UGridSlot* GSlot = Cast<UGridSlot>(Slot))
@@ -936,7 +897,7 @@ namespace
             if (Props->TryGetNumberField(TEXT("column_span"), ColSpan))  GSlot->SetColumnSpan(ColSpan);
             if (Props->TryGetNumberField(TEXT("layer"), Layer))          GSlot->SetLayer(Layer);
 
-            ApplyPaddingAndAlignment(GSlot, Props);
+            ApplyPaddingAndAlignment(GSlot, Props, Bad);
 
             if (Props->HasField(TEXT("nudge"))) GSlot->SetNudge(ParseVec2(Props, TEXT("nudge")));
         }
@@ -947,7 +908,7 @@ namespace
             int32 Row, Column;
             if (Props->TryGetNumberField(TEXT("row"), Row))       USlot->SetRow(Row);
             if (Props->TryGetNumberField(TEXT("column"), Column)) USlot->SetColumn(Column);
-            ApplyAlignments(USlot, Props);
+            ApplyAlignments(USlot, Props, Bad);
         }
 
         // Anything not handled above gets one reflection attempt against the
@@ -965,6 +926,11 @@ namespace
             }
             if (HaybaReflection::SetProp(Slot, Key, Pair.Value)) Result.Applied.Add(Key);
             else Result.Unknown.Add(Key);
+        }
+        for (const FString& Key : Bad)
+        {
+            Result.Applied.Remove(Key);
+            Result.Unknown.AddUnique(Key);
         }
 
         return Result;
@@ -1305,6 +1271,13 @@ FHaybaHandlerResult FHaybaMCPUIHandler::Handle(const FString& Cmd, const TShared
     if (Cmd == TEXT("ui_measure_text"))        return HandleMeasureText(P);
     if (Cmd == TEXT("ui_report_findings"))     return HandleReportFindings(P);
     if (Cmd == TEXT("ui_render_widget_to_png")) return HandleRenderToPng(P);
+    if (HaybaUIOps::WrapperCommands().Contains(Cmd))
+    {
+        FString Native, Error;
+        TSharedPtr<FJsonObject> NativeParams;
+        if (!HaybaUIOps::TranslateWrapper(Cmd, P, Native, NativeParams, Error)) return FHaybaHandlerResult::Err(Error);
+        return Handle(Native, NativeParams);
+    }
 
     return FHaybaHandlerResult::Err(FString::Printf(TEXT("UIHandler: unknown command %s"), *Cmd));
 #endif
@@ -1450,9 +1423,12 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleAddElement(const TSharedPtr<FJsonO
 
     RegisterWidgetVariable(WBP, NewChild);
 
+    // Report what the slot did not take, as ui_set_widget_properties does; this
+    // path used to discard it, so bad alignment/padding values looked applied.
+    FSlotApplyResult AddedSlotResult;
     const TSharedPtr<FJsonObject>* SlotProps = nullptr;
     if (P->TryGetObjectField(TEXT("slot_props"), SlotProps) && SlotProps && SlotProps->IsValid())
-        ApplySlotProps(NewSlot, *SlotProps);
+        AddedSlotResult = ApplySlotPropsChecked(NewSlot, *SlotProps);
 
     if (!FinalizeWidgetTreeMutation(WBP, TEXT("ui_add_element"), InvariantError))
     {
@@ -1474,6 +1450,14 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleAddElement(const TSharedPtr<FJsonO
     Out->SetStringField(TEXT("name"),   NewChild->GetName());
     Out->SetStringField(TEXT("class"),  ChildClass->GetName());
     Out->SetStringField(TEXT("slot_class"), NewSlot->GetClass()->GetName());
+    if (AddedSlotResult.Unknown.Num() > 0)
+    {
+        TArray<TSharedPtr<FJsonValue>> Unknown;
+        for (const FString& Key : AddedSlotResult.Unknown) Unknown.Add(MakeShared<FJsonValueString>(Key));
+        Out->SetArrayField(TEXT("unknown_slot_props"), Unknown);
+        Out->SetStringField(TEXT("warning"), FString::Printf(TEXT("The element was added, but slot keys %s were not applied (not valid for a %s, or a value that could not be parsed)."),
+            *FString::Join(AddedSlotResult.Unknown, TEXT(", ")), *NewSlot->GetClass()->GetName()));
+    }
     return FHaybaHandlerResult::Ok(Out);
 }
 
@@ -1583,7 +1567,7 @@ FHaybaHandlerResult FHaybaMCPUIHandler::HandleSetProperties(const TSharedPtr<FJs
                 if (SlotResult.Unknown.Num() > 0)
                 {
                     Warnings.Add(FString::Printf(
-                        TEXT("Slot is a %s; keys %s are not valid for that slot type. Query the widget to see its real slot class."),
+                        TEXT("Slot is a %s; keys %s were not applied: not valid for that slot type, or a value that could not be parsed (alignment: Left/Center/Right/Fill or HAlign_*; padding: number, [h,v], [l,t,r,b], {left,top,right,bottom} or (Left=..,Top=..,Right=..,Bottom=..)). Query the widget to see its real slot class."),
                         *Widget->Slot->GetClass()->GetName(),
                         *FString::Join(SlotResult.Unknown, TEXT(", "))));
                 }

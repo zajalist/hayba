@@ -2239,7 +2239,7 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
   {
     name: 'material_compile',
     description:
-      'Finalize a material OR material FUNCTION: write it to disk, apply staged settings, surface translator errors + shader optimization stats (materials). Graph edits DEFER the disk write — call this once the graph is complete. NOTE: material functions no longer auto-save either, so after editing a function call material_compile with function_path to persist it (this avoids a half-built function crashing the editor when it is opened/compiled).',
+      'Finalize a material OR material FUNCTION: write it to disk, apply staged settings, surface translator AND platform shader-compile errors (it waits up to 30 s for the shader map, so ok:false means the shaders really failed; a timeout is ok:false with shader_compile_timed_out) + shader optimization stats (materials). Graph edits DEFER the disk write — call this once the graph is complete. NOTE: material functions no longer auto-save either, so after editing a function call material_compile with function_path to persist it (this avoids a half-built function crashing the editor when it is opened/compiled).',
     meta: materialCompileMeta,
     handler: materialCompileHandler,
     cost: 'high',
@@ -2260,11 +2260,11 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
   {
     name: 'material_validate',
     description:
-      'Statically check a material OR material FUNCTION graph for translator-crash-prone wiring WITHOUT compiling: reroutes/named-reroutes used downstream that resolve to no input, and connections to non-existent output indices — both trigger an uncatchable HLSL-translator assert that kills the editor. material_compile runs these same checks and refuses to compile when any fail, so call this first to fix issues safely.',
+      'Statically check a material OR material FUNCTION graph for translator-crash-prone wiring WITHOUT compiling: reroutes/named-reroutes used downstream that resolve to no input, and connections to non-existent output indices — both trigger an uncatchable HLSL-translator assert that kills the editor. material_compile runs these same checks and refuses to compile when any fail, so call this first to fix issues safely. It also lints Custom node HLSL (apostrophes outside comments, unclosed strings, comments or brackets). compile:true (materials) then runs the real platform shader compile and waits for it, so shader errors that would otherwise surface later on the GPU-compile thread are returned here; it never saves.',
     meta: materialValidateMeta,
     handler: materialValidateHandler,
-    cost: 'low',
-    returns: '{ok:boolean, problems:[string]}',
+    cost: 'high',
+    returns: '{ok:boolean, problems:[string], compiled?, shader_platform?, shader_compile_timed_out?, saved?:false}',
     niche: M,
     schema: {
       material_path: z
@@ -2275,6 +2275,10 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
         .string()
         .optional()
         .describe('Path to a material FUNCTION to validate (either this or material_path)'),
+      compile: z
+        .boolean()
+        .optional()
+        .describe('Materials only: after the static checks pass, recompile and wait (up to 30 s) for the platform shader compile and return its errors. Never saves.'),
     },
   },
   {
@@ -2342,11 +2346,11 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
   {
     name: 'asset_save',
     description:
-      'Save named assets to disk natively (C++, no editor Python). Each path is saved only if it is loaded and dirty, then verified clean in memory with a fresh file on disk; saved[], skipped[] and failed[] say what happened to each. Refuses maps (use level_save), read-only files, Blueprints mid-compile, and PIE. There is no save-everything mode: other agents share this editor.',
+      'Save named assets to disk natively (C++, no editor Python). Each path is saved only if it is loaded and dirty (force:true saves a clean one too; skipped_not_dirty lists the clean ones it skipped), then verified clean in memory with a fresh file on disk; saved[], skipped[] and failed[] say what happened to each. Refuses maps (use level_save), read-only files, Blueprints mid-compile, and PIE. There is no save-everything mode: other agents share this editor.',
     meta: assetSaveMeta,
     handler: assetSaveHandler,
     cost: 'low',
-    returns: '{ok, saved[], saved_count, skipped[{path,reason}], failed[{path,reason}], verified}',
+    returns: '{ok, saved[], saved_count, skipped[{path,reason}], skipped_not_dirty[], failed[{path,reason}], verified}',
     schema: assetSaveSchema.shape,
   },
   {
@@ -2525,7 +2529,7 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
         .string()
         .optional()
         .describe(
-          'Target material output, e.g. base_color, normal, front_material (Substrate), displacement (Nanite tessellation - needs material_set_property enable_tessellation=true)',
+          'Target material output. Spelling-insensitive: base_color, BaseColor, MP_BaseColor and emissive / emissive_color / EmissiveColor all work. Outputs: base_color, metallic, specular, roughness, emissive_color, opacity, opacity_mask, normal, world_position_offset, ambient_occlusion, subsurface_color, pixel_depth_offset, refraction, clear_coat, clear_coat_roughness, anisotropy, tangent, shading_model, front_material (Substrate), displacement (Nanite tessellation; needs material_set_property enable_tessellation=true)',
         ),
     },
   },
@@ -3071,11 +3075,12 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
   {
     name: 'asset_fix_redirectors',
     description:
-      'Collapse the redirector stubs left behind by renames and moves. USE_WHEN: after a batch of asset_rename / asset_move calls — redirectors that survive into a cook are wasted work and confuse later reference lookups.',
+      'Collapse the redirector stubs left behind by renames and moves: loads and saves every asset that references one (unsaved edits in those assets are saved too), then deletes the redirectors nothing references (unreferenced:"keep" leaves them). Runs unattended, never opens the engine\'s Redirector Update Report. USE_WHEN: after a batch of asset_rename / asset_move calls — redirectors that survive into a cook are wasted work and confuse later reference lookups.',
     meta: assetFixRedirectorsMeta,
     handler: assetFixRedirectorsHandler,
     cost: 'medium',
-    returns: '{fixed_count, path}',
+    returns:
+      '{ok, path, unreferenced, redirector_count, fixed_count, deleted_count, kept_count, saved_packages[], redirectors[{redirector, target, fixed, deleted, still_referenced_by?}], warning?}',
     niche: ASSETGRAPH,
     schema: assetFixRedirectorsSchema.shape,
   },
@@ -3252,7 +3257,7 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
     meta: pieMouseMeta,
     handler: pieMouseHandler,
     cost: 'medium',
-    returns: '{action, x, y, coordinate_space, absolute_x, absolute_y, focused_widget_after, button, dispatched}',
+    returns: '{action, modifiers, x, y, coordinate_space, absolute_x, absolute_y, focused_widget_after, button, dispatched}',
     niche: PIE,
     schema: pieMouseSchema.shape,
   },
@@ -3263,7 +3268,7 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
     meta: pieTypeTextMeta,
     handler: pieTypeTextHandler,
     cost: 'medium',
-    returns: '{text, characters_sent, characters_accepted_by_ui, focused_widget, warning?, note}',
+    returns: '{text, modifiers, target, focus_moved?, pie_viewport?, characters_sent, characters_accepted_by_ui, focused_widget, warning?, note}',
     niche: PIE,
     schema: pieTypeTextSchema.shape,
   },
@@ -3285,7 +3290,7 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
     meta: piePressKeyMeta,
     handler: piePressKeyHandler,
     cost: 'medium',
-    returns: '{key, event, dispatched, focused_widget, handled_by_ui, release_scheduled, release_after_ms?}',
+    returns: '{key, event, dispatched, modifiers, target, focus_moved?, pie_viewport?, focused_widget, handled_by_ui, release_scheduled, release_after_ms?}',
     niche: PIE,
     schema: piePressKeySchema.shape,
   },

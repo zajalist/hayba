@@ -4,6 +4,84 @@ All notable changes to Hayba MCP Toolkit are documented here. Format based on [K
 
 ## [Unreleased]
 
+Ports the production tool-gap fixes that were running on a separate
+integration branch onto the 0.4.1 code.
+
+### Added
+- `asset_import` accepts `.gltf` / `.glb` as `static_mesh` under a strict
+  policy:
+  - Sources come only from a `TrustedImportRoots` folder, set in project
+    settings and never by a tool call. The default is empty, which refuses
+    glTF.
+  - Every referenced buffer and texture must be a `data:` URI or a plain
+    relative path below the `.gltf`. Each is pinned for the whole import,
+    capped at 512 MiB per file and 1 GiB in total.
+  - The glTF must be 2.x. Required extensions are limited to
+    `KHR_materials_*`, `KHR_texture_transform` and `KHR_mesh_quantization`,
+    and files with skins or animations are refused.
+  - The destination folder must be new or empty.
+  - The import runs through the project's Interchange asset pipeline in one
+    synchronous automated task, and is verified by folder readback.
+- Blueprint: `blueprint_add_function` takes `thread_safe` and by-reference /
+  const inputs (anim node function signatures); `blueprint_add_event`
+  implements parent functions that return a value as override graphs
+  (`UUserWidget::OnKeyDown` and friends); `blueprint_add_node` adds
+  `input_key`; `blueprint_set_pin_default` sets Text pins.
+- Animation: `anim_blueprint_add_node_function`, `anim_graph_node_bind_function`
+  and `blendspace_set_samples`; `blueprint_inspect_graph` and
+  `blueprint_measure_nodes` page their nodes and edges under the 50-item cap.
+- The `ui_*` convenience tools are native commands as well, so callers on the
+  TCP path reach them; `ui_set_text_style` outline and shadow now apply.
+- `editor_set_background_audio`, `editor_set_render_while_hidden` (full-rate
+  PIE on a minimized editor) and `editor_get_keyboard_focus`.
+- `audio_recording_start` / `_stop` and `audio_active_sounds` take
+  `world: auto|pie|editor` and read the PIE world's own audio device.
+- `asset_save` takes `force: true` and reports `skipped_not_dirty`.
+- `HAYBA_MCP_PORT` pins the editor's TCP port.
+
+### Changed
+- Mutating commands refuse parameters they do not take ([HCR-PARAM-001])
+  instead of ignoring them (first set: `editor_start_pie`, `editor_stop_pie`,
+  `blueprint_create`, `blueprint_add_component` / `_variable` / `_function`,
+  `asset_save`; the router-level `transaction` option is always accepted).
+- `editor_start_pie` is refused while another owner holds an exclusive global
+  lease, even under Advisory enforcement.
+- `python_exec_file` is scoped by its declared `resources` for leases
+  (WriteScoped when declared, Global when not).
+- Every viewport command resolves its viewport in one place: the PIE
+  player's view while PIE runs, else the level viewport last used; level
+  camera changes are refused during PIE.
+- Injected PIE input uses only the caller's `modifiers` and targets the PIE
+  game viewport by default.
+
+### Fixed
+- `blueprint_add_function`, `blueprint_add_variable` and
+  `blueprint_add_component` refuse a member name the Blueprint or a parent
+  already uses ([HCR-BP-NAME-001]) instead of leaving the class uncompilable.
+  `python_run` / `python_exec_file` scripts that start PIE are refused while a
+  loaded Blueprint would open UE's compile prompt ([HCR-PIE-001]), using the
+  same rule as `editor_start_pie`'s preflight.
+- `blueprint_add_component` attaches scene components under a parent instead
+  of adding root nodes.
+- `blueprint_add_node` gives nodes their pins before `PostPlacedNewNode`
+  (`spawn_actor_from_class` asserted) and takes `class_path` for it.
+- Materials: spelling-insensitive output names and short enum names; Material
+  Collection Parameter ids resolve on staged edits; staged edits rebuild
+  Custom node outputs; `material_compile` submits and waits for the platform
+  shader compile and reports its errors; Custom HLSL is linted before compile.
+- `editor_capture_viewport` captures the PIE or level view and refuses an
+  all-black frame.
+- Asset tools never open a dialog (`asset_fix_redirectors` no longer parks the
+  game thread on the Redirector Update Report).
+- UI slot values that do not parse are reported instead of silently
+  defaulted.
+- Every python_run-backed tool template (asset, editor, foliage, landscape,
+  lighting, mesh, niagara, sequencer, water, actor, pcg, introspect) runs
+  without `try`/`with` and `getattr`, which the native policy refuses; the
+  sequencer tools use the UE 5.8+ scripting names.
+- [HCR-CONSOLE-001] catches `execute_console_command` called as a method or
+  through an alias.
+
 ## [0.4.1] — 2026-11-12
 
 First full release of the 0.4 line (0.4.0 shipped only as release

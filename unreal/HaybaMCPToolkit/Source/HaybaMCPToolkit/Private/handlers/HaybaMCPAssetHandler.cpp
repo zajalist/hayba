@@ -21,6 +21,8 @@
 #include "Animation/AnimSequence.h"
 #include "PhysicsEngine/PhysicsAsset.h"
 #include "Materials/MaterialInterface.h"
+#include "AssetImportTask.h"
+#include "HaybaMCPDeveloperSettings.h"
 #include "Factories/SoundFactory.h"
 #include "Engine/Texture2D.h"
 #include "Engine/StaticMesh.h"
@@ -54,6 +56,8 @@
 #include "UObject/GarbageCollection.h"
 #include "Engine/Blueprint.h"
 #include "HaybaMCPParams.h"
+#include "PackageTools.h"
+#include "UObject/ObjectRedirector.h"
 
 #if PLATFORM_WINDOWS
 #include "Windows/AllowWindowsPlatformTypes.h"
@@ -87,6 +91,11 @@ TArray<FString> FHaybaMCPAssetHandler::GetCommands() const
 
 FHaybaHandlerResult FHaybaMCPAssetHandler::Handle(const FString& Cmd, const TSharedPtr<FJsonObject>& P)
 {
+    // No asset command may open a modal (HaybaMCPAssetGuard.h): engine prompts reached from here (asset_move's
+    // "referenced by code, continue?", checkout / make-writable / save questions) answer their default instead.
+    // Never call IAssetTools::FixupReferencers under this: its report is an SModalEditorDialog, and a cancelled one
+    // trips a check on its unset result (see AssetFixRedirectors).
+    TGuardValue<bool> NoModals(GIsRunningUnattendedScript, true);
     if (Cmd == TEXT("asset_search"))         return AssetSearch(P);
     if (Cmd == TEXT("asset_registry_query")) return AssetRegistryQuery(P);
     if (Cmd == TEXT("asset_get_info"))       return AssetGetInfo(P);
@@ -800,9 +809,17 @@ bool ParseAndValidateRequest(const TSharedPtr<FJsonObject>& Json, FRequest& Out,
     {
         Out.Kind = EKind::SkeletalMeshFbx;
     }
+    else if (Out.Extension == TEXT(".gltf") && Out.AssetType == TEXT("static_mesh"))
+    {
+        Out.Kind = EKind::StaticMeshGltf;
+    }
+    else if (Out.Extension == TEXT(".glb") && Out.AssetType == TEXT("static_mesh"))
+    {
+        Out.Kind = EKind::StaticMeshGlb;
+    }
     else
     {
-        Error = TEXT("asset_import [HAI_INVALID_REQUEST]: extension and asset_type must match png/jpeg+texture, wav+sound_wave, or binary fbx+static_mesh/skeletal_mesh; glTF/GLB/OBJ/USD and dependency-reading formats are not accepted");
+        Error = TEXT("asset_import [HAI_INVALID_REQUEST]: extension and asset_type must match png/jpeg+texture, wav+sound_wave, binary fbx+static_mesh/skeletal_mesh, or gltf/glb+static_mesh (from a TrustedImportRoots folder only); OBJ/USD and other dependency-reading formats are not accepted");
         return false;
     }
 
@@ -922,6 +939,22 @@ bool ValidateFileHeader(EKind Kind, TConstArrayView<uint8> Header, int64 FileByt
         case EKind::SoundWave:      return ValidateWave(Header, FileBytes, Error);
         case EKind::StaticMeshFbx:
         case EKind::SkeletalMeshFbx: return ValidateFbx(Header, Error);
+        case EKind::StaticMeshGlb:
+        {
+            uint32 JsonBytes = 0;
+            return ValidateGlbHeader(Header, FileBytes, JsonBytes, Error);
+        }
+        case EKind::StaticMeshGltf:
+        {
+            for (const uint8 Byte : Header)
+            {
+                if (Byte == ' ' || Byte == '\t' || Byte == '\r' || Byte == '\n') continue;
+                if (Byte == '{') return true;
+                break;
+            }
+            Error = TEXT("asset_import [HAI_FORMAT_REJECTED]: .gltf must be a JSON object");
+            return false;
+        }
         default:
             Error = TEXT("asset_import [HAI_FORMAT_REJECTED]: no fixed format policy exists");
             return false;
@@ -937,6 +970,8 @@ int64 MaxFileBytesForKind(EKind Kind)
         case EKind::SoundWave:     return MaxWaveBytes;
         case EKind::StaticMeshFbx:
         case EKind::SkeletalMeshFbx: return MaxFbxBytes;
+        case EKind::StaticMeshGltf:  return MaxGltfJsonBytes;
+        case EKind::StaticMeshGlb:   return MaxGltfFileBytes;
         default:                   return 0;
     }
 }
@@ -973,6 +1008,131 @@ FString SkeletalCollision(const FRequest& Request, const TArray<FString>& Existi
         if (bMesh || bSkeleton || bPhysics || bAnim) return Existing;
     }
     return FString();
+}
+
+bool IsSafeRelativeUri(const FString& Uri)
+{
+    if (Uri.IsEmpty() || Uri.Len() > 260 || HasControlCharacter(Uri)) return false;
+    // ':' covers schemes and drives; '%' would let "..%2f" smuggle a parent segment.
+    static const TCHAR Forbidden[] = TEXT(":%?#*\"<>|");
+    for (int32 I = 0; Forbidden[I] != 0; ++I)
+    {
+        int32 At = INDEX_NONE;
+        if (Uri.FindChar(Forbidden[I], At)) return false;
+    }
+    if (Uri.StartsWith(TEXT("/")) || Uri.StartsWith(TEXT("\\"))) return false;
+    FString Normal = Uri.Replace(TEXT("\\"), TEXT("/"));
+    TArray<FString> Segments;
+    Normal.ParseIntoArray(Segments, TEXT("/"), true);
+    if (Segments.Num() == 0 || Segments.Num() > 5) return false;
+    for (const FString& S : Segments)
+    {
+        if (S == TEXT(".") || S == TEXT("..") || S.EndsWith(TEXT(".")) || S.EndsWith(TEXT(" "))) return false;
+    }
+    return true;
+}
+
+bool ValidateGlbHeader(TConstArrayView<uint8> Header, int64 FileBytes, uint32& OutJsonBytes, FString& Error)
+{
+    if (Header.Num() < 20 || FMemory::Memcmp(Header.GetData(), "glTF", 4) != 0 || ReadLe32(Header, 4) != 2
+        || static_cast<int64>(ReadLe32(Header, 8)) != FileBytes || ReadLe32(Header, 16) != 0x4E4F534Au)
+    {
+        Error = TEXT("asset_import [HAI_FORMAT_REJECTED]: .glb requires a glTF 2 container whose stated length matches the file and whose first chunk is JSON");
+        return false;
+    }
+    OutJsonBytes = ReadLe32(Header, 12);
+    if (OutJsonBytes == 0 || OutJsonBytes > MaxGltfJsonBytes || 20ll + OutJsonBytes > FileBytes)
+    {
+        Error = TEXT("asset_import [HAI_FORMAT_REJECTED]: .glb JSON chunk is empty, larger than 64 MiB, or runs past the file");
+        return false;
+    }
+    return true;
+}
+
+bool ValidateGltfJson(const FString& JsonText, TArray<FString>& OutRelativeUris, FString& Error)
+{
+    OutRelativeUris.Reset();
+    // The JSON parser recurses per nesting level; real glTF is a few levels deep.
+    int32 Depth = 0, MaxDepth = 0;
+    bool bInString = false, bEscaped = false;
+    for (const TCHAR C : JsonText)
+    {
+        if (bInString)
+        {
+            if (bEscaped) bEscaped = false;
+            else if (C == TEXT('\\')) bEscaped = true;
+            else if (C == TEXT('"')) bInString = false;
+            continue;
+        }
+        if (C == TEXT('"')) bInString = true;
+        else if (C == TEXT('{') || C == TEXT('[')) MaxDepth = FMath::Max(MaxDepth, ++Depth);
+        else if (C == TEXT('}') || C == TEXT(']')) --Depth;
+    }
+    if (MaxDepth > 64)
+    {
+        Error = TEXT("asset_import [HAI_FORMAT_REJECTED]: glTF JSON nests deeper than 64 levels");
+        return false;
+    }
+    TSharedPtr<FJsonObject> Root;
+    if (!FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(JsonText), Root) || !Root.IsValid())
+    {
+        Error = TEXT("asset_import [HAI_FORMAT_REJECTED]: glTF JSON does not parse");
+        return false;
+    }
+    const TSharedPtr<FJsonObject>* Asset = nullptr;
+    FString Version;
+    if (!Root->TryGetObjectField(TEXT("asset"), Asset) || !(*Asset)->TryGetStringField(TEXT("version"), Version)
+        || !Version.StartsWith(TEXT("2.")))
+    {
+        Error = TEXT("asset_import [HAI_FORMAT_REJECTED]: only glTF 2.x is accepted");
+        return false;
+    }
+    const TArray<TSharedPtr<FJsonValue>>* Required = nullptr;
+    if (Root->TryGetArrayField(TEXT("extensionsRequired"), Required))
+    {
+        for (const TSharedPtr<FJsonValue>& V : *Required)
+        {
+            const FString Ext = V.IsValid() ? V->AsString() : FString();
+            if (!Ext.StartsWith(TEXT("KHR_materials_")) && Ext != TEXT("KHR_texture_transform") && Ext != TEXT("KHR_mesh_quantization"))
+            {
+                Error = FString::Printf(TEXT("asset_import [HAI_FORMAT_REJECTED]: required glTF extension '%s' is outside the allow-list (KHR_materials_*, KHR_texture_transform, KHR_mesh_quantization)"), *Ext);
+                return false;
+            }
+        }
+    }
+    for (const TCHAR* Key : { TEXT("skins"), TEXT("animations") })
+    {
+        const TArray<TSharedPtr<FJsonValue>>* List = nullptr;
+        if (Root->TryGetArrayField(Key, List) && List->Num() > 0)
+        {
+            Error = FString::Printf(TEXT("asset_import [HAI_FORMAT_REJECTED]: this glTF has %s; asset_type static_mesh imports static geometry only"), Key);
+            return false;
+        }
+    }
+    for (const TCHAR* Key : { TEXT("buffers"), TEXT("images") })
+    {
+        const TArray<TSharedPtr<FJsonValue>>* List = nullptr;
+        if (!Root->TryGetArrayField(Key, List)) continue;
+        if (List->Num() > 1024)
+        {
+            Error = FString::Printf(TEXT("asset_import [HAI_FORMAT_REJECTED]: more than 1024 %s"), Key);
+            return false;
+        }
+        for (const TSharedPtr<FJsonValue>& V : *List)
+        {
+            const TSharedPtr<FJsonObject>* Entry = nullptr;
+            FString Uri;
+            if (!V.IsValid() || !V->TryGetObject(Entry) || !(*Entry)->TryGetStringField(TEXT("uri"), Uri)) continue;
+            if (Uri.StartsWith(TEXT("data:"))) continue; // bounded by the 64 MiB JSON cap
+            if (!IsSafeRelativeUri(Uri))
+            {
+                Error = FString::Printf(TEXT("asset_import [HAI_FORMAT_REJECTED]: %s uri '%s' must be a data: URI or a plain relative path below the .gltf's folder"), Key, *Uri.Left(120));
+                return false;
+            }
+            OutRelativeUris.AddUnique(Uri.Replace(TEXT("\\"), TEXT("/")));
+        }
+    }
+    return true;
 }
 }
 
@@ -1090,9 +1250,18 @@ public:
 
     bool Open(const HaybaAssetImport::FRequest& Request, FString& Error)
     {
-        FString Authority = FPaths::ConvertRelativePathToFull(
-            FPaths::Combine(FPlatformProcess::UserTempDir(), TEXT("hayba-asset-connectors")));
-        FString Source = FPaths::ConvertRelativePathToFull(Request.SourceFile);
+        return OpenUnder(Request.SourceFile,
+            FPaths::Combine(FPlatformProcess::UserTempDir(), TEXT("hayba-asset-connectors")),
+            3, HaybaAssetImport::MaxFileBytesForKind(Request.Kind), Error);
+    }
+
+    /** Pin SourceFile under Authority (at least MinSegments path entries below it), with
+     *  the same no-link/no-reparse/fixed-disk identity rules. Used for the connector cache
+     *  and, for glTF, a settings-configured trusted root and the files a .gltf references. */
+    bool OpenUnder(const FString& SourceFile, FString Authority, int32 MinSegments, int64 MaxBytes, FString& Error)
+    {
+        Authority = FPaths::ConvertRelativePathToFull(Authority);
+        FString Source = FPaths::ConvertRelativePathToFull(SourceFile);
         FPaths::NormalizeFilename(Authority);
         FPaths::NormalizeFilename(Source);
         Authority.RemoveFromEnd(TEXT("/"));
@@ -1106,7 +1275,7 @@ public:
         FString Relative = Source.RightChop(AuthorityPrefix.Len());
         TArray<FString> Segments;
         Relative.ParseIntoArray(Segments, TEXT("/"), true);
-        if (Segments.Num() < 3 || Segments.Num() > 34)
+        if (Segments.Num() < MinSegments || Segments.Num() > 34)
         {
             Error = TEXT("asset_import [HAI_AUTHORITY_REJECTED]: source_file must be inside a source/request directory and stay within 32 nested entries");
             return false;
@@ -1162,7 +1331,12 @@ public:
             return false;
         }
         FileBytes = static_cast<int64>(Size.QuadPart);
-        if (!HaybaAssetImport::ValidateFileSize(Request.Kind, FileBytes, Error)) return false;
+        if (MaxBytes <= 0 || FileBytes <= 0 || FileBytes > MaxBytes)
+        {
+            Error = FString::Printf(
+                TEXT("asset_import [HAI_FILE_REJECTED]: source size must be 1..%lld bytes for this asset_type"), MaxBytes);
+            return false;
+        }
 
         FString FinalSource;
         if (!WinFinalPath(FileHandle, FinalSource)
@@ -1193,6 +1367,37 @@ public:
         {
             Error = TEXT("asset_import [HAI_FILE_REJECTED]: pinned source header could not be read completely");
             return false;
+        }
+        return true;
+    }
+
+    /** Read Count bytes at Offset through the pinned handle (the glTF JSON). */
+    bool ReadRange(int64 Offset, int64 Count, TArray<uint8>& Out, FString& Error) const
+    {
+        if (Offset < 0 || Count <= 0 || Count > MAX_int32 || Offset + Count > FileBytes)
+        {
+            Error = TEXT("asset_import [HAI_FILE_REJECTED]: requested range is outside the pinned source");
+            return false;
+        }
+        Out.SetNumUninitialized(static_cast<int32>(Count));
+        LARGE_INTEGER Start;
+        Start.QuadPart = Offset;
+        if (!SetFilePointerEx(FileHandle, Start, nullptr, FILE_BEGIN))
+        {
+            Error = TEXT("asset_import [HAI_FILE_REJECTED]: pinned source could not be positioned");
+            return false;
+        }
+        int64 Done = 0;
+        while (Done < Count)
+        {
+            DWORD Got = 0;
+            const DWORD Want = static_cast<DWORD>(FMath::Min<int64>(Count - Done, 16 * 1024 * 1024));
+            if (!ReadFile(FileHandle, Out.GetData() + Done, Want, &Got, nullptr) || Got == 0)
+            {
+                Error = TEXT("asset_import [HAI_FILE_REJECTED]: pinned source could not be read completely");
+                return false;
+            }
+            Done += Got;
         }
         return true;
     }
@@ -1376,6 +1581,159 @@ UFactory* CreatePinnedImportFactory(
 }
 }
 
+#if PLATFORM_WINDOWS
+/** glTF/GLB under the approved policy: a TrustedImportRoots source (settings only, never the
+ *  request), every referenced buffer and texture pinned under the .gltf's own folder, a
+ *  new-or-empty destination folder, the project's Interchange asset pipeline through one
+ *  synchronous automated task, and verification by folder readback. */
+static FHaybaHandlerResult ImportGltf(const HaybaAssetImport::FRequest& Request)
+{
+    using namespace HaybaAssetImport;
+    FString Error;
+
+    FString Root;
+    for (FString Candidate : GetDefault<UHaybaMCPDeveloperSettings>()->TrustedImportRoots)
+    {
+        FPaths::NormalizeFilename(Candidate);
+        Candidate.RemoveFromEnd(TEXT("/"));
+        if (Candidate.Len() > 3 && Request.SourceFile.StartsWith(Candidate + TEXT("/"), ESearchCase::IgnoreCase))
+        {
+            Root = Candidate;
+            break;
+        }
+    }
+    if (Root.IsEmpty())
+        return AssetImportPreflightFailure(TEXT("HAI_AUTHORITY_REJECTED"),
+            TEXT("asset_import [HAI_AUTHORITY_REJECTED]: glTF/GLB is read only from a TrustedImportRoots folder (Project Settings > Hayba MCP Toolkit > Security); this source is not under one"),
+            TEXT("policy_blocked"));
+
+    FWinAssetSourceLease Source;
+    if (!Source.OpenUnder(Request.SourceFile, Root, 1, MaxFileBytesForKind(Request.Kind), Error))
+        return AssetImportPreflightFailure(AssetImportCodeFromError(Error, TEXT("HAI_AUTHORITY_REJECTED")), Error, TEXT("policy_blocked"));
+    TArray<uint8> Header;
+    if (!Source.ReadHeader(Header, Error) || !ValidateFileHeader(Request.Kind, Header, Source.GetFileBytes(), Error))
+        return AssetImportPreflightFailure(AssetImportCodeFromError(Error, TEXT("HAI_FORMAT_REJECTED")), Error, TEXT("policy_blocked"));
+
+    TArray<uint8> JsonBytes;
+    uint32 GlbJsonBytes = 0;
+    const bool bRead = Request.Kind == EKind::StaticMeshGlb
+        ? ValidateGlbHeader(Header, Source.GetFileBytes(), GlbJsonBytes, Error) && Source.ReadRange(20, GlbJsonBytes, JsonBytes, Error)
+        : Source.ReadRange(0, Source.GetFileBytes(), JsonBytes, Error);
+    if (!bRead)
+        return AssetImportPreflightFailure(AssetImportCodeFromError(Error, TEXT("HAI_FILE_REJECTED")), Error, TEXT("policy_blocked"));
+    const FUTF8ToTCHAR Converted(reinterpret_cast<const ANSICHAR*>(JsonBytes.GetData()), JsonBytes.Num());
+    const FString JsonText(Converted.Length(), Converted.Get());
+    TArray<FString> Uris;
+    if (!ValidateGltfJson(JsonText, Uris, Error))
+        return AssetImportPreflightFailure(TEXT("HAI_FORMAT_REJECTED"), Error, TEXT("policy_blocked"));
+
+    // Pin what the importer will read next to the .gltf, so nothing is swapped mid-import.
+    const FString Dir = FPaths::GetPath(Request.SourceFile);
+    TArray<TUniquePtr<FWinAssetSourceLease>> Referenced;
+    int64 TotalBytes = Source.GetFileBytes();
+    for (const FString& Uri : Uris)
+    {
+        TUniquePtr<FWinAssetSourceLease> Lease = MakeUnique<FWinAssetSourceLease>();
+        if (!Lease->OpenUnder(Dir / Uri, Dir, 1, MaxGltfFileBytes, Error))
+            return AssetImportPreflightFailure(AssetImportCodeFromError(Error, TEXT("HAI_FILE_REJECTED")),
+                FString::Printf(TEXT("%s (referenced file '%s')"), *Error, *Uri), TEXT("policy_blocked"));
+        TotalBytes += Lease->GetFileBytes();
+        if (TotalBytes > MaxGltfTotalBytes)
+            return AssetImportPreflightFailure(TEXT("HAI_FILE_REJECTED"),
+                TEXT("asset_import [HAI_FILE_REJECTED]: the glTF and its referenced files exceed 1 GiB together"), TEXT("policy_blocked"));
+        Referenced.Add(MoveTemp(Lease));
+    }
+
+    FAssetRegistryModule* RegistryModule = FModuleManager::LoadModulePtr<FAssetRegistryModule>(TEXT("AssetRegistry"));
+    if (!RegistryModule || RegistryModule->Get().IsLoadingAssets())
+        return AssetImportPreflightFailure(TEXT("HAI_REGISTRY_BUSY"),
+            TEXT("asset_import [HAI_REGISTRY_BUSY]: AssetRegistry is unavailable or still discovering assets; retry after it is ready"), TEXT("retryable"));
+    IAssetRegistry& Registry = RegistryModule->Get();
+
+    // glTF asset names come from inside the file, so the only honest no-overwrite
+    // guarantee is a destination that holds nothing, in the registry or on disk.
+    TArray<FAssetData> Existing;
+    Registry.GetAssetsByPath(FName(*Request.DestinationPath), Existing, /*bRecursive*/ true);
+    TArray<FString> OnDisk;
+    FString DestDir;
+    if (FPackageName::TryConvertLongPackageNameToFilename(Request.DestinationPath + TEXT("/"), DestDir))
+        IFileManager::Get().FindFilesRecursive(OnDisk, *DestDir, TEXT("*.uasset"), true, false);
+    if (Existing.Num() > 0 || OnDisk.Num() > 0)
+        return AssetImportPreflightFailure(TEXT("HAI_COLLISION"), FString::Printf(
+            TEXT("asset_import [HAI_COLLISION]: %s is not empty; glTF imports go into a new or empty folder so nothing can be overwritten. Skipped."),
+            *Request.DestinationPath));
+
+    FAssetToolsModule* AssetToolsModule = FModuleManager::LoadModulePtr<FAssetToolsModule>(TEXT("AssetTools"));
+    if (!AssetToolsModule)
+        return AssetImportPreflightFailure(TEXT("HAI_MODULE_UNAVAILABLE"),
+            TEXT("asset_import [HAI_MODULE_UNAVAILABLE]: AssetTools module is unavailable; no import was started"), TEXT("retryable"));
+    TStrongObjectPtr<UAssetImportTask> Task(NewObject<UAssetImportTask>(GetTransientPackage()));
+    Task->Filename = Request.SourceFile;
+    Task->DestinationPath = Request.DestinationPath;
+    Task->bAutomated = true;
+    Task->bReplaceExisting = false;
+    Task->bReplaceExistingSettings = false;
+    Task->bSave = false;
+    Task->bAsync = false;
+    if (!Source.Recheck(Error))
+        return AssetImportPreflightFailure(TEXT("HAI_IDENTITY_CHANGED"), Error, TEXT("policy_blocked"));
+
+    AssetToolsModule->Get().ImportAssetTasks({ Task.Get() });
+
+    FString PostError;
+    bool bStable = Source.Recheck(PostError);
+    for (const TUniquePtr<FWinAssetSourceLease>& Lease : Referenced) bStable = Lease->Recheck(PostError) && bStable;
+
+    TArray<FAssetData> After;
+    Registry.GetAssetsByPath(FName(*Request.DestinationPath), After, /*bRecursive*/ true);
+    TArray<TSharedPtr<FJsonValue>> Created, Meshes, Materials, Textures, Unexpected;
+    for (const FAssetData& A : After)
+    {
+        const FString Path = A.GetObjectPathString();
+        const FString Class = A.AssetClassPath.GetAssetName().ToString();
+        TSharedPtr<FJsonObject> Item = MakeShared<FJsonObject>();
+        Item->SetStringField(TEXT("path"), Path);
+        Item->SetStringField(TEXT("class"), Class);
+        Created.Add(MakeShared<FJsonValueObject>(Item));
+        if (A.AssetClassPath == UStaticMesh::StaticClass()->GetClassPathName()) Meshes.Add(MakeShared<FJsonValueString>(Path));
+        else if (Class.StartsWith(TEXT("Material"))) Materials.Add(MakeShared<FJsonValueString>(Path));
+        else if (Class.StartsWith(TEXT("Texture"))) Textures.Add(MakeShared<FJsonValueString>(Path));
+        else Unexpected.Add(MakeShared<FJsonValueObject>(Item));
+    }
+
+    const bool bOk = bStable && Meshes.Num() > 0 && Unexpected.Num() == 0;
+    TSharedPtr<FJsonObject> Out = MakeAssetImportState(
+        bOk,
+        bOk ? TEXT("HAI_IMPORTED") : (bStable ? TEXT("HAI_READBACK_MISMATCH") : TEXT("HAI_IDENTITY_CHANGED")),
+        bOk ? FString() : (bStable
+            ? FString::Printf(TEXT("asset_import [HAI_READBACK_MISMATCH]: expected only static meshes, materials and textures; got %d mesh(es) and %d other asset(s). Inspect created[] before retrying."), Meshes.Num(), Unexpected.Num())
+            : PostError),
+        TEXT("verify"),
+        bOk ? TEXT("applied_unsaved") : (Created.Num() > 0 ? TEXT("partially_applied") : TEXT("unknown")));
+    Out->SetStringField(TEXT("asset_type"), Request.AssetType);
+    Out->SetStringField(TEXT("factory"), TEXT("Interchange (project default asset pipeline)"));
+    Out->SetNumberField(TEXT("source_size_bytes"), static_cast<double>(TotalBytes));
+    Out->SetNumberField(TEXT("referenced_files"), Referenced.Num());
+    if (Meshes.Num() > 0) Out->SetStringField(TEXT("path"), Meshes[0]->AsString());
+    Out->SetArrayField(TEXT("static_meshes"), Meshes);
+    Out->SetArrayField(TEXT("materials"), Materials);
+    Out->SetArrayField(TEXT("textures"), Textures);
+    Out->SetArrayField(TEXT("created"), Created);
+    Out->SetArrayField(TEXT("unexpected"), Unexpected);
+    Out->SetNumberField(TEXT("succeeded"), bOk ? Created.Num() : 0);
+    Out->SetBoolField(TEXT("verified"), bOk);
+    Out->SetBoolField(TEXT("readback_verified"), bOk);
+    Out->SetBoolField(TEXT("partial"), !bOk && Created.Num() > 0);
+    Out->SetBoolField(TEXT("unknown_outcome"), !bOk);
+    if (!bOk) Out->SetStringField(TEXT("failure_kind"), bStable ? TEXT("unknown_outcome") : TEXT("session_suspect"));
+    Out->SetArrayField(TEXT("warnings"), {
+        MakeShared<FJsonValueString>(TEXT("Trusted-root and reference checks do not prove a crafted file safe for the in-process importer; only import files you produced.")),
+        MakeShared<FJsonValueString>(TEXT("Nothing is on disk yet: call asset_save with the created paths.")),
+    });
+    return FHaybaHandlerResult::Ok(Out);
+}
+#endif
+
 /** A skeletal import creates a set of assets whose names depend on the file's takes and
  *  materials, so it is verified by what appeared in the folder, never by the returned
  *  pointers (import callbacks may invalidate those). */
@@ -1479,6 +1837,9 @@ FHaybaHandlerResult FHaybaMCPAssetHandler::AssetImport(const TSharedPtr<FJsonObj
         TEXT("asset_import [HAI_PLATFORM_UNSUPPORTED]: this platform cannot provide the required no-follow pinned-handle authority; no import was started"),
         TEXT("policy_blocked"));
 #else
+    // glTF reads several files from a trusted root, not one file from the connector cache.
+    if (Request.Kind == EKind::StaticMeshGltf || Request.Kind == EKind::StaticMeshGlb) return ImportGltf(Request);
+
     FWinAssetSourceLease SourceLease;
     if (!SourceLease.Open(Request, Error))
         return AssetImportPreflightFailure(
@@ -2005,6 +2366,12 @@ FHaybaHandlerResult FHaybaMCPAssetHandler::AssetValidate(const TSharedPtr<FJsonO
     return FHaybaHandlerResult::Ok(Out);
 }
 
+// Why a rename or move can be refused: Handle() answers engine prompts with their default instead of opening them.
+static const TCHAR* RenameRefusedHint = TEXT("Nothing was renamed. The engine refused it; see the Output Log (LogAssetTools). ")
+    TEXT("Hayba answers engine prompts with their default rather than open a dialog on the game thread, so a rename the ")
+    TEXT("engine wants confirmed (the asset is referenced by native code or config: 'Continue with rename?'; a read-only ")
+    TEXT("or checked-out file) is refused instead of waiting for a click.");
+
 FHaybaHandlerResult FHaybaMCPAssetHandler::AssetRename(const TSharedPtr<FJsonObject>& P)
 {
     FString Path, NewName;
@@ -2023,7 +2390,7 @@ FHaybaHandlerResult FHaybaMCPAssetHandler::AssetRename(const TSharedPtr<FJsonObj
 
     bool bRenamed = UEditorAssetLibrary::RenameAsset(Path, NewPath);
     if (!bRenamed)
-        return FHaybaHandlerResult::Err(FString::Printf(TEXT("asset_rename: RenameAsset failed (%s -> %s)"), *Path, *NewPath));
+        return FHaybaHandlerResult::Err(FString::Printf(TEXT("asset_rename: RenameAsset failed (%s -> %s). %s"), *Path, *NewPath, RenameRefusedHint));
 
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
     Out->SetStringField(TEXT("old_path"), Path);
@@ -2062,16 +2429,33 @@ FHaybaHandlerResult FHaybaMCPAssetHandler::AssetMove(const TSharedPtr<FJsonObjec
     Out->SetBoolField(TEXT("ok"), bOk);
     Out->SetStringField(TEXT("old_path"), Path);
     Out->SetStringField(TEXT("new_path"), NewPackage);
-    if (!bOk) return FHaybaHandlerResult::Err(FString::Printf(TEXT("asset_move: RenameAssets failed (%s)"), *Path));
+    if (!bOk) return FHaybaHandlerResult::Err(FString::Printf(TEXT("asset_move: RenameAssets failed (%s). %s"), *Path, RenameRefusedHint));
     return FHaybaHandlerResult::Ok(Out);
 }
 
+// Re-point everything that references a redirector at its target, then delete the redirectors nothing references
+// any more (unreferenced:"delete", the default) or leave them in place ("keep").
+//
+// This deliberately does not call IAssetTools::FixupReferencers. In UE 5.8 that always ends in the modal
+// "Redirector Update Report", whatever ERedirectFixupMode says, which held the shared editor's game thread until
+// someone clicked it; with GIsRunningUnattendedScript set the report is cancelled instead and its unset result trips a
+// check. What follows is that function's work without its dialogs: load the referencers, fix their soft paths, save
+// them, confirm on the registry that nothing references the redirector any more, then delete it.
 FHaybaHandlerResult FHaybaMCPAssetHandler::AssetFixRedirectors(const TSharedPtr<FJsonObject>& P)
 {
     FString Path = TEXT("/Game");
     P->TryGetStringField(TEXT("path"), Path);
+    FString Unreferenced = TEXT("delete");
+    P->TryGetStringField(TEXT("unreferenced"), Unreferenced);
+    if (Unreferenced != TEXT("delete") && Unreferenced != TEXT("keep"))
+        return FHaybaHandlerResult::Err(TEXT("asset_fix_redirectors: unreferenced must be \"delete\" (the default) or \"keep\". Nothing was changed."));
+    const bool bDelete = Unreferenced == TEXT("delete");
+    if (GEditor && GEditor->IsPlaySessionInProgress())
+        return FHaybaHandlerResult::Err(TEXT("asset_fix_redirectors: a Play-In-Editor session is running; stop it first. Nothing was changed."));
 
     IAssetRegistry& Reg = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry").Get();
+    if (Reg.IsLoadingAssets())
+        return FHaybaHandlerResult::Err(TEXT("asset_fix_redirectors: the asset registry is still discovering assets, so referencers are not known yet; retry when it finishes. Nothing was changed."));
     FARFilter Filter;
     Filter.bRecursivePaths = true;
     Filter.bRecursiveClasses = true;
@@ -2080,19 +2464,167 @@ FHaybaHandlerResult FHaybaMCPAssetHandler::AssetFixRedirectors(const TSharedPtr<
     TArray<FAssetData> Redirectors;
     Reg.GetAssets(Filter, Redirectors);
 
-    TArray<UObjectRedirector*> Objs;
-    for (const FAssetData& AD : Redirectors)
-        if (UObjectRedirector* R = Cast<UObjectRedirector>(AD.GetAsset())) Objs.Add(R);
-
-    if (Objs.Num() > 0)
+    struct FFound
     {
-        FAssetToolsModule& M = FModuleManager::LoadModuleChecked<FAssetToolsModule>("AssetTools");
-        M.Get().FixupReferencers(Objs);
+        TStrongObjectPtr<UObjectRedirector> Object;
+        FString Path;
+        FName Package;
+        TSharedPtr<FJsonObject> Entry;
+    };
+    TArray<FFound> Found;
+    for (const FAssetData& AD : Redirectors)
+    {
+        if (UObjectRedirector* R = Cast<UObjectRedirector>(AD.GetAsset()))
+        {
+            FFound& F = Found.AddDefaulted_GetRef();
+            F.Object.Reset(R);
+            F.Path = AD.GetObjectPathString();
+            F.Package = AD.PackageName;
+        }
+    }
+
+    // Load every referencing package. Failures are kept per package and reported against each redirector it blocks.
+    TMap<FName, UPackage*> ToSave;
+    TMap<FName, FString> Blocked;
+    TArray<TWeakObjectPtr<UPackage>> LoadedHere;
+    TMap<FSoftObjectPath, FSoftObjectPath> SoftRedirects;
+    TArray<FString> ScanPaths;
+    for (FFound& F : Found)
+    {
+        UObject* Target = F.Object->DestinationObject;
+        F.Entry = MakeShared<FJsonObject>();
+        F.Entry->SetStringField(TEXT("redirector"), F.Path);
+        F.Entry->SetStringField(TEXT("target"), Target ? Target->GetPathName() : FString());
+        if (!Target) continue;  // a broken redirector: re-pointing its referencers would point them at nothing
+        const FSoftObjectPath From(F.Object.Get()), To(Target);
+        SoftRedirects.Add(From, To);
+        if (Cast<UBlueprint>(Target))
+        {
+            SoftRedirects.Add(FSoftObjectPath(From.ToString() + TEXT("_C")), FSoftObjectPath(To.ToString() + TEXT("_C")));
+            SoftRedirects.Add(FSoftObjectPath(FString::Printf(TEXT("%s.Default__%s_C"), *From.GetLongPackageName(), *From.GetAssetName())),
+                FSoftObjectPath(FString::Printf(TEXT("%s.Default__%s_C"), *To.GetLongPackageName(), *To.GetAssetName())));
+        }
+        ScanPaths.AddUnique(FPackageName::GetLongPackagePath(F.Package.ToString()) / TEXT(""));
+
+        TArray<FName> Referencers;
+        Reg.GetReferencers(F.Package, Referencers);
+        F.Entry->SetNumberField(TEXT("referencer_count"), Referencers.Num());
+        for (const FName Ref : Referencers)
+        {
+            ScanPaths.AddUnique(FPackageName::GetLongPackagePath(Ref.ToString()) / TEXT(""));
+            if (ToSave.Contains(Ref) || Blocked.Contains(Ref)) continue;
+            UPackage* Pkg = FindPackage(nullptr, *Ref.ToString());
+            if (!Pkg && (Pkg = LoadPackage(nullptr, *Ref.ToString(), LOAD_None)) != nullptr) LoadedHere.Add(Pkg);
+            FString File;
+            if (!Pkg) Blocked.Add(Ref, TEXT("could not be loaded"));
+            else if (Pkg->HasAnyPackageFlags(PKG_CompiledIn)) Blocked.Add(Ref, TEXT("is native code; change the reference in source"));
+            else if (FPackageName::DoesPackageExist(Ref.ToString(), &File) && IFileManager::Get().IsReadOnly(*File))
+                Blocked.Add(Ref, TEXT("its file is read-only (locked by source control or LFS?)"));
+            else ToSave.Add(Ref, Pkg);
+        }
+    }
+
+    // As the engine does: keep the loaded referencers' objects alive until they are saved.
+    TArray<UPackage*> Packages;
+    ToSave.GenerateValueArray(Packages);
+    TArray<TStrongObjectPtr<UObject>> Rooted;
+    for (UPackage* Pkg : Packages)
+    {
+        ForEachObjectWithPackage(Pkg, [&Rooted](UObject* Object) { Rooted.Emplace(Object); return true; },
+            EGetObjectsFlags::None, RF_Standalone, EInternalObjectFlags::RootSet);
+    }
+    // Soft paths only in the packages saved below; the engine also rewrites every dirty package, which would dirty
+    // other agents' unsaved work without saving it.
+    if (Packages.Num() > 0) IAssetTools::Get().RenameReferencingSoftObjectPaths(Packages, SoftRedirects);
+
+    TArray<FString> Saved;
+    {
+        // As level_save does: a failed save reports instead of opening a dialog on the game thread.
+        TGuardValue<bool> UnattendedSave(GIsRunningUnattendedScript, true);
+        for (const TPair<FName, UPackage*>& It : ToSave)
+        {
+            if (UEditorLoadingAndSavingUtils::SavePackages({ It.Value }, /*bOnlyDirty=*/false)) Saved.Add(It.Key.ToString());
+            else Blocked.Add(It.Key, TEXT("failed to save; see the Output Log"));
+        }
+    }
+    Rooted.Empty();
+    Reg.ScanPathsSynchronous(ScanPaths, /*bForceRescan=*/true);
+
+    // Fixed means the registry, rescanned after the saves, shows nothing referencing the redirector any more.
+    int32 FixedCount = 0;
+    TArray<UObject*> ToDelete;
+    for (FFound& F : Found)
+    {
+        if (!F.Object->DestinationObject)
+        {
+            F.Entry->SetBoolField(TEXT("fixed"), false);
+            F.Entry->SetStringField(TEXT("reason"), TEXT("points at nothing (its target is missing); left alone"));
+            continue;
+        }
+        TArray<FName> Still;
+        Reg.GetReferencers(F.Package, Still);
+        F.Entry->SetBoolField(TEXT("fixed"), Still.Num() == 0);
+        if (Still.Num() > 0)
+        {
+            TArray<TSharedPtr<FJsonValue>> Why;
+            for (const FName Ref : Still)
+            {
+                const FString* Reason = Blocked.Find(Ref);
+                Why.Add(MakeShared<FJsonValueString>(Ref.ToString() + TEXT(": ") + (Reason ? *Reason : FString(TEXT("still references it after saving")))));
+            }
+            F.Entry->SetArrayField(TEXT("still_referenced_by"), Why);
+            continue;
+        }
+        ++FixedCount;
+        if (!bDelete) continue;
+        // The engine's delete set: every redirector in the package, and the package itself when nothing else is in it.
+        UPackage* Pkg = F.Object->GetOutermost();
+        bool bOtherAsset = false;
+        ForEachObjectWithOuter(Pkg, [&ToDelete, &bOtherAsset](UObject* Object)
+        {
+            if (UObjectRedirector* R = Cast<UObjectRedirector>(Object)) { R->RemoveFromRoot(); ToDelete.AddUnique(R); }
+            else bOtherAsset = true;
+        });
+        if (!bOtherAsset) { Pkg->RemoveFromRoot(); ToDelete.AddUnique(Pkg); }
+    }
+    for (FFound& F : Found) F.Object.Reset();  // as the engine does, drop our references before deleting
+    if (ToDelete.Num() > 0) ObjectTools::DeleteObjects(ToDelete, /*bShowConfirmation=*/false);
+
+    int32 DeletedCount = 0;
+    TArray<TSharedPtr<FJsonValue>> Report;
+    for (const FFound& F : Found)
+    {
+        const FString File = PackageFileOnDisk(F.Path);
+        const bool bGone = !File.IsEmpty() && !IFileManager::Get().FileExists(*File);
+        DeletedCount += bGone;
+        F.Entry->SetBoolField(TEXT("deleted"), bGone);
+        Report.Add(MakeShared<FJsonValueObject>(F.Entry));
     }
 
     auto Out = MakeShared<FJsonObject>();
-    Out->SetNumberField(TEXT("fixed_count"), Objs.Num());
+    // Unload what this call loaded, as the engine does; its error goes in the reply instead of a dialog.
+    TArray<UPackage*> Unload;
+    for (const TWeakObjectPtr<UPackage>& Pkg : LoadedHere) if (Pkg.IsValid()) Unload.Add(Pkg.Get());
+    FText UnloadError;
+    if (Unload.Num() > 0 && !UPackageTools::UnloadPackages(Unload, UnloadError, /*bUnloadDirtyPackages=*/true))
+        Out->SetStringField(TEXT("unload_warning"), UnloadError.ToString());
+
     Out->SetStringField(TEXT("path"), Path);
+    Out->SetStringField(TEXT("unreferenced"), bDelete ? TEXT("delete") : TEXT("keep"));
+    Out->SetNumberField(TEXT("redirector_count"), Found.Num());
+    Out->SetNumberField(TEXT("fixed_count"), FixedCount);
+    Out->SetNumberField(TEXT("deleted_count"), DeletedCount);
+    Out->SetNumberField(TEXT("kept_count"), Found.Num() - DeletedCount);
+    TArray<TSharedPtr<FJsonValue>> SavedJson;
+    for (const FString& S : Saved) SavedJson.Add(MakeShared<FJsonValueString>(S));
+    Out->SetArrayField(TEXT("saved_packages"), SavedJson);
+    Out->SetArrayField(TEXT("redirectors"), Report);
+    const bool bAllDone = FixedCount == Found.Num() && (!bDelete || DeletedCount == Found.Num());
+    Out->SetBoolField(TEXT("ok"), bAllDone);
+    if (!bAllDone)
+        Out->SetStringField(TEXT("warning"), FString::Printf(
+            TEXT("%d of %d redirectors were not fixed, and %d fixed ones are still on disk; see still_referenced_by / reason per redirector, and the Output Log."),
+            Found.Num() - FixedCount, Found.Num(), bDelete ? FixedCount - DeletedCount : 0));
     return FHaybaHandlerResult::Ok(Out);
 }
 
@@ -2202,15 +2734,20 @@ FHaybaHandlerResult FHaybaMCPAssetHandler::AssetGetReferencers(const TSharedPtr<
 // ---------------------------------------------------------------------------
 FHaybaHandlerResult FHaybaMCPAssetHandler::AssetSave(const TSharedPtr<FJsonObject>& P)
 {
+    const FString BadParams = HaybaUnknownParamsError(P, TEXT("asset_save"), { TEXT("asset_paths"), TEXT("force") });
+    if (!BadParams.IsEmpty()) return FHaybaHandlerResult::Err(BadParams);
     FHaybaParamReader R(P, TEXT("asset_save"));
     const TArray<TSharedPtr<FJsonValue>>* Paths = R.RequiredArray(TEXT("asset_paths"), 1, 64);
+    // Some editor-Python edits (AnimationLibrary notify tracks and events) leave the package clean, so a
+    // dirty-only save skipped them and the edit never reached disk.
+    const bool bForce = R.OptionalBool(TEXT("force"), false);
     if (R.HasErrors()) return FHaybaHandlerResult::Err(R.ErrorMessage());
     if (GEditor && GEditor->IsPlaySessionInProgress())
         return FHaybaHandlerResult::Err(TEXT("asset_save: a Play-In-Editor session is running; stop it first. Nothing was saved."));
     if (UE::IsSavingPackage() || IsGarbageCollecting())
         return FHaybaHandlerResult::Err(TEXT("asset_save: the editor is already saving or collecting garbage; retry in a moment. Nothing was saved."));
 
-    TArray<TSharedPtr<FJsonValue>> Saved, Skipped, Failed;
+    TArray<TSharedPtr<FJsonValue>> Saved, Skipped, Failed, NotDirty;
     auto Note = [](TArray<TSharedPtr<FJsonValue>>& List, const FString& Path, const FString& Reason)
     {
         TSharedPtr<FJsonObject> Entry = MakeShared<FJsonObject>();
@@ -2234,7 +2771,12 @@ FHaybaHandlerResult FHaybaMCPAssetHandler::AssetSave(const TSharedPtr<FJsonObjec
         UPackage* Package = FindPackage(nullptr, *PackageName);
         if (!Package) { Note(Skipped, Path, TEXT("not loaded, so nothing in memory to save")); continue; }
         if (Package->ContainsMap()) { Note(Failed, Path, TEXT("is a map; save levels with level_save")); continue; }
-        if (!Package->IsDirty()) { Note(Skipped, Path, TEXT("already saved (not dirty)")); continue; }
+        if (!bForce && !Package->IsDirty())
+        {
+            Note(Skipped, Path, TEXT("not dirty, so not saved; pass force:true if it was changed by something that does not mark packages dirty"));
+            NotDirty.Add(MakeShared<FJsonValueString>(Path));
+            continue;
+        }
 
         // A Blueprint mid-compile would serialize a half-built class.
         bool bCompiling = false;
@@ -2281,6 +2823,7 @@ FHaybaHandlerResult FHaybaMCPAssetHandler::AssetSave(const TSharedPtr<FJsonObjec
     Out->SetArrayField(TEXT("saved"), Saved);
     Out->SetNumberField(TEXT("saved_count"), Saved.Num());
     Out->SetArrayField(TEXT("skipped"), Skipped);
+    Out->SetArrayField(TEXT("skipped_not_dirty"), NotDirty);
     Out->SetArrayField(TEXT("failed"), Failed);
     Out->SetBoolField(TEXT("verified"), Failed.Num() == 0);
     return FHaybaHandlerResult::Ok(Out);

@@ -19,6 +19,18 @@ import {
   lightingPyDescriptors,
   LIGHTING_NON_IDEMPOTENT,
 } from './lighting-py-tools.js';
+import { scanPythonForCrashers } from '../guards/known-crashers.js';
+
+// Native python_run refuses any try or with statement (HCR-TIME-001). Strings and comments are removed first, as the
+// native lexer only looks at identifiers (same check as actor-py-no-try.test.ts).
+function refusedStatement(script: string): string | null {
+  const code = script
+    .replace(/"""[\s\S]*?"""|'''[\s\S]*?'''/g, '""')
+    .replace(/"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'/g, '""')
+    .replace(/#.*$/gm, '');
+  const m = code.match(/(?:^|[\s;:])(try|with)\b/m);
+  return m ? m[1]! : null;
+}
 
 // Canned-stdout sender driving the HAYBA_JSON parse path; captures the last script
 // so we can assert on generated python (mirrors foliage-py-tools.test.ts).
@@ -90,7 +102,7 @@ describe('postprocess_get', () => {
     setDefaultSender(sender);
     await makePyToolHandler(postprocessGetDescriptor)({});
     const s = lastScript();
-    expect(s).toContain('_resolve_ppv');
+    expect(s).toContain('_find_ppv');
     expect(s).toContain('"override_" + f');
     expect(s).toContain('overrides');
   });
@@ -273,7 +285,7 @@ describe('lighting-domain factory catalog', () => {
     );
   });
 
-  it('every generated script carries the _err path', async () => {
+  it('no generated script is refused by python_run policy (try/with, getattr and friends)', async () => {
     for (const d of lightingPyDescriptors) {
       const { sender, lastScript } = mockStdout(emit({ ok: true }));
       setDefaultSender(sender);
@@ -287,7 +299,9 @@ describe('lighting-domain factory catalog', () => {
       if (d.name === 'fog_configure') params.density = 1;
       if (d.name === 'light_spawn') params.light_type = 'point';
       await makePyToolHandler(d)(params);
-      expect(lastScript()).toContain('_err(_e)');
+      const s = lastScript();
+      expect(refusedStatement(s), d.name).toBeNull();
+      expect(scanPythonForCrashers(s), d.name).toBeNull();
     }
   });
 });

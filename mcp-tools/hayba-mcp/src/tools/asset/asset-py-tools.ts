@@ -47,11 +47,13 @@
 // (pure UI focus) and asset_get_source_path (read) are all retry-safe — none
 // creates or appends, so none is added to tool-executor's NON_IDEMPOTENT set.
 //
-// UNCERTAIN-API flags for the next live-validation pass (all wrapped defensively
-// so they degrade to a structured error rather than a silent wrong answer):
+// UNCERTAIN-API flags for the next live-validation pass (no try/with, native
+// policy HCR-TIME-001: probes are hasattr-gated, anything else propagates):
 //   - asset_get_source_path: the AssetImportData accessor varies by asset type
 //     (get_first_filename / extract_filenames / source_data.source_files); all
 //     shapes are probed, degrading to source_paths:[] when none is present.
+//     Whether the class has asset_import_data at all is read from the
+//     AssetImportData asset-registry tag (AssetData.get_tag_value).
 
 import { z } from 'zod';
 import type { HaybaToolMeta } from '../hayba-tool-meta.js';
@@ -88,14 +90,9 @@ export type AssetCreateFolderParams = z.infer<typeof assetCreateFolderSchema>;
 function assetCreateFolderScript(p: AssetCreateFolderParams): string {
   return [
     `_path = ${pyStr(p.path)}`,
-    'try:',
-    '    existed = False',
-    '    try: existed = unreal.EditorAssetLibrary.does_directory_exist(_path)',
-    '    except Exception: pass',
-    '    created = unreal.EditorAssetLibrary.make_directory(_path)',
-    '    _emit({"ok": True, "path": _path, "created": bool(created), "already_existed": bool(existed)})',
-    'except Exception as _e:',
-    '    _err(_e)',
+    'existed = unreal.EditorAssetLibrary.does_directory_exist(_path)',
+    'created = unreal.EditorAssetLibrary.make_directory(_path)',
+    '_emit({"ok": True, "path": _path, "created": bool(created), "already_existed": bool(existed)})',
   ].join('\n');
 }
 
@@ -158,32 +155,26 @@ export type AssetGetSourcePathParams = z.infer<typeof assetGetSourcePathSchema>;
 function assetGetSourcePathScript(p: AssetGetSourcePathParams): string {
   return [
     `_path = ${pyStr(p.asset_path)}`,
-    'try:',
-    '    obj = unreal.EditorAssetLibrary.load_asset(_path)',
-    '    if obj is None: raise Exception("asset not found: %s" % _path)',
-    '    aid = None',
-    '    try: aid = obj.get_editor_property("asset_import_data")',
-    '    except Exception: aid = None',
+    'obj = unreal.EditorAssetLibrary.load_asset(_path) if unreal.EditorAssetLibrary.does_asset_exist(_path) else None',
+    'if obj is None:',
+    '    _err("asset not found: %s" % _path)',
+    'else:',
+    // asset_import_data is editor-only (not a python attribute, so hasattr cannot see it) and
+    // get_editor_property raises on classes without it; those classes publish no AssetImportData registry tag.
+    '    has_aid = unreal.EditorAssetLibrary.find_asset_data(_path).get_tag_value("AssetImportData") is not None',
+    '    aid = obj.get_editor_property("asset_import_data") if has_aid else None',
     '    sources = []',
     '    if aid is not None:',
     '        # Probe the several AssetImportData accessors seen across asset types.',
-    '        try:',
+    '        if hasattr(aid, "get_first_filename"):',
     '            fn = aid.get_first_filename()',
     '            if fn: sources.append(str(fn))',
-    '        except Exception: pass',
-    '        if not sources:',
-    '            try:',
-    '                for f in aid.extract_filenames(): sources.append(str(f))',
-    '            except Exception: pass',
-    '        if not sources:',
-    '            try:',
-    '                sd = aid.get_editor_property("source_data")',
-    '                for sf in sd.source_files: sources.append(str(sf.relative_filename))',
-    '            except Exception: pass',
+    '        if not sources and hasattr(aid, "extract_filenames"):',
+    '            for f in aid.extract_filenames(): sources.append(str(f))',
+    '        if not sources and hasattr(aid, "source_data"):',
+    '            for sf in aid.source_data.source_files: sources.append(str(sf.relative_filename))',
     '    _emit({"ok": True, "asset_path": _path, "has_import_data": aid is not None,',
     '           "source_paths": sources, "count": len(sources)})',
-    'except Exception as _e:',
-    '    _err(_e)',
   ].join('\n');
 }
 

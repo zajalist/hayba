@@ -2240,6 +2240,12 @@
           "name": "component_name",
           "type": "string",
           "required": true
+        },
+        {
+          "name": "parent",
+          "type": "string",
+          "required": false,
+          "description": "Scene component to attach under; default the existing scene root (it becomes the root only when the Blueprint has none)"
         }
       ],
       "returns": {
@@ -2248,7 +2254,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Add a component of a given class to a Blueprint's component tree. Changes are staged — blueprint_compile applies them, and nothing takes effect in the level until it does."
+      "notes": "Add a component of a given class to a Blueprint's component tree. A scene component attaches under `parent`, else under the existing scene root (never a second root); the reply has attached_to, became_root and the full hierarchy. Changes are staged — blueprint_compile applies them, and nothing takes effect in the level until it does."
     },
     "blueprint_add_variable": {
       "aliases": [],
@@ -2882,7 +2888,7 @@
           "name": "asset_type",
           "type": "string",
           "required": true,
-          "description": "Exact type intent: texture for PNG/JPEG, sound_wave for WAV, static_mesh or skeletal_mesh for binary FBX. glTF/GLB/OBJ/USD and dependency-reading formats are rejected."
+          "description": "Exact type intent: texture for PNG/JPEG, sound_wave for WAV, static_mesh or skeletal_mesh for binary FBX, static_mesh for .gltf/.glb. glTF/GLB is read only from a TrustedImportRoots folder (project settings), with every referenced buffer/texture a data: URI or a plain relative path below the .gltf, required extensions limited to KHR_materials_*/KHR_texture_transform/KHR_mesh_quantization, no skins or animations, and a new or empty destination_path. OBJ/USD and other dependency-reading formats are rejected."
         },
         {
           "name": "options",
@@ -3342,6 +3348,19 @@
           "type": "number",
           "required": false,
           "description": "Hold duration in ms before release"
+        },
+        {
+          "name": "modifiers",
+          "type": "array",
+          "required": false,
+          "description": "shift|ctrl|alt|cmd held for this input; default none (the live keyboard is never read)"
+        },
+        {
+          "name": "target",
+          "type": "string",
+          "required": false,
+          "default": "pie",
+          "description": "pie: focus the PIE game viewport first and refuse if it cannot; focused: whatever holds focus"
         }
       ],
       "returns": {
@@ -3409,6 +3428,12 @@
           "type": "number",
           "required": false,
           "description": "wheel notches for scroll (default 1, positive scrolls up)"
+        },
+        {
+          "name": "modifiers",
+          "type": "array",
+          "required": false,
+          "description": "shift|ctrl|alt|cmd held for this input; default none (the live keyboard is never read)"
         }
       ],
       "returns": {
@@ -3464,6 +3489,19 @@
           "type": "string",
           "required": true,
           "description": "text to type as character events (what text fields consume)"
+        },
+        {
+          "name": "modifiers",
+          "type": "array",
+          "required": false,
+          "description": "shift|ctrl|alt|cmd held for this input; default none (the live keyboard is never read)"
+        },
+        {
+          "name": "target",
+          "type": "string",
+          "required": false,
+          "default": "pie",
+          "description": "pie: focus the PIE game viewport first and refuse if it cannot; focused: whatever holds focus"
         }
       ],
       "returns": {
@@ -4094,15 +4132,33 @@
     },
     "audio_recording_start": {
       "aliases": [], "handler_cpp": "FHaybaMCPAudioHandler::Handle",
-      "params":[{"name":"submix_path","type":"string","required":false},{"name":"expected_duration","type":"number","required":false,"default":10}],
-      "returns":{"shape":"object","fields":[{"name":"submix","type":"string"},{"name":"expected_duration","type":"number"},{"name":"recording_state","type":"string"}]},
+      "params":[{"name":"submix_path","type":"string","required":false},{"name":"world","type":"string","required":false,"default":"auto","description":"auto|pie|editor: whose audio device"},{"name":"expected_duration","type":"number","required":false,"default":10}],
+      "returns":{"shape":"object","fields":[{"name":"submix","type":"string"},{"name":"world","type":"string"},{"name":"audio_device_id","type":"integer"},{"name":"expected_duration","type":"number"},{"name":"recording_state","type":"string"}]},
       "agent_callable":true,"has_ts_wrapper":true,"notes":"Starts tracked Audio Mixer capture of master or one submix; fails cleanly when Audio Mixer is unavailable."
     },
     "audio_recording_stop": {
       "aliases": [], "handler_cpp": "FHaybaMCPAudioHandler::Handle",
-      "params":[{"name":"submix_path","type":"string","required":false},{"name":"filename","type":"string","required":true},{"name":"relative_path","type":"string","required":false,"default":"","description":"Subfolder under Saved/BouncedWavFiles; absolute/.. rejected"}],
-      "returns":{"shape":"object","fields":[{"name":"submix","type":"string"},{"name":"recording_state","type":"string"},{"name":"wav_path","type":"string"},{"name":"sample_count","type":"integer"},{"name":"channel_count","type":"integer"},{"name":"sample_rate","type":"number"},{"name":"duration_seconds","type":"number"}]},
+      "params":[{"name":"submix_path","type":"string","required":false},{"name":"world","type":"string","required":false,"default":"auto","description":"auto|pie|editor: whose audio device"},{"name":"filename","type":"string","required":true},{"name":"relative_path","type":"string","required":false,"default":"","description":"Subfolder under Saved/BouncedWavFiles; absolute/.. rejected"}],
+      "returns":{"shape":"object","fields":[{"name":"submix","type":"string"},{"name":"recording_state","type":"string"},{"name":"wav_path","type":"string"},{"name":"sample_count","type":"integer"},{"name":"channel_count","type":"integer"},{"name":"sample_rate","type":"number"},{"name":"duration_seconds","type":"number"},{"name":"peak","type":"number"},{"name":"peak_dbfs","type":"number"},{"name":"rms","type":"number"},{"name":"silent","type":"boolean"},{"name":"world","type":"string"},{"name":"audio_device_id","type":"integer"}]},
       "agent_callable":true,"has_ts_wrapper":true,"notes":"Stops capture and uses UE's synchronous PCM writer. Zero samples, writer failure, or absent WAV is an outer command error."
+    },
+    "editor_set_background_audio": {
+      "aliases": [], "handler_cpp": "FHaybaMCPAudioHandler::Handle",
+      "params":[{"name":"enabled","type":"boolean","required":true},{"name":"unfocused_volume_multiplier","type":"number","required":false,"description":"0..1; default 1 when enabling, unchanged when disabling"}],
+      "returns":{"shape":"object","fields":[{"name":"enabled","type":"boolean"},{"name":"unfocused_volume_multiplier","type":"number"},{"name":"previous","type":"object"},{"name":"has_focus","type":"boolean"},{"name":"verified","type":"boolean"}]},
+      "agent_callable":true,"has_ts_wrapper":true,"notes":"Sets ULevelEditorMiscSettings bAllowBackgroundAudio and the FApp unfocused volume multiplier in memory (never saved to config) so an unfocused editor keeps rendering audio; returns previous for restore."
+    },
+    "editor_set_render_while_hidden": {
+      "aliases": [], "handler_cpp": "FHaybaMCPEditorHandler::Handle",
+      "params":[{"name":"allow","type":"boolean","required":true,"description":"true holds full-rate ticking for this owner; false releases this owner's hold"}],
+      "returns":{"shape":"object","fields":[{"name":"allow","type":"boolean"},{"name":"owner","type":"string"},{"name":"holders","type":"array"},{"name":"active","type":"boolean"},{"name":"previous_active","type":"boolean"},{"name":"throttled_now","type":"boolean"}]},
+      "agent_callable":true,"has_ts_wrapper":false,"notes":"Keeps a minimized or unfocused editor ticking at full rate instead of 3 fps (UEditorEngine::ShouldThrottleCPUUsage throttles whenever all windows are hidden), so PIE bursts on a background editor run at speed. Held per owner: the throttle override stays registered until every holder sends allow:false. Default off; in memory only. Turn it on for the burst and off after."
+    },
+    "editor_get_keyboard_focus": {
+      "aliases": [], "handler_cpp": "FHaybaMCPPIEHandler::Handle",
+      "params":[],
+      "returns":{"shape":"object","fields":[{"name":"pie_running","type":"boolean"},{"name":"widget_type","type":"string"},{"name":"widget_id","type":"string"},{"name":"widget_path","type":"string"},{"name":"window_title","type":"string"},{"name":"is_pie_viewport","type":"boolean"},{"name":"in_pie_viewport","type":"boolean"},{"name":"pie_viewport","type":"object"}]},
+      "agent_callable":true,"has_ts_wrapper":false,"notes":"Read-only: which Slate widget holds keyboard focus right now (type, parent chain, window) and whether it is the PIE game viewport or inside it. Check it before sending keys, or when a key appeared to do nothing, to tell input that reached the game from input that reached the editor."
     },
     "net_debug": {
       "aliases": [],
@@ -4719,6 +4775,9 @@
       "has_ts_wrapper": false,
       "notes": "Compiles an ANIMATION blueprint (ABP) — the animation state-machine asset, not an ordinary class. Reports the compiler errors and warnings. Every anim_blueprint_* write leaves the asset needing this, and an uncompiled ABP keeps running its previously generated class, so state-machine edits look like they did nothing."
     },
+    "anim_blueprint_add_node_function": {"aliases":[],"handler_cpp":"FHaybaMCPAnimationHandler::AddNodeFunction","params":[{"name":"path","type":"string","required":true,"description":"Object path of the anim blueprint"},{"name":"name","type":"string","required":true,"description":"Function name; a name the blueprint already uses is refused before anything is created"}],"returns":{"shape":"object","fields":[{"name":"function_name","type":"string"},{"name":"graph","type":"string"},{"name":"entry_node_id","type":"string"},{"name":"inputs","type":"array","description":"[{name, type, by_ref, const}]: Context (AnimUpdateContext) and Node (AnimNodeReference), both const by reference"},{"name":"thread_safe","type":"boolean"},{"name":"bindable","type":"boolean","description":"the compiled function matches Prototype_ThreadSafeAnimUpdateCall and is BlueprintThreadSafe"},{"name":"compiled","type":"boolean"},{"name":"error_count","type":"integer"},{"name":"warning_count","type":"integer"},{"name":"errors","type":"array"},{"name":"warnings","type":"array"},{"name":"verified","type":"boolean"},{"name":"dirty","type":"boolean"}]},"agent_callable":true,"has_ts_wrapper":false,"notes":"Creates an anim node function in an animation blueprint the way the details panel's Create Binding does: signature (const FAnimUpdateContext& Context, const FAnimNodeReference& Node) copied from the engine prototype, marked thread safe, then compiles. Bind it to a node's On Initial Update / On Become Relevant / On Update with anim_graph_node_bind_function; build its body with blueprint_add_node (graph_name = the function name), using thread-safe calls only."},
+    "anim_graph_node_bind_function": {"aliases":[],"handler_cpp":"FHaybaMCPAnimationHandler::BindNodeFunction","params":[{"name":"path","type":"string","required":true,"description":"Object path of the anim blueprint"},{"name":"node","type":"string","required":true,"description":"An anim graph node's GUID (from blueprint_inspect_graph) or object name, or a state's name (binds on the state's result node)"},{"name":"slot","type":"string","required":true,"description":"initial_update, become_relevant or update; a state also has state_entry, state_fully_blended_in, state_exit, state_fully_blended_out"},{"name":"function","type":"string","required":true,"description":"A function of this blueprint with the anim node signature, marked thread safe (anim_blueprint_add_node_function makes one)"},{"name":"graph_name","type":"string","required":false,"description":"Only search this graph (the AnimGraph, a state machine or a state)"}],"returns":{"shape":"object","fields":[{"name":"node_id","type":"string"},{"name":"node_class","type":"string"},{"name":"graph","type":"string"},{"name":"slot","type":"string"},{"name":"property","type":"string","description":"e.g. UpdateFunction"},{"name":"bound_function","type":"string"},{"name":"resolves_after_compile","type":"boolean"},{"name":"compiled","type":"boolean"},{"name":"error_count","type":"integer"},{"name":"warning_count","type":"integer"},{"name":"errors","type":"array"},{"name":"warnings","type":"array"},{"name":"verified","type":"boolean"},{"name":"dirty","type":"boolean"}]},"agent_callable":true,"has_ts_wrapper":false,"notes":"Binds a blueprint function to an anim graph node's (or a state's) function slot, the FMemberReference editor Python cannot set, then compiles. A function whose signature is not (const FAnimUpdateContext&, const FAnimNodeReference&) or that is not thread safe is refused before anything changes, with the reason; an unknown slot is refused with the node's real slots."},
+    "blendspace_set_samples": {"aliases":[],"handler_cpp":"FHaybaMCPAnimationHandler::BlendSpaceSetSamples","params":[{"name":"path","type":"string","required":true,"description":"Object path of a BlendSpace or BlendSpace1D"},{"name":"samples","type":"array","required":true,"description":"1-256 of {anim, x, y}; anim is an AnimSequence path on the blend space's skeleton; y is required on a 2D blend space and ignored on 1D. Replaces every existing sample"},{"name":"axes","type":"array","required":false,"description":"[{name?, min?, max?, grid_divisions?}] for axis X (and Y on 2D); every sample must then lie inside them"}],"returns":{"shape":"object","fields":[{"name":"path","type":"string"},{"name":"kind","type":"string","description":"1d or 2d"},{"name":"samples","type":"array","description":"[{anim, x, y, valid}] as the blend space now holds them"},{"name":"sample_count","type":"integer"},{"name":"axes","type":"array","description":"[{name, min, max, grid_divisions}]"},{"name":"verified","type":"boolean"},{"name":"dirty","type":"boolean"}]},"agent_callable":true,"has_ts_wrapper":false,"notes":"Replaces a blend space's samples, and optionally its axis names and ranges, in one call, then re-triangulates. Every sample is validated first (animation exists, same skeleton, matching additive type, unique position, inside the given axes) so a bad request changes nothing; if the engine still refuses one, the previous samples and axes are restored. Leaves the asset dirty, not saved."},
     "physics_set_simulate": {
       "aliases": [],
       "handler_cpp": "FHaybaMCPPhysicsHandler::PhysicsSetSimulate",
@@ -5101,11 +5160,12 @@
           "required": true,
           "description": "Must be unused on this blueprint (case-insensitive); a taken name is refused before anything is created"
         },
-        { "name": "inputs", "type": "array", "required": false, "description": "Parameters as [{name, type, container?, map_value_type?}]; type uses the blueprint_add_variable grammar (float, text, object:<class path>, array<...>)" },
+        { "name": "inputs", "type": "array", "required": false, "description": "Parameters as [{name, type, container?, map_value_type?, by_ref?, const?}]; type uses the blueprint_add_variable grammar (float, text, object:<class path>, array<...>). by_ref and const make a const-by-reference input, as anim node functions need" },
         { "name": "outputs", "type": "array", "required": false, "description": "Return values as [{name, type, container?, map_value_type?}]; creates the function's result node" },
         { "name": "locals", "type": "array", "required": false, "description": "[{name, type, default_value?}] local variables" },
         { "name": "pure", "type": "boolean", "required": false, "default": false, "description": "Mark the function pure (no exec pins; called wherever its output is read)" },
-        { "name": "const", "type": "boolean", "required": false, "default": false }
+        { "name": "const", "type": "boolean", "required": false, "default": false },
+        { "name": "thread_safe", "type": "boolean", "required": false, "default": false, "description": "mark the function BlueprintThreadSafe (FKismetUserDeclaredFunctionMetadata.bThreadSafe, unreachable from editor Python); anim node functions need it" }
       ],
       "returns": {
         "shape": "object",
@@ -5145,12 +5205,13 @@
             "name": "verified",
             "type": "boolean",
             "description": "The compiled function has exactly the requested parameters and purity"
-          }
+          },
+          { "name": "thread_safe", "type": "boolean", "description": "read back from the compiled function's BlueprintThreadSafe metadata" }
         ]
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Adds a function graph with its signature (typed inputs, outputs, locals, pure/const) in one call and recompiles in C++. A name already taken is refused before anything is created, and every parameter type is resolved first, so a bad type refuses the whole function rather than leaving a half-built one. Check compiled_clean and signature. Build the body with blueprint_add_node using graph_name = the function name."
+      "notes": "Adds a function graph with its signature (typed inputs, outputs, locals, pure/const, thread_safe, const-by-reference inputs) in one call and recompiles in C++. A name already taken is refused before anything is created, and every parameter type is resolved first, so a bad type refuses the whole function rather than leaving a half-built one. thread_safe sets BlueprintThreadSafe, which editor Python cannot reach; anim node functions need it. Check compiled_clean, signature and thread_safe. Build the body with blueprint_add_node using graph_name = the function name."
     },
     "blueprint_document": {
       "aliases": [],
@@ -5179,16 +5240,16 @@
     },
     "blueprint_inspect_graph": {
       "aliases": [], "handler_cpp": "FHaybaMCPBlueprintHandler::InspectGraph",
-      "params": [{"name":"path","type":"string","required":true},{"name":"graph_name","type":"string","required":false}],
-      "returns": {"shape":"object","fields":[{"name":"nodes","type":"array"},{"name":"edges","type":"array"},{"name":"dirty","type":"boolean"}]},
+      "params": [{"name":"path","type":"string","required":true},{"name":"graph_name","type":"string","required":false},{"name":"offset","type":"integer","required":false,"default":0,"description":"first node of the page"},{"name":"limit","type":"integer","required":false,"default":50,"description":"nodes per page, 1-50 (the reply cap)"},{"name":"edge_offset","type":"integer","required":false,"default":0,"description":"first edge of the page"},{"name":"edge_limit","type":"integer","required":false,"default":50,"description":"edges per page, 1-50"}],
+      "returns": {"shape":"object","fields":[{"name":"nodes","type":"array","description":"this page: {node_id, title, pins:[{name, direction, type, default_value?, default_object?, default_text?}]}"},{"name":"edges","type":"array","description":"this page: {from_node, from_pin, to_node, to_pin}"},{"name":"node_count","type":"integer","description":"total nodes in the graph"},{"name":"edge_count","type":"integer","description":"total edges in the graph"},{"name":"page","type":"object","description":"{nodes:{offset, returned, total, next_offset}, edges:{...}}; next_offset is null on the last page"},{"name":"dirty","type":"boolean"}]},
       "agent_callable": true, "has_ts_wrapper": false,
-      "notes": "Read-only exact graph export. Returns stable node GUIDs, pin names/directions/types, every edge, counts, and dirty state. Use this before adding or wiring nodes."
+      "notes": "Read-only exact graph export. Returns stable node GUIDs, pin names/directions/types and the pins' literal default values, edges, totals, and dirty state. Replies are capped at 50 items per array, so nodes and edges come in pages: keep calling with offset = page.nodes.next_offset (and edge_offset = page.edges.next_offset) until it is null. Use this before adding or wiring nodes."
     },
     "blueprint_add_node": {
       "aliases": [], "handler_cpp": "FHaybaMCPBlueprintHandler::AddNode",
-      "params": [{"name":"path","type":"string","required":true},{"name":"graph_name","type":"string","required":false,"description":"Graph to place the node in; omit for the main event graph, or pass a function name to build its body"},{"name":"node_type","type":"string","required":true,"description":"call_function, message, branch, select, timer_by_function, variable_get, variable_set, cast, custom_event, macro, break_struct, make_struct, call_dispatcher, function_entry, function_result, sequence, make_array, self, format_text, get_data_table_row, spawn_actor_from_class, create_widget, reroute, get_array_item, switch_int, switch_string, switch_name. sequence: option_count = number of then_N outputs; self: a reference to this blueprint; create_widget: class_path = the widget class, ending _C"},{"name":"function_name","type":"string","required":false,"description":"call_function/message: the function; 'ClassPath:Function' (editor Python's form) also works"},{"name":"class_path","type":"string","required":false,"description":"call_function/message owner class (omit for this blueprint's own functions), cast target, the class owning a variable_get/set member, or the widget class of create_widget"},{"name":"variable_name","type":"string","required":false,"description":"variable_get/set: a member of this Blueprint, else a local of the function graph, else a member of class_path"},{"name":"event_name","type":"string","required":false,"description":"custom_event: the event name (an existing one is returned, never duplicated)"},{"name":"macro_name","type":"string","required":false,"description":"macro: e.g. ForEachLoop, DoOnce, IsValid"},{"name":"macro_library","type":"string","required":false,"description":"macro: library Blueprint (default /Engine/EditorBlueprintResources/StandardMacros.StandardMacros); this Blueprint's own macros are searched first"},{"name":"struct_path","type":"string","required":false,"description":"break_struct/make_struct: e.g. /Script/CoreUObject.Vector or /Game/Data/S_Item.S_Item"},{"name":"dispatcher_name","type":"string","required":false,"description":"call_dispatcher: an event dispatcher on this Blueprint"},{"name":"option_count","type":"integer","required":false,"description":"select: number of options; sequence: number of outputs (2-32)"},{"name":"x","type":"number","required":false},{"name":"y","type":"number","required":false}],
+      "params": [{"name":"path","type":"string","required":true},{"name":"graph_name","type":"string","required":false,"description":"Graph to place the node in; omit for the main event graph, or pass a function name to build its body"},{"name":"node_type","type":"string","required":true,"description":"call_function, message, branch, select, timer_by_function, variable_get, variable_set, cast, custom_event, macro, break_struct, make_struct, call_dispatcher, function_entry, function_result, input_key, sequence, make_array, self, format_text, get_data_table_row, spawn_actor_from_class, create_widget, reroute, get_array_item, switch_int, switch_string, switch_name. sequence: option_count = number of then_N outputs; self: a reference to this blueprint; create_widget: class_path = the widget class, ending _C"},{"name":"function_name","type":"string","required":false,"description":"call_function/message: the function; 'ClassPath:Function' (editor Python's form) also works"},{"name":"class_path","type":"string","required":false,"description":"call_function/message owner class (omit for this blueprint's own functions), cast target, the class owning a variable_get/set member, or the widget class of create_widget"},{"name":"variable_name","type":"string","required":false,"description":"variable_get/set: a member of this Blueprint, else a local of the function graph, else a member of class_path"},{"name":"event_name","type":"string","required":false,"description":"custom_event: the event name (an existing one is returned, never duplicated)"},{"name":"macro_name","type":"string","required":false,"description":"macro: e.g. ForEachLoop, DoOnce, IsValid"},{"name":"macro_library","type":"string","required":false,"description":"macro: library Blueprint (default /Engine/EditorBlueprintResources/StandardMacros.StandardMacros); this Blueprint's own macros are searched first"},{"name":"struct_path","type":"string","required":false,"description":"break_struct/make_struct: e.g. /Script/CoreUObject.Vector or /Game/Data/S_Item.S_Item"},{"name":"dispatcher_name","type":"string","required":false,"description":"call_dispatcher: an event dispatcher on this Blueprint"},{"name":"key","type":"string","required":false,"description":"input_key: any key name (LeftMouseButton, MouseWheelUp, SpaceBar, E); gives Pressed/Released/Key pins; one per key per graph (an existing one is returned)"},{"name":"option_count","type":"integer","required":false,"description":"select: number of options; sequence: number of outputs (2-32)"},{"name":"x","type":"number","required":false},{"name":"y","type":"number","required":false}],
       "returns":{"shape":"object","fields":[{"name":"node_id","type":"string"},{"name":"pins","type":"array"},{"name":"already_existed","type":"boolean"},{"name":"return_class","type":"string","description":"create_widget only: the widget class the output is typed to"}]}, "agent_callable":true,"has_ts_wrapper":false,
-      "notes":"Stages one node and returns its GUID plus exact pins. Covers the editor palette nodes: calls, interface messages, casts, self/local/other-class variables, custom events, StandardMacros (built in C++), struct break/make, dispatcher calls, entry/result, sequence, make array, create widget, spawn actor, data-table row, switches and reroutes. timer_by_function creates K2_SetTimer; set its Object, FunctionName, Time and Looping pins before compile. Refused during PIE or while the Blueprint compiles. For entry points use blueprint_add_event (BeginPlay, Construct), blueprint_add_custom_event, or ui_bind_event (widget events). For many nodes at once use blueprint_graph_batch."
+      "notes":"Stages one node and returns its GUID plus exact pins. Covers the editor palette nodes: calls, interface messages, casts, self/local/other-class variables, custom events, input_key nodes, StandardMacros (built in C++), struct break/make, dispatcher calls, entry/result, sequence, make array, create widget, spawn actor, data-table row, switches and reroutes. timer_by_function creates K2_SetTimer; set its Object, FunctionName, Time and Looping pins before compile. Refused during PIE or while the Blueprint compiles. For entry points use blueprint_add_event (BeginPlay, Construct), blueprint_add_custom_event, or ui_bind_event (widget events). For many nodes at once use blueprint_graph_batch."
     },
     "blueprint_connect_nodes": {
       "aliases": [], "handler_cpp":"FHaybaMCPBlueprintHandler::ConnectNodes",
@@ -5200,7 +5261,7 @@
       "aliases": [], "handler_cpp":"FHaybaMCPBlueprintHandler::SetPinDefault",
       "params":[{"name":"path","type":"string","required":true},{"name":"graph_name","type":"string","required":false},{"name":"node_id","type":"string","required":true},{"name":"pin_name","type":"string","required":true},{"name":"value","type":"string","required":true}],
       "returns":{"shape":"object","fields":[{"name":"applied","type":"string"}]},"agent_callable":true,"has_ts_wrapper":false,
-      "notes":"Sets a literal or object/class reference on an unconnected input pin. Refuses connected pins so values are never silently ignored."
+      "notes":"Sets a literal or object/class reference on an unconnected input pin (Text pins such as SetText InText take a plain string, stored as the pin text). Refuses connected pins so values are never silently ignored."
     },
     "blueprint_add_event": {
       "aliases": [], "handler_cpp":"FHaybaMCPBlueprintHandler::AddEvent",
@@ -5246,9 +5307,9 @@
     },
     "blueprint_measure_nodes": {
       "aliases": [], "handler_cpp":"FHaybaMCPBlueprintHandler::MeasureNodes",
-      "params":[{"name":"path","type":"string","required":true},{"name":"graph_name","type":"string","required":false}],
-      "returns":{"shape":"object","fields":[{"name":"graph","type":"string"},{"name":"measured","type":"boolean","description":"false when Slate is unavailable and sizes are estimates"},{"name":"nodes","type":"array","description":"{node_id, title, rect:[x,y,w,h], comment, in_comment}"},{"name":"node_count","type":"integer"}]},"agent_callable":true,"has_ts_wrapper":false,
-      "notes":"Read-only. Returns every Blueprint graph node's REAL rendered rectangle, measured from a private off-screen graph panel at 1:1 zoom (node sizes exist only in the editor's Slate widgets, so estimates clip), plus which comment box each node starts in. Feed it to a layout planner, then apply with blueprint_move_nodes."
+      "params":[{"name":"path","type":"string","required":true},{"name":"graph_name","type":"string","required":false},{"name":"offset","type":"integer","required":false,"default":0,"description":"first node of the page"},{"name":"limit","type":"integer","required":false,"default":50,"description":"nodes per page, 1-50 (the reply cap)"}],
+      "returns":{"shape":"object","fields":[{"name":"graph","type":"string"},{"name":"measured","type":"boolean","description":"false when Slate is unavailable and sizes are estimates"},{"name":"nodes","type":"array","description":"this page: {node_id, title, rect:[x,y,w,h], comment, in_comment}"},{"name":"node_count","type":"integer","description":"total nodes in the graph"},{"name":"page","type":"object","description":"{offset, returned, total, next_offset}; next_offset is null on the last page"}]},"agent_callable":true,"has_ts_wrapper":false,
+      "notes":"Read-only. Returns every Blueprint graph node's REAL rendered rectangle, measured from a private off-screen graph panel at 1:1 zoom (node sizes exist only in the editor's Slate widgets, so estimates clip), plus which comment box each node starts in. Pages of up to 50 nodes: call again with offset = page.next_offset until it is null. Feed it to a layout planner, then apply with blueprint_move_nodes."
     },
     "blueprint_fit_comments": {
       "aliases": [], "handler_cpp":"FHaybaMCPBlueprintHandler::FitComments",

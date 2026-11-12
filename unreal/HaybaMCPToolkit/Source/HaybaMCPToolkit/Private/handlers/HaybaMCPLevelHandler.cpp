@@ -2,6 +2,7 @@
 #include "HaybaMCPSaveVerify.h"
 #include "CoreGlobals.h"
 #include "HaybaMCPUnattendedProbe.h"
+#include "HaybaMCPViewport.h"
 #include "HaybaMCPParams.h"
 #include "Json.h"
 #include "Editor.h"
@@ -486,15 +487,13 @@ FHaybaHandlerResult FHaybaMCPLevelHandler::LevelSetBookmark(const TSharedPtr<FJs
     if (RequestedLocation.IsSet()) Location = RequestedLocation.GetValue();
     else
     {
-        // Use current viewport position
-        FViewport* Viewport = GEditor->GetActiveViewport();
-        FEditorViewportClient* VPC = Viewport
-            ? static_cast<FEditorViewportClient*>(Viewport->GetClient())
-            : nullptr;
-        if (!VPC)
-            return FHaybaHandlerResult::Err(TEXT("level_set_bookmark: no active level viewport and no explicit location was supplied; nothing was stored"));
-        Location = VPC->GetViewLocation();
-        Rotation = VPC->GetViewRotation();
+        // The current view: the PIE player's while PIE runs, else the level viewport (HaybaMCPViewport.h).
+        HaybaViewport::FView View;
+        FString ViewError;
+        if (!HaybaViewport::CurrentView(View, ViewError))
+            return FHaybaHandlerResult::Err(TEXT("level_set_bookmark: ") + ViewError + TEXT(" and no explicit location was supplied; nothing was stored"));
+        Location = View.Location;
+        Rotation = View.Rotation;
     }
 
     FTransform T(Rotation, Location);
@@ -551,12 +550,9 @@ FHaybaHandlerResult FHaybaMCPLevelHandler::LevelGotoBookmark(const TSharedPtr<FJ
     FVector Location = Bookmark->Transform.GetLocation();
     FRotator Rotation = Bookmark->Transform.Rotator();
 
-    FViewport* Viewport = GEditor->GetActiveViewport();
-    FEditorViewportClient* VPC = Viewport
-        ? static_cast<FEditorViewportClient*>(Viewport->GetClient())
-        : nullptr;
-    if (!VPC)
-        return FHaybaHandlerResult::Err(TEXT("level_goto_bookmark: no active level viewport; viewport was not changed"));
+    FString ViewportError;
+    FLevelEditorViewportClient* VPC = HaybaViewport::LevelViewportToChange(TEXT("level_goto_bookmark"), ViewportError);
+    if (!VPC) return FHaybaHandlerResult::Err(ViewportError);
 
     VPC->SetViewLocation(Location);
     VPC->SetViewRotation(Rotation);

@@ -629,6 +629,8 @@ static bool IsDestructiveCommand(const FString& Cmd)
         TEXT("audio_meter_stop"),
         TEXT("audio_recording_start"),
         TEXT("audio_recording_stop"),
+        TEXT("editor_set_background_audio"),
+        TEXT("editor_set_render_while_hidden"),
         // Sequencer / Niagara / MetaSound / GAS / UI / Input authoring
         TEXT("seq_create"),
         TEXT("niagara_spawn"),
@@ -641,6 +643,10 @@ static bool IsDestructiveCommand(const FString& Cmd)
         TEXT("ui_create_widget"),
         TEXT("ui_set_widget_properties"),
         TEXT("ui_mutate_tree"),
+        // The ui_* MCP wrappers, native since restart 11 (HaybaUIOps::TranslateWrapper): the same mutations.
+        TEXT("ui_set_text_style"), TEXT("ui_set_brush"), TEXT("ui_set_property"), TEXT("ui_set_visibility"),
+        TEXT("ui_set_slot_layout"), TEXT("ui_move_element"), TEXT("ui_remove_element"), TEXT("ui_rename_element"),
+        TEXT("ui_reparent_element"), TEXT("ui_duplicate_element"), TEXT("ui_replace_element"),
         TEXT("ui_save_widget"),
         TEXT("input_create_action"),
         TEXT("input_create_mapping"),
