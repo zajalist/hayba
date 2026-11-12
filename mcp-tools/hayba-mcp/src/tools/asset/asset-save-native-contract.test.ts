@@ -26,15 +26,17 @@ describe('asset_save is native and refuses unsafe saves', () => {
   });
 
   it('never saves maps, compiling Blueprints or read-only files, and never prompts', () => {
-    before('Package->ContainsMap()', 'UPackage::SavePackage');
-    before('bBeingCompiled', 'UPackage::SavePackage');
-    before('IsReadOnly(*Filename)', 'UPackage::SavePackage');
-    expect(save).toContain('Args.SaveFlags = SAVE_NoError');
+    before('Package->ContainsMap()', 'SavePackageNoError(');
+    before('bBeingCompiled', 'SavePackageNoError(');
+    before('FindReadOnlyPackageFiles(Package)', 'SavePackageNoError(');
+    // The toolkit's one raw SavePackage, with SAVE_NoError (save-site-contract checks its body).
+    expect(save).toContain('HaybaSaveVerify::Detail::SavePackageNoError(');
+    expect(save).not.toContain('UPackage::SavePackage');
     expect(save).not.toContain('SaveDirtyPackages');
   });
 
   it('verifies the effect: clean in memory and a fresh file on disk', () => {
-    before('UPackage::SavePackage', '!Package->IsDirty() && Stamp != FDateTime::MinValue() && Stamp >= Before');
+    before('SavePackageNoError(', '!Package->IsDirty() && Stamp != FDateTime::MinValue() && Stamp >= Before');
   });
 
   it('is plan-gated but never wrapped in an undo transaction', () => {
