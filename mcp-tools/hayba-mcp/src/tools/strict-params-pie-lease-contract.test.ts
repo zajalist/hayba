@@ -36,8 +36,9 @@ describe('mutating commands refuse parameters they do not take', () => {
 
 describe('PIE never starts under another owner exclusive global lease', () => {
   it('refuses editor_start_pie on that conflict whatever the enforcement mode', () => {
-    const check = between(read('Private', 'HaybaMCPLeaseManager.cpp'), 'FHaybaMCPLeaseManager::CheckCommand(', '\n}\n');
+    // On main the verdict is built in CheckCommandFacts; CheckCommand only resolves access first.
+    const check = between(read('Private', 'HaybaMCPLeaseManager.cpp'), 'FHaybaMCPLeaseManager::CheckCommandFacts(', '\n}\n');
     expect(check).toContain('L.Key == TEXT("global") && L.Mode == HaybaMCPAccess::ELockMode::Exclusive');
-    expect(check).toContain('(bHolderExclusiveGlobal && Cmd == TEXT("editor_start_pie"))');
+    expect(check).toContain('if (Decision.Verdict == EVerdict::Refuse || bPieUnderExclusiveGlobal)');
   });
 });

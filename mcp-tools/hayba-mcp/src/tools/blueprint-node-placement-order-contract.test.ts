@@ -18,13 +18,15 @@ const bp = readFileSync(
 describe('blueprint nodes get their pins before PostPlacedNewNode', () => {
   it('never calls PostPlacedNewNode on a node without pins', () => {
     expect(bp).not.toMatch(/PostPlacedNewNode\(\);\s*\n\s*Node->AllocateDefaultPins\(\);/);
-    expect(bp.match(/Node->AllocateDefaultPins\(\);[^\n]*\n\s*Node->PostPlacedNewNode\(\);/g)?.length).toBe(3);
+    // Place(), the function entry/result path, input_key, and the custom and bound event nodes.
+    expect(bp.match(/Node->AllocateDefaultPins\(\);[^\n]*\n\s*Node->PostPlacedNewNode\(\);/g)?.length).toBe(5);
   });
 
   it('spawn_actor_from_class refuses a class_path that is not a concrete Actor class before placing', () => {
     const at = bp.indexOf('SpawnClass->IsChildOf(AActor::StaticClass())');
     expect(at).toBeGreaterThan(-1);
-    expect(at).toBeLessThan(bp.indexOf('UK2Node* Node = NewObject<UK2Node>(Graph, NodeClass);'));
+    const simplePath = bp.indexOf('SimpleNodeClasses.Find(NodeType)');
+    expect(at).toBeLessThan(bp.indexOf('UK2Node* Node = NewObject<UK2Node>(Graph, NodeClass);', simplePath));
     expect(bp).toContain('TrySetDefaultObject(*ClassPin, SpawnClass);');
   });
 });

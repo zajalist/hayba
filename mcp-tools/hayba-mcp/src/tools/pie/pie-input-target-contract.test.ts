@@ -1,5 +1,5 @@
 /**
- * a production project story lane, 2026-11-10 18:53: an injected "P" tore PIE down. editor_pie_press_key built its key event with Slate's
+ * A production project story lane, 2026-11-10 18:53: an injected "P" tore PIE down. editor_pie_press_key built its key event with Slate's
  * LIVE modifier state, the user was holding Alt (Alt+Tab), and Alt+P is the editor's RepeatLastPlay chord. Keys also
  * went to whatever held keyboard focus, which can be the level editor's own SViewport. Pins the fix: injected input
  * carries only the modifiers the caller names (default none); keyboard input targets the PIE game viewport by default,

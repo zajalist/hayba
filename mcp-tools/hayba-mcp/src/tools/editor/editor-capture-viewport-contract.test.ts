@@ -1,5 +1,5 @@
 /**
- * a production project, 2026-11-10 17:14: editor_capture_viewport returned all-black frames with camera 0,0,0. Every viewport command
+ * A production project, 2026-11-10 17:14: editor_capture_viewport returned all-black frames with camera 0,0,0. Every viewport command
  * took its viewport from GEditor->GetActiveViewport(), the FOCUSED one, which is the PIE window or nothing while the
  * editor is in the background (and the bookmark commands static_cast its client to FEditorViewportClient). Pins the
  * fix: one resolver (HaybaMCPViewport.h). Reading the view takes the PIE player's while PIE runs, else the level

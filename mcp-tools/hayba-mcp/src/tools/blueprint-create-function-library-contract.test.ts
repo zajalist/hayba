@@ -19,7 +19,7 @@ const create = bp.slice(bp.indexOf('FHaybaHandlerResult FHaybaMCPBlueprintHandle
 describe('blueprint_create makes a function library a function library', () => {
   it('picks BPTYPE_FunctionLibrary for a BlueprintFunctionLibrary parent', () => {
     expect(create).toContain('ParentClass->IsChildOf(UBlueprintFunctionLibrary::StaticClass())');
-    expect(create).toContain('? BPTYPE_FunctionLibrary : BPTYPE_Normal');
-    expect(create).toMatch(/CreateBlueprint\(\s*ParentClass, Package, \*Name, Type,/);
+    expect(create).toMatch(/\?\s*BPTYPE_FunctionLibrary\s*:\s*BPTYPE_Normal/);
+    expect(create).toMatch(/CreateBlueprint\(\s*ParentClass, Package, \*Name, BlueprintType,/);
   });
 });

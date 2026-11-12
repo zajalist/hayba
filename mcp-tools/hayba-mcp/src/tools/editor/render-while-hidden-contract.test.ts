@@ -1,5 +1,5 @@
 /**
- * a production project, 2026-11-10: lane PIE bursts ran at 3 fps whenever the user minimized the editor. UEditorEngine::ShouldThrottleCPUUsage
+ * A production project, 2026-11-10: lane PIE bursts ran at 3 fps whenever the user minimized the editor. UEditorEngine::ShouldThrottleCPUUsage
  * throttles while AreAllWindowsHidden() even with bThrottleCPUWhenNotForeground off, and GetMaxTickRate then returns 3.
  * The engine's own way out is a ShouldDisableCPUThrottlingDelegates entry. editor_set_render_while_hidden {allow}
  * registers one while any owner holds it and removes it when the last owner lets go, so two lanes bursting at once do

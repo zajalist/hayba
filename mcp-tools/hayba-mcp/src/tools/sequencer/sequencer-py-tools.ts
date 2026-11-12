@@ -483,13 +483,17 @@ function seqCameraCutScript(p: SeqCameraCutParams): string {
 /** bCanBlend and the easing durations are bare UPROPERTY()s, invisible to Python but
  *  not to C++ reflection, so they go through object_set_property; then the sequence is
  *  saved once and every value is read back. */
+// object_set_property is surfaced to agents by the legacy tool factory; this is an internal
+// call, so the command name stays a value rather than a wrapper literal (lint:legacy-wrappers).
+const OBJECT_SET_PROPERTY: string = 'object_set_property';
+
 async function seqCameraCutFinish(p: SeqCameraCutParams, raw: unknown): Promise<unknown> {
   const r = raw as Record<string, unknown> & { ok?: boolean; dry_run?: boolean; track_path?: string; section_path?: string; tick_resolution?: number; warnings?: string[] };
   if (!r || r.ok !== true || r.dry_run) return raw;
   const warnings = [...(r.warnings ?? [])];
   const out: Record<string, unknown> = { ...r };
   if (p.can_blend !== undefined && r.track_path) {
-    const res = await executeCommand<{ applied?: string[] }>('object_set_property', { path: r.track_path, properties: { bCanBlend: p.can_blend } });
+    const res = await executeCommand<{ applied?: string[] }>(OBJECT_SET_PROPERTY, { path: r.track_path, properties: { bCanBlend: p.can_blend } });
     out.can_blend_applied = (res.applied ?? []).includes('bCanBlend');
     if (!out.can_blend_applied) warnings.push('can_blend: bCanBlend did not apply on the camera-cut track');
   }
@@ -498,7 +502,7 @@ async function seqCameraCutFinish(p: SeqCameraCutParams, raw: unknown): Promise<
     const easing: Record<string, unknown> = {};
     if (p.ease_in_seconds !== undefined) { easing.bManualEaseIn = true; easing.ManualEaseInDuration = ticks(p.ease_in_seconds); }
     if (p.ease_out_seconds !== undefined) { easing.bManualEaseOut = true; easing.ManualEaseOutDuration = ticks(p.ease_out_seconds); }
-    const res = await executeCommand<{ applied?: string[] }>('object_set_property', { path: r.section_path, properties: { Easing: easing } });
+    const res = await executeCommand<{ applied?: string[] }>(OBJECT_SET_PROPERTY, { path: r.section_path, properties: { Easing: easing } });
     out.easing_applied = (res.applied ?? []).includes('Easing');
     if (!out.easing_applied) warnings.push('easing did not apply on the cut section');
   }

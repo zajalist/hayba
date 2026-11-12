@@ -1,5 +1,5 @@
 /**
- * a production project's 6 h freeze, 2026-11-09: blueprint_add_function took the name of BP_RoomAudio's component "Presence". The
+ * A production project's 6 h freeze, 2026-11-09: blueprint_add_function took the name of BP_RoomAudio's component "Presence". The
  * class stopped compiling ("Name collision - function and property have the same name"), and the next
  * editor_request_begin_play opened UE's modal "Blueprint Compilation Errors" prompt, which parked the game thread
  * until a human answered it. This pins both halves of the fix in the source: the add commands run the editor's own

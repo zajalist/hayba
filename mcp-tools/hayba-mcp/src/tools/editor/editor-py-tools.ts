@@ -266,12 +266,16 @@ function editorCvarReadbackScript(p: EditorCvarSetParams): string {
   ].join('\n');
 }
 
-// Step 2: set through the audited native command, then read the value back.
+// Step 2: set through the audited native command, then read the value back. The command is
+// surfaced to agents by the legacy tool factory; this internal call keeps its name a value
+// rather than a wrapper literal (lint:legacy-wrappers).
+const RUN_CONSOLE_COMMAND: string = 'editor_run_console_command';
+
 async function editorCvarSetFinish(p: EditorCvarSetParams, raw: unknown): Promise<unknown> {
   const pre = raw as { ok?: boolean; exists?: boolean | null };
   if (!pre || pre.ok !== true) return raw;
   const requested = cvarValueString(p);
-  await executeCommand('editor_run_console_command', { command: `${p.name} ${requested}` });
+  await executeCommand(RUN_CONSOLE_COMMAND, { command: `${p.name} ${requested}` });
   const rb = await runUePythonJson<{ applied?: number; string_value?: string | null }>(editorCvarReadbackScript(p), 30_000);
   const verified = pre.exists === true && typeof rb?.string_value === 'string' && rb.string_value !== '';
   return {

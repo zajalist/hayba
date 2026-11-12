@@ -65,9 +65,11 @@ describe('blueprint_add_function declares anim-node-compatible functions', () =>
   const add = body(blueprint, 'FHaybaMCPBlueprintHandler::AddFunction');
   it('takes thread_safe and const-by-ref inputs', () => {
     expect(add).toContain('Entry->MetaData.bThreadSafe = bThreadSafe');
-    expect(add).toContain('Param.Type.bIsReference = bByRef');
-    expect(add).toContain('Param.Type.bIsConst = bConstParam');
-    expect(add).toContain('TEXT("by_ref")');
+    // by_ref / const inputs go through the shared parameter reader, which only accepts them for inputs.
+    expect(add).toContain('/*bAllowRef=*/true');
+    expect(blueprint).toContain('PinType.bIsReference = bByRef;');
+    expect(blueprint).toContain('PinType.bIsConst = bConstParam;');
+    expect(blueprint).toContain('TEXT("by_ref")');
     expectSidecarParamsRead('blueprint_add_function', add);
   });
 });

@@ -2389,8 +2389,8 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::AddCustomEvent(const TSharedPtr<F
     Node->NodePosX = X;
     Node->NodePosY = Y;
     Graph->AddNode(Node, false, false);
+    Node->AllocateDefaultPins();  // before PostPlacedNewNode, as in Place() above
     Node->PostPlacedNewNode();
-    Node->AllocateDefaultPins();
     // An event's parameters are OUTPUT pins on its node — data flows out of it.
     for (const FHaybaParamDecl& D : Inputs)
         Node->CreateUserDefinedPin(FName(*D.Name), D.PinType, EGPD_Output, /*bUseUniqueName*/ false);
@@ -2481,8 +2481,8 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::AddBoundEvent(const TSharedPtr<FJ
     Node->NodePosX = X;
     Node->NodePosY = Y;
     Graph->AddNode(Node, false, false);
+    Node->AllocateDefaultPins();  // before PostPlacedNewNode, as in Place() above
     Node->PostPlacedNewNode();
-    Node->AllocateDefaultPins();
     FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(BP);
 
     TSharedPtr<FJsonObject> Out = HaybaDescribeNode(Node);

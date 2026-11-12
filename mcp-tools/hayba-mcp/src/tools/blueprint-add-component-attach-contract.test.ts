@@ -1,5 +1,5 @@
 /**
- * a production project UI lane, 2026-11-10: blueprint_add_component added every component with SCS->AddNode, i.e. as a ROOT node. The
+ * A production project UI lane, 2026-11-10: blueprint_add_component added every component with SCS->AddNode, i.e. as a ROOT node. The
  * first one became BP_ItemInspect's RootComponent, so its "relative" location acted as a world transform and the item
  * rendered at the world origin. Pins the fix: a scene component attaches under `parent`, else under the existing scene
  * root (SCS root node or the parent class's native root); it is a root only when the Blueprint has none; the reply

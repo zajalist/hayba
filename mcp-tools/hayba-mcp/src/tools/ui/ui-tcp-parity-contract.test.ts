@@ -20,6 +20,9 @@ const tsTools = [...new Set([...tsIndex.matchAll(/name: '(ui_[a-z_]+)'/g)].map((
 
 // Composites: several native calls stitched together in TypeScript (snapshot, then per-widget writes or rules).
 const MCP_ONLY = new Set(['ui_copy_style', 'ui_set_default_font', 'ui_validate']);
+// MCP tools whose native command has another name; over TCP they are reached by that name.
+const NATIVE_NAME: Record<string, string> = { ui_bind_event: 'blueprint_add_bound_event' };
+const blueprintNative = readFileSync(join(src, 'handlers', 'HaybaMCPBlueprintHandler.cpp'), 'utf8');
 
 describe('every ui_* MCP tool answers over TCP too', () => {
   it('finds the MCP tools', () => {
@@ -29,7 +32,9 @@ describe('every ui_* MCP tool answers over TCP too', () => {
 
   for (const name of tsTools.filter((n) => !MCP_ONLY.has(n))) {
     it(`${name} is a native command`, () => {
-      expect(native).toContain(`TEXT("${name}")`);
+      const nativeName = NATIVE_NAME[name];
+      if (nativeName) expect(blueprintNative).toContain(`TEXT("${nativeName}")`);
+      else expect(native).toContain(`TEXT("${name}")`);
     });
   }
 });
