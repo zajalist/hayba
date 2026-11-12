@@ -11,7 +11,7 @@ import {
   actorSpawnFromAssetDescriptor,
   actorBatchTransformDescriptor,
 } from '../actor/actor-py-tools.js';
-import { assetSaveDescriptor, assetOpenEditorDescriptor } from '../asset/asset-py-tools.js';
+import { assetOpenEditorDescriptor } from '../asset/asset-py-tools.js';
 import { editorGetCameraDescriptor } from '../editor/editor-py-tools.js';
 import { meshGetBoundsDescriptor } from '../mesh/mesh-py-tools.js';
 
@@ -19,8 +19,6 @@ const cases: Array<[PyToolDescriptor, Record<string, unknown>]> = [
   [actorInspectDescriptor as unknown as PyToolDescriptor, { actor_id: 'Rock1' }],
   [actorSpawnFromAssetDescriptor as unknown as PyToolDescriptor, { asset_path: '/Game/M', label: 'L', snap_to_floor: true }],
   [actorBatchTransformDescriptor as unknown as PyToolDescriptor, { transforms: [{ actor_id: 'A', location: [1, 2, 3], rotation: [0, 0, 90], scale: [1, 1, 1] }] }],
-  [assetSaveDescriptor as unknown as PyToolDescriptor, {}],
-  [assetSaveDescriptor as unknown as PyToolDescriptor, { asset_paths: ['/Game/A'] }],
   [assetOpenEditorDescriptor as unknown as PyToolDescriptor, { asset_paths: ['/Game/A'] }],
   [editorGetCameraDescriptor as unknown as PyToolDescriptor, {}],
   [meshGetBoundsDescriptor as unknown as PyToolDescriptor, { asset_path: '/Game/M' }],

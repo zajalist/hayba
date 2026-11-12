@@ -52,6 +52,9 @@ const HEAVY_OPS = new Set<string>([
   // working, or a modal save/confirm prompt parks the game thread forever.
   // Heavy tier + no auto-retry (same class as ui_mutate_tree / asset_import).
   'asset_delete',
+  // Up to 2048 graph ops (plus an optional compile) in one game-thread call; a
+  // whole FoA graph build is far past the medium (10s) tier.
+  'blueprint_graph_batch',
 ]);
 
 /** Register an additional command as a heavy (game-thread-blocking) op. */

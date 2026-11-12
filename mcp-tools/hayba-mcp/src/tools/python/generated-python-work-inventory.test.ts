@@ -36,7 +36,7 @@ describe('generated-Python bounded-work inventory', () => {
   it('reconciles every generated descriptor exactly once', () => {
     const sourceNames = generatedDescriptorNames();
     const inventoryNames = GENERATED_PYTHON_WORK_INVENTORY.map((item) => item.name).sort();
-    expect(inventoryNames).toHaveLength(108);
+    expect(inventoryNames).toHaveLength(107);
     expect(new Set(inventoryNames).size).toBe(inventoryNames.length);
     expect(inventoryNames).toEqual(sourceNames);
   });
@@ -66,7 +66,6 @@ describe('generated-Python bounded-work inventory', () => {
       'actor_set_folder',
       'actor_set_selection',
       'asset_open_editor',
-      'asset_save',
       'content_browser_sync',
       'foliage_add_instances',
       'niagara_param_set',
@@ -90,7 +89,6 @@ describe('generated-Python bounded-work inventory', () => {
       'actor_batch_transform',
       'actor_focus',
       'actor_set_folder',
-      'asset_save',
       'asset_get_source_path',
       'object_exists',
       'foliage_type_inspect',
