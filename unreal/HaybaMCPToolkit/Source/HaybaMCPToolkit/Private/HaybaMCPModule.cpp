@@ -86,6 +86,7 @@
 #include "WorkspaceMenuStructureModule.h"
 #include "Widgets/Docking/SDockTab.h"
 #include "Interfaces/IPluginManager.h"
+#include "IPythonScriptPlugin.h"
 
 namespace HaybaMCPExactApproval
 {
@@ -231,6 +232,15 @@ void FHaybaMCPModule::StartupModule()
     // Lease-warning drain (T6, R-18): a closed 30 s window's "repeated N more
     // times" line is logged even when no further warning arrives.
     FHaybaMCPLeaseManager::Get().StartWarningDrain();
+    // PythonScriptPlugin's closure type crashes CPython's GC (hayba_psp_hotfix.py): patch it as
+    // soon as Python is up, before any agent's script or an engine GC can reach the bug.
+    if (IPythonScriptPlugin* Python = IPythonScriptPlugin::Get())
+    {
+        if (!FHaybaMCPPythonHandler::EnsurePspHotfix())
+        {
+            PythonInitializedHandle = Python->OnPythonInitialized().AddLambda([]() { FHaybaMCPPythonHandler::EnsurePspHotfix(); });
+        }
+    }
 
     // Optional-capability check: warn (log + editor notification) for any
     // satellite plugin that is disabled, so the user understands why a command
@@ -395,6 +405,14 @@ void FHaybaMCPModule::ShutdownModule()
     AutoOpenTimerHandle.Invalidate();
 
     FHaybaMCPLeaseManager::Get().StopWarningDrain();
+    if (PythonInitializedHandle.IsValid())
+    {
+        if (IPythonScriptPlugin* Python = IPythonScriptPlugin::Get())
+        {
+            Python->OnPythonInitialized().Remove(PythonInitializedHandle);
+        }
+        PythonInitializedHandle.Reset();
+    }
     if (OpenToolkitConsoleCommand)
     {
         IConsoleManager::Get().UnregisterConsoleObject(OpenToolkitConsoleCommand, false);

@@ -527,6 +527,7 @@ static bool IsDestructiveCommand(const FString& Cmd)
     static const TSet<FString> DestructiveCommands = {
         // Arbitrary code / wildcard invocation
         TEXT("python_run"),
+        TEXT("python_exec_file"),
         // Runs any number of commands under one lease (each step is gated
         // again unless the batch itself was approved). See docs/adr/0010.
         TEXT("editor_batch"),
@@ -544,6 +545,8 @@ static bool IsDestructiveCommand(const FString& Cmd)
         TEXT("actor_batch_spawn"),
         TEXT("actor_spawn_from_asset"),
         TEXT("actor_set_properties"),
+        // In NON_IDEMPOTENT since f68294a4; the plan-mode-gate test requires it here too.
+        TEXT("actor_transform"),
         TEXT("actor_set_visibility"),
         TEXT("actor_snap_to_socket"),
         TEXT("actor_tag"),
@@ -551,6 +554,7 @@ static bool IsDestructiveCommand(const FString& Cmd)
         TEXT("object_set_property"),
         // Asset lifecycle
         TEXT("asset_import"),
+        TEXT("asset_save"),
         TEXT("asset_duplicate"),
         TEXT("asset_delete"),
         TEXT("asset_rename"),
@@ -566,6 +570,13 @@ static bool IsDestructiveCommand(const FString& Cmd)
         TEXT("blueprint_add_custom_event"),
         TEXT("blueprint_add_bound_event"),
         TEXT("blueprint_remove_node"),
+        TEXT("blueprint_add_comment"),
+        TEXT("blueprint_move_nodes"),
+        TEXT("blueprint_remove_nodes"),
+        TEXT("blueprint_disconnect"),
+        TEXT("blueprint_fit_comments"),
+        // Many graph ops in one call; the transaction around it makes the whole batch one undo.
+        TEXT("blueprint_graph_batch"),
         // Material authoring
         TEXT("material_create"),
         TEXT("material_create_instance"),
@@ -707,6 +718,12 @@ bool FHaybaMCPCommandHandler::ShouldCreateEditorTransaction(const FString& Cmd)
 
     // Persistence is approval-gated, but writing a map to disk is not undoable.
     if (Cmd == TEXT("level_save")) return false;
+    // Saving is not undoable; a transaction would only serialize every object in
+    // the packages being saved, inside the save.
+    if (Cmd == TEXT("asset_save")) return false;
+    // A project script saves, imports and deletes assets itself, as it did through remote
+    // execution; one global transaction around all of that is the WP-unload crash class again.
+    if (Cmd == TEXT("python_exec_file")) return false;
 
     return true;
 }
@@ -1678,6 +1695,17 @@ FString FHaybaMCPCommandHandler::ProcessBatchStep(
 
 FString FHaybaMCPCommandHandler::ProcessWithContext(const FString& CommandJson, FHaybaMCPRequestContext& Context)
 {
+    // Never run one command inside another (e.g. an editor panel calling
+    // SendTcpCommand while a running command pumps Slate). The TCP drain
+    // defers instead of getting here; in-process callers are refused.
+    if (DispatchDepth > 0)
+    {
+        return MakeErrorResponse(TEXT(""),
+            TEXT("Request rejected: another Hayba command is still executing on the game thread; nested dispatch is refused. Retry after it returns."),
+            TEXT("protocol"), false, /*bKnownPreflight=*/true);
+    }
+    TGuardValue<int32> DispatchDepthGuard(DispatchDepth, DispatchDepth + 1);
+
     FString Response;
     {
         FHaybaMCPLeaseManager::FScope Scope(Context);

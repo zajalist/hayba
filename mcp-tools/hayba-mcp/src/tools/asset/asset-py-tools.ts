@@ -8,7 +8,7 @@
 // subset and skip catalog entries that are C++-backed, TS-only, already
 // surfaced by the legacy sidecar, or whose python is speculative:
 //
-//   SHIPPED (4): asset_save, asset_create_folder, asset_open_editor,
+//   SHIPPED (3): asset_create_folder, asset_open_editor,
 //     asset_get_source_path.
 //
 //   SKIPPED:
@@ -40,8 +40,7 @@
 //     reads ONLY the reimport source-file path(s) out of the asset's
 //     AssetImportData (the "where did this come from on disk" question);
 //     asset_get_info is the broad C++ single-asset info call.
-//   - asset_save is the WRITE counterpart to editor_get_state's dirty-package
-//     read: state tells you WHAT is dirty, asset_save flushes it.
+//   - asset_save moved to native C++ (asset/asset-save.ts -> HaybaMCPAssetHandler::AssetSave).
 //
 // NON_IDEMPOTENT: none. asset_save (re-saving the same bytes = same state),
 // asset_create_folder (make_directory is a no-op if it exists), asset_open_editor
@@ -53,9 +52,6 @@
 //   - asset_get_source_path: the AssetImportData accessor varies by asset type
 //     (get_first_filename / extract_filenames / source_data.source_files); all
 //     shapes are probed, degrading to source_paths:[] when none is present.
-//   - asset_save: EditorLoadingAndSavingUtils.save_dirty_packages arity — the
-//     (save_map, save_content) bool form is used; per-asset save falls back to
-//     EditorAssetLibrary.save_asset.
 
 import { z } from 'zod';
 import type { HaybaToolMeta } from '../hayba-tool-meta.js';
@@ -81,46 +77,6 @@ const uiMeta: HaybaToolMeta = {
   effects: [],
   when: 'surfacing an asset\'s editor tab for the user (pure UI focus)',
   not_when: 'reading asset state programmatically — use asset_inspect',
-};
-
-// ── asset_save ────────────────────────────────────────────────────────────────
-export const assetSaveSchema = z.object({
-  asset_paths: z.array(z.string().min(1)).optional()
-    .describe('Specific asset paths to save. When omitted, all dirty content packages are saved.'),
-});
-export type AssetSaveParams = z.infer<typeof assetSaveSchema>;
-
-function assetSaveScript(p: AssetSaveParams): string {
-  return [
-    `_paths = ${p.asset_paths !== undefined ? JSON.stringify(p.asset_paths) : 'None'}`,
-    'try:',
-    '    saved = []; failed = []',
-    '    if _paths:',
-    '        for pth in _paths:',
-    '            try:',
-    '                ok = unreal.EditorAssetLibrary.save_asset(pth, only_if_is_dirty=True)',
-    '                (saved if ok else failed).append(pth)',
-    '            except Exception:',
-    '                failed.append(pth)',
-    '        _emit({"ok": len(failed) == 0, "mode": "named", "saved": saved, "saved_count": len(saved), "failed": failed, "warnings": ([] if not failed else ["%d of %d asset(s) failed to save (path missing or not saveable)" % (len(failed), len(_paths))])})',
-    '    else:',
-    '        ok = unreal.EditorLoadingAndSavingUtils.save_dirty_packages(True, True)',
-    '        _emit({"ok": True, "mode": "all_dirty", "saved_all": bool(ok)})',
-    'except Exception as _e:',
-    '    _err(_e)',
-  ].join('\n');
-}
-
-export const assetSaveDescriptor: PyToolDescriptor<typeof assetSaveSchema.shape> = {
-  name: 'asset_save',
-  description:
-    'Save dirty packages to disk. With asset_paths: saves each (only if dirty) and reports per-asset success — ok:false when ANY named path fails to save (surfaced in failed[] + warnings[]). Without: flushes ALL dirty map+content packages in one call. The write counterpart to editor_get_state\'s dirty_packages read. Idempotent (re-saving unchanged bytes is a no-op).',
-  cost: 'low',
-  returns: '{ok, mode, saved?[], saved_count?, failed?[], warnings?[], saved_all?}',
-  schema: assetSaveSchema.shape,
-  meta: writeMeta,
-  buildScript: assetSaveScript,
-  timeoutMs: 30_000,
 };
 
 // ── asset_create_folder ─────────────────────────────────────────────────────────
@@ -164,24 +120,20 @@ export type AssetOpenEditorParams = z.infer<typeof assetOpenEditorSchema>;
 function assetOpenEditorScript(p: AssetOpenEditorParams): string {
   return [
     `_paths = ${JSON.stringify(p.asset_paths)}`,
-    'try:',
-    '    objs = []; missing = []',
-    '    for pth in _paths:',
-    '        try:',
-    '            o = unreal.EditorAssetLibrary.load_asset(pth)',
-    '            if o is not None: objs.append(o)',
-    '            else: missing.append(pth)',
-    '        except Exception: missing.append(pth)',
-    '    opened = False',
-    '    if objs:',
-    '        aes = unreal.get_editor_subsystem(unreal.AssetEditorSubsystem)',
-    '        if aes is None: raise Exception("AssetEditorSubsystem unavailable")',
-    '        aes.open_editor_for_assets(objs)',
-    '        opened = True',
-    '    if not opened: raise Exception("no loadable assets to open")',
-    '    _emit({"ok": True, "opened": opened, "count": len(objs), "missing": missing})',
-    'except Exception as _e:',
-    '    _err(_e)',
+    // No try/with (native policy HCR-TIME-001): existence is checked, not caught.
+    'objs = []; missing = []',
+    'for pth in _paths:',
+    '    o = unreal.EditorAssetLibrary.load_asset(pth) if unreal.EditorAssetLibrary.does_asset_exist(pth) else None',
+    '    if o is not None: objs.append(o)',
+    '    else: missing.append(pth)',
+    'aes = unreal.get_editor_subsystem(unreal.AssetEditorSubsystem) if objs else None',
+    'if not objs:',
+    '    _err("no loadable assets to open")',
+    'elif aes is None:',
+    '    _err("AssetEditorSubsystem unavailable")',
+    'else:',
+    '    aes.open_editor_for_assets(objs)',
+    '    _emit({"ok": True, "opened": True, "count": len(objs), "missing": missing})',
   ].join('\n');
 }
 
@@ -250,7 +202,6 @@ export const assetGetSourcePathDescriptor: PyToolDescriptor<typeof assetGetSourc
 
 // ── Aggregate: all asset-domain PyToolDescriptors (spliced in index.ts) ─────────
 export const assetPyDescriptors: PyToolDescriptor[] = [
-  assetSaveDescriptor,
   assetCreateFolderDescriptor,
   assetOpenEditorDescriptor,
   assetGetSourcePathDescriptor,

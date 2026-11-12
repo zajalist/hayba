@@ -18,6 +18,8 @@ export const schema = z.object({
   size: z.tuple([z.number(), z.number()]).optional().describe('Box size [width, height]'),
   color: z.array(z.number()).min(3).max(4).optional().describe('Box color [r, g, b] or [r, g, b, a] (0..1)'),
   font_size: z.number().int().optional().describe('Title font size (default 18)'),
+  show_bubble: z.boolean().optional().describe('"Show Bubble When Zoomed": the title floats above the box when zoomed out (default true)'),
+  color_bubble: z.boolean().optional().describe('"Color Bubble": tint that bubble with the box colour (default true)'),
 }).refine((d) => !!d.material_path || !!d.function_path, {
   message: 'one of material_path or function_path is required',
 });

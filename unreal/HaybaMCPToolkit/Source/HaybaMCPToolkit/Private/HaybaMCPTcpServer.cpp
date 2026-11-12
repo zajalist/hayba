@@ -6,6 +6,7 @@
 #include "Serialization/JsonSerializer.h"
 #include "SocketSubsystem.h"
 #include "IPAddress.h"
+#include "Framework/Application/SlateApplication.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogHaybaMCPTCP, Log, All);
 
@@ -593,6 +594,27 @@ bool FHaybaMCPTcpServer::DrainPendingCommands(float /*DeltaTime*/)
             CommandHandler->NotifyConnectionClosed(ClosedConnId);
         }
     }
+
+    // Only drain on a clean tick. A tick that arrives while a command is still
+    // running, or while the editor is inside a slow task / modal loop (anything
+    // that ticks the core ticker from inside its own loop, e.g. material
+    // baking), would run the next command nested inside that work. Leave the
+    // queue intact; a later top-level tick drains it.
+    const bool bNestedTick = bInDrain
+        || (CommandHandler.IsValid() && CommandHandler->IsDispatching())
+        || GIsSlowTask
+        || (FSlateApplication::IsInitialized() && FSlateApplication::Get().GetActiveModalWindow().IsValid());
+    if (bNestedTick)
+    {
+        if (!bLoggedDeferral && !PendingCommands.IsEmpty())
+        {
+            UE_LOG(LogHaybaMCPTCP, Log, TEXT("Deferring queued commands: a command, slow task or modal window is active"));
+            bLoggedDeferral = true;
+        }
+        return true;
+    }
+    bLoggedDeferral = false;
+    TGuardValue<bool> DrainGuard(bInDrain, true);
 
     FHaybaMCPPendingCommand Cmd;
     const double Deadline = FPlatformTime::Seconds() + MaxDrainSeconds;

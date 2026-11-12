@@ -40,7 +40,7 @@ namespace HaybaMCPLease
 		double MinTtlSeconds = 5.0;
 		double MaxTtlSeconds = 900.0;
 		/** A waiter that has not polled for this long is dropped, so a crashed
-		 *  agent's ticket cannot hold the queue forever. */
+		 *  agent's ticket cannot hold the queue forever (and is never granted). */
 		double WaiterTtlSeconds = 30.0;
 		int32 AgingGrants = 3;
 		double AgingSeconds = 60.0;
@@ -68,6 +68,9 @@ namespace HaybaMCPLease
 		/** A ticket from an earlier Queued answer; empty for a new request. */
 		FString Ticket;
 		FString Label;
+		/** >0: a grant lives only this long until its owner renews it once, so a lease granted to a
+		 *  requester that died while queued lapses quickly instead of after its full TTL. */
+		double ConfirmWithinSeconds = 0.0;
 	};
 
 	struct FLease
@@ -894,6 +897,10 @@ namespace HaybaMCPLease
 			Lease.TtlSeconds = ClampTtl(Waiter.Request.TtlSeconds);
 			Lease.Lane = Waiter.Request.Lane;
 			Lease.FenceOf = FenceOf;
+			if (Waiter.Request.ConfirmWithinSeconds > 0.0)
+			{
+				Lease.ExpiresAt = FMath::Min(Lease.ExpiresAt, Now + Waiter.Request.ConfirmWithinSeconds);
+			}
 			if (!FenceOf.IsEmpty())
 			{
 				Lease.ExpiresAt = FMath::Min(Lease.ExpiresAt, Now + Tuning.FenceGrantMaxSeconds);

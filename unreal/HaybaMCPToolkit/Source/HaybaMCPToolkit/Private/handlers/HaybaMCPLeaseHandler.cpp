@@ -183,6 +183,7 @@ FHaybaHandlerResult FHaybaMCPLeaseHandler::Acquire(const TSharedPtr<FJsonObject>
 	}
 	Request.Lane = Lane == TEXT("long") ? ELane::Long : ELane::Interactive;
 	P->TryGetNumberField(TEXT("ttl_s"), Request.TtlSeconds);
+	P->TryGetNumberField(TEXT("confirm_within_s"), Request.ConfirmWithinSeconds);
 
 	bool bBind = true;
 	P->TryGetBoolField(TEXT("bind_connection"), bBind);

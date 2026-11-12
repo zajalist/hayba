@@ -91,6 +91,21 @@ TArray<FString> FHaybaMCPMaterialHandler::GetCommands() const
 
 FHaybaHandlerResult FHaybaMCPMaterialHandler::Handle(const FString& Cmd, const TSharedPtr<FJsonObject>& P)
 {
+    // Graph edits and compiles rebuild shader maps. During PIE the renderer draws those materials every
+    // frame, and a map rebuilt under it is the 23:37 MaterialShader.cpp:2567 crash class again. Reads,
+    // validation, instances, parameter values and assignment stay available.
+    static const TSet<FString> GraphCommands = {
+        TEXT("material_create"), TEXT("material_function_create"), TEXT("material_add_node"),
+        TEXT("material_set_node"), TEXT("material_set_property"), TEXT("material_delete_node"),
+        TEXT("material_add_comment"), TEXT("material_set_comment"), TEXT("material_delete_comment"),
+        TEXT("material_add_reroute_declaration"), TEXT("material_add_reroute_usage"),
+        TEXT("material_connect_nodes"), TEXT("material_disconnect"), TEXT("material_compile"),
+    };
+    if (GraphCommands.Contains(Cmd) && GEditor && GEditor->IsPlaySessionInProgress())
+    {
+        return FHaybaHandlerResult::Err(FString::Printf(
+            TEXT("%s: a Play-In-Editor session is running; stop it (editor_stop_pie) before editing or compiling material graphs. Nothing was changed."), *Cmd));
+    }
     if (Cmd == TEXT("material_create"))         return MatCreate(P);
     if (Cmd == TEXT("material_function_create")) return MatFunctionCreate(P);
     if (Cmd == TEXT("material_add_node"))       return MatAddNode(P);
@@ -2193,6 +2208,10 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatAddComment(const TSharedPtr<FJs
     ValidateIntegerArrayRange(ParamR, TEXT("size"), Size, bHasSize, 1, 1000000);
     ValidateNumberArrayRange(ParamR, TEXT("color"), ColorValues, bHasColor, 0.0, 1.0);
     const int32 Font = ParamR.OptionalIntInRange(TEXT("font_size"), 18, 1, 512);
+    // House comment style: "Show Bubble When Zoomed" + "Color Bubble" on, so the title
+    // floats readably when the graph is zoomed out.
+    const bool bShowBubble = ParamR.OptionalBool(TEXT("show_bubble"), true);
+    const bool bColorBubble = ParamR.OptionalBool(TEXT("color_bubble"), true);
     if (MatPath.IsEmpty() == FuncPath.IsEmpty())
         ParamR.AddError(TEXT("pass exactly one of 'material_path' or 'function_path'"));
     if (ParamR.HasErrors()) return FHaybaHandlerResult::Err(ParamR.ErrorMessage());
@@ -2209,6 +2228,9 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatAddComment(const TSharedPtr<FJs
     auto Setup = [&](UMaterialExpressionComment* C) {
         C->Text = Text; C->SizeX = W; C->SizeY = H; C->CommentColor = Color; C->FontSize = Font;
         C->MaterialExpressionEditorX = X; C->MaterialExpressionEditorY = Y;
+        C->bCommentBubbleVisible_InDetailsPanel = bShowBubble;
+        C->bColorCommentBubble = bColorBubble;
+        C->bCommentBubbleVisible = bShowBubble;
     };
 
     if (!FuncPath.IsEmpty())
@@ -2323,9 +2345,13 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatSetComment(const TSharedPtr<FJs
     ValidateNumberArrayRange(ParamR, TEXT("color"), ColorValues, bHasColor, 0.0, 1.0);
     const bool bHasFont = ParamR.Raw().IsValid() && ParamR.Raw()->HasField(TEXT("font_size"));
     const int32 Font = ParamR.OptionalIntInRange(TEXT("font_size"), 18, 1, 512);
+    const bool bHasShowBubble = ParamR.Raw().IsValid() && ParamR.Raw()->HasField(TEXT("show_bubble"));
+    const bool bShowBubble = ParamR.OptionalBool(TEXT("show_bubble"), false);
+    const bool bHasColorBubble = ParamR.Raw().IsValid() && ParamR.Raw()->HasField(TEXT("color_bubble"));
+    const bool bColorBubble = ParamR.OptionalBool(TEXT("color_bubble"), false);
     if (MatPath.IsEmpty() == FuncPath.IsEmpty())
         ParamR.AddError(TEXT("pass exactly one of 'material_path' or 'function_path'"));
-    if (!bHasText && !bHasPos && !bHasSize && !bHasColor && !bHasFont)
+    if (!bHasText && !bHasPos && !bHasSize && !bHasColor && !bHasFont && !bHasShowBubble && !bHasColorBubble)
         ParamR.AddError(TEXT("no comment fields to update"));
     if (ParamR.HasErrors()) return FHaybaHandlerResult::Err(ParamR.ErrorMessage());
 
@@ -2341,6 +2367,8 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatSetComment(const TSharedPtr<FJs
         if (bHasColor)
             C->CommentColor = FLinearColor(ColorValues[0], ColorValues[1], ColorValues[2], ColorValues.Num() >= 4 ? ColorValues[3] : 1.0);
         if (bHasFont) C->FontSize = Font;
+        if (bHasShowBubble) { C->bCommentBubbleVisible_InDetailsPanel = bShowBubble; C->bCommentBubbleVisible = bShowBubble; }
+        if (bHasColorBubble) C->bColorCommentBubble = bColorBubble;
     };
     auto Verify = [&](const UMaterialExpressionComment* C)
     {
@@ -2357,6 +2385,8 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatSetComment(const TSharedPtr<FJs
                 ColorValues.Num() >= 4 ? ColorValues[3] : 1.0);
             if (!C->CommentColor.Equals(Expected)) return false;
         }
+        if (bHasShowBubble && C->bCommentBubbleVisible_InDetailsPanel != bShowBubble) return false;
+        if (bHasColorBubble && C->bColorCommentBubble != bColorBubble) return false;
         return !bHasFont || C->FontSize == Font;
     };
 
@@ -2857,7 +2887,17 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatSetProperty(const TSharedPtr<FJ
         bAnyChanged |= bKeyChanged;
         if (bKeyChanged) Changed.Add(MakeShared<FJsonValueString>(Key));
     }
-    if (bAnyChanged) Mat->Modify();
+    if (bAnyChanged)
+    {
+        // These settings decide which shader types the material's shader map must contain. Changing them
+        // under a map still compiling (or compiled) for the old settings left the material inconsistent,
+        // and the next render of it (an editor-autosave thumbnail) failed the MaterialShader.cpp:2567
+        // check ContainsShaderType and killed the editor (a production project, 2026-11-05 23:37, M_UI_SandText switched to
+        // MD_UI + translucent while compiling). Drop the stale compile now; recompile for the new settings
+        // below, before anything can render it.
+        Mat->CancelOutstandingCompilation();
+        Mat->Modify();
+    }
 
     TSharedPtr<FJsonObject> Readback = MakeShared<FJsonObject>();
     TArray<TSharedPtr<FJsonValue>> VerificationFailed;
@@ -2922,6 +2962,24 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatSetProperty(const TSharedPtr<FJ
             *FString::Join(FailedNames, TEXT(", "))));
     }
 
+    bool bRecompileCrashed = false;
+    if (bAnyChanged)
+    {
+        // Same guarded boundary as material_compile: RecompileMaterial broadcasts editor notifications
+        // that a stale script delegate can fault in. It queues an async compile for the new settings;
+        // until that lands the renderer uses the default material instead of the stale map.
+        HaybaSeh::RunGuarded(+[](void* InMat)
+        {
+            UMaterialEditingLibrary::RecompileMaterial(static_cast<UMaterial*>(InMat));
+        }, Mat, bRecompileCrashed);
+        if (bRecompileCrashed)
+        {
+            return FHaybaHandlerResult::Err(TEXT(
+                "material_set_property: the settings were applied, but the native recompile faulted (SEH caught it). "
+                "Restart the editor before another mutation; do not save this material first."));
+        }
+    }
+
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
     Out->SetStringField(TEXT("material_path"), Mat->GetPathName());
     Out->SetArrayField(TEXT("applied"), Applied);
@@ -2936,7 +2994,10 @@ FHaybaHandlerResult FHaybaMCPMaterialHandler::MatSetProperty(const TSharedPtr<FJ
     Out->SetBoolField(TEXT("dirty"), bPackageDirty);
     Out->SetBoolField(TEXT("saved"), false);
     Out->SetBoolField(TEXT("requires_compile"), bPackageDirty);
-    Out->SetStringField(TEXT("note"), TEXT("call material_compile to apply settings and write the material to disk"));
+    Out->SetBoolField(TEXT("recompile_queued"), bAnyChanged);
+    Out->SetStringField(TEXT("note"), bAnyChanged
+        ? TEXT("settings applied and a recompile for them is queued; call material_compile to surface errors and write the material to disk")
+        : TEXT("call material_compile to apply settings and write the material to disk"));
     return FHaybaHandlerResult::Ok(Out);
 }
 

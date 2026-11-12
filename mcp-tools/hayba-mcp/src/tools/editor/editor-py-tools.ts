@@ -81,17 +81,21 @@ import type { HaybaToolMeta } from '../hayba-tool-meta.js';
 import { pyStr } from '../ue-python.js';
 import type { PyToolDescriptor } from '../py-tool-factory.js';
 
-// ── Shared Python helpers (editor subsystems + reflection resolve) ────────────
+// ── Shared Python helpers (editor subsystems) ─────────────────────────────────
+// No try/with/getattr here: native python_run policy refuses try/with
+// (HCR-TIME-001) and getattr (HCR-DYNAMIC-001), and this block is prepended to
+// every editor tool. Callers pass the subsystem class directly.
 const PY_EDITOR_HELPERS = [
-  'def _sub(name):',
-  '    try: return unreal.get_editor_subsystem(getattr(unreal, name))',
-  '    except Exception: return None',
+  'def _sub(cls):',
+  '    return unreal.get_editor_subsystem(cls)',
   'def _vec(v):',
-  '    try: return [v.x, v.y, v.z]',
-  '    except Exception: return None',
+  '    return [v.x, v.y, v.z] if v is not None else None',
   'def _rot(r):',
-  '    try: return [r.roll, r.pitch, r.yaw]',
-  '    except Exception: return None',
+  '    return [r.roll, r.pitch, r.yaw] if r is not None else None',
+].join('\n');
+
+// Reflection resolve, only reflect_class needs it (still uses getattr/try).
+const PY_RESOLVE_TYPE = [
   'def _resolve_type(nm):',
   '    if not nm: return None',
   '    o = getattr(unreal, nm, None)',
@@ -124,19 +128,19 @@ export type EditorGetCameraParams = z.infer<typeof editorGetCameraSchema>;
 function editorGetCameraScript(_p: EditorGetCameraParams): string {
   return [
     PY_EDITOR_HELPERS,
-    'try:',
-    '    ues = _sub("UnrealEditorSubsystem")',
-    '    if ues is None: raise Exception("UnrealEditorSubsystem unavailable")',
-    '    info = ues.get_level_viewport_camera_info()',
-    '    loc = None; rot = None',
-    '    if isinstance(info, tuple):',
-    '        # ((loc,rot)) or (bool, loc, rot) depending on engine build',
-    '        parts = [x for x in info if not isinstance(x, bool)]',
-    '        if len(parts) >= 2: loc, rot = parts[0], parts[1]',
-    '    if loc is None: raise Exception("get_level_viewport_camera_info returned no transform")',
+    'ues = _sub(unreal.UnrealEditorSubsystem)',
+    'info = ues.get_level_viewport_camera_info() if ues is not None else None',
+    'loc = None; rot = None',
+    'if isinstance(info, tuple):',
+    '    # ((loc,rot)) or (bool, loc, rot) depending on engine build',
+    '    parts = [x for x in info if not isinstance(x, bool)]',
+    '    if len(parts) >= 2: loc, rot = parts[0], parts[1]',
+    'if ues is None:',
+    '    _err("UnrealEditorSubsystem unavailable")',
+    'elif loc is None:',
+    '    _err("get_level_viewport_camera_info returned no transform")',
+    'else:',
     '    _emit({"ok": True, "location": _vec(loc), "rotation": _rot(rot)})',
-    'except Exception as _e:',
-    '    _err(_e)',
   ].join('\n');
 }
 
@@ -285,7 +289,7 @@ function selectionGetScript(_p: SelectionGetParams): string {
   return [
     PY_EDITOR_HELPERS,
     'try:',
-    '    eas = _sub("EditorActorSubsystem")',
+    '    eas = _sub(unreal.EditorActorSubsystem)',
     '    actors = []',
     '    try:',
     '        for a in eas.get_selected_level_actors():',
@@ -399,7 +403,7 @@ function outlinerTreeScript(p: OutlinerTreeParams): string {
     `_limit = ${p.limit}`,
     `_offset = ${p.offset}`,
     'try:',
-    '    eas = _sub("EditorActorSubsystem")',
+    '    eas = _sub(unreal.EditorActorSubsystem)',
     '    nodes = []',
     '    for a in eas.get_all_level_actors():',
     '        try:',
@@ -465,7 +469,7 @@ function objectInspectScript(p: ObjectInspectParams): string {
     '        try: obj = unreal.EditorAssetLibrary.load_asset(_target)',
     '        except Exception: pass',
     '    if obj is None:',
-    '        eas = _sub("EditorActorSubsystem")',
+    '        eas = _sub(unreal.EditorActorSubsystem)',
     '        for a in (eas.get_all_level_actors() if eas else []):',
     '            try:',
     '                if a.get_actor_label() == _target or a.get_path_name() == _target: obj = a; break',
@@ -525,7 +529,7 @@ function objectExistsScript(p: ObjectExistsParams): string {
     '            if o is not None: found = True; kind = "object"; path = o.get_path_name()',
     '        except Exception: pass',
     '    if not found:',
-    '        eas = _sub("EditorActorSubsystem")',
+    '        eas = _sub(unreal.EditorActorSubsystem)',
     '        for a in (eas.get_all_level_actors() if eas else []):',
     '            try:',
     '                if a.get_actor_label() == _target or a.get_path_name() == _target:',
@@ -656,6 +660,7 @@ export type ReflectClassParams = z.infer<typeof reflectClassSchema>;
 function reflectClassScript(p: ReflectClassParams): string {
   return [
     PY_EDITOR_HELPERS,
+    PY_RESOLVE_TYPE,
     `_cp = ${pyStr(p.class_path)}`,
     'try:',
     '    o = _resolve_type(_cp)',

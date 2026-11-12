@@ -1,4 +1,5 @@
 #include "HaybaMCPAssetHandler.h"
+#include "HaybaMCPSaveVerify.h"
 #include "HaybaMCPAssetRegistryQuery.h"
 #include "Json.h"
 #include "Editor.h"
@@ -13,6 +14,13 @@
 #include "Factories/FbxFactory.h"
 #include "Factories/FbxImportUI.h"
 #include "Factories/FbxStaticMeshImportData.h"
+#include "Factories/FbxSkeletalMeshImportData.h"
+#include "Factories/FbxAnimSequenceImportData.h"
+#include "Engine/SkeletalMesh.h"
+#include "Animation/Skeleton.h"
+#include "Animation/AnimSequence.h"
+#include "PhysicsEngine/PhysicsAsset.h"
+#include "Materials/MaterialInterface.h"
 #include "Factories/SoundFactory.h"
 #include "Engine/Texture2D.h"
 #include "Engine/StaticMesh.h"
@@ -41,6 +49,11 @@
 #include "UObject/UnrealType.h"  // FProperty::ExportText_InContainer
 #include "UObject/Package.h"
 #include "UObject/StrongObjectPtr.h"
+#include "UObject/SavePackage.h"
+#include "UObject/UObjectHash.h"
+#include "UObject/GarbageCollection.h"
+#include "Engine/Blueprint.h"
+#include "HaybaMCPParams.h"
 
 #if PLATFORM_WINDOWS
 #include "Windows/AllowWindowsPlatformTypes.h"
@@ -57,6 +70,7 @@ TArray<FString> FHaybaMCPAssetHandler::GetCommands() const
         TEXT("asset_registry_query"),
         TEXT("asset_get_info"),
         TEXT("asset_import"),
+        TEXT("asset_save"),
         TEXT("asset_duplicate"),
         TEXT("asset_delete"),
         TEXT("asset_get_references"),
@@ -77,6 +91,7 @@ FHaybaHandlerResult FHaybaMCPAssetHandler::Handle(const FString& Cmd, const TSha
     if (Cmd == TEXT("asset_registry_query")) return AssetRegistryQuery(P);
     if (Cmd == TEXT("asset_get_info"))       return AssetGetInfo(P);
     if (Cmd == TEXT("asset_import"))         return AssetImport(P);
+    if (Cmd == TEXT("asset_save"))           return AssetSave(P);
     if (Cmd == TEXT("asset_duplicate"))      return AssetDuplicate(P);
     if (Cmd == TEXT("asset_delete"))         return AssetDelete(P);
     if (Cmd == TEXT("asset_get_references")) return AssetGetReferences(P);
@@ -676,13 +691,13 @@ bool ParseAndValidateRequest(const TSharedPtr<FJsonObject>& Json, FRequest& Out,
         return false;
     }
     static const TSet<FString> AllowedFields = {
-        TEXT("source_file"), TEXT("destination_path"), TEXT("asset_type")
+        TEXT("source_file"), TEXT("destination_path"), TEXT("asset_type"), TEXT("options")
     };
     for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : Json->Values)
     {
         if (!AllowedFields.Contains(Pair.Key))
         {
-            Error = TEXT("asset_import [HAI_INVALID_REQUEST]: only source_file, destination_path, and asset_type are accepted");
+            Error = TEXT("asset_import [HAI_INVALID_REQUEST]: only source_file, destination_path, asset_type and (skeletal_mesh) options are accepted");
             return false;
         }
     }
@@ -781,10 +796,98 @@ bool ParseAndValidateRequest(const TSharedPtr<FJsonObject>& Json, FRequest& Out,
     {
         Out.Kind = EKind::StaticMeshFbx;
     }
+    else if (Out.Extension == TEXT(".fbx") && Out.AssetType == TEXT("skeletal_mesh"))
+    {
+        Out.Kind = EKind::SkeletalMeshFbx;
+    }
     else
     {
-        Error = TEXT("asset_import [HAI_INVALID_REQUEST]: extension and asset_type must match png/jpeg+texture, wav+sound_wave, or binary fbx+static_mesh; glTF/GLB/OBJ/USD and dependency-reading formats are not accepted");
+        Error = TEXT("asset_import [HAI_INVALID_REQUEST]: extension and asset_type must match png/jpeg+texture, wav+sound_wave, or binary fbx+static_mesh/skeletal_mesh; glTF/GLB/OBJ/USD and dependency-reading formats are not accepted");
         return false;
+    }
+
+    const TSharedPtr<FJsonObject>* Options = nullptr;
+    if (Json->HasField(TEXT("options")))
+    {
+        if (Out.Kind != EKind::SkeletalMeshFbx || !Json->TryGetObjectField(TEXT("options"), Options))
+        {
+            Error = TEXT("asset_import [HAI_INVALID_REQUEST]: options is an object and only applies to asset_type skeletal_mesh");
+            return false;
+        }
+        FSkeletalOptions& S = Out.Skeletal;
+        static const TMap<FString, bool FSkeletalOptions::*> Bools = {
+            { TEXT("import_mesh"), &FSkeletalOptions::bImportMesh },
+            { TEXT("create_physics_asset"), &FSkeletalOptions::bCreatePhysicsAsset },
+            { TEXT("import_animations"), &FSkeletalOptions::bImportAnimations },
+            { TEXT("import_materials"), &FSkeletalOptions::bImportMaterials },
+            { TEXT("import_textures"), &FSkeletalOptions::bImportTextures },
+            { TEXT("import_morph_targets"), &FSkeletalOptions::bImportMorphTargets },
+            { TEXT("use_t0_as_ref_pose"), &FSkeletalOptions::bUseT0AsRefPose },
+            { TEXT("update_skeleton_reference_pose"), &FSkeletalOptions::bUpdateSkeletonReferencePose },
+        };
+        static const TMap<FString, FString FSkeletalOptions::*> Strings = {
+            { TEXT("skeleton"), &FSkeletalOptions::Skeleton },
+            { TEXT("physics_asset"), &FSkeletalOptions::PhysicsAsset },
+            { TEXT("normal_import_method"), &FSkeletalOptions::NormalImportMethod },
+        };
+        for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : (*Options)->Values)
+        {
+            const FString Key(Pair.Key);
+            if (bool FSkeletalOptions::* const* B = Bools.Find(Key))
+            {
+                if (!Pair.Value.IsValid() || Pair.Value->Type != EJson::Boolean)
+                {
+                    Error = FString::Printf(TEXT("asset_import [HAI_INVALID_REQUEST]: options.%s must be a boolean"), *Key);
+                    return false;
+                }
+                S.**B = Pair.Value->AsBool();
+            }
+            else if (FString FSkeletalOptions::* const* Str = Strings.Find(Key))
+            {
+                if (!Pair.Value.IsValid() || Pair.Value->Type != EJson::String || Pair.Value->AsString().Len() > 512
+                    || HasControlCharacter(Pair.Value->AsString()))
+                {
+                    Error = FString::Printf(TEXT("asset_import [HAI_INVALID_REQUEST]: options.%s must be a short string"), *Key);
+                    return false;
+                }
+                S.**Str = Pair.Value->AsString();
+            }
+            else
+            {
+                Error = FString::Printf(TEXT("asset_import [HAI_INVALID_REQUEST]: unknown options.%s"), *Key);
+                return false;
+            }
+        }
+        for (const FString* Ref : { &S.Skeleton, &S.PhysicsAsset })
+        {
+            if (!Ref->IsEmpty() && (!FPackageName::IsValidObjectPath(*Ref) || Ref->StartsWith(TEXT("/Temp/"))))
+            {
+                Error = FString::Printf(TEXT("asset_import [HAI_INVALID_REQUEST]: '%s' is not an object path such as /Game/Chars/SK_Hero_Skeleton.SK_Hero_Skeleton"), **Ref);
+                return false;
+            }
+        }
+        if (S.NormalImportMethod != TEXT("import") && S.NormalImportMethod != TEXT("compute")
+            && S.NormalImportMethod != TEXT("import_and_tangents"))
+        {
+            Error = TEXT("asset_import [HAI_INVALID_REQUEST]: options.normal_import_method must be import, compute or import_and_tangents");
+            return false;
+        }
+        if (!S.PhysicsAsset.IsEmpty() && S.bCreatePhysicsAsset && (*Options)->HasField(TEXT("create_physics_asset")))
+        {
+            Error = TEXT("asset_import [HAI_INVALID_REQUEST]: pass physics_asset or create_physics_asset:true, not both");
+            return false;
+        }
+        if (!S.PhysicsAsset.IsEmpty()) S.bCreatePhysicsAsset = false;
+        if (!S.bImportMesh)
+        {
+            if (S.Skeleton.IsEmpty())
+            {
+                Error = TEXT("asset_import [HAI_INVALID_REQUEST]: an animation-only import (import_mesh:false) needs options.skeleton");
+                return false;
+            }
+            S.bImportAnimations = true;
+            S.bCreatePhysicsAsset = false;
+        }
     }
     Out.MaxFileBytes = MaxFileBytesForKind(Out.Kind);
 
@@ -817,7 +920,8 @@ bool ValidateFileHeader(EKind Kind, TConstArrayView<uint8> Header, int64 FileByt
         case EKind::TexturePng:     return ValidatePng(Header, Error);
         case EKind::TextureJpeg:    return ValidateJpeg(Header, Error);
         case EKind::SoundWave:      return ValidateWave(Header, FileBytes, Error);
-        case EKind::StaticMeshFbx:  return ValidateFbx(Header, Error);
+        case EKind::StaticMeshFbx:
+        case EKind::SkeletalMeshFbx: return ValidateFbx(Header, Error);
         default:
             Error = TEXT("asset_import [HAI_FORMAT_REJECTED]: no fixed format policy exists");
             return false;
@@ -831,7 +935,8 @@ int64 MaxFileBytesForKind(EKind Kind)
         case EKind::TexturePng:
         case EKind::TextureJpeg:   return MaxTextureBytes;
         case EKind::SoundWave:     return MaxWaveBytes;
-        case EKind::StaticMeshFbx: return MaxFbxBytes;
+        case EKind::StaticMeshFbx:
+        case EKind::SkeletalMeshFbx: return MaxFbxBytes;
         default:                   return 0;
     }
 }
@@ -847,6 +952,27 @@ bool ValidateFileSize(EKind Kind, int64 FileBytes, FString& Error)
         return false;
     }
     return true;
+}
+
+FString SkeletalCollision(const FRequest& Request, const TArray<FString>& ExistingNames)
+{
+    const FString& Name = Request.AssetName;
+    const FSkeletalOptions& S = Request.Skeletal;
+    for (const FString& Existing : ExistingNames)
+    {
+        const bool bMesh = Existing.Equals(Name, ESearchCase::IgnoreCase);
+        const bool bSkeleton = S.bImportMesh && S.Skeleton.IsEmpty()
+            && Existing.Equals(Name + TEXT("_Skeleton"), ESearchCase::IgnoreCase);
+        const bool bPhysics = S.bImportMesh && S.bCreatePhysicsAsset
+            && Existing.Equals(Name + TEXT("_PhysicsAsset"), ESearchCase::IgnoreCase);
+        // Animation names depend on the FBX take names, so the importer's whole
+        // prefix is reserved: an existing AnimSequence there would be reimported into.
+        const bool bAnim = S.bImportAnimations && (S.bImportMesh
+            ? Existing.StartsWith(Name + TEXT("_Anim"), ESearchCase::IgnoreCase)
+            : Existing.StartsWith(Name + TEXT("_"), ESearchCase::IgnoreCase));
+        if (bMesh || bSkeleton || bPhysics || bAnim) return Existing;
+    }
+    return FString();
 }
 }
 
@@ -1129,12 +1255,12 @@ private:
 #endif
 
 UFactory* CreatePinnedImportFactory(
-    HaybaAssetImport::EKind Kind,
+    const HaybaAssetImport::FRequest& Request,
     UClass*& ExpectedClass,
     FString& FactoryName,
     FString& Error)
 {
-    switch (Kind)
+    switch (Request.Kind)
     {
         case HaybaAssetImport::EKind::TexturePng:
         case HaybaAssetImport::EKind::TextureJpeg:
@@ -1195,11 +1321,148 @@ UFactory* CreatePinnedImportFactory(
             FactoryName = TEXT("FbxFactory.StaticMeshOnly");
             return Factory;
         }
+        case HaybaAssetImport::EKind::SkeletalMeshFbx:
+        {
+            const HaybaAssetImport::FSkeletalOptions& S = Request.Skeletal;
+            USkeleton* Skeleton = nullptr;
+            if (!S.Skeleton.IsEmpty() && !(Skeleton = LoadObject<USkeleton>(nullptr, *S.Skeleton)))
+            {
+                Error = FString::Printf(TEXT("asset_import [HAI_INVALID_REQUEST]: options.skeleton '%s' is not a loadable Skeleton"), *S.Skeleton);
+                return nullptr;
+            }
+            UPhysicsAsset* Physics = nullptr;
+            if (!S.PhysicsAsset.IsEmpty() && !(Physics = LoadObject<UPhysicsAsset>(nullptr, *S.PhysicsAsset)))
+            {
+                Error = FString::Printf(TEXT("asset_import [HAI_INVALID_REQUEST]: options.physics_asset '%s' is not a loadable PhysicsAsset"), *S.PhysicsAsset);
+                return nullptr;
+            }
+            UFbxFactory* Factory = NewObject<UFbxFactory>(GetTransientPackage());
+            if (!Factory || !Factory->ImportUI || !Factory->ImportUI->SkeletalMeshImportData || !Factory->ImportUI->AnimSequenceImportData)
+            {
+                Error = TEXT("asset_import [HAI_FACTORY_UNAVAILABLE]: FBX skeletal-mesh factory options are unavailable");
+                return nullptr;
+            }
+            UFbxImportUI* UI = Factory->ImportUI;
+            Factory->SetDetectImportTypeOnImport(false);
+            UI->bAutomatedImportShouldDetectType = false;
+            UI->MeshTypeToImport = S.bImportMesh ? FBXIT_SkeletalMesh : FBXIT_Animation;
+            UI->OriginalImportType = UI->MeshTypeToImport;
+            UI->bImportAsSkeletal = S.bImportMesh;
+            UI->bImportMesh = S.bImportMesh;
+            UI->Skeleton = Skeleton;
+            UI->bCreatePhysicsAsset = S.bCreatePhysicsAsset;
+            UI->PhysicsAsset = Physics;
+            UI->bImportAnimations = S.bImportAnimations;
+            UI->bImportMaterials = S.bImportMaterials;
+            UI->bImportTextures = S.bImportTextures;
+            UI->bOverrideFullName = true;
+            UI->bAllowContentTypeImport = false;
+            UFbxSkeletalMeshImportData* Mesh = UI->SkeletalMeshImportData;
+            Mesh->bImportMorphTargets = S.bImportMorphTargets;
+            Mesh->bUseT0AsRefPose = S.bUseT0AsRefPose;
+            Mesh->bUpdateSkeletonReferencePose = S.bUpdateSkeletonReferencePose;
+            Mesh->bImportMeshLODs = false;
+            Mesh->NormalImportMethod = S.NormalImportMethod == TEXT("compute") ? FBXNIM_ComputeNormals
+                : S.NormalImportMethod == TEXT("import_and_tangents") ? FBXNIM_ImportNormalsAndTangents
+                : FBXNIM_ImportNormals;
+            ExpectedClass = S.bImportMesh ? USkeletalMesh::StaticClass() : UAnimSequence::StaticClass();
+            FactoryName = S.bImportMesh ? TEXT("FbxFactory.SkeletalMesh") : TEXT("FbxFactory.AnimationOnly");
+            return Factory;
+        }
         default:
             Error = TEXT("asset_import [HAI_FACTORY_UNAVAILABLE]: no exact factory policy exists");
             return nullptr;
     }
 }
+}
+
+/** A skeletal import creates a set of assets whose names depend on the file's takes and
+ *  materials, so it is verified by what appeared in the folder, never by the returned
+ *  pointers (import callbacks may invalidate those). */
+static FHaybaHandlerResult VerifySkeletalImport(const HaybaAssetImport::FRequest& Request, IAssetRegistry& Registry,
+    const TSet<FString>& BeforeImport, bool bSourceIdentityStable, const FString& PostIdentityError,
+    const FString& FactoryName, int64 SourceBytes)
+{
+    const HaybaAssetImport::FSkeletalOptions& S = Request.Skeletal;
+    TArray<FAssetData> InFolder;
+    Registry.GetAssetsByPath(FName(*Request.DestinationPath), InFolder, /*bRecursive*/ false);
+
+    FString MeshPath, SkeletonPath, PhysicsPath;
+    TArray<TSharedPtr<FJsonValue>> Created, Anims, Materials, Textures;
+    for (const FAssetData& A : InFolder)
+    {
+        const FString Path = A.GetObjectPathString();
+        if (BeforeImport.Contains(Path)) continue;
+        const FTopLevelAssetPath Class = A.AssetClassPath;
+        TSharedPtr<FJsonObject> Item = MakeShared<FJsonObject>();
+        Item->SetStringField(TEXT("path"), Path);
+        Item->SetStringField(TEXT("class"), Class.GetAssetName().ToString());
+        Created.Add(MakeShared<FJsonValueObject>(Item));
+        if (Class == USkeletalMesh::StaticClass()->GetClassPathName() && Path == Request.ExpectedObjectPath) MeshPath = Path;
+        else if (Class == USkeleton::StaticClass()->GetClassPathName()) SkeletonPath = Path;
+        else if (Class == UPhysicsAsset::StaticClass()->GetClassPathName()) PhysicsPath = Path;
+        else if (Class == UAnimSequence::StaticClass()->GetClassPathName()) Anims.Add(MakeShared<FJsonValueString>(Path));
+        else if (Class.GetAssetName().ToString().StartsWith(TEXT("Material"))) Materials.Add(MakeShared<FJsonValueString>(Path));
+        else if (Class.GetAssetName().ToString().StartsWith(TEXT("Texture"))) Textures.Add(MakeShared<FJsonValueString>(Path));
+    }
+
+    TArray<FString> Missing;
+    TArray<TSharedPtr<FJsonValue>> Warnings;
+    if (S.bImportMesh && MeshPath.IsEmpty()) Missing.Add(TEXT("the skeletal mesh ") + Request.ExpectedObjectPath);
+    if (S.bImportMesh && S.Skeleton.IsEmpty() && SkeletonPath.IsEmpty()) Missing.Add(TEXT("a new Skeleton"));
+    if (!S.bImportMesh && Anims.Num() == 0) Missing.Add(TEXT("any AnimSequence"));
+    if (S.bImportMesh && S.bCreatePhysicsAsset && PhysicsPath.IsEmpty())
+        Warnings.Add(MakeShared<FJsonValueString>(TEXT("No PhysicsAsset was created (a mesh without suitable bones gets none).")));
+    if (S.bImportMesh && S.bImportAnimations && Anims.Num() == 0)
+        Warnings.Add(MakeShared<FJsonValueString>(TEXT("import_animations was on but the FBX produced no AnimSequence (no takes?).")));
+
+    int32 BoneCount = 0;
+    TSharedPtr<FJsonObject> Bounds;
+    if (const USkeletalMesh* Mesh = MeshPath.IsEmpty() ? nullptr : LoadObject<USkeletalMesh>(nullptr, *MeshPath))
+    {
+        BoneCount = Mesh->GetRefSkeleton().GetNum();
+        const FBoxSphereBounds B = Mesh->GetBounds();
+        Bounds = MakeShared<FJsonObject>();
+        Bounds->SetArrayField(TEXT("origin"), { MakeShared<FJsonValueNumber>(B.Origin.X), MakeShared<FJsonValueNumber>(B.Origin.Y), MakeShared<FJsonValueNumber>(B.Origin.Z) });
+        Bounds->SetArrayField(TEXT("extent"), { MakeShared<FJsonValueNumber>(B.BoxExtent.X), MakeShared<FJsonValueNumber>(B.BoxExtent.Y), MakeShared<FJsonValueNumber>(B.BoxExtent.Z) });
+        Bounds->SetNumberField(TEXT("radius"), B.SphereRadius);
+    }
+    else if (const USkeleton* Target = S.Skeleton.IsEmpty() ? nullptr : LoadObject<USkeleton>(nullptr, *S.Skeleton))
+    {
+        BoneCount = Target->GetReferenceSkeleton().GetNum();
+    }
+
+    const bool bOk = bSourceIdentityStable && Missing.Num() == 0;
+    TSharedPtr<FJsonObject> Out = MakeAssetImportState(
+        bOk,
+        bOk ? TEXT("HAI_IMPORTED") : (bSourceIdentityStable ? TEXT("HAI_READBACK_MISMATCH") : TEXT("HAI_IDENTITY_CHANGED")),
+        bOk ? FString() : (bSourceIdentityStable
+            ? TEXT("asset_import [HAI_READBACK_MISMATCH]: the skeletal import did not produce ") + FString::Join(Missing, TEXT(", ")) + TEXT("; inspect created[] before retrying")
+            : PostIdentityError),
+        TEXT("verify"),
+        bOk ? TEXT("applied_unsaved") : (Created.Num() > 0 ? TEXT("partially_applied") : TEXT("unknown")));
+    Out->SetStringField(TEXT("asset_type"), Request.AssetType);
+    Out->SetStringField(TEXT("factory"), FactoryName);
+    Out->SetNumberField(TEXT("source_size_bytes"), static_cast<double>(SourceBytes));
+    if (!MeshPath.IsEmpty()) Out->SetStringField(TEXT("path"), MeshPath);
+    Out->SetStringField(TEXT("skeletal_mesh"), MeshPath);
+    Out->SetStringField(TEXT("skeleton"), SkeletonPath.IsEmpty() ? S.Skeleton : SkeletonPath);
+    Out->SetStringField(TEXT("physics_asset"), PhysicsPath.IsEmpty() ? S.PhysicsAsset : PhysicsPath);
+    Out->SetArrayField(TEXT("anim_sequences"), Anims);
+    Out->SetArrayField(TEXT("materials"), Materials);
+    Out->SetArrayField(TEXT("textures"), Textures);
+    Out->SetArrayField(TEXT("created"), Created);
+    Out->SetNumberField(TEXT("bone_count"), BoneCount);
+    if (Bounds.IsValid()) Out->SetObjectField(TEXT("bounds"), Bounds);
+    Out->SetNumberField(TEXT("succeeded"), bOk ? Created.Num() : 0);
+    Out->SetBoolField(TEXT("verified"), bOk);
+    Out->SetBoolField(TEXT("readback_verified"), bOk);
+    Out->SetBoolField(TEXT("partial"), !bOk && Created.Num() > 0);
+    Out->SetBoolField(TEXT("unknown_outcome"), !bOk);
+    if (!bOk) Out->SetStringField(TEXT("failure_kind"), bSourceIdentityStable ? TEXT("unknown_outcome") : TEXT("session_suspect"));
+    Warnings.Add(MakeShared<FJsonValueString>(TEXT("Nothing is on disk yet: call asset_save with the created paths.")));
+    Out->SetArrayField(TEXT("warnings"), Warnings);
+    return FHaybaHandlerResult::Ok(Out);
 }
 
 FHaybaHandlerResult FHaybaMCPAssetHandler::AssetImport(const TSharedPtr<FJsonObject>& P)
@@ -1258,6 +1521,26 @@ FHaybaHandlerResult FHaybaMCPAssetHandler::AssetImport(const TSharedPtr<FJsonObj
             TEXT("asset_import [HAI_COLLISION]: the exact destination object/package already exists in registry, memory, or on disk; overwrite is never attempted"));
     }
 
+    // A skeletal import creates several assets; snapshot the folder so every name it
+    // could take is checked now and everything it created is found afterwards.
+    TSet<FString> BeforeImport;
+    if (Request.Kind == EKind::SkeletalMeshFbx)
+    {
+        TArray<FAssetData> InFolder;
+        Registry.GetAssetsByPath(FName(*Request.DestinationPath), InFolder, /*bRecursive*/ false);
+        TArray<FString> Names;
+        for (const FAssetData& A : InFolder)
+        {
+            BeforeImport.Add(A.GetObjectPathString());
+            Names.Add(A.AssetName.ToString());
+        }
+        const FString Clash = SkeletalCollision(Request, Names);
+        if (!Clash.IsEmpty())
+            return AssetImportPreflightFailure(TEXT("HAI_COLLISION"), FString::Printf(
+                TEXT("asset_import [HAI_COLLISION]: '%s' already exists in %s and this skeletal import could create or overwrite it; skipped. Import into a fresh folder or rename the source."),
+                *Clash, *Request.DestinationPath));
+    }
+
     FAssetToolsModule* AssetToolsModule =
         FModuleManager::LoadModulePtr<FAssetToolsModule>(TEXT("AssetTools"));
     if (!AssetToolsModule)
@@ -1269,9 +1552,13 @@ FHaybaHandlerResult FHaybaMCPAssetHandler::AssetImport(const TSharedPtr<FJsonObj
     UClass* ExpectedClass = nullptr;
     FString FactoryName;
     TStrongObjectPtr<UFactory> Factory(
-        CreatePinnedImportFactory(Request.Kind, ExpectedClass, FactoryName, Error));
+        CreatePinnedImportFactory(Request, ExpectedClass, FactoryName, Error));
     if (!Factory.IsValid() || !ExpectedClass)
-        return AssetImportPreflightFailure(TEXT("HAI_FACTORY_UNAVAILABLE"), Error, TEXT("retryable"));
+    {
+        const FString Code = AssetImportCodeFromError(Error, TEXT("HAI_FACTORY_UNAVAILABLE"));
+        return AssetImportPreflightFailure(Code, Error,
+            Code == TEXT("HAI_INVALID_REQUEST") ? TEXT("input_rejected") : TEXT("retryable"));
+    }
     if (!Factory->FactoryCanImport(Request.SourceFile))
         return AssetImportPreflightFailure(
             TEXT("HAI_FACTORY_REJECTED"),
@@ -1318,6 +1605,10 @@ FHaybaHandlerResult FHaybaMCPAssetHandler::AssetImport(const TSharedPtr<FJsonObj
     const int32 ReturnedPointerCount = ImportedPointers.Num();
     FString PostIdentityError;
     const bool bSourceIdentityStable = SourceLease.Recheck(PostIdentityError);
+
+    if (Request.Kind == EKind::SkeletalMeshFbx)
+        return VerifySkeletalImport(Request, Registry, BeforeImport, bSourceIdentityStable, PostIdentityError,
+            FactoryName, SourceLease.GetFileBytes());
 
     const FAssetData Readback = Registry.GetAssetByObjectPath(ExpectedSoftPath);
     const bool bReadbackExists = Readback.IsValid();
@@ -1900,5 +2191,97 @@ FHaybaHandlerResult FHaybaMCPAssetHandler::AssetGetReferencers(const TSharedPtr<
     Out->SetStringField(TEXT("path"), Path);
     Out->SetArrayField(TEXT("referencers"), Items);
     Out->SetNumberField(TEXT("count"), Items.Num());
+    return FHaybaHandlerResult::Ok(Out);
+}
+
+// ---------------------------------------------------------------------------
+// asset_save: the native replacement for the python-backed save and for
+// EditorAssetLibrary.save_asset in lane scripts. Named packages only: the old
+// "no paths = save every dirty package" mode wrote other agents' half-built
+// work to disk in a shared editor. Maps are refused (level_save owns them).
+// ---------------------------------------------------------------------------
+FHaybaHandlerResult FHaybaMCPAssetHandler::AssetSave(const TSharedPtr<FJsonObject>& P)
+{
+    FHaybaParamReader R(P, TEXT("asset_save"));
+    const TArray<TSharedPtr<FJsonValue>>* Paths = R.RequiredArray(TEXT("asset_paths"), 1, 64);
+    if (R.HasErrors()) return FHaybaHandlerResult::Err(R.ErrorMessage());
+    if (GEditor && GEditor->IsPlaySessionInProgress())
+        return FHaybaHandlerResult::Err(TEXT("asset_save: a Play-In-Editor session is running; stop it first. Nothing was saved."));
+    if (UE::IsSavingPackage() || IsGarbageCollecting())
+        return FHaybaHandlerResult::Err(TEXT("asset_save: the editor is already saving or collecting garbage; retry in a moment. Nothing was saved."));
+
+    TArray<TSharedPtr<FJsonValue>> Saved, Skipped, Failed;
+    auto Note = [](TArray<TSharedPtr<FJsonValue>>& List, const FString& Path, const FString& Reason)
+    {
+        TSharedPtr<FJsonObject> Entry = MakeShared<FJsonObject>();
+        Entry->SetStringField(TEXT("path"), Path);
+        Entry->SetStringField(TEXT("reason"), Reason);
+        List.Add(MakeShared<FJsonValueObject>(Entry));
+    };
+
+    for (const TSharedPtr<FJsonValue>& V : *Paths)
+    {
+        const FString Path = V.IsValid() && V->Type == EJson::String ? V->AsString() : FString();
+        // "/Game/X/Y.Y" and "/Game/X/Y" name the same package.
+        FString PackageName = Path;
+        int32 Dot = INDEX_NONE;
+        if (PackageName.FindChar(TEXT('.'), Dot)) PackageName.LeftInline(Dot);
+        if (!PackageName.StartsWith(TEXT("/Game/")) || !FPackageName::IsValidLongPackageName(PackageName))
+        {
+            Note(Failed, Path, TEXT("not a /Game/ asset path"));
+            continue;
+        }
+        UPackage* Package = FindPackage(nullptr, *PackageName);
+        if (!Package) { Note(Skipped, Path, TEXT("not loaded, so nothing in memory to save")); continue; }
+        if (Package->ContainsMap()) { Note(Failed, Path, TEXT("is a map; save levels with level_save")); continue; }
+        if (!Package->IsDirty()) { Note(Skipped, Path, TEXT("already saved (not dirty)")); continue; }
+
+        // A Blueprint mid-compile would serialize a half-built class.
+        bool bCompiling = false;
+        ForEachObjectWithPackage(Package, [&bCompiling](UObject* Object)
+        {
+            if (const UBlueprint* BP = Cast<UBlueprint>(Object)) bCompiling |= BP->bBeingCompiled;
+            return !bCompiling;
+        }, false);
+        if (bCompiling) { Note(Failed, Path, TEXT("a Blueprint in it is compiling; retry after blueprint_compile returns")); continue; }
+
+        FString Filename;
+        if (!FPackageName::TryConvertLongPackageNameToFilename(PackageName, Filename, FPackageName::GetAssetPackageExtension()))
+        {
+            Note(Failed, Path, TEXT("has no file location"));
+            continue;
+        }
+        // A read-only file would make the save fail, or prompt and stall the game thread.
+        const TArray<FString> ReadOnly = HaybaSaveVerify::FindReadOnlyPackageFiles(Package);
+        if (ReadOnly.Num() > 0)
+        {
+            Note(Failed, Path, TEXT("read-only on disk; nothing was saved. ") + HaybaSaveVerify::MakeWritableHint(ReadOnly, FString()));
+            continue;
+        }
+
+        const FDateTime Before = FDateTime::UtcNow() - FTimespan::FromSeconds(2);
+        // The toolkit's one raw SavePackage: SAVE_NoError, so no modal error dialog mid-command.
+        const bool bSaveReturned = HaybaSaveVerify::Detail::SavePackageNoError(Package, nullptr, Filename);
+        // Verify the effect, not the reply: clean in memory and a fresh file on disk.
+        const FDateTime Stamp = IFileManager::Get().GetTimeStamp(*Filename);
+        if (bSaveReturned && !Package->IsDirty() && Stamp != FDateTime::MinValue() && Stamp >= Before)
+        {
+            Saved.Add(MakeShared<FJsonValueString>(Path));
+        }
+        else
+        {
+            Note(Failed, Path, bSaveReturned
+                ? TEXT("SavePackage returned true but the package is still dirty or the file did not update; check it before relying on it")
+                : TEXT("SavePackage failed; see the Output Log. The package is still dirty in memory"));
+        }
+    }
+
+    TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
+    Out->SetBoolField(TEXT("ok"), Failed.Num() == 0);
+    Out->SetArrayField(TEXT("saved"), Saved);
+    Out->SetNumberField(TEXT("saved_count"), Saved.Num());
+    Out->SetArrayField(TEXT("skipped"), Skipped);
+    Out->SetArrayField(TEXT("failed"), Failed);
+    Out->SetBoolField(TEXT("verified"), Failed.Num() == 0);
     return FHaybaHandlerResult::Ok(Out);
 }

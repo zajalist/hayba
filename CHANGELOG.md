@@ -4,7 +4,29 @@ All notable changes to Hayba MCP Toolkit are documented here. Format based on [K
 
 ## [Unreleased]
 
+## [0.4.1] — 2026-11-12
+
+First full release of the 0.4 line (0.4.0 shipped only as release
+candidates). Highlights: Unreal Engine 5.9 support, the new in-editor
+workspace (Chat, World and the six-tab layout), multi-agent editor leases,
+and the P0 editor safety train.
+
 ### Added
+- Unreal Engine 5.9 support, and 5.9 is the tested engine for this release
+  (5.7 and 5.8 were not retested). The plugin descriptors carry no engine
+  pin, so Unreal does not ask about a version mismatch. The capture component
+  stays visible because 5.9's `CaptureScene` refuses a hidden one.
+- `python_exec_file {path, env?, resources?}` runs a trusted `.py` file from
+  inside the project, outside `python_run`'s sandbox, as one SEH-guarded
+  request with a private namespace. Off by default (Project Settings >
+  Plugins > Hayba MCP Toolkit > Allow Project Python Files); plan-gated, never wrapped in an
+  editor transaction, and refused for scripts that wait on every compile in
+  the world (screenshots, `finish_all_compilation`).
+- `lease_acquire` takes `confirm_within_s`: a grant lapses that quickly unless
+  its owner renews it once, so a grant to a client that already went away no
+  longer blocks every other waiter for minutes.
+- The PythonScriptPlugin closure-type hotfix (a CPython GC crash) is applied
+  once per editor session, as soon as Python starts.
 - P0 editor safety: sticky unsafe state after a contained native fault, guarded
   saves, Play and dirty-Blueprint preflights, asset-busy protection, and
   owner-bound multi-agent leases with canonical `lease_id` handles.
@@ -26,6 +48,37 @@ All notable changes to Hayba MCP Toolkit are documented here. Format based on [K
   editor sees one persistent notification. `ping` and `editor_get_state` report
   `editor_unsafe`, `python_unhealthy` and `health`; `ping` advertises
   `capabilities.editor_health`.
+- `blueprint_graph_batch`: up to 2048 Blueprint graph ops in one call
+  (add_node, add_event, connect, set_pin, comment, move, remove, disconnect,
+  fit_comments), with `ref` names linking ops. Each op runs through the
+  matching single command, so the same validation and verified readback apply.
+  The batch stops at the first failed op and reports `failed_index`, `refs`
+  and `mutation_status`. It is one undo and one skeleton regeneration, with
+  `compile`/`save` optional at the end. It replaces editor-Python graph
+  builders.
+- `blueprint_add_comment` (title-only house style, colour, Show Bubble When
+  Zoomed and Color Bubble on by default), `blueprint_move_nodes`
+  (position-only; `pack` removes overlaps using real node sizes, and
+  `fit_comments` refits boxes afterwards), `blueprint_remove_nodes` (closes
+  the Blueprint's editors first), and `blueprint_disconnect`.
+- `blueprint_measure_nodes` and `blueprint_fit_comments`. Real rendered node
+  rectangles come from a private off-screen `SGraphPanel`. Fit resizes every
+  comment around its group, inner boxes first; it can optionally push
+  overlapping groups apart, and `title_only` trims comment text to its title.
+  Colour and bubble flags are never changed.
+- `blueprint_add_node` gains `custom_event`, `macro` (StandardMacros, built
+  in C++), `message`, `break_struct`, `make_struct`, `call_dispatcher`,
+  `function_entry` and `function_result`. It also gains the palette nodes
+  sequence, make_array, self, format_text, get_data_table_row,
+  spawn_actor_from_class, create_widget, reroute, get_array_item and the
+  switches. `variable_get`/`set` now resolve locals and other classes'
+  members, and `function_name` accepts the `Class:Function` form.
+- Native C++ `asset_save` replaces the python-backed tool. It saves named,
+  loaded, dirty `/Game` packages only and verifies each (clean in memory, fresh
+  file on disk). It refuses maps, read-only files, compiling Blueprints and
+  PIE, and the save-everything mode is gone.
+- `material_add_comment` / `material_set_comment` take `show_bubble` and
+  `color_bubble`; add defaults both on.
 - Multi-agent editor leases (ADR-0010). `lease_acquire` / `lease_renew` /
   `lease_release` / `lease_status` claim `global`, `world:`, `wp-region:`,
   `asset:`, `actor:` or `pie` resources. Acquire never blocks: it answers
@@ -100,8 +153,26 @@ All notable changes to Hayba MCP Toolkit are documented here. Format based on [K
   longer knows.
 - The World view uses a full-width 3D canvas with an on-demand hierarchy
   explorer in place of the old force graph and fixed inspector.
+- Blueprint mutations and `blueprint_compile` are refused while a PIE session
+  runs, because reinstancing live PIE objects was a recurring crash.
+  `actor_transform` is now plan-gated, matching its NON_IDEMPOTENT
+  classification.
 
 ### Fixed
+- `asset_delete` is a heavy operation (300 s timeout, no automatic retry), so
+  deleting a large Blueprint no longer times out while the editor is still
+  working, and paths broken across lines by a client are joined before use.
+- After a contained native fault, abandoned progress dialogs, slow-task
+  entries and a stranded "saving package" flag are cleaned up, so the editor
+  survives long enough to save and restart.
+- A command is never run inside another one: nested dispatch is refused, and
+  queued TCP commands wait while a command, slow task or modal dialog is
+  active.
+- `material_set_property` recompiles when it changes settings that decide
+  shaders, and material graph edits and compiles are refused while Play In
+  Editor runs.
+- Blueprint node measurement and `blueprint_move_nodes` round to 32-bit
+  integers explicitly.
 - Read-only or racing package saves return an error instead of opening a
   blocking dialog or continuing unsafely. Plugin Python runs unattended.
 - Large and paged editor responses preserve exact source paths and report

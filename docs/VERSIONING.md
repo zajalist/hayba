@@ -34,6 +34,10 @@ release candidates of that version:
 - Deploy B → `v0.4.0-rc.2`
 - `v0.4.0` is tagged after Deploy C.
 
+The 0.4 line was released as **0.4.1** (`v0.4.1`), which adds Unreal
+Engine 5.9 support and the multi-agent lease work to the safety train; no
+plain `v0.4.0` tag was cut.
+
 The first installer release is **0.5.0**.
 
 `packages/*` (the worldbuilding libraries) version independently of the

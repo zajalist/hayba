@@ -208,7 +208,15 @@ describe('executeCommand — idempotency / retry gating', () => {
 
 describe('heavy-ops registry', () => {
   it('recognises the known game-thread-blocking commands', () => {
-    for (const cmd of ['asset_import', 'landscape_import', 'level_save', 'pcg_execute_graph', 'hayba_asset_reindex']) {
+    for (const cmd of [
+      'asset_import',
+      'asset_delete',
+      'landscape_import',
+      'level_save',
+      'pcg_execute_graph',
+      'hayba_asset_reindex',
+      'ui_mutate_tree',
+    ]) {
       expect(isHeavyOp(cmd)).toBe(true);
     }
     expect(isHeavyOp('actor_list')).toBe(false);

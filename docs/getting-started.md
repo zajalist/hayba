@@ -1,10 +1,14 @@
 # Getting started
 
+New to Hayba? The [step-by-step install guide](../INSTALL.md) is the
+simplest path (Windows, Unreal Engine 5.9). This page is the shorter
+developer version, plus the optional add-ons.
+
 ## Prerequisites
 
 - **Node.js ≥ 22.5** (see [`.nvmrc`](../.nvmrc); the codebase uses
   `node:sqlite`)
-- **Unreal Engine 5.7+** (UE 5.7 or 5.8) on Windows, and **Visual Studio with the C++ toolchain your Unreal Engine version requires** (to build the plugin)
+- **Unreal Engine 5.9** on Windows (5.7 and 5.8 were not tested for 0.4.1), and **Visual Studio with the C++ toolchain your Unreal Engine version requires** (to build the plugin)
 - Python 3.10+ and [`uv`](https://docs.astral.sh/uv/) (only for the
   optional visual sidecar, Tier 2)
 
