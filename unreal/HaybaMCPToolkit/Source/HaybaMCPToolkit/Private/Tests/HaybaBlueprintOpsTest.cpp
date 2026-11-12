@@ -159,7 +159,10 @@ bool FHaybaBlueprintOpsTypeSpecTest::RunTest(const FString&)
             TestFalse(FString::Printf(TEXT("'%s' says why"), Bad), S.Error.IsEmpty());
         }
     }
+    return true;
+}
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
     FHaybaBlueprintOpsBatchTranslateTest,
     "Hayba.MCP.BlueprintOps.BatchTranslate",
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
@@ -244,6 +247,10 @@ bool FHaybaBlueprintOpsEventNameTest::RunTest(const FString&)
     TestEqual(TEXT("widget events are already function names"), CanonicalEventFunctionName(TEXT("Construct")), FString(TEXT("Construct")));
     TestEqual(TEXT("the real name passes through"), CanonicalEventFunctionName(TEXT("ReceiveBeginPlay")), FString(TEXT("ReceiveBeginPlay")));
     TestEqual(TEXT("prefix stripped for any event"), CanonicalEventFunctionName(TEXT("Event Construct")), FString(TEXT("Construct")));
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
     FHaybaBlueprintOpsCommentBoxTest,
     "Hayba.MCP.BlueprintOps.CommentBox",
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
@@ -288,6 +295,10 @@ bool FHaybaBlueprintOpsParamNamesTest::RunTest(const FString&)
     // Exec and self pins already use these names on every node.
     for (const TCHAR* Reserved : { TEXT("execute"), TEXT("then"), TEXT("self") })
         TestFalse(FString::Printf(TEXT("'%s' is reserved"), Reserved), ParamNamesProblem({ Reserved }).IsEmpty());
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
     FHaybaBlueprintOpsCommentLayoutTest,
     "Hayba.MCP.BlueprintOps.CommentLayout",
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)

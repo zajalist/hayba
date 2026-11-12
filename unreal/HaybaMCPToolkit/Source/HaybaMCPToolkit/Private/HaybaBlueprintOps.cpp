@@ -198,6 +198,8 @@ namespace HaybaBlueprintOps
             }
         }
         return FString();
+    }
+
     FBatchStep TranslateBatchOp(const TSharedPtr<FJsonObject>& Op, const FString& Path,
         const FString& DefaultGraph, const TMap<FString, FString>& Refs)
     {
