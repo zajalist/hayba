@@ -50,6 +50,10 @@ namespace HaybaMCPLease
 		 *  this long from its grant, renewals included, so a batch parked at a
 		 *  fence always gets its resources back. */
 		double FenceGrantMaxSeconds = 30.0;
+		/** A request with a TTL of at most this, conflicting with no holder, may be granted ahead of a
+		 *  whole-editor EXCLUSIVE waiter that a holder still keeps waiting, during that waiter's first
+		 *  AgingSeconds. Such a grant lives at most this long, renewals included, so EXCLUSIVE cannot starve. */
+		double BypassMaxTtlSeconds = 300.0;
 		/** A bound lease whose connection closed keeps its locks this long after
 		 *  the close, so a client that reconnects can renew it (T7). Capped at
 		 *  OrphanedAt + OrphanGraceSeconds: nothing can slide an orphan forward. */
@@ -71,6 +75,8 @@ namespace HaybaMCPLease
 		/** >0: a grant lives only this long until its owner renews it once, so a lease granted to a
 		 *  requester that died while queued lapses quickly instead of after its full TTL. */
 		double ConfirmWithinSeconds = 0.0;
+		/** Served ahead of every other waiter (never ahead of a holder): the coordinator's urgent requests. */
+		bool bFront = false;
 	};
 
 	struct FLease
@@ -99,6 +105,8 @@ namespace HaybaMCPLease
 		int64 YieldSeq = 0;
 		/** Token of the yielding lease this one was granted under, if any. */
 		FString FenceOf;
+		/** Granted ahead of a waiting whole-editor EXCLUSIVE: lives at most BypassMaxTtlSeconds from its grant. */
+		bool bPassedExclusive = false;
 
 		bool IsYielding() const { return YieldSeq > 0; }
 	};
@@ -397,7 +405,12 @@ namespace HaybaMCPLease
 				}
 			}
 
-			// 2. So does a conflicting waiter that ranks ahead of it.
+			// 2. So does a conflicting waiter that ranks ahead of it, except a whole-editor EXCLUSIVE that a holder
+			//    still keeps waiting (MayBePassed): a short request goes ahead of it rather than queueing every area
+			//    lease behind it. The pass is capped (BypassMaxTtlSeconds) and stops once it has waited AgingSeconds.
+			const bool bShort = ClampTtl(Candidate.Request.TtlSeconds) <= Tuning.BypassMaxTtlSeconds
+				&& !IsWholeEditorExclusive(Candidate.Locks);
+			bool bPassesExclusive = false;
 			const FWaiter* AheadBlocker = nullptr;
 			int32 Ahead = 0;
 			for (const FWaiter& Other : Waiters)
@@ -406,6 +419,11 @@ namespace HaybaMCPLease
 				if (Ranks(Other, Now) < Ranks(Candidate, Now)
 					&& HaybaMCPAccess::FindConflict(Candidate.Locks, Other.Locks))
 				{
+					if (bShort && MayBePassed(Other, Now))
+					{
+						bPassesExclusive = true;
+						continue;
+					}
 					++Ahead;
 					if (!AheadBlocker) AheadBlocker = &Other;
 				}
@@ -413,7 +431,7 @@ namespace HaybaMCPLease
 
 			if (!Blocker && !AheadBlocker)
 			{
-				return Grant(WaiterIndex, Now, FenceOf);
+				return Grant(WaiterIndex, Now, FenceOf, bPassesExclusive);
 			}
 
 			Result.Status = EStatus::Queued;
@@ -754,6 +772,10 @@ namespace HaybaMCPLease
 			{
 				Out = FMath::Min(Out, Lease.GrantedAt + Tuning.FenceGrantMaxSeconds);
 			}
+			if (Lease.bPassedExclusive)
+			{
+				Out = FMath::Min(Out, Lease.GrantedAt + Tuning.BypassMaxTtlSeconds);
+			}
 			if (Lease.IsOrphaned())
 			{
 				Out = FMath::Min(Out, Lease.OrphanedAt + Tuning.OrphanGraceSeconds);
@@ -861,15 +883,42 @@ namespace HaybaMCPLease
 			return false;
 		}
 
-		/** Lower ranks are served first: interactive-or-aged before long, then
+		/** Lower ranks are served first: front, then interactive-or-aged before long, then
 		 *  by arrival. */
 		int64 Ranks(const FWaiter& W, double Now) const
 		{
-			const int64 Lane = (W.Request.Lane == ELane::Interactive || IsAged(W, Now)) ? 0 : 1;
+			const int64 Lane = W.Request.bFront ? 0 : (W.Request.Lane == ELane::Interactive || IsAged(W, Now)) ? 1 : 2;
 			return (Lane << 48) + W.Seq;
 		}
 
-		FAcquireResult Grant(int32 WaiterIndex, double Now, const FString& FenceOf = FString())
+		/** An X lock on the root: the request wants the whole editor to itself. */
+		static bool IsWholeEditorExclusive(const TArray<FLock>& Locks)
+		{
+			return Locks.ContainsByPredicate([](const FLock& L)
+			{
+				return L.Key == TEXT("global") && L.Mode == HaybaMCPAccess::ELockMode::Exclusive;
+			});
+		}
+
+		/** A whole-editor EXCLUSIVE waiter that a holder still keeps waiting, for its first AgingSeconds (and
+		 *  never a front one): a short request may be granted ahead of it instead of queueing behind it. */
+		bool MayBePassed(const FWaiter& W, double Now) const
+		{
+			if (W.Request.bFront || !IsWholeEditorExclusive(W.Locks) || Now - W.EnqueuedAt >= Tuning.AgingSeconds)
+			{
+				return false;
+			}
+			for (const FLease& L : Leases)
+			{
+				if (L.Owner != W.Request.Owner && HaybaMCPAccess::FindConflict(W.Locks, L.Locks) && !FenceServes(L, W, Now))
+				{
+					return true;
+				}
+			}
+			return false;
+		}
+
+		FAcquireResult Grant(int32 WaiterIndex, double Now, const FString& FenceOf = FString(), bool bPassedExclusive = false)
 		{
 			FWaiter Waiter = MoveTemp(Waiters[WaiterIndex]);
 			Waiters.RemoveAt(WaiterIndex);
@@ -904,6 +953,11 @@ namespace HaybaMCPLease
 			if (!FenceOf.IsEmpty())
 			{
 				Lease.ExpiresAt = FMath::Min(Lease.ExpiresAt, Now + Tuning.FenceGrantMaxSeconds);
+			}
+			Lease.bPassedExclusive = bPassedExclusive;
+			if (bPassedExclusive)
+			{
+				Lease.ExpiresAt = FMath::Min(Lease.ExpiresAt, Now + Tuning.BypassMaxTtlSeconds);
 			}
 
 			FAcquireResult Result;
