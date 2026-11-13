@@ -36,9 +36,11 @@ Agent host ──stdio──▶ Node MCP server ──TCP──▶ UE5 C++ plugi
 - **Handler domain** — a UE-side command group (Actor, PCG,
   Sequencer, …), each implementing `IHaybaMCPHandler` (`GetCommands()` /
   `Handle()`).
-- **Plan Mode** — every destructive op is wrapped in
-  `GEditor->BeginTransaction` so `Ctrl+Z` works. A safety invariant, not a
-  feature flag.
+- **Plan Mode** — the project setting requires a frozen, single-use native
+  approval for external destructive calls. A request can additionally require
+  exact review; it cannot disable the project gate. Undo transactions are a
+  separate command-specific behavior, not a guarantee that every effect is
+  reversible.
 - **PCG / PCGEx** — UE Procedural Content Generation; Hayba ships a SQLite
   registry of PCGEx nodes/pins/properties queried by intent.
 - **Code Mode meta-tools** — `list_tool_categories` / `get_tool_signature`

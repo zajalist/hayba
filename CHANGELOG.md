@@ -21,6 +21,8 @@ All notable changes to Hayba MCP Toolkit are documented here. Format based on [K
   build checks, optional Claude configuration, backups and rollback.
 - `chooser_inspect` reads bounded pages of UE 5.9 Chooser tables through the
   optional Chooser editor API, including columns, bindings and cell/result values.
+  A named native read route works under Plan Mode without allowing caller Python.
+  Text-heavy pages exceeding 48 KiB return an explicit smaller-page error.
 - Fab catalog/library search uses UE 5.9's real optional Fab API and bounded,
   caller-owned query jobs. Chat can open the native Fab browser and attach imported
   selections; purchasing and Add to Project remain explicit actions in Fab.

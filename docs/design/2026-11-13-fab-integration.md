@@ -72,6 +72,18 @@ TypeScript typecheck and 32 focused tests passed. The Fab service/opener, handle
 and tests compiled against UE 5.9 (three translation units, exit 0). Native tests
 cover public menu action dispatch, disabled actions, input/URL boundaries,
 read-only classification, job ownership, deadlines, expiry and metadata bounds.
-Macro-disabled compilation, final DLL dependency inspection and native test
-execution are pending the disposable-editor gate. Live catalog/library responses,
-actual browser opening and imports have not been exercised by this local gate.
+Macro-disabled compilation without Fab include paths passed; final DLL import
+inspection found no Fab DLL dependency. All three Fab native tests passed in a
+Fab-disabled disposable editor (the complete focused gate: 45 tests, zero failures,
+exit 0; one expected sidecar-identity warning). Native source:
+`28686520d708d29e32e2314843b8349088b3f191`.
+
+A separate real MCP stdio client connected to the built server, listed the Fab
+tools, and called `fab_search` against an owned Fab-disabled editor. It returned
+the actionable disabled-plugin error. The final wire gate passed 14 assertions,
+also covering real Chooser pagination and preservation of arbitrary Python review.
+Editor and client exited cleanly with no dirty packages or Content files. This
+check used the same native source above and DLL SHA256
+`B5AAEEB3F327A3D9C0767939A74B725C9B372F03083B85808632739DC59CEA7F`.
+Live catalog/library responses, actual Fab browser opening and imports have not
+been exercised. These checks do not establish sign-in, acquisition or import success.

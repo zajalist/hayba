@@ -25,7 +25,14 @@ This follows the official [Claude Code MCP configuration](https://code.claude.co
 
 ## Updating and recovery
 
-Close the project's editor, builds, Claude MCP sessions and Hayba sidecar before updating. The installer reports blocking process IDs; it never kills an application. Select **Update existing Hayba** to back up and replace a normal plugin folder. Developer junctions are refused rather than moved or followed.
+Close the project's editor, builds, Claude MCP sessions and Hayba sidecar before updating. The installer reports matching blocking process IDs; it never kills an application. Select **Update existing Hayba** to back up and replace a physical plugin folder. Junctions at the plugin destination or its checked ancestors are refused.
+
+A nested developer link such as `ThirdParty/mcp_server` is different: the installer
+moves the whole physical old plugin folder into its backup, preserving the link
+there without following or modifying its checkout target. The new installation
+is self-contained. This migrates away from the developer link, so subsequent
+checkout edits need a new build/install. Keep the old backup until the new
+installation works.
 
 Backups and `receipt.json` are kept under `<Project>/Saved/HaybaInstaller/backups/<operation>`. Failed configuration writes restore the previous plugin and files when they have not been changed concurrently. A failure during rollback reports the backup location for manual recovery. Keep backups until the updated project has been verified.
 
@@ -58,7 +65,16 @@ node --test tools/installer.test.cjs
 node tools/installer/smoke.mjs "D:/NewHaybaInstallerBuild/Hayba Setup" "C:/Program Files/Epic Games/UE_5.9" "D:/NewDisposableInstallTest"
 ```
 
-The smoke test uses isolated Claude configuration and user-state directories, not real account settings. Use the resulting disposable project for a headless Unreal load check with `-HaybaAutomationChild`, `-nullrhi` and `-NoAssetRegistryCache`. Do not equate MCP startup or native automation with verification of every game's Play-in-Editor behavior.
+The smoke test uses isolated Claude configuration and user-state directories, not real account settings. Use the resulting disposable project for a headless Unreal load check with `-HaybaAutomationChild`, `-nullrhi` and `-NoAssetRegistryCache`. Explicitly select an owned cache, as in the qualified runs:
+
+```text
+-DDC=(EnginePak=InstalledEnginePak,Local=(Type=FileSystem,Path=D:/YourOwnedTestCache/ddc)) -DDC-NoDefaultGraph
+```
+
+Choose a disposable cache path owned by the test. Default DDC startup can restart
+a shared Zen service even when the project and user profile are isolated; see
+[the recorded incident](audit/2026-11-13-editor-upgrade.md#test-isolation-and-known-incident).
+Do not equate MCP startup or native automation with verification of every game's Play-in-Editor behavior.
 
 CLI install/check mode uses the same core as the picker:
 

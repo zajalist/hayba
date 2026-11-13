@@ -75,3 +75,18 @@ Backend capabilities already include `editor_get_state` (PIE ownership, compile/
 Then evaluate Chooser inspection as the first new UE5.9-specific tool. Reuse existing schemas, dispatcher, provider vault, transport, transaction and evidence mechanisms. No new UI framework, semantic World map, transport, service, paid-provider job, or wholesale native toolset mirror is needed.
 
 Verification boundary: source and documentation research only. Local engine source establishes API presence, not loaded-plugin availability. The browser-harness skill path supplied in global instructions was absent; no browser/desktop automation was required. Implementation and runtime evidence belong in a separate handoff.
+
+## Implementation follow-through
+
+The implemented batch and its measured runtime gates are recorded in
+[the upgrade verification report](../audit/2026-11-13-editor-upgrade.md).
+It includes bounded validation, editor diagnostics, Fab discovery and a named
+native `chooser_inspect` read command. The Chooser command accepts only validated
+asset/page parameters and runs a fixed bundled inspector; it does not grant
+arbitrary Python a Plan Mode exemption. Pages are limited to 20 rows by eight
+columns, with clipped text/bindings and a 48 KiB ASCII-JSON output budget.
+An oversized page returns an explicit smaller-page error, never partial JSON.
+
+Discovery enrichment and typed iteration evidence above remain proposals, not
+shipped features. Optional plugin availability and external provider completion
+must still be observed before claiming a workflow succeeded.

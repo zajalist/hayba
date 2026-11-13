@@ -34,7 +34,9 @@ UPDATING / BACKUPS
 Close this project's Unreal editor, Claude MCP sessions and Hayba sidecar
 before updating. The installer reports the process ID if something is using it;
 it never terminates your applications. Check "Update existing Hayba" to replace
-a normal plugin folder. Developer junctions are deliberately not replaced.
+a physical plugin folder. Junctions at that folder or its checked ancestors are
+refused. Nested links stay inside the old folder's backup; the new copy is
+self-contained and no longer follows your development checkout.
 Backups and a receipt are kept in <Project>/Saved/HaybaInstaller/backups.
 Keep the backup until you have verified the new installation. To undo an update,
 close the apps, move the new plugin out, and restore the backed-up plugin and
