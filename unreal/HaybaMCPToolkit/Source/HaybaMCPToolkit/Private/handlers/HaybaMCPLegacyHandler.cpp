@@ -926,6 +926,41 @@ FHaybaHandlerResult FHaybaMCPLegacyHandler::Cmd_CreateGraph(const TSharedPtr<FJs
         }
     }
 
+    // Graph settings (bUseHierarchicalGeneration, HiGenGridSize, HiGenGridSizeMultiplier, ...): "graphSettings" at the
+    // root, else "metadata.graphSettings" where pcg_export_graph puts it. Each goes through the graph's own edit
+    // handler, as a Details-panel edit does, so HiGen changes reach the generation grid.
+    const TSharedPtr<FJsonObject>* GraphSettingsObj = nullptr;
+    const TSharedPtr<FJsonObject>* MetadataObj = nullptr;
+    if (!(*GraphObj)->TryGetObjectField(TEXT("graphSettings"), GraphSettingsObj)
+        && (*GraphObj)->TryGetObjectField(TEXT("metadata"), MetadataObj) && MetadataObj && MetadataObj->IsValid())
+    {
+        (*MetadataObj)->TryGetObjectField(TEXT("graphSettings"), GraphSettingsObj);
+    }
+    if (GraphSettingsObj && GraphSettingsObj->IsValid())
+    {
+        for (const auto& Pair : (*GraphSettingsObj)->Values)
+        {
+            const FString PropName(Pair.Key);
+            FProperty* Prop = UPCGGraph::StaticClass()->FindPropertyByName(FName(*PropName));
+            if (!Prop || !Prop->HasAnyPropertyFlags(CPF_Edit) || Prop->HasAnyPropertyFlags(CPF_EditConst))
+            {
+                PropertyProblems.Add(FString::Printf(TEXT("graph setting %s: no such editable property on PCGGraph"), *PropName));
+                continue;
+            }
+            if (!HaybaReflection::SetValueFromJson(Prop, NewGraph, Pair.Value, NewGraph))
+            {
+                PropertyProblems.Add(FString::Printf(
+                    TEXT("graph setting %s: could not apply the given value to a %s"), *PropName, *Prop->GetCPPType()));
+                continue;
+            }
+            FEditPropertyChain Chain;
+            Chain.AddHead(Prop);
+            FPropertyChangedChainEvent Changed(Chain, FPropertyChangedEvent(Prop, EPropertyChangeType::ValueSet));
+            static_cast<UObject*>(NewGraph)->PostEditChangeChainProperty(Changed);
+            ++PropertiesApplied;
+        }
+    }
+
     // ── Layered auto-layout ───────────────────────────────────────────────────
     // Place nodes by graph DEPTH (column = longest path from a source) and stagger
     // siblings vertically, so nodes never stack at the same position. Runs after
