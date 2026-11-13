@@ -510,7 +510,9 @@ export interface AgentLoopParams {
   signal?: AbortSignal;
 }
 
-const DEFAULT_MAX_STEPS = 16;
+// Real editing work (inspect, edit, verify) routinely needs dozens of tool
+// rounds; 16 cut BYOK chats off mid-task. Override with settings.json chatMaxSteps.
+export const DEFAULT_MAX_STEPS = 60;
 const MAX_STOP_ERROR_CHARS = 384;
 
 function boundedStopError(

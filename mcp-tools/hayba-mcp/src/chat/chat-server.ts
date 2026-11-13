@@ -64,6 +64,7 @@ import type { LLMTool, LLMUsage } from '../agents/llm-client.js';
 import { createChatDispatcher } from './tool-dispatch.js';
 import { withExactReview } from '../tools/tool-executor.js';
 import { buildHandsManifest, isExploreReadOnlyTool, type GuardContext } from '../brain/hands-guard.js';
+import { readSettings } from '../tools/routing/settings-watcher.js';
 import type { BrainConnector } from '../brain/brain-connector.js';
 import type { BrainSession } from '../brain/brain-session.js';
 import { LocalApprovals } from '../brain/local-approvals.js';
@@ -629,11 +630,13 @@ const LOOPS = ['community', 'pro'] as const;
 const PERMISSION_KEYS = ['tools.execute', 'facts.vision', 'facts.scene', 'python_run'] as const;
 
 /**
- * Local Pro permissions: safe defaults overlaid with only the known boolean keys
- * from the request (the brain's hello schema is strict; stray keys would fail it).
+ * Chat permissions for both loops: defaults overlaid with only the known boolean
+ * keys from the request (the brain's hello schema is strict; stray keys would
+ * fail it). python_run defaults on so BYOK chats can edit; the editor's Settings
+ * toggle sends python_run:false to withhold it. Edits still go through review.
  */
-function resolvePermissions(requested: unknown): Permissions {
-  const permissions: Permissions = { 'tools.execute': true, 'facts.vision': false, 'facts.scene': false, python_run: false };
+export function resolvePermissions(requested: unknown): Permissions {
+  const permissions: Permissions = { 'tools.execute': true, 'facts.vision': false, 'facts.scene': false, python_run: true };
   if (requested && typeof requested === 'object') {
     for (const key of PERMISSION_KEYS) {
       const value = (requested as Record<string, unknown>)[key];
@@ -1258,6 +1261,7 @@ export function registerChatRoutes(app: Express, options: ChatRoutesOptions = {}
       archetypeFilter,
       pinnedSpecialistId: body.archetype,
       tools: options.tools,
+      pythonRun: resolvePermissions(body.permissions).python_run,
       dispatchTool,
       delegateTask: async (input) => {
         const explicit = configStore.get(sessionId);
@@ -1307,6 +1311,8 @@ interface RunTurnParams {
   archetypeFilter?: string[];
   pinnedSpecialistId?: string;
   tools?: LLMTool[];
+  /** Community: offer python_run (Pro enforces this through its permissions). */
+  pythonRun?: boolean;
   dispatchTool: DispatchTool;
   delegateTask?: (input: Record<string, unknown>) => Promise<unknown>;
   signal: AbortSignal;
@@ -1426,9 +1432,12 @@ async function runTurn(session: ChatSession, params: RunTurnParams): Promise<voi
           system: params.system,
           messages: params.messages,
           tools:
-            params.mode === 'explore'
-              ? (params.tools ?? buildToolCatalog()).filter((tool) => isExploreReadOnlyTool(tool.name))
+            params.mode === 'explore' || params.pythonRun === false
+              ? (params.tools ?? buildToolCatalog()).filter((tool) =>
+                  (params.mode !== 'explore' || isExploreReadOnlyTool(tool.name)) &&
+                  (params.pythonRun !== false || tool.name !== 'python_run'))
               : params.tools,
+          maxSteps: readSettings().chatMaxSteps,
           archetypeFilter: params.archetypeFilter,
           pinnedSpecialistId: params.pinnedSpecialistId,
           dispatchTool,
