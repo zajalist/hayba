@@ -32,6 +32,7 @@
 #include "handlers/HaybaMCPSceneGraphHandler.h"
 #include "handlers/HaybaMCPEditorHandler.h"
 #include "handlers/HaybaMCPFabHandler.h"
+#include "handlers/HaybaMCPChooserHandler.h"
 #include "handlers/HaybaMCPPIEHandler.h"
 #include "handlers/HaybaMCPPythonHandler.h"
 #include "handlers/HaybaMCPAssetHandler.h"
@@ -180,6 +181,7 @@ void FHaybaMCPModule::StartupModule()
     CommandHandler->RegisterHandler(MakeShared<FHaybaMCPSceneGraphHandler>());
     CommandHandler->RegisterHandler(MakeShared<FHaybaMCPEditorHandler>());
     CommandHandler->RegisterHandler(MakeShared<FHaybaMCPFabHandler>());
+    CommandHandler->RegisterHandler(MakeShared<FHaybaMCPChooserHandler>());
     CommandHandler->RegisterHandler(MakeShared<FHaybaMCPPIEHandler>());
     CommandHandler->RegisterHandler(MakeShared<FHaybaMCPPythonHandler>());
     CommandHandler->RegisterHandler(MakeShared<FHaybaMCPAssetHandler>());
