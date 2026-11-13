@@ -405,7 +405,7 @@ import { handleSketchfabDownload, meta as sketchfabDownloadMeta } from './asset-
 // ── PCGEx tool handlers ───────────────────────────────────────────────────────
 import { searchNodeCatalog } from './search-node-catalog.js';
 import { getNodeDetails } from './get-node-details.js';
-import { createPcgGraph } from './create-pcg-graph.js';
+import { createPcgGraph, PCG_GRAPH_PATH_DESCRIPTION } from './create-pcg-graph.js';
 import { validatePcgGraph } from './validate-pcg-graph.js';
 import { listPcgAssets } from './list-pcg-assets.js';
 import { exportPcgGraph } from './export-pcg-graph.js';
@@ -1329,11 +1329,12 @@ export const PCG_DESCRIPTORS: ToolDescriptor[] = [
     schema: {
       graph: z.string().describe('JSON string of the PCGEx graph topology'),
       name: z.string().describe('Asset name for the new PCGGraph'),
+      path: z.string().optional().describe(PCG_GRAPH_PATH_DESCRIPTION),
     },
     cost: 'medium',
     returns: '{ok, path, nodes, edges}',
-    handler: async ({ graph, name }) => {
-      const result = await createPcgGraph({ graph, name });
+    handler: async ({ graph, name, path }) => {
+      const result = await createPcgGraph({ graph, name, path });
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     },
   }),
