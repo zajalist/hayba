@@ -8,21 +8,27 @@ import { copyTree, packageDependencies } from './installer/package-runtime.mjs';
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const options = {};
 for (let i = 2; i < process.argv.length; i += 2) {
-  if (!['--artifact', '--verification', '--engine', '--output'].includes(process.argv[i]) || !process.argv[i + 1]) throw new Error('Usage: node tools/build-installer.mjs --artifact <verified-plugin-folder> --verification <workspace-install.json> --engine <UE-folder> --output <new-output-folder>');
+  if (!['--artifact', '--verification', '--engine', '--output'].includes(process.argv[i]) || !process.argv[i + 1]) throw new Error('Usage: node tools/build-installer.mjs --artifact <plugin-folder> [--verification <workspace-install.json>] --engine <UE-folder> --output <new-output-folder>');
   options[process.argv[i].slice(2)] = resolve(process.argv[i + 1]);
 }
 if (process.platform !== 'win32' || process.arch !== 'x64') throw new Error('Build this Windows x64 package on Windows x64.');
-for (const name of ['artifact', 'verification', 'engine', 'output']) if (!options[name]) throw new Error(`Missing --${name}`);
+for (const name of ['artifact', 'engine', 'output']) if (!options[name]) throw new Error(`Missing --${name}`);
 if (existsSync(options.output)) throw new Error('Choose a new output folder; existing packages are never overwritten.');
 const json = file => JSON.parse(readFileSync(file, 'utf8').replace(/^\uFEFF/, ''));
 const hash = file => createHash('sha256').update(readFileSync(file)).digest('hex');
-const verification = json(options.verification);
-if (hash(verification.nativeReport).toLowerCase() !== verification.nativeReportSha256.toLowerCase()) throw new Error('Native test report hash differs from verification.');
-const report = json(verification.nativeReport);
-if (report.failed || report.notRun || report.inProcess || !(report.succeeded + report.succeededWithWarnings)) throw new Error('Native verification is incomplete or failed.');
 const moduleName = 'UnrealEditor-HaybaMCPToolkit.dll';
-const verifiedDll = verification.files.find(file => file.name === moduleName);
-if (!verifiedDll || hash(join(options.artifact, 'Binaries/Win64', moduleName)) !== verifiedDll.sha256.toLowerCase()) throw new Error('Native DLL does not match the tested artifact.');
+// --verification (a workspace-install.json naming a passing native test report) pins the DLL to a tested build.
+// Without it the package records nativeVerification: null.
+let nativeVerification = null;
+if (options.verification) {
+  const verification = json(options.verification);
+  if (hash(verification.nativeReport).toLowerCase() !== verification.nativeReportSha256.toLowerCase()) throw new Error('Native test report hash differs from verification.');
+  const report = json(verification.nativeReport);
+  if (report.failed || report.notRun || report.inProcess || !(report.succeeded + report.succeededWithWarnings)) throw new Error('Native verification is incomplete or failed.');
+  const verifiedDll = verification.files.find(file => file.name === moduleName);
+  if (!verifiedDll || hash(join(options.artifact, 'Binaries/Win64', moduleName)) !== verifiedDll.sha256.toLowerCase()) throw new Error('Native DLL does not match the tested artifact.');
+  nativeVerification = { passed: report.succeeded + report.succeededWithWarnings, warnings: report.succeededWithWarnings, dllSha256: verifiedDll.sha256 };
+}
 const modules = json(join(options.engine, 'Engine/Binaries/Win64/UnrealEditor.modules'));
 const artifactModules = json(join(options.artifact, 'Binaries/Win64/UnrealEditor.modules'));
 if (modules.BuildId !== artifactModules.BuildId) throw new Error('Engine build ID differs from tested plugin.');
@@ -48,7 +54,7 @@ copyFileSync(join(options.artifact, 'HaybaMCPToolkit.uplugin'), join(plugin, 'Ha
 for (const directory of ['Resources','Config','Source']) if (existsSync(join(options.artifact, directory))) copyTree(join(options.artifact, directory), join(plugin, directory));
 const binaries = join(plugin, 'Binaries/Win64');
 mkdirSync(binaries, { recursive: true });
-for (const name of [moduleName, 'UnrealEditor.modules', 'UnrealEditor-HaybaMCPToolkit.pdb']) {
+for (const name of [moduleName, 'UnrealEditor.modules']) { // no .pdb: it would triple the download
   const source = join(options.artifact, 'Binaries/Win64', name);
   if (existsSync(source)) copyFileSync(source, join(binaries, name));
 }
@@ -72,11 +78,6 @@ copyFileSync(join(repo, 'LICENSE'), join(plugin, 'LICENSE'));
 copyFileSync(join(repo, 'LICENSE'), join(server, 'node_modules/@hayba/brain-protocol/LICENSE'));
 mkdirSync(join(bundle, 'installer'), { recursive: true });
 for (const name of ['Install.ps1','Installer.Core.ps1']) copyFileSync(join(repo, 'tools/installer', name), join(bundle, 'installer', name));
-copyFileSync(join(repo, 'tools/installer/Install Hayba.cmd'), join(bundle, 'Install Hayba.cmd'));
-const compiler = join(process.env.SystemRoot, 'Microsoft.NET/Framework64/v4.0.30319/csc.exe');
-const compile = spawnSync(compiler, ['/nologo', '/target:winexe', '/platform:x64', '/reference:System.Windows.Forms.dll', `/out:${join(bundle, 'Install Hayba.exe')}`, join(repo, 'tools/installer/Launcher.cs')], { stdio: 'inherit', windowsHide: true });
-if (compile.status !== 0) throw new Error('Could not build the small Windows installer launcher.');
-copyFileSync(join(repo, 'tools/installer/README.txt'), join(bundle, 'START HERE.txt'));
 const files = [];
 function inventory(directory, prefix = '') {
   for (const name of readdirSync(directory).sort()) {
@@ -90,14 +91,24 @@ function inventory(directory, prefix = '') {
 }
 console.log('Hashing the complete payload...');
 inventory(plugin);
-writeFileSync(join(bundle, 'manifest.json'), JSON.stringify({ schemaVersion: 1, version: `${packageJson.version}-workspace`, createdAt: new Date().toISOString(), engine: { version, buildId: modules.BuildId }, node: nodeVersion, nativeVerification: { passed: report.succeeded + report.succeededWithWarnings, warnings: report.succeededWithWarnings, dllSha256: verifiedDll.sha256 }, files }, null, 2));
-const zip = join(options.output, `Hayba-Setup-UE${version}-build${modules.BuildId}.zip`);
-console.log(`Creating ${basename(zip)}...`);
+writeFileSync(join(bundle, 'manifest.json'), JSON.stringify({ schemaVersion: 1, version: packageJson.version, createdAt: new Date().toISOString(), engine: { version, buildId: modules.BuildId }, node: nodeVersion, nativeVerification, files }, null, 2));
+const zip = join(options.output, 'package.zip');
+console.log('Packing the payload for the Setup .exe...');
 const quote = value => `'${value.replaceAll("'", "''")}'`;
-const script = `$ProgressPreference='SilentlyContinue'; Add-Type -AssemblyName System.IO.Compression.FileSystem; [IO.Compression.ZipFile]::CreateFromDirectory(${quote(bundle)},${quote(zip)},[IO.Compression.CompressionLevel]::Optimal,$false)`;
+// Stored (uncompressed): Inno Setup's LZMA compresses the whole archive far better.
+const script = `$ProgressPreference='SilentlyContinue'; Add-Type -AssemblyName System.IO.Compression.FileSystem; [IO.Compression.ZipFile]::CreateFromDirectory(${quote(bundle)},${quote(zip)},[IO.Compression.CompressionLevel]::NoCompression,$false)`;
 const shellEnv = { ...process.env };
 for (const key of Object.keys(shellEnv)) if (key.toLowerCase() === 'psmodulepath') delete shellEnv[key];
 const result = spawnSync('powershell.exe', ['-NoProfile', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], { env: shellEnv, stdio: 'inherit', windowsHide: true });
-if (result.status !== 0) throw new Error('ZIP creation failed.');
-writeFileSync(zip + '.sha256', `${hash(zip)}  ${basename(zip)}\n`);
-console.log(JSON.stringify({ bundle, zip, files: files.length, dependencies: dependencies.length }, null, 2));
+if (result.status !== 0) throw new Error('Package ZIP creation failed.');
+const iscc = [process.env.HAYBA_ISCC, join(process.env.LOCALAPPDATA ?? '', 'Programs/Inno Setup 6/ISCC.exe'), 'C:/Program Files (x86)/Inno Setup 6/ISCC.exe'].find(path => path && existsSync(path));
+if (!iscc) throw new Error('Inno Setup 6 (ISCC.exe) is required to build the Setup .exe files. Set HAYBA_ISCC to its path.');
+const installers = [];
+for (const withMcp of [1, 0]) {
+  const compile = spawnSync(iscc, ['/Q', `/DWithMcp=${withMcp}`, `/DAppVersion=${packageJson.version}`, `/DPackageZip=${zip}`, `/DInstallerDir=${join(repo, 'tools/installer')}`, `/O${options.output}`, join(repo, 'tools/installer/hayba-setup.iss')], { stdio: 'inherit', windowsHide: true });
+  if (compile.status !== 0) throw new Error('Inno Setup could not build the installer.');
+  const exe = join(options.output, `Hayba-Setup-${packageJson.version}-${withMcp ? 'Plugin+MCP' : 'Plugin'}.exe`);
+  writeFileSync(exe + '.sha256', `${hash(exe)}  ${basename(exe)}\n`);
+  installers.push(exe);
+}
+console.log(JSON.stringify({ bundle, installers, files: files.length, dependencies: dependencies.length }, null, 2));

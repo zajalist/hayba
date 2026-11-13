@@ -1,87 +1,39 @@
-# Hayba Windows installer
+# Hayba Windows installers
 
-The portable installer installs a **prebuilt editor plugin, Node runtime and MCP server** into a selected Unreal project. Teammates do not need Git, npm or Visual Studio for an engine build that matches the package. Their normal C++ project build requirements still apply.
+Each release ships two per-user Setup programs (no admin, no Git/npm/Node/Visual Studio):
 
-## For teammates
+- **Hayba-Setup-&lt;version&gt;-Plugin+MCP.exe**: installs the plugin into a chosen `.uproject` and registers the bundled MCP server for Claude Code (project `.mcp.json`), Claude Desktop (`%APPDATA%\Claude\claude_desktop_config.json`) and Cursor (`%USERPROFILE%\.cursor\mcp.json`).
+- **Hayba-Setup-&lt;version&gt;-Plugin.exe**: installs only the plugin.
 
-1. Get the **Hayba Setup ZIP** from your teammate. Extract the whole ZIP.
-2. Save and close the target project in Unreal.
-3. Double-click **Install Hayba.exe**.
-4. Browse to your `.uproject`. The installer detects matching Unreal installations; select the engine folder manually if needed.
-5. Optionally select **Claude Code** and/or **Claude Desktop**, then click **Install Hayba**.
-6. Open Unreal and **Tools → Hayba MCP Toolkit**. Restart Claude. Claude Code may ask you to approve the project's MCP configuration.
+Both copy the prebuilt UE 5.9 Win64 plugin, a bundled Node runtime and the prebuilt MCP server into `<Project>/Plugins/HaybaMCPToolkit`. Screens: choose project, install, finished.
 
-Ask Claude: “Use Hayba to check the Unreal connection, then list the actors in the current level without changing anything.”
+## Behaviour
 
-All runtime files are copied into your project's `Plugins/HaybaMCPToolkit`. You can delete the extracted installer folder after installation. No machine-wide Node installation, registry edits or permanent execution-policy changes are made.
-
-## Compatibility and configuration
-
-The installer checks the engine's exact build ID, not just its `5.9` label. A mismatched engine requires a new package compiled and tested for that engine. The installer does not upgrade projects or bypass the compatibility check.
-
-Claude Code receives a project `.mcp.json` entry. Claude Desktop receives an entry in the config path shown in the installer. If the app uses a different location, use **Config...** to choose the file opened by **Settings → Developer → Edit Config**. Existing MCP servers and other settings are preserved. The new server is named `hayba-<project-id>`, with a distinct name per project. Its bundled launcher uses the project as its working directory for editor discovery. Keep machine-specific absolute paths out of your shared repository.
-
-This follows the official [Claude Code MCP configuration](https://code.claude.com/docs/en/mcp) and [Claude Desktop local-server configuration](https://modelcontextprotocol.io/docs/develop/connect-local-servers). Claude handles its own model account; these MCP entries contain no API keys. In-editor chat has separate provider settings.
-
-## Updating and recovery
-
-Close the project's editor, builds, Claude MCP sessions and Hayba sidecar before updating. The installer reports matching blocking process IDs; it never kills an application. Select **Update existing Hayba** to back up and replace a physical plugin folder. Junctions at the plugin destination or its checked ancestors are refused.
-
-A nested developer link such as `ThirdParty/mcp_server` is different: the installer
-moves the whole physical old plugin folder into its backup, preserving the link
-there without following or modifying its checkout target. The new installation
-is self-contained. This migrates away from the developer link, so subsequent
-checkout edits need a new build/install. Keep the old backup until the new
-installation works.
-
-Backups and `receipt.json` are kept under `<Project>/Saved/HaybaInstaller/backups/<operation>`. Failed configuration writes restore the previous plugin and files when they have not been changed concurrently. A failure during rollback reports the backup location for manual recovery. Keep backups until the updated project has been verified.
-
-To restore manually, close the applications, move the new plugin out of `Plugins`, and move the backed-up plugin back. The receipt maps project/MCP config files to their backups. Do not overwrite newer edits with an old full-file config backup.
+- **Engine:** any installed Unreal 5.9.x is accepted. When its build ID differs from the build Hayba was compiled on (a launcher hotfix), the installer stamps the engine's build ID into the plugin's `UnrealEditor.modules`. Launcher hotfixes of one minor version keep the same ABI, which is also how Marketplace plugins load. Any other version is refused with no changes.
+- **Safety:** close the project in Unreal first; the installer refuses while Unreal, a build or a Hayba server uses the project and never kills processes. An existing plugin and every config file it changes are backed up to `<Project>/Saved/HaybaInstaller/backups/<operation>` with a `receipt.json`. Failures roll back. Existing MCP servers and settings are preserved; Hayba's entry is named `hayba-<project-id>`.
+- **Uninstall:** Settings > Apps > "Hayba &lt;version&gt; (…)". It removes the plugin (moved to `<Project>/Saved/HaybaInstaller/removed-*`), the `.uproject` entry and this project's MCP entries, for every project that Setup installed into.
+- **Silent use:** `Setup.exe /VERYSILENT /PROJECT="C:\Game\Game.uproject" /CLIENTS=code,desktop,cursor` (omit `/CLIENTS` to use the detected defaults).
 
 ## For maintainers
 
 Files:
 
-- `tools/installer/Install.ps1`: native project picker and command-line entry point.
-- `tools/installer/Installer.Core.ps1`: shared validation, staging, installation and rollback.
-- `tools/installer/Launcher.cs`: small Windows GUI launcher.
-- `tools/installer/package-runtime.mjs`: copies the installed production dependency graph, preserving nested versions and package licenses.
-- `tools/build-installer.mjs`: builds the portable distribution from an explicitly verified native artifact.
-- `tools/installer.test.cjs`: disposable boundary/rollback and dependency-packaging tests.
-- `tools/installer/smoke.mjs`: real installation into a new disposable project and bundled Node/MCP handshake.
+- `tools/installer/hayba-setup.iss`: Inno Setup 6 script for both variants (`/DWithMcp=1|0`).
+- `tools/installer/Install.ps1`: command-line entry point the Setup programs call (install and `-Uninstall`).
+- `tools/installer/Installer.Core.ps1`: validation, staging, installation, rollback and uninstall.
+- `tools/installer/package-runtime.mjs`: copies the production dependency graph with licenses.
+- `tools/build-installer.mjs`: builds the payload and both Setup programs.
+- `tools/installer.test.cjs` / `tools/installer/test-core.ps1`: boundary, rollback, hotfix and uninstall tests.
+- `tools/installer/smoke.mjs`: real installation into a disposable project plus a bundled Node/MCP handshake.
 
-Build the server first with `npm run build:server -w @hayba/mcp`. The native verification manifest must identify the tested DLL, report path/hash and artifact hashes; this matches the existing `Saved/chat-ui-build/workspace-install.json` format. The builder refuses a DLL different from the tested artifact.
+Install [Inno Setup 6](https://jrsoftware.org/isdl.php) (per-user is fine; set `HAYBA_ISCC` if ISCC.exe is elsewhere), build the server with `npm run build:server -w @hayba/mcp`, then:
 
 ```powershell
-node tools/build-installer.mjs --artifact "D:/path/to/verified/HaybaMCPToolkit" --verification "D:/path/to/workspace-install.json" --engine "C:/Program Files/Epic Games/UE_5.9" --output "D:/NewHaybaInstallerBuild"
+node tools/build-installer.mjs --artifact "D:/path/to/compiled/HaybaMCPToolkit" --engine "C:/Program Files/Epic Games/UE_5.9" --output "D:/NewHaybaInstallerBuild" [--verification "D:/path/to/workspace-install.json"]
 ```
 
-Use a new output folder. The builder verifies its Windows x64 Node executable against [Node's official release checksums](https://nodejs.org/dist/), includes the corresponding license, bundles installed production dependency versions, records per-file SHA256 hashes and emits a ZIP plus a ZIP checksum. It does not include personal settings, API keys, chats, workspace junctions or the repository's development dependencies. The optional visual sidecar and its Python/model downloads are not bundled.
-
-Verification:
+`--artifact` is a plugin folder containing `Binaries/Win64/UnrealEditor-HaybaMCPToolkit.dll` compiled against that engine. With `--verification`, the builder refuses a DLL different from the one a passing native test report names. The builder verifies its Node executable against [Node's official checksums](https://nodejs.org/dist/), records per-file SHA256 hashes and writes a `.sha256` next to each Setup program. It never includes personal settings, API keys, chats or `.pdb` files.
 
 ```powershell
 node --test tools/installer.test.cjs
-node tools/installer/smoke.mjs "D:/NewHaybaInstallerBuild/Hayba Setup" "C:/Program Files/Epic Games/UE_5.9" "D:/NewDisposableInstallTest"
 ```
-
-The smoke test uses isolated Claude configuration and user-state directories, not real account settings. Use the resulting disposable project for a headless Unreal load check with `-HaybaAutomationChild`, `-nullrhi` and `-NoAssetRegistryCache`. Explicitly select an owned cache, as in the qualified runs:
-
-```text
--DDC=(EnginePak=InstalledEnginePak,Local=(Type=FileSystem,Path=D:/YourOwnedTestCache/ddc)) -DDC-NoDefaultGraph
-```
-
-Choose a disposable cache path owned by the test. Default DDC startup can restart
-a shared Zen service even when the project and user profile are isolated; see
-[the recorded incident](audit/2026-11-13-editor-upgrade.md#test-isolation-and-known-incident).
-Do not equate MCP startup or native automation with verification of every game's Play-in-Editor behavior.
-
-CLI install/check mode uses the same core as the picker:
-
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\installer\Install.ps1" -PackageRoot "." -Project "C:\Projects\Game\Game.uproject" -Engine "C:\Program Files\Epic Games\UE_5.9" -CheckOnly
-```
-
-Remove `-CheckOnly` to install. Optional switches are `-ClaudeCode`, `-ClaudeDesktop` and `-ReplaceExisting`; `-DesktopConfig` selects an explicit Claude Desktop config file.
-
-This is currently an **unsigned maintainer-built development package**, not a newly published GitHub release. Share the ZIP checksum independently when distributing it. Source-tag installation remains available in [the source setup guide](team-setup.md).

@@ -75,14 +75,31 @@ function Get-HaybaEngines {
     foreach ($path in $found.Keys) { if (Test-Path -LiteralPath "$path/Engine/Build/Build.version") { $path } }
 }
 
+function Get-HaybaEngineInfo([string]$Engine) {
+    $version = Read-HaybaJson "$Engine/Engine/Build/Build.version"
+    $modules = Read-HaybaJson "$Engine/Engine/Binaries/Win64/UnrealEditor.modules"
+    [pscustomobject]@{ Path=$Engine; MajorMinor="$($version.MajorVersion).$($version.MinorVersion)"; Version="$($version.MajorVersion).$($version.MinorVersion).$($version.PatchVersion)"; BuildId=[string]$modules.BuildId }
+}
+
+# The package's major.minor (e.g. 5.9) from a manifest engine version such as 5.9.0.
+function Get-HaybaMajorMinor([string]$Version) { ($Version -split '\.')[0..1] -join '.' }
+
+# Picks an installed engine for the package: same build first, else any matching major.minor (launcher hotfixes).
+function Find-HaybaEngine($Manifest) {
+    $want = Get-HaybaMajorMinor $Manifest.engine.version
+    $found = @(foreach ($path in @(Get-HaybaEngines | Sort-Object)) { try { $info = Get-HaybaEngineInfo $path; if ($info.MajorMinor -eq $want) { $info } } catch { } })
+    $best = @($found | Where-Object BuildId -eq $Manifest.engine.buildId) + @($found | Sort-Object Version -Descending)
+    if (-not $best.Count) { throw "Unreal Engine $want was not found. Install Unreal Engine $want from the Epic Games Launcher, then run this installer again. No project files were changed." }
+    return $best[0].Path
+}
+
 function Get-HaybaPayload([string]$PackageRoot, [string]$Engine) {
     $manifest = Read-HaybaJson (Join-Path $PackageRoot 'manifest.json')
     if ($manifest.schemaVersion -ne 1 -or -not $manifest.files -or -not $manifest.engine.buildId) { throw 'Invalid installer manifest.' }
-    $version = Read-HaybaJson "$Engine/Engine/Build/Build.version"
-    $modules = Read-HaybaJson "$Engine/Engine/Binaries/Win64/UnrealEditor.modules"
-    $engineVersion = "$($version.MajorVersion).$($version.MinorVersion).$($version.PatchVersion)"
-    if ($modules.BuildId -ne $manifest.engine.buildId -or $engineVersion -ne $manifest.engine.version) {
-        throw "This package requires Unreal $($manifest.engine.version), build $($manifest.engine.buildId). Selected engine is $engineVersion, build $($modules.BuildId). Get a package compiled for that engine; no project files were changed."
+    $engineInfo = Get-HaybaEngineInfo $Engine
+    $want = Get-HaybaMajorMinor $manifest.engine.version
+    if ($engineInfo.MajorMinor -ne $want) {
+        throw "This Hayba build is for Unreal Engine $want.x. The selected engine is $($engineInfo.Version). Install Unreal Engine $want from the Epic Games Launcher; no project files were changed."
     }
     $payload = [IO.Path]::GetFullPath((Join-Path $PackageRoot 'payload/HaybaMCPToolkit'))
     $seen = @{}
@@ -99,8 +116,22 @@ function Get-HaybaPayload([string]$PackageRoot, [string]$Engine) {
     foreach ($required in @('HaybaMCPToolkit.uplugin','Binaries/Win64/UnrealEditor.modules','Binaries/Win64/UnrealEditor-HaybaMCPToolkit.dll','ThirdParty/node/node.exe','ThirdParty/mcp_server/dist/bootstrap.js','ThirdParty/mcp_server/dist/index.js','ThirdParty/mcp_server/run-mcp.cjs')) {
         if (-not $seen.ContainsKey($required)) { throw "Package is missing $required" }
     }
-    if ((Read-HaybaJson "$payload/Binaries/Win64/UnrealEditor.modules").BuildId -ne $modules.BuildId) { throw 'Bundled plugin build does not match the manifest.' }
-    return [pscustomobject]@{ Manifest=$manifest; Root=$payload }
+    if ((Read-HaybaJson "$payload/Binaries/Win64/UnrealEditor.modules").BuildId -ne $manifest.engine.buildId) { throw 'Bundled plugin build does not match the manifest.' }
+    return [pscustomobject]@{ Manifest=$manifest; Root=$payload; Engine=$engineInfo }
+}
+
+function Get-HaybaServerName([string]$Project) {
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try { $suffix = ([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($Project.ToLowerInvariant())))).Replace('-','').Substring(0,8).ToLowerInvariant() } finally { $sha.Dispose() }
+    return 'hayba-' + $suffix
+}
+
+function Get-HaybaClientConfigs([string]$ProjectRoot, [string]$DesktopConfig, [string]$CursorConfig) {
+    @(
+        [pscustomobject]@{ Name='ClaudeCode'; Path="$ProjectRoot/.mcp.json"; Backup='claude-code.json'; Local=$true }
+        [pscustomobject]@{ Name='ClaudeDesktop'; Path=$DesktopConfig; Backup='claude-desktop.json'; Local=$false }
+        [pscustomobject]@{ Name='Cursor'; Path=$CursorConfig; Backup='cursor.json'; Local=$false }
+    )
 }
 
 function New-HaybaJsonChange([string]$Path, [string]$BackupName, $Object, [string]$OriginalHash) {
@@ -135,12 +166,14 @@ function Write-HaybaJsonChange($Change) {
 function Invoke-HaybaInstall {
     param(
         [Parameter(Mandatory=$true)][string]$Project,
-        [Parameter(Mandatory=$true)][string]$Engine,
+        [string]$Engine,
         [Parameter(Mandatory=$true)][string]$PackageRoot,
-        [switch]$ClaudeCode, [switch]$ClaudeDesktop,
+        [switch]$ClaudeCode, [switch]$ClaudeDesktop, [switch]$Cursor,
         [string]$DesktopConfig = (Join-Path $env:APPDATA 'Claude/claude_desktop_config.json'),
+        [string]$CursorConfig = (Join-Path $env:USERPROFILE '.cursor/mcp.json'),
         [switch]$ReplaceExisting, [switch]$CheckOnly
     )
+    if (-not $Engine) { $Engine = Find-HaybaEngine (Read-HaybaJson (Join-Path $PackageRoot 'manifest.json')) }
     $projectFile = Get-Item -LiteralPath $Project
     if ($projectFile.PSIsContainer -or $projectFile.Extension -ne '.uproject') { throw 'Choose an existing .uproject file.' }
     $Project = $projectFile.FullName
@@ -158,8 +191,8 @@ function Invoke-HaybaInstall {
     $descriptor = Read-HaybaJson $Project
     if ($descriptor.PSObject.Properties['Plugins'] -and $descriptor.Plugins -isnot [Array]) { throw 'Project Plugins must be a JSON array.' }
     $association = [string]$descriptor.EngineAssociation
-    if ($association -match '^\d+\.\d+(\.\d+)?$' -and -not $payload.Manifest.engine.version.StartsWith($association + '.') -and $association -ne $payload.Manifest.engine.version) {
-        throw "Project uses Unreal $association. Choose a package and engine matching this project; the installer does not upgrade projects."
+    if ($association -match '^\d+\.\d+(\.\d+)?$' -and (Get-HaybaMajorMinor $association) -ne (Get-HaybaMajorMinor $payload.Manifest.engine.version)) {
+        throw "This project uses Unreal $association, but this Hayba build is for Unreal $(Get-HaybaMajorMinor $payload.Manifest.engine.version). The installer does not upgrade projects; no files were changed."
     }
     $plugins = @($descriptor.Plugins | Where-Object { $null -ne $_ })
     foreach ($item in $plugins) { if ($item -isnot [pscustomobject] -or -not ($item.Name -is [string])) { throw 'Invalid plugin entry in project JSON.' } }
@@ -168,16 +201,15 @@ function Invoke-HaybaInstall {
     if ($hayba.Count) { Set-HaybaProperty $hayba[0] 'Enabled' $true }
     else { $plugins += [pscustomobject]@{ Name='HaybaMCPToolkit'; Enabled=$true } }
     Set-HaybaProperty $descriptor 'Plugins' $plugins
-    $sha = [Security.Cryptography.SHA256]::Create()
-    try { $suffix = ([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($Project.ToLowerInvariant())))).Replace('-','').Substring(0,8).ToLowerInvariant() } finally { $sha.Dispose() }
-    $name = 'hayba-' + $suffix
+    $name = Get-HaybaServerName $Project
     $entry = [pscustomobject]@{ command="$plugin\ThirdParty\node\node.exe"; args=@("$plugin\ThirdParty\mcp_server\run-mcp.cjs"); env=[pscustomobject]@{ DASHBOARD_PORT='0'; HAYBA_MCP_HTTP_PORT='0' } }
     $changes = @(New-HaybaJsonChange $Project 'project.json' $descriptor $projectHash)
-    if ($ClaudeCode) { $changes += New-HaybaMcpChange "$projectRoot/.mcp.json" 'claude-code.json' $name $entry }
-    if ($ClaudeDesktop) {
-        $DesktopConfig = [IO.Path]::GetFullPath($DesktopConfig)
-        Assert-HaybaLocalPath $DesktopConfig ([IO.Path]::GetPathRoot($DesktopConfig))
-        $changes += New-HaybaMcpChange $DesktopConfig 'claude-desktop.json' $name $entry
+    $wanted = @{ ClaudeCode=[bool]$ClaudeCode; ClaudeDesktop=[bool]$ClaudeDesktop; Cursor=[bool]$Cursor }
+    foreach ($client in Get-HaybaClientConfigs $projectRoot $DesktopConfig $CursorConfig) {
+        if (-not $wanted[$client.Name]) { continue }
+        $path = [IO.Path]::GetFullPath($client.Path)
+        if (-not $client.Local) { Assert-HaybaLocalPath $path ([IO.Path]::GetPathRoot($path)) }
+        $changes += New-HaybaMcpChange $path $client.Backup $name $entry
     }
     if ($CheckOnly) { return [pscustomobject]@{ Project=$Project; Plugin=$plugin; ServerName=$name; Checked=$true } }
     $operation = [DateTime]::UtcNow.ToString('yyyyMMdd-HHmmss') + '-' + [Guid]::NewGuid().ToString('N').Substring(0,8)
@@ -198,6 +230,15 @@ function Invoke-HaybaInstall {
             [IO.File]::Copy((Join-Path $payload.Root $file.path), $destination)
             if ((Get-HaybaHash $destination) -ne $file.sha256) { throw "Copied file failed integrity check: $($file.path)" }
         }
+        if ($payload.Engine.BuildId -ne $payload.Manifest.engine.buildId) {
+            # Launcher hotfixes of one minor version share an ABI (Epic keeps their CompatibleChangelist), which is how
+            # Marketplace plugins load across 5.x.y. Stamp the engine's build so Unreal loads the prebuilt module.
+            $modulesPath = Join-Path $stagedPlugin 'Binaries/Win64/UnrealEditor.modules'
+            $modulesJson = Read-HaybaJson $modulesPath
+            Set-HaybaProperty $modulesJson 'BuildId' $payload.Engine.BuildId
+            [IO.File]::WriteAllText($modulesPath, ($modulesJson | ConvertTo-Json -Depth 10))
+            Write-Host "Note: Hayba was built on Unreal $($payload.Manifest.engine.version) (build $($payload.Manifest.engine.buildId)); your engine is $($payload.Engine.Version) (build $($payload.Engine.BuildId)). It was marked compatible. If Unreal reports the plugin as incompatible, update Unreal from the Epic Games Launcher."
+        }
         foreach ($change in $changes) {
             if ((Get-HaybaHash $change.Path) -ne $change.OriginalHash) { throw "Configuration changed during installation: $($change.Path)" }
             if ($change.OriginalHash) { [IO.File]::Copy($change.Path, (Join-Path $backup $change.BackupName)) }
@@ -210,7 +251,7 @@ function Invoke-HaybaInstall {
         [IO.Directory]::Move($stagedPlugin, $plugin)
         $installedNew = $true
         foreach ($change in $changes) { Write-HaybaJsonChange $change }
-        $receipt = @{ installedAt=[DateTime]::UtcNow.ToString('o'); version=$payload.Manifest.version; engine=$payload.Manifest.engine; project=$Project; backup=$backup; serverName=$name; configs=@($changes | ForEach-Object { @{ path=$_.Path; backup=$_.BackupName } }) }
+        $receipt = @{ installedAt=[DateTime]::UtcNow.ToString('o'); version=$payload.Manifest.version; engine=$payload.Manifest.engine; installedEngine=$payload.Engine; project=$Project; backup=$backup; serverName=$name; configs=@($changes | ForEach-Object { @{ path=$_.Path; backup=$_.BackupName } }) }
         [IO.File]::WriteAllText("$backup/receipt.json", ($receipt | ConvertTo-Json -Depth 12))
         [IO.Directory]::Delete($stage)
         Write-Host "Installed. Backups: $backup"
@@ -229,5 +270,46 @@ function Invoke-HaybaInstall {
             if ($movedOld) { [IO.Directory]::Move("$backup/HaybaMCPToolkit", $plugin) }
         } catch { throw "$failure Rollback needs attention: $($_.Exception.Message). Backups: $backup" }
         throw "$failure Installation was rolled back. Diagnostic files: $stage. Backups: $backup"
+    }
+}
+
+# Removes Hayba from one project: the plugin folder moves to Saved/HaybaInstaller (kept as a backup),
+# the .uproject entry and this project's MCP entries are removed. Other settings are preserved.
+function Invoke-HaybaUninstall {
+    param(
+        [Parameter(Mandatory=$true)][string]$Project,
+        [string]$DesktopConfig = (Join-Path $env:APPDATA 'Claude/claude_desktop_config.json'),
+        [string]$CursorConfig = (Join-Path $env:USERPROFILE '.cursor/mcp.json')
+    )
+    if (-not (Test-Path -LiteralPath $Project -PathType Leaf)) { Write-Host "Project not found, skipped: $Project"; return }
+    $Project = (Get-Item -LiteralPath $Project).FullName
+    $projectRoot = Split-Path -Parent $Project
+    $plugin = Join-Path $projectRoot 'Plugins\HaybaMCPToolkit'
+    Assert-HaybaLocalPath $plugin $projectRoot
+    Assert-HaybaProjectClosed $Project $plugin
+    $name = Get-HaybaServerName $Project
+    $nodePath = "$plugin\ThirdParty\node\node.exe"
+    foreach ($client in Get-HaybaClientConfigs $projectRoot $DesktopConfig $CursorConfig) {
+        $path = [IO.Path]::GetFullPath($client.Path)
+        $hash = Get-HaybaHash $path
+        if (-not $hash) { continue }
+        $config = Read-HaybaJson $path
+        $entry = if ($config.PSObject.Properties['mcpServers']) { $config.mcpServers.PSObject.Properties[$name] } else { $null }
+        if (-not $entry -or $entry.Value.command -ne $nodePath) { continue }
+        $config.mcpServers.PSObject.Properties.Remove($name)
+        Write-HaybaJsonChange (New-HaybaJsonChange $path $client.Backup $config $hash)
+        Write-Host "Removed MCP server $name from $path"
+    }
+    $descriptor = Read-HaybaJson $Project
+    if ($descriptor.PSObject.Properties['Plugins'] -and @($descriptor.Plugins | Where-Object Name -eq 'HaybaMCPToolkit').Count) {
+        $hash = Get-HaybaHash $Project
+        Set-HaybaProperty $descriptor 'Plugins' @($descriptor.Plugins | Where-Object { $_.Name -ne 'HaybaMCPToolkit' })
+        Write-HaybaJsonChange (New-HaybaJsonChange $Project 'project.json' $descriptor $hash)
+    }
+    if ((Test-Path -LiteralPath "$plugin/HaybaMCPToolkit.uplugin")) {
+        $removed = Join-Path $projectRoot ('Saved\HaybaInstaller\removed-' + [DateTime]::UtcNow.ToString('yyyyMMdd-HHmmss'))
+        [IO.Directory]::CreateDirectory($removed) | Out-Null
+        [IO.Directory]::Move($plugin, "$removed\HaybaMCPToolkit")
+        Write-Host "Removed Hayba from $Project (plugin kept at $removed)"
     }
 }

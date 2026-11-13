@@ -35,9 +35,9 @@ try {
     $installArgs = @{ Project="$game/Game.uproject"; Engine=$engine; PackageRoot=$bundle; ClaudeCode=$true; ClaudeDesktop=$true; DesktopConfig=$desktop }
     Invoke-HaybaInstall @installArgs -CheckOnly | Out-Null
     Assert (-not (Test-Path "$game/Plugins/HaybaMCPToolkit")) 'CheckOnly mutated project'
-    [IO.File]::WriteAllText("$engine/Engine/Binaries/Win64/UnrealEditor.modules", '{"BuildId":"wrong"}')
-    Expect-Failure { Invoke-HaybaInstall @installArgs } 'build'
-    [IO.File]::WriteAllText("$engine/Engine/Binaries/Win64/UnrealEditor.modules", '{"BuildId":"test-build"}')
+    [IO.File]::WriteAllText("$engine/Engine/Build/Build.version", '{"MajorVersion":5,"MinorVersion":8,"PatchVersion":4}')
+    Expect-Failure { Invoke-HaybaInstall @installArgs } 'Unreal Engine 5\.9'
+    [IO.File]::WriteAllText("$engine/Engine/Build/Build.version", '{"MajorVersion":5,"MinorVersion":9,"PatchVersion":0}')
     [IO.File]::WriteAllText("$payload/Resources/chat/index.html", 'tampered')
     Expect-Failure { Invoke-HaybaInstall @installArgs } 'integrity'
     [IO.File]::WriteAllText("$payload/Resources/chat/index.html", 'fixture')
@@ -58,6 +58,15 @@ try {
     Expect-Failure { Invoke-HaybaInstall @installArgs } 'already installed'
     Invoke-HaybaInstall @installArgs -ReplaceExisting | Out-Null
     Assert (Test-Path "$game/Plugins/HaybaMCPToolkit/Binaries/Win64/UnrealEditor-HaybaMCPToolkit.dll") 'Update lost DLL'
+    # A launcher hotfix (same 5.9, different build) installs with the engine's build stamped in; Cursor gets an entry.
+    $cursor = Join-Path $root 'Cursor/mcp.json'
+    [IO.File]::WriteAllText("$engine/Engine/Build/Build.version", '{"MajorVersion":5,"MinorVersion":9,"PatchVersion":2}')
+    [IO.File]::WriteAllText("$engine/Engine/Binaries/Win64/UnrealEditor.modules", '{"BuildId":"hotfix-build"}')
+    $hotfix = Invoke-HaybaInstall @installArgs -ReplaceExisting -Cursor -CursorConfig $cursor
+    Assert ((Get-Content "$game/Plugins/HaybaMCPToolkit/Binaries/Win64/UnrealEditor.modules" -Raw | ConvertFrom-Json).BuildId -eq 'hotfix-build') 'Hotfix engine build not stamped'
+    Assert ((Get-Content $cursor -Raw | ConvertFrom-Json).mcpServers.($hotfix.ServerName)) 'Cursor MCP entry missing'
+    [IO.File]::WriteAllText("$engine/Engine/Build/Build.version", '{"MajorVersion":5,"MinorVersion":9,"PatchVersion":0}')
+    [IO.File]::WriteAllText("$engine/Engine/Binaries/Win64/UnrealEditor.modules", '{"BuildId":"test-build"}')
     [IO.File]::WriteAllText($desktop, '{broken')
     $before = (Get-FileHash "$game/Game.uproject").Hash
     Expect-Failure { Invoke-HaybaInstall @installArgs -ReplaceExisting } 'JSON'
@@ -85,6 +94,14 @@ try {
     Expect-Failure { Invoke-HaybaInstall @installArgs -ReplaceExisting } 'link|junction'
     Assert (Test-Path "$real/HaybaMCPToolkit.uplugin") 'Junction target damaged'
     [IO.Directory]::Delete("$game/Plugins/HaybaMCPToolkit")
+    # Uninstall removes the plugin, the project entry and only this project's MCP entries.
+    $installed = Invoke-HaybaInstall @installArgs -Cursor -CursorConfig $cursor
+    Invoke-HaybaUninstall -Project "$game/Game.uproject" -DesktopConfig $desktop -CursorConfig $cursor
+    Assert (-not (Test-Path "$game/Plugins/HaybaMCPToolkit")) 'Uninstall left the plugin'
+    Assert (-not (@((Get-Content "$game/Game.uproject" -Raw | ConvertFrom-Json).Plugins) | Where-Object Name -eq 'HaybaMCPToolkit')) 'Uninstall left the project entry'
+    $code = Get-Content "$game/.mcp.json" -Raw | ConvertFrom-Json
+    Assert ($code.mcpServers.existing -and -not $code.mcpServers.($installed.ServerName)) 'Uninstall changed the wrong Claude Code entries'
+    Assert (-not (Get-Content $cursor -Raw | ConvertFrom-Json).mcpServers.($installed.ServerName)) 'Uninstall left the Cursor entry'
     'All installer checks passed.'
 } finally {
     $resolved = [IO.Path]::GetFullPath($root)

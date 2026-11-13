@@ -1,7 +1,7 @@
 {
   "FileVersion": 3,
-  "Version": 7,
-  "VersionName": "0.4.1",
+  "Version": 8,
+  "VersionName": "0.4.2",
   "FriendlyName": "Hayba MCP Toolkit",
   "Description": "AI-powered terrain and PCG authoring for Unreal Engine 5 via MCP — 34-domain expansion",
   "Category": "Editor",

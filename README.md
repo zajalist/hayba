@@ -8,9 +8,7 @@
 
 Inspect, plan, build, and validate Unreal Engine worlds through MCP. Native editor checks keep agent work accountable to the state of the project.
 
-**[Install Hayba 0.4.1 on Windows with Unreal Engine 5.9, step by step](INSTALL.md)**
-
-For the current development installer, see [portable Windows setup](docs/windows-installer.md).
+**[Download the Hayba 0.4.2 installers](https://github.com/zajalist/hayba/releases/tag/v0.4.2)** (Windows, Unreal Engine 5.9)
 
 [Explore the architecture](docs/ARCHITECTURE.md) | [Browse the tools](docs/wiki/) | [Changelog](CHANGELOG.md) | [Contribute](CONTRIBUTING.md)
 
@@ -18,7 +16,7 @@ For the current development installer, see [portable Windows setup](docs/windows
 
 Hayba connects MCP-capable agents to Unreal Editor. It gives them a wide tool library, a focused in-editor workspace, and a native safety boundary for changes to a shared project.
 
-> **Release status:** `v0.4.1` is the latest release. It is tested on Unreal Engine 5.9 (5.7 and 5.8 may work but were not tested for this release) and ships the new editor workspace, multi-agent editor leases and the editor safety train. See the [changelog](CHANGELOG.md) and [versioning](docs/VERSIONING.md).
+> **Release status:** `v0.4.2` is the latest release. It is tested on Unreal Engine 5.9 (5.7 and 5.8 may work but were not tested for this release) and ships the new editor workspace, multi-agent editor leases and the editor safety train. See the [changelog](CHANGELOG.md) and [versioning](docs/VERSIONING.md).
 
 The development workspace now opens directly into Chat, with searchable threads,
 model and access controls, context attachments, delegated-agent results, Fab
@@ -26,6 +24,24 @@ browsing and media connections. The old World/semantic-map tab is removed;
 scene inspection remains available to agents through the tool catalog.
 See the [workspace guide](unreal/HaybaMCPToolkit/README.md) for the unreleased UI
 and the [changelog](CHANGELOG.md) for its verification scope.
+
+## Install (Windows, Unreal Engine 5.9)
+
+No Git, npm, Node or Visual Studio needed. Node and the MCP server are bundled. Both installers run without admin rights and add an uninstaller under **Settings > Apps**.
+
+**Option 1: Plugin + MCP** (use Hayba from Claude Code, Claude Desktop or Cursor, and in the editor)
+
+1. Download **Hayba-Setup-0.4.2-Plugin+MCP.exe** from the [latest release](https://github.com/zajalist/hayba/releases/latest) and close your project in Unreal.
+2. Run it, choose your `.uproject`, tick the apps to connect, and click **Install**.
+3. Open the project in Unreal 5.9, then restart your AI app and ask it to "check the Hayba Unreal connection".
+
+**Option 2: Plugin only** (in-editor chat, no external AI apps)
+
+1. Download **Hayba-Setup-0.4.2-Plugin.exe** from the [latest release](https://github.com/zajalist/hayba/releases/latest) and close your project in Unreal.
+2. Run it, choose your `.uproject`, and click **Install**.
+3. Open the project, then **Tools > Hayba MCP Toolkit > Settings**: pick a provider, paste your API key, and click **Save**. The key is stored encrypted with Windows DPAPI.
+
+Any Unreal 5.9.x launcher install works. Other engine versions are refused with a clear message and no changes. For a source build, see [INSTALL.md](INSTALL.md).
 
 ## See the workflow
 

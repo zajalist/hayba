@@ -2,6 +2,11 @@
 
 All notable changes to Hayba MCP Toolkit are documented here. Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.4.2] - 2026-11-13
+
+- Windows Setup programs: **Hayba-Setup-0.4.2-Plugin+MCP.exe** (plugin plus MCP registration for Claude Code, Claude Desktop and Cursor) and **Hayba-Setup-0.4.2-Plugin.exe** (plugin only). Per-user, bundled Node and prebuilt server, uninstaller, any Unreal 5.9.x accepted.
+- In-editor chat: turns may take 60 tool rounds by default (was 16); set `chatMaxSteps` in `Saved/HaybaMCP/settings.json`. `python_run` is permitted by default for Community/BYOK and Pro chats; a request can withhold it with `permissions.python_run: false`.
+- `blueprint_graph_batch` and Blueprint compiles repair wildcard pins left undetermined by batched connections, and report `wildcard_nodes_repaired`.
 ## [Unreleased]
 
 ### UE 5.9 editor workspace update
