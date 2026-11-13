@@ -291,6 +291,12 @@ bool FHaybaHealthAllowlistDriftTest::RunTest(const FString&)
 	const TSet<FString> Registered(Router->GetAllCommands());
 	TSet<FString> Known = Registered;
 	Known.Append(RouterInlineCommands());
+	// The core policy also covers commands supplied by the optional MetaSound satellite.
+	if (!FModuleManager::Get().IsModuleLoaded(TEXT("HaybaMCPMetaSound")))
+	{
+		Known.Add(TEXT("metasound_inspect"));
+		Known.Add(TEXT("metasound_list"));
+	}
 
 	auto CheckKnown = [this, &Known](const TCHAR* SetName, const TSet<FString>& Set)
 	{
@@ -348,7 +354,7 @@ bool FHaybaHealthAllowlistDriftTest::RunTest(const FString&)
 	TestEqual(TEXT("12 status commands"), StatusOnlyCommands().Num(), 12);
 	TestEqual(TEXT("20 control-plane commands"), ControlPlaneCommands().Num(), 20);
 	TestEqual(TEXT("10 PIE observation commands"), PieObservationCommands().Num(), 10);
-	TestEqual(TEXT("75 read commands"), ReadCommands().Num(), 75);
+	TestEqual(TEXT("77 read commands"), ReadCommands().Num(), 77);
 	TestEqual(TEXT("5 router-inline commands"), RouterInlineCommands().Num(), 5);
 	TestEqual(TEXT("3 unsafe control-plane commands"), UnsafeControlPlaneCommands().Num(), 3);
 	TestEqual(TEXT("27 unsafe reads"), UnsafeReads().Num(), 27);

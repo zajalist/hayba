@@ -3,6 +3,7 @@
 #include "handlers/HaybaMCPAssetHandler.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "Editor.h"
+#include "Curves/CurveFloat.h"
 #include "Engine/World.h"
 #include "HAL/FileManager.h"
 #include "Misc/PackageName.h"
@@ -99,7 +100,7 @@ bool FHaybaAssetValidationRuntimeTest::RunTest(const FString& Parameters)
     for (const TCHAR* Name : { TEXT("One"), TEXT("Two") })
     {
         UPackage* Package = CreatePackage(*(Root / Name));
-        UObject* Asset = NewObject<UObject>(Package, FName(Name), RF_Public | RF_Standalone);
+        UObject* Asset = NewObject<UCurveFloat>(Package, FName(Name), RF_Public | RF_Standalone);
         Assets.Emplace(Asset);
         FAssetRegistryModule::AssetCreated(Asset);
         Package->SetDirtyFlag(false);
@@ -116,13 +117,16 @@ bool FHaybaAssetValidationRuntimeTest::RunTest(const FString& Parameters)
     TestTrue(TEXT("refusal explicitly confirms no assets validated"), Overflow.ErrorMessage.Contains(TEXT("folder exceeds max_assets=1; nothing was validated")));
 
     Params->SetStringField(TEXT("path"), Assets[0]->GetPathName());
-    const auto Unsupported = Handler.Handle(TEXT("asset_validate"), Params);
-    if (TestTrue(TEXT("unsupported concrete fixture returns a validation summary"), Unsupported.bOk) &&
-        TestTrue(TEXT("validation summary present"), Unsupported.Data.IsValid()))
+    const auto Validated = Handler.Handle(TEXT("asset_validate"), Params);
+    if (TestTrue(TEXT("concrete curve fixture returns a validation summary"), Validated.bOk) &&
+        TestTrue(TEXT("validation summary present"), Validated.Data.IsValid()))
     {
-        TestEqual(TEXT("unsupported UObject cannot report passed"), Unsupported.Data->GetStringField(TEXT("status")), FString(TEXT("not_validated")));
-        TestFalse(TEXT("unsupported UObject is not valid"), Unsupported.Data->GetBoolField(TEXT("valid")));
-        TestFalse(TEXT("unsupported UObject lacks complete coverage"), Unsupported.Data->GetBoolField(TEXT("complete")));
+        TestEqual(TEXT("curve validation passed"), Validated.Data->GetStringField(TEXT("status")), FString(TEXT("passed")));
+        TestTrue(TEXT("curve is valid"), Validated.Data->GetBoolField(TEXT("valid")));
+        TestTrue(TEXT("curve has complete coverage"), Validated.Data->GetBoolField(TEXT("complete")));
+        TestEqual(TEXT("one curve requested"), Validated.Data->GetNumberField(TEXT("num_requested")), 1.0);
+        TestEqual(TEXT("one curve checked"), Validated.Data->GetNumberField(TEXT("num_checked")), 1.0);
+        TestEqual(TEXT("one curve validated"), Validated.Data->GetNumberField(TEXT("num_valid")), 1.0);
     }
     for (const auto& Asset : Assets)
     {
