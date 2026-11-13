@@ -567,7 +567,8 @@ bool FHaybaMCPLeasePieCommandsClassifyTest::RunTest(const FString& Parameters)
 	}
 	for (const FString& Cmd : HaybaMCPState::PieOwnerCommands())
 	{
-		const EAccessClass Expected = Cmd == TEXT("editor_stop_pie") ? EAccessClass::Global : EAccessClass::WriteScoped;
+		const EAccessClass Expected = Cmd == TEXT("editor_stop_pie") || Cmd == TEXT("editor_run_console_command")
+			? EAccessClass::Global : EAccessClass::WriteScoped;
 		TestEqual(*FString::Printf(TEXT("PIE owner command keeps a write class: %s"), *Cmd),
 			HaybaMCPAccess::ClassifyCommand(Cmd, FHaybaMCPCommandHandler::IsPlanGatedCommand(Cmd)).Class, Expected);
 	}
