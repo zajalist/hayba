@@ -2108,8 +2108,9 @@ EPythonTier FHaybaMCPPythonHandler::ClassifyScript(const FString& Code)
         TEXT(".rename("), TEXT(".replace("), TEXT(".mkdir("),
         TEXT(".rmdir("), TEXT(".touch("), TEXT(".chmod("),
         TEXT(".lchmod("), TEXT(".symlink_to("), TEXT(".hardlink_to("),
-        TEXT("open("), TEXT("__import__"), TEXT("eval("),
-        TEXT("compile("), TEXT("shutil"),
+        TEXT("open("), TEXT("__import__"), TEXT("shutil"),
+        // No eval( / compile(: FindFatalPythonPattern already refuses those builtins with callable-boundary
+        // matching, and as plain substrings here they refused method calls such as blueprint.recompile().
         // NOTE: a bare "socket" pattern false-positived on UE's StaticMesh
         // "sockets" property (live-battery finding: mesh_get_sockets was
         // Tier-3 blocked). Match actual network-socket usage instead.

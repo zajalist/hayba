@@ -85,8 +85,8 @@ const TIER3_SOURCE_PATTERNS = [
   '.hardlink_to(',
   'open(',
   '__import__',
-  'eval(',
-  'compile(',
+  // No eval( / compile(: scanPythonForCrashers refuses those builtins first with callable-boundary matching,
+  // and as plain substrings here they refused method calls such as blueprint.recompile().
   'shutil',
   'importsocket',
   'socket.socket',
