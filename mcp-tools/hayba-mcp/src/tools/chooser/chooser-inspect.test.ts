@@ -36,7 +36,7 @@ class Library:
     @staticmethod
     def is_column_disabled(a, c): return False
     @staticmethod
-    def get_column_input_binding(a, c): return None if c == 0 else (0, ["Speed"] * case.get("binding_length", 1))
+    def get_column_input_binding(a, c): return None if c == 0 else (0, [case.get("binding_segment", "Speed")] * case.get("binding_length", 1))
     @staticmethod
     def is_row_disabled(a, r): return r == 1
     @staticmethod
@@ -48,7 +48,7 @@ class Library:
         assert 0 <= c < case.get("columns", 3) and 0 <= r < case.get("rows", 5)
         return "" if case.get("unavailable") else "bool"
     @staticmethod
-    def get_cell_value(a, c, r): return "x" * case.get("text_length", 1)
+    def get_cell_value(a, c, r): return case.get("value_character", "x") * case.get("text_length", 1)
 class Assets:
     @staticmethod
     def does_asset_exist(path): return not case.get("missing_asset")
@@ -80,6 +80,7 @@ async function inspect(args: Record<string, unknown> = {}, scenario: Record<stri
       encoding: 'utf8', timeout: 10_000, maxBuffer: 2 * 1024 * 1024,
     });
     expect(run.status, run.stderr).toBe(0);
+    expect(Buffer.byteLength(run.stdout, 'utf8')).toBeLessThanOrEqual(48 * 1024 + 12);
     return { id: 'fixture', ok: true, data: { ok: true, stdout: run.stdout, stderr: run.stderr } };
   });
   const result = await chooserInspectDescriptor.handler({ path: '/Game/Test/CT', ...args }, undefined as never);
@@ -108,13 +109,23 @@ describe('Chooser inspection pages', () => {
   });
 
   it('caps native getter loops and exported text even for very large tables', async () => {
-    const { payload } = await inspect({ row_limit: 20, column_limit: 8 }, { rows: 2_000_000_000, columns: 2_000_000_000, text_length: 6000, binding_length: 100 });
-    expect(payload.rows).toHaveLength(20);
-    expect(payload.columns).toHaveLength(8);
-    expect(payload.rows.flatMap((r: { cells: unknown[] }) => r.cells)).toHaveLength(160);
+    const { payload } = await inspect({ row_limit: 2, column_limit: 4 }, { rows: 2_000_000_000, columns: 2_000_000_000, text_length: 6000, binding_length: 100 });
+    expect(payload.rows).toHaveLength(2);
+    expect(payload.columns).toHaveLength(4);
+    expect(payload.rows.flatMap((r: { cells: unknown[] }) => r.cells)).toHaveLength(8);
     expect(payload.rows[0].cells[0].value).toMatchObject({ text: 'x'.repeat(512), truncated: true });
     expect(payload.columns[1].binding.property_chain).toHaveLength(32);
     expect(payload.columns[1].binding.truncated).toBe(true);
+  });
+
+  it('returns valid explicit error JSON when Unicode values and bindings exceed the response budget', async () => {
+    const { result, payload } = await inspect({ row_limit: 20, column_limit: 8 }, {
+      rows: 2_000_000_000, columns: 2_000_000_000, text_length: 6000,
+      value_character: '\ud83d\ude80', binding_length: 100, binding_segment: '\u754c'.repeat(600),
+    });
+    expect(result.isError).toBe(true);
+    expect(payload).toEqual({ ok: false, error: 'Chooser page exceeds response budget; reduce row_limit or column_limit.' });
+    expect(payload).not.toHaveProperty('rows');
   });
 
   it('distinguishes an empty table from a missing asset or API', async () => {

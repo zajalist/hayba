@@ -2426,9 +2426,9 @@ FString FHaybaMCPCommandHandler::ProcessCommandInContext(const FString& CommandJ
             // would drop the lexically last ones silently.
             Limits.MaxTopLevelFields = 32;
         }
-        else if (Cmd == TEXT("python_run"))
+        else if (Cmd == TEXT("python_run") || Cmd == TEXT("chooser_inspect"))
         {
-            // python_run's stdout carries the HAYBA_JSON result line for every
+            // Structured Python stdout carries the HAYBA_JSON result line for every
             // python-factory tool; the 512-char cap clipped it mid-JSON
             // ("Unterminated string at position 501" — live-battery finding,
             // broke actor_find/object_inspect/outliner_tree/reflect_class).

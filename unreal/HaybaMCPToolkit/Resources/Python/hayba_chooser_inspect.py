@@ -2,7 +2,12 @@
 # Native getters materialize one property before clipping; output and loops are bounded.
 import json as _json, unreal as unreal
 def _emit(value):
-    print("HAYBA_JSON:" + _json.dumps(value, default=str))
+    encoded = _json.dumps(value, default=str)
+    # dumps defaults to ASCII, so characters equal encoded bytes. Stay below
+    # the native 64 KiB stdout cap without ever emitting partial JSON.
+    if len(encoded) > 48 * 1024:
+        encoded = _json.dumps({"ok": False, "error": "Chooser page exceeds response budget; reduce row_limit or column_limit."})
+    print("HAYBA_JSON:" + encoded)
 def _err(message):
     _emit({"ok": False, "error": str(message)})
 

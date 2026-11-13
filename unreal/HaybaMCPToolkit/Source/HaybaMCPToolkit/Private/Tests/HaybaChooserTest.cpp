@@ -2,6 +2,9 @@
 #include "Misc/AutomationTest.h"
 #include "handlers/HaybaMCPChooserHandler.h"
 #include "HaybaMCPCommandSets.h"
+#include "HaybaMCPCommandHandler.h"
+#include "HaybaMCPSettings.h"
+#include "Serialization/JsonSerializer.h"
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FHaybaChooserBoundaryTest, "Hayba.Chooser.InputBoundary",
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
@@ -38,6 +41,43 @@ bool FHaybaChooserBoundaryTest::RunTest(const FString&)
     Params->RemoveField(TEXT("row_offset"));
     Params->SetStringField(TEXT("path"), TEXT("/Game/X');raise RuntimeError('caller code')#"));
     TestFalse(TEXT("Injection-shaped asset path rejected"), FHaybaMCPChooserHandler::BuildRequest(Params, Python, Error));
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FHaybaChooserOutputTest, "Hayba.Chooser.OutputEnvelope",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FHaybaChooserOutputTest::RunTest(const FString&)
+{
+    class FOutputHandler : public IHaybaMCPHandler
+    {
+    public:
+        FString Output;
+        FString GetDomain() const override { return TEXT("chooser_output_test"); }
+        TArray<FString> GetCommands() const override { return { TEXT("chooser_inspect") }; }
+        FHaybaHandlerResult Handle(const FString&, const TSharedPtr<FJsonObject>&) override
+        {
+            auto Data = MakeShared<FJsonObject>();
+            Data->SetStringField(TEXT("output"), Output);
+            return FHaybaHandlerResult::Ok(Data);
+        }
+    };
+    auto Handler = MakeShared<FOutputHandler>();
+    Handler->Output = TEXT("HAYBA_JSON:{\"ok\":true,\"text\":\"") + FString::ChrN(2048, TEXT('x')) + TEXT("\"}\n");
+    FHaybaMCPCommandHandler Router;
+    Router.RegisterHandler(Handler);
+    auto Request = MakeShared<FJsonObject>();
+    Request->SetStringField(TEXT("id"), TEXT("chooser-output-test"));
+    Request->SetStringField(TEXT("cmd"), TEXT("chooser_inspect"));
+    Request->SetStringField(TEXT("auth"), FHaybaMCPSettings::Get().CapabilityToken);
+    Request->SetObjectField(TEXT("params"), MakeShared<FJsonObject>());
+    FString Json;
+    FJsonSerializer::Serialize(Request.ToSharedRef(), TJsonWriterFactory<>::Create(&Json));
+    TSharedPtr<FJsonObject> Reply;
+    const FString Wire = Router.ProcessCommand(Json);
+    if (!TestTrue(TEXT("Router returns JSON"), FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Wire), Reply)) || !Reply) return false;
+    if (!TestTrue(TEXT("Named read routes successfully"), Reply->GetBoolField(TEXT("ok")))) return false;
+    TestEqual(TEXT("Machine-readable stdout survives generic response shaping"),
+        Reply->GetObjectField(TEXT("data"))->GetStringField(TEXT("output")), Handler->Output);
     return true;
 }
 #endif
