@@ -44,6 +44,10 @@ export const GRAPH_PATTERNS = `
 - Use format_graph_topology to auto-layout any graph before calling create_pcg_graph.
 - Default layered layout: x = layer * (nodeWidth + horizontalSpacing), y = rowIndex * (nodeHeight + verticalSpacing).
 
+## Subgraph Nodes
+- PCGSubgraphSettings: set properties.Subgraph to the subgraph's asset path (e.g. "/Game/PCG/PCG_Rocks.PCG_Rocks").
+  It is applied through SetSubgraph and the node then has the subgraph's pins; SubgraphInstance cannot be set directly.
+
 ## General
 - Always check actual pin names via get_node_details before connecting nodes.
 - Cluster nodes (Delaunay, Voronoi, etc.) output "Vtx" and "Edges" — not "Out".
