@@ -749,8 +749,8 @@
         ]
       },
       "agent_callable": false,
-      "has_ts_wrapper": false,
-      "notes": "Diagnostic ping used by sidecar discovery handshake. Not exposed to agents via hayba_invoke — call check_ue_status instead."
+      "has_ts_wrapper": true,
+      "notes": "Diagnostic ping used by sidecar discovery and the copilot_health wrapper. Reports answering process_id, project_name and engine_version alongside version fields. Not exposed through hayba_invoke; use check_ue_status or copilot_health."
     },
     "list_node_classes": {
       "aliases": [

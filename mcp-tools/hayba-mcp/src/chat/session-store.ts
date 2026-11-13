@@ -15,7 +15,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { basename, dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve, sep } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import type { LLMMessage } from '../agents/llm-client.js';
@@ -114,11 +114,16 @@ export function sessionMessages(input: unknown): SavedSession['messages'] {
  * appends in this process; separate sidecar processes must use separate roots. */
 export class SessionStore {
   private readonly summaries = new Map<string, { mtime: number; size: number; summary: SessionSummary }>();
-  constructor(private readonly directory = resolve(process.cwd(), 'Saved/HaybaMCP/sessions')) {}
+  constructor(private readonly directory = resolve(process.cwd(), 'Saved/HaybaMCP/sessions')) {
+    this.directory = resolve(directory);
+  }
 
   private path(id: string): string {
     if (!isValidSessionId(id)) throw new Error('invalid session id');
-    return join(this.directory, `${id}.json`);
+    const root = join(this.directory, sep);
+    const destination = resolve(root, `${id}.json`);
+    if (!destination.startsWith(root)) throw new Error('invalid session path');
+    return destination;
   }
 
   create(id: string = `sess_${randomUUID()}`): SavedSession {

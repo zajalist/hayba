@@ -121,17 +121,36 @@ describe('SessionStore', () => {
       'a\\b',
       '..',
       'C:outside',
+      '/outside',
+      '\\\\server\\share\\outside',
+      '%2e%2e%2foutside',
+      'safe\u0000outside',
+      'safe.json:outside',
       'CON',
       'sk-ant-api03-SENTINEL_PROVIDER_KEY_123456789',
     ]) {
       expect(() => store.load(id)).toThrow(/invalid session id/);
       expect(() => store.create(id)).toThrow(/invalid session id/);
       expect(() => store.remove(id)).toThrow(/invalid session id/);
+      expect(() => store.append(id, { messages: [] })).toThrow(/invalid session id/);
+      expect(() => store.replaceMessages(id, [])).toThrow(/invalid session id/);
     }
     const { id } = store.create();
     store.remove(id);
     expect(() => store.append(id, { messages: [] })).toThrow(/unknown session/);
     expect(readdirSync(directory)).toEqual([]);
+  });
+
+  it('normalizes the configured root before reading, updating and deleting session files', () => {
+    const root = join(directory, 'sessions');
+    const store = new SessionStore(root + '/nested/..');
+    store.create('safe-thread_1');
+    store.append('safe-thread_1', { messages: [{ role: 'user', content: 'Inspect this scene' }] });
+    expect(new SessionStore(root).load('safe-thread_1')?.messages).toHaveLength(1);
+    expect(store.list()).toEqual([expect.objectContaining({ id: 'safe-thread_1', messageCount: 1 })]);
+    expect(readdirSync(root)).toEqual(['safe-thread_1.json']);
+    expect(store.remove('safe-thread_1')).toBe(true);
+    expect(readdirSync(root)).toEqual([]);
   });
 
   it('preserves the previous JSON when an append fails validation', () => {
