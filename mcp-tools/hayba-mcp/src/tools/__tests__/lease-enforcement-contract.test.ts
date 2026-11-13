@@ -15,7 +15,6 @@ import { makePyToolHandler, type PyToolDescriptor } from '../py-tool-factory.js'
 import { actorPyDescriptors } from '../actor/actor-py-tools.js';
 import { assetPyDescriptors } from '../asset/asset-py-tools.js';
 import { editorPyDescriptors } from '../editor/editor-py-tools.js';
-import { chooserInspectDescriptor } from '../chooser/chooser-inspect.js';
 import { foliagePyDescriptors } from '../foliage/foliage-py-tools.js';
 import { landscapePyDescriptors } from '../landscape/landscape-py-tools.js';
 import { lightingPyDescriptors } from '../lighting/lighting-py-tools.js';
@@ -232,7 +231,7 @@ describe('lease enforcement contract (T8, wire)', () => {
 describe('python read declarations (R-1)', () => {
   const REVIEWED_READS = [
     'actor_find', 'actor_get_selection', 'actor_inspect', 'asset_get_source_path',
-    'asset_inspect', 'chooser_inspect', 'editor_cvar_get', 'editor_get_camera', 'foliage_capability_probe',
+    'asset_inspect', 'editor_cvar_get', 'editor_get_camera', 'foliage_capability_probe',
     'foliage_get_instance_count', 'foliage_scan_types', 'foliage_type_inspect', 'landscape_get_material',
     'landscape_inspect', 'landscape_layer_list', 'landscape_list', 'landscape_list_splines',
     'light_get', 'light_list', 'lighting_capability_probe', 'mesh_get_bounds',
@@ -254,7 +253,6 @@ describe('python read declarations (R-1)', () => {
     ['actor/actor-py-tools.ts', actorPyDescriptors],
     ['asset/asset-py-tools.ts', assetPyDescriptors],
     ['editor/editor-py-tools.ts', editorPyDescriptors],
-    ['chooser/chooser-inspect.ts', [chooserInspectDescriptor as unknown as PyToolDescriptor]],
     ['foliage/foliage-py-tools.ts', foliagePyDescriptors],
     ['landscape/landscape-py-tools.ts', landscapePyDescriptors],
     ['lighting/lighting-py-tools.ts', lightingPyDescriptors],
@@ -293,7 +291,7 @@ describe('python read declarations (R-1)', () => {
 
   it('only the reviewed read tools declare read_only (a new one needs a reviewed entry here)', () => {
     expect(all.length).toBeGreaterThan(90);
-    expect(REVIEWED_READS).toHaveLength(51);
+    expect(REVIEWED_READS).toHaveLength(50);
     expect(all.filter((d) => d.readOnly === true).map((d) => d.name).sort()).toEqual(REVIEWED_READS);
   });
 
@@ -312,7 +310,7 @@ describe('python read declarations (R-1)', () => {
         .filter((m) => /\bmeta: readMeta,/.test(m[0]))
         .map((m) => /\bname: '([^']+)'/.exec(m[0])?.[1]);
     });
-    expect(readMetaNames).toHaveLength(53);
+    expect(readMetaNames).toHaveLength(52);
     expect(readMetaNames.sort()).toEqual([...REVIEWED_READS, ...UNDECLARED_ON_PURPOSE].sort());
   });
 

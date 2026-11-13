@@ -1,12 +1,14 @@
 import { spawnSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { afterEach, describe, expect, it } from 'vitest';
 import { STANDARD_DESCRIPTORS, inferDir } from '../index.js';
 import { setDefaultSender } from '../tool-executor.js';
-import { makePyToolHandler } from '../py-tool-factory.js';
 import { chooserInspectDescriptor } from './chooser-inspect.js';
 import { scanPythonForCrashers } from '../guards/known-crashers.js';
 
 afterEach(() => setDefaultSender(undefined as never));
+
+const trustedScript = readFileSync(new URL('../../../../../unreal/HaybaMCPToolkit/Resources/Python/hayba_chooser_inspect.py', import.meta.url), 'utf8');
 
 // These doubles execute the emitted Python; native API availability is separately
 // verified against UE5.9 headers/PyGenUtil and the disposable-editor probe.
@@ -69,9 +71,10 @@ async function inspect(args: Record<string, unknown> = {}, scenario: Record<stri
   let dispatched = false;
   setDefaultSender(async (command, params) => {
     dispatched = true;
-    expect(command).toBe('python_run');
-    expect(params.read_only).toBe(true);
-    const script = String(params.script);
+    expect(command).toBe('chooser_inspect');
+    expect(params).not.toHaveProperty('script');
+    expect(params).not.toHaveProperty('read_only');
+    const script = 'import json as _json\n_hayba_params = _json.loads(' + JSON.stringify(JSON.stringify(params)) + ')\n' + trustedScript;
     expect(scanPythonForCrashers(script)).toBeNull();
     const run = spawnSync(process.platform === 'win32' ? 'python' : 'python3', ['-c', fixture + '\n' + script, JSON.stringify(scenario)], {
       encoding: 'utf8', timeout: 10_000, maxBuffer: 2 * 1024 * 1024,
@@ -79,8 +82,10 @@ async function inspect(args: Record<string, unknown> = {}, scenario: Record<stri
     expect(run.status, run.stderr).toBe(0);
     return { id: 'fixture', ok: true, data: { ok: true, stdout: run.stdout, stderr: run.stderr } };
   });
-  const result = await makePyToolHandler(chooserInspectDescriptor)({ path: '/Game/Test/CT', ...args });
-  return { result, payload: JSON.parse(result.content[0]!.text!), dispatched };
+  const result = await chooserInspectDescriptor.handler({ path: '/Game/Test/CT', ...args }, undefined as never);
+  const content = result.content[0];
+  if (content?.type !== 'text') throw new Error('Chooser must return a JSON text result');
+  return { result, payload: JSON.parse(content.text), dispatched };
 }
 
 describe('Chooser inspection discovery', () => {
@@ -148,6 +153,7 @@ describe('Chooser inspection pages', () => {
   it.each([
     { row_limit: 21 }, { column_limit: 9 }, { row_limit: 0 }, { row_limit: 1.5 },
     { row_offset: -1 }, { column_offset: 2_147_483_648 }, { path: '' }, { path: 'x'.repeat(4097) },
+    { script: 'raise RuntimeError("caller code")' }, { script_path: 'caller.py' }, { read_only: false },
   ])('refuses invalid input before editor work %s', async (args) => {
     const { result, dispatched } = await inspect(args);
     expect(result.isError).toBe(true);

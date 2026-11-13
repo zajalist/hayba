@@ -3588,7 +3588,7 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
     schema: assetRegistryQuerySchema.shape,
   },
   ...editorPyDescriptors.map((d) => d.name === 'asset_inspect' ? withAssetPreparationInspection(toToolDescriptor(d)) : toToolDescriptor(d)),
-  toToolDescriptor(chooserInspectDescriptor),
+  chooserInspectDescriptor,
 
   // ── Asset & mesh P0 tools (Phase 2 Wave 2, Task 2) — factory path ─────────
   // Net-new asset-provenance/save/folder tools and StaticMesh-asset readbacks

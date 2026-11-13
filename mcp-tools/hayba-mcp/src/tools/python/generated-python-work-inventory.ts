@@ -18,7 +18,6 @@ export const GENERATED_PYTHON_DESCRIPTOR_NAMES_BY_DOMAIN = {
     'actor_set_folder',
   ],
   asset: ['asset_create_folder', 'asset_open_editor', 'asset_get_source_path'],
-  chooser: ['chooser_inspect'],
   editor: [
     'editor_get_camera',
     'editor_cvar_get',
@@ -267,15 +266,12 @@ for (const [domain, names] of Object.entries(GENERATED_PYTHON_DESCRIPTOR_NAMES_B
     const callerCollection = OPEN_CALLER_COLLECTION_DESCRIPTORS.has(name);
     const callerNumeric = OPEN_CALLER_NUMERIC_DESCRIPTORS.has(name);
     const engineCollection = OPEN_ENGINE_COLLECTION_DESCRIPTORS.has(name);
-    const status: GeneratedPythonWorkStatus = callerFormula || name === 'chooser_inspect'
+    const status: GeneratedPythonWorkStatus = callerFormula
       ? 'bounded-in-scope'
       : callerCollection || callerNumeric || engineCollection
         ? 'follow-up-open'
         : 'fixed-caller-work';
     const rationales: string[] = [];
-    if (name === 'chooser_inspect') {
-      rationales.push('Row/column input caps and runtime page bounds limit inspection to 160 cells, with 512-character text and 32 binding segments. Native getters still materialize one property before clipping; engine-side allocation is not isolated.');
-    }
     if (callerFormula) {
       rationales.push(
         'Caller-derived work formula reviewed; the exact count is precomputed and capped before UE transport.',
