@@ -71,7 +71,7 @@ bool FHaybaChooserOutputTest::RunTest(const FString&)
     Request->SetStringField(TEXT("auth"), FHaybaMCPSettings::Get().CapabilityToken);
     Request->SetObjectField(TEXT("params"), MakeShared<FJsonObject>());
     FString Json;
-    FJsonSerializer::Serialize(Request.ToSharedRef(), TJsonWriterFactory<>::Create(&Json));
+    FJsonSerializer::Serialize(Request, TJsonWriterFactory<>::Create(&Json));
     TSharedPtr<FJsonObject> Reply;
     const FString Wire = Router.ProcessCommand(Json);
     if (!TestTrue(TEXT("Router returns JSON"), FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Wire), Reply)) || !Reply) return false;
