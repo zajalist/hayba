@@ -104,3 +104,24 @@ describe('the MCP tool', () => {
     ]);
   });
 });
+
+describe('during PIE (the owner drives its own game)', () => {
+  const policy = readFileSync(
+    join(here, '..', '..', '..', '..', '..', 'unreal', 'HaybaMCPToolkit', 'Source', 'HaybaMCPToolkit', 'Private',
+      'HaybaMCPEditorStatePolicy.h'),
+    'utf8',
+  ).replace(/\r\n/g, '\n');
+  const owner = policy.slice(policy.indexOf('PieOwnerCommands()'), policy.indexOf('return Commands;'));
+
+  it('lets only the PIE owner run console commands, via the PIE-owner rule', () => {
+    expect(owner).toContain('TEXT("editor_run_console_command"),');
+    expect(owner).not.toContain('TEXT("python_run")');
+  });
+
+  it('refuses world editor while PIE runs, before anything executes', () => {
+    const refusal = body.indexOf('is refused while a Play-In-Editor session runs');
+    expect(refusal).toBeGreaterThan(-1);
+    expect(body).toContain('if (Target == TEXT("editor") && GEditor && GEditor->PlayWorld)');
+    expect(refusal).toBeLessThan(exec);
+  });
+});
