@@ -21,7 +21,7 @@ const PY_RESOLVE_NODE = [
   'def _has_eprop(o, n):',
   '    return ("- ``%s`` " % n) in (type(o).__doc__ or "")',
   'def _eprop_ok(o, n):',
-  '    # docstrings list python (snake_case) names, but get/set_editor_property also take the native',
+  '    # docstrings list python (snake_case) names, but the editor-property accessors also take the native',
   '    # name hayba_export_pcg_graph prints (e.g. "bUseSeed"), so only a lowercase name is provably missing',
   '    return _has_eprop(o, n) or n != n.lower()',
   'def _find_graph(p):',
@@ -156,6 +156,14 @@ const lowMeta: HaybaToolMeta = {
   effects: ['mutates_asset'],
   when: 'authoring a PCG graph step-by-step instead of hand-rolling python against UE reflection',
   not_when: 'building a whole graph at once — use hayba_create_pcg_graph',
+};
+
+// Read-only tools declare readOnly, so python_run asks for a Read lease instead of a global write that blocks lanes.
+const readMeta: HaybaToolMeta = {
+  cost: 'low',
+  effects: [],
+  when: 'reading a PCG node, its pins, or the instances a cook produced',
+  not_when: 'mutating the graph (use pcg_set_prop / pcg_wire)',
 };
 
 // ── pcg_add_node ──────────────────────────────────────────────────────────────
@@ -387,7 +395,8 @@ export const pcgInspectInstancesDescriptor: PyToolDescriptor<typeof pcgInspectIn
   cost: 'low',
   returns: '{ok, actor, ism:[{mesh,count,sample}], total}',
   schema: pcgInspectInstancesSchema.shape,
-  meta: lowMeta,
+  meta: readMeta,
+  readOnly: true,
   buildScript: inspectInstancesScript,
   timeoutMs: 30_000,
 };
@@ -623,7 +632,8 @@ export const pcgListPinsDescriptor: PyToolDescriptor<typeof pcgListPinsSchema.sh
   cost: 'low',
   returns: '{ok, node, inputs:[{label,type}], outputs:[{label,type}]}',
   schema: pcgListPinsSchema.shape,
-  meta: { cost: 'low', effects: [], when: 'discovering exact pin labels before wiring', not_when: 'mutating the graph' },
+  meta: readMeta,
+  readOnly: true,
   buildScript: listPinsScript,
   timeoutMs: 30_000,
 };
@@ -680,12 +690,26 @@ function getNodeScript(p: PcgGetNodeParams): string {
 export const pcgGetNodeDescriptor: PyToolDescriptor<typeof pcgGetNodeSchema.shape> = {
   name: 'pcg_get_node',
   description:
-    'Read one PCG node\'s settings FULLY and UNtruncated: pcg_get_node(graph, node, path?). With `path` (\"/\"-nested, e.g. "config/fitting/scale_to_fit") returns that single value in full; without it dumps every readable property. Use when hayba_export_pcg_graph truncates a long struct string. Read-only.',
+    'Read one PCG node\'s settings FULLY and UNtruncated: pcg_get_node(graph, node, path?). With `path` ("/"-nested, e.g. "config/fitting/scale_to_fit") returns that single value in full; without it dumps every readable property. Use when hayba_export_pcg_graph truncates a long struct string. Read-only.',
   cost: 'low',
   returns: '{ok, node, path?, type?, value?} | {ok, node, class, properties:{...}}',
   schema: pcgGetNodeSchema.shape,
-  meta: { cost: 'low', effects: [], when: 'reading a node property that export truncates', not_when: 'mutating (use pcg_set_prop)' },
+  meta: readMeta,
+  readOnly: true,
   buildScript: getNodeScript,
   timeoutMs: 30_000,
 };
 
+/** Every descriptor in this file, as the other *-py-tools files export theirs (lease-enforcement-contract reads it).
+ *  Cast: these descriptors type buildScript's params, which the untyped element type does not accept. */
+export const pcgPyDescriptors = [
+  pcgAddNodeDescriptor,
+  pcgSetPropDescriptor,
+  pcgWireDescriptor,
+  pcgInspectInstancesDescriptor,
+  pcgRemoveNodeDescriptor,
+  pcgDisconnectDescriptor,
+  pcgLayoutDescriptor,
+  pcgListPinsDescriptor,
+  pcgGetNodeDescriptor,
+] as unknown as PyToolDescriptor[];

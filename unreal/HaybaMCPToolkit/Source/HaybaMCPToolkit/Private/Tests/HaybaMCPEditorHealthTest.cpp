@@ -28,6 +28,8 @@
 #include "HaybaMCPCommandHandler.h"
 #include "HaybaMCPModule.h"
 #include "Modules/ModuleManager.h"
+#include "HAL/PlatformProcess.h"
+#include "Misc/EngineVersion.h"
 
 #if WITH_DEV_AUTOMATION_TESTS
 
@@ -1010,6 +1012,23 @@ bool FHaybaHealthBatchPumpStopsTest::RunTest(const FString&)
 	}
 	TestFalse(TEXT("the real editor health is untouched (R-7)"), FHaybaEditorHealth::IsUnsafe());
 	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FHaybaPingIdentityTest, "Hayba.MCP.Health.PingIdentity",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FHaybaPingIdentityTest::RunTest(const FString&)
+{
+    const auto Router = HaybaHealthTest::Router(*this);
+    if (!Router.IsValid()) return false;
+    const auto Reply = HaybaHealthTest::Send(*Router, TEXT("ping"), HaybaHealthTest::TestOwner());
+    TestTrue(TEXT("ping routes successfully"), HaybaHealthTest::Bool(Reply, TEXT("ok")));
+    const auto Data = HaybaHealthTest::Obj(Reply, TEXT("data"));
+    TestEqual(TEXT("PID identifies this answering editor"), Data->GetNumberField(TEXT("process_id")), double(FPlatformProcess::GetCurrentProcessId()));
+    TestEqual(TEXT("project identifies this host"), HaybaHealthTest::Str(Data, TEXT("project_name")), FString(FApp::GetProjectName()));
+    TestEqual(TEXT("exact engine build is reported"), HaybaHealthTest::Str(Data, TEXT("engine_version")), FEngineVersion::Current().ToString());
+    return true;
 }
 
 #endif // WITH_DEV_AUTOMATION_TESTS

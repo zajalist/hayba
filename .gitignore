@@ -1,5 +1,6 @@
 node_modules/
 dist/
+/mcp-tools/hayba-mcp/dist.*/
 *.js.map
 .env
 *.tsbuildinfo

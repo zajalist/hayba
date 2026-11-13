@@ -36,7 +36,7 @@ describe('generated-Python bounded-work inventory', () => {
   it('reconciles every generated descriptor exactly once', () => {
     const sourceNames = generatedDescriptorNames();
     const inventoryNames = GENERATED_PYTHON_WORK_INVENTORY.map((item) => item.name).sort();
-    expect(inventoryNames).toHaveLength(107);
+    expect(inventoryNames).toHaveLength(108);
     expect(new Set(inventoryNames).size).toBe(inventoryNames.length);
     expect(inventoryNames).toEqual(sourceNames);
   });

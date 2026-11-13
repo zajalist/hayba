@@ -37,6 +37,8 @@
 #include "Async/Async.h"
 #include "HAL/Event.h"
 #include "HAL/PlatformProcess.h"
+#include "Misc/App.h"
+#include "Misc/EngineVersion.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogHaybaMCPLegacy, Log, All);
 
@@ -121,6 +123,9 @@ FHaybaHandlerResult FHaybaMCPLegacyHandler::Cmd_Ping(const TSharedPtr<FJsonObjec
 	Data->SetStringField(TEXT("ueVersion"),
 		FString::Printf(TEXT("%d.%d"), ENGINE_MAJOR_VERSION, ENGINE_MINOR_VERSION));
 	Data->SetStringField(TEXT("plugin"), TEXT("HaybaMCPToolkit"));
+	Data->SetNumberField(TEXT("process_id"), FPlatformProcess::GetCurrentProcessId());
+	Data->SetStringField(TEXT("project_name"), FApp::GetProjectName());
+	Data->SetStringField(TEXT("engine_version"), FEngineVersion::Current().ToString());
 
 	// Read the real version from the plugin descriptor instead of a hardcoded
 	// string that drifted (was "0.2.0" while the .uplugin says 0.3.0).

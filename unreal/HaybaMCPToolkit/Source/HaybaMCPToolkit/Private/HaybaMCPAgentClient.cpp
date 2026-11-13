@@ -8,6 +8,7 @@
 #include "Json.h"
 #include "Misc/Guid.h"
 #include "Editor.h"
+#include "Containers/Ticker.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogHaybaAgentClient, Log, All);
 
@@ -100,6 +101,11 @@ FHaybaMCPAgentClient::~FHaybaMCPAgentClient()
 {
 	// Best-effort: drop callbacks and cancel any in-flight request so a late HTTP
 	// tick cannot re-enter a destroyed client. (Callbacks also capture a weak ptr.)
+	if (IdentityRequest.IsValid())
+	{
+		IdentityRequest->OnProcessRequestComplete().Unbind();
+		IdentityRequest->CancelRequest();
+	}
 	if (ConfigRequest.IsValid())
 	{
 		ConfigRequest->OnProcessRequestComplete().Unbind();
@@ -186,7 +192,19 @@ bool FHaybaMCPAgentClient::HasCompatibleSidecarIdentity(const FJsonObject& Healt
 		Health.TryGetStringField(TEXT("status"), Status) && Status == TEXT("ok");
 }
 
-void FHaybaMCPAgentClient::CheckSidecarThenStream(const FString& UserPrompt)
+void FHaybaMCPAgentClient::CheckSidecarThenStream(const FString& UserPrompt, int32 RetryCount)
+{
+	const auto Request = CreateSidecarIdentityRequest(UserPrompt, RetryCount);
+	if (!Request->ProcessRequest() && bTurnPending)
+	{
+		IdentityRequest.Reset();
+		OnError.Broadcast(FHaybaChatError{
+			TEXT("Could not start the chat connection request. Retry your message."), TEXT("transport") });
+		EmitLocalDone(TEXT("error"), /*cancelled*/ false);
+	}
+}
+
+TSharedRef<IHttpRequest, ESPMode::ThreadSafe> FHaybaMCPAgentClient::CreateSidecarIdentityRequest(const FString& UserPrompt, int32 RetryCount)
 {
 	TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();
 	IdentityRequest = Request;
@@ -196,7 +214,7 @@ void FHaybaMCPAgentClient::CheckSidecarThenStream(const FString& UserPrompt)
 	const uint32 Generation = TurnGeneration;
 	TWeakPtr<FHaybaMCPAgentClient> WeakSelf = AsShared();
 	Request->OnProcessRequestComplete().BindLambda(
-		[WeakSelf, UserPrompt, Generation](FHttpRequestPtr Req, FHttpResponsePtr Response, bool bConnected)
+		[WeakSelf, UserPrompt, Generation, RetryCount](FHttpRequestPtr Req, FHttpResponsePtr Response, bool bConnected)
 		{
 			TSharedPtr<FHaybaMCPAgentClient> Self = WeakSelf.Pin();
 			if (!Self.IsValid() || !Self->IsTurnCurrent(Generation)) return;
@@ -209,8 +227,38 @@ void FHaybaMCPAgentClient::CheckSidecarThenStream(const FString& UserPrompt)
 				Health.IsValid() && FHaybaMCPAgentClient::HasCompatibleSidecarIdentity(*Health);
 			if (!bCompatible)
 			{
+				UE_LOG(LogHaybaAgentClient, Warning, TEXT("Chat preflight failed: connected=%d HTTP=%d bytes=%d same_url=%d identity=%d"),
+					bConnected, Response.IsValid() ? Response->GetResponseCode() : 0,
+					Response.IsValid() ? Response->GetContent().Num() : 0,
+					Req.IsValid() && Req->GetEffectiveURL() == (Self->TurnSidecarURL / TEXT("api/health")),
+					Health.IsValid() && HasCompatibleSidecarIdentity(*Health));
+				// Only recover an absent listener. An unrelated or outdated HTTP
+				// service must never receive credentials or be killed automatically.
+				if (!bConnected && (!Response.IsValid() || Response->GetResponseCode() == 0) && RetryCount < 8 &&
+					FHaybaMCPSettings::Get().bAutoStartSidecar)
+				{
+					FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda(
+						[WeakSelf, UserPrompt, Generation, RetryCount](float)
+						{
+							auto Next = WeakSelf.Pin();
+							if (!Next.IsValid() || !Next->IsTurnCurrent(Generation)) return false;
+							auto* Module = FModuleManager::GetModulePtr<FHaybaMCPModule>(TEXT("HaybaMCPToolkit"));
+							FString StartupError;
+							if (RetryCount == 0 && Module && !Module->IsMCPServerRunning() && !Module->StartMCPServer(&StartupError))
+							{
+								Next->OnError.Broadcast(FHaybaChatError{StartupError, TEXT("sidecar_startup")});
+								Next->EmitLocalDone(TEXT("error"), false);
+								return false;
+							}
+							Next->CheckSidecarThenStream(UserPrompt, RetryCount + 1);
+							return false;
+						}), 1.0f);
+					return;
+				}
 				Self->OnError.Broadcast(FHaybaChatError{
-					TEXT("The chat sidecar is unavailable or incompatible. Restart Hayba's sidecar, then retry; your message is still here."),
+					bConnected
+						? TEXT("This address is not running a compatible Hayba chat server. Rebuild the MCP server and check the Sidecar URL in Settings. Your message is saved.")
+						: TEXT("The Hayba chat server did not become ready. Check the server installation and Node.js, then retry. Your message is saved."),
 					TEXT("sidecar_identity") });
 				Self->EmitLocalDone(TEXT("error"), /*cancelled*/ false);
 				return;
@@ -225,13 +273,7 @@ void FHaybaMCPAgentClient::CheckSidecarThenStream(const FString& UserPrompt)
 				else Next->ConfigureAndStream(UserPrompt);
 			});
 		});
-	if (!Request->ProcessRequest() && IsTurnCurrent(Generation))
-	{
-		IdentityRequest.Reset();
-		OnError.Broadcast(FHaybaChatError{
-			TEXT("Could not connect to the Hayba chat sidecar. Restart it, then retry."), TEXT("transport") });
-		EmitLocalDone(TEXT("error"), /*cancelled*/ false);
-	}
+	return Request;
 }
 
 void FHaybaMCPAgentClient::ForceCommunityThisChat()

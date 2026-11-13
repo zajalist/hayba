@@ -3,7 +3,6 @@
 #include "HaybaMCPStyle.h"
 #include "HaybaMCPChatPanel.h"
 #include "HaybaMCPToolStreamPanel.h"
-#include "HaybaMCPSceneMapPanel.h"
 #include "HaybaMCPPlanPanel.h"
 #include "HaybaMCPDiffPanel.h"
 #include "HaybaMCPValidationPanel.h"
@@ -11,7 +10,6 @@
 #include "HaybaMCPMemoryPanel.h"
 #include "HaybaMCPLessonsPanel.h"
 #include "HaybaMCPCapabilitiesPanel.h"
-#include "HaybaMCPSceneMapWebPanel.h"
 #include "HaybaMCPOnboardingWidget.h"
 #include "HaybaMCPSettingsPanel.h"
 #include "HaybaMCPSettings.h"
@@ -38,7 +36,6 @@ namespace
     {
         switch (P)
         {
-            case EHaybaPanel::World:    return NSLOCTEXT("Hayba", "Nav.World",    "World");
             case EHaybaPanel::Library:  return NSLOCTEXT("Hayba", "Nav.Library",  "Library");
             case EHaybaPanel::Rules:    return NSLOCTEXT("Hayba", "Nav.Rules",    "Rules");
             case EHaybaPanel::Activity: return NSLOCTEXT("Hayba", "Nav.Activity", "Activity");
@@ -55,7 +52,6 @@ namespace
             case EHaybaPanel::Chat:     return FHaybaMCPStyle::GetBrush(TEXT("Hayba.Icon.Nav.Chat"));
             case EHaybaPanel::Activity: return FHaybaMCPStyle::GetBrush(TEXT("Hayba.Icon.Nav.Activity"));
             case EHaybaPanel::Rules:    return FHaybaMCPStyle::GetBrush(TEXT("Hayba.Icon.Nav.Rules"));
-            case EHaybaPanel::World:    return FHaybaMCPStyle::GetBrush(TEXT("Hayba.Icon.Nav.World"));
             case EHaybaPanel::Library:  return FHaybaMCPStyle::GetBrush(TEXT("Hayba.Icon.Nav.Library"));
             case EHaybaPanel::Settings: return FHaybaMCPStyle::GetBrush(TEXT("Hayba.Icon.Nav.Settings"));
         }
@@ -70,7 +66,6 @@ namespace
             case EHaybaSection::MCP:        return NSLOCTEXT("Hayba", "Sec.MCP",        "Tool permissions");
             case EHaybaSection::Slivers:    return NSLOCTEXT("Hayba", "Sec.Recipes",    "Recipes");
             case EHaybaSection::ToolStream: return NSLOCTEXT("Hayba", "Sec.Stream",     "Live");
-            case EHaybaSection::SceneMap:   return NSLOCTEXT("Hayba", "Sec.SceneMap",   "Map");
             case EHaybaSection::Plan:       return NSLOCTEXT("Hayba", "Sec.Plan",       "Plans");
             case EHaybaSection::Diff:       return NSLOCTEXT("Hayba", "Sec.Diff",       "Changes");
             case EHaybaSection::Validation: return NSLOCTEXT("Hayba", "Sec.Validation", "Checks");
@@ -88,10 +83,9 @@ TArray<EHaybaSection> SHaybaMCPMainPanel::SectionsFor(EHaybaPanel Panel)
 {
     switch (Panel)
     {
-        case EHaybaPanel::World:    return { EHaybaSection::SceneMap };
         case EHaybaPanel::Library:  return { EHaybaSection::Memory, EHaybaSection::Slivers };
         case EHaybaPanel::Rules:    return { EHaybaSection::Validation };
-        case EHaybaPanel::Activity: return { EHaybaSection::ToolStream, EHaybaSection::Diff };
+        case EHaybaPanel::Activity: return { EHaybaSection::ToolStream, EHaybaSection::Diff, EHaybaSection::Validation };
         case EHaybaPanel::Chat:     return { EHaybaSection::Chat };
         case EHaybaPanel::Settings: return { EHaybaSection::Settings };
     }
@@ -103,7 +97,7 @@ EHaybaPanel SHaybaMCPMainPanel::PanelForSection(EHaybaSection Section)
     if (Section == EHaybaSection::Plan) return EHaybaPanel::Activity;
     if (Section == EHaybaSection::Lessons) return EHaybaPanel::Rules;
     if (Section == EHaybaSection::MCP) return EHaybaPanel::Settings;
-    for (EHaybaPanel P : { EHaybaPanel::Chat, EHaybaPanel::World,
+    for (EHaybaPanel P : { EHaybaPanel::Chat,
                            EHaybaPanel::Activity, EHaybaPanel::Rules,
                            EHaybaPanel::Library, EHaybaPanel::Settings })
     {
@@ -114,7 +108,7 @@ EHaybaPanel SHaybaMCPMainPanel::PanelForSection(EHaybaSection Section)
 
 TArray<EHaybaPanel> SHaybaMCPMainPanel::RailDestinations()
 {
-    return { EHaybaPanel::Chat, EHaybaPanel::World };
+    return { EHaybaPanel::Chat };
 }
 
 void SHaybaMCPMainPanel::Construct(const FArguments& InArgs, FHaybaMCPModule* InModule)
@@ -176,6 +170,8 @@ TSharedRef<SWidget> SHaybaMCPMainPanel::BuildHeader()
     // The chat owns the task state; the dock owns the single shared header.
     check(ChatPanel.IsValid());
     return SNew(SBorder)
+        .Visibility_Lambda([this]() { return CurrentPanel == EHaybaPanel::Chat && ChatPanel.IsValid() && ChatPanel->IsWebWorkspaceReady()
+            ? EVisibility::Collapsed : EVisibility::Visible; })
         .BorderImage(FHaybaMCPStyle::GetBrush(TEXT("Hayba.Brush.Dock")))
         .Padding(FMargin(12.f, 8.f, 12.f, 8.f))
         [
@@ -226,19 +222,6 @@ TSharedRef<SWidget> SHaybaMCPMainPanel::BuildHeader()
                 SNew(SButton)
                 .ButtonStyle(&FHaybaMCPStyle::Get().GetWidgetStyle<FButtonStyle>("Hayba.Button.Icon"))
                 .ContentPadding(FMargin(6.f))
-                .ToolTipText(NSLOCTEXT("Hayba", "GoToWorld", "World"))
-                .Visibility_Lambda([this]() { return CurrentPanel == EHaybaPanel::Chat
-                    ? EVisibility::Visible : EVisibility::Collapsed; })
-                .OnClicked(this, &SHaybaMCPMainPanel::OnSidebarClick, EHaybaPanel::World)
-                [ SNew(SImage).Image(PanelIcon(EHaybaPanel::World))
-                    .ColorAndOpacity_Lambda([this]() { return FSlateColor(FHaybaMCPStyle::Colour(
-                        CurrentPanel == EHaybaPanel::World ? "Hayba.Color.Accent.Ochre" : "Hayba.Color.Text.Secondary")); }) ]
-            ]
-            + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
-            [
-                SNew(SButton)
-                .ButtonStyle(&FHaybaMCPStyle::Get().GetWidgetStyle<FButtonStyle>("Hayba.Button.Icon"))
-                .ContentPadding(FMargin(6.f))
                 .ToolTipText(NSLOCTEXT("Hayba", "NewTask", "New conversation"))
                 .Visibility_Lambda([this]() { return CurrentPanel == EHaybaPanel::Chat
                     ? EVisibility::Visible : EVisibility::Collapsed; })
@@ -280,8 +263,6 @@ TSharedRef<SWidget> SHaybaMCPMainPanel::BuildMoreMenu()
         ];
     };
     Add(EHaybaPanel::Activity, NSLOCTEXT("Hayba", "More.Activity", "Activity"));
-    Add(EHaybaPanel::Rules, NSLOCTEXT("Hayba", "More.Checks", "Checks"));
-    Add(EHaybaPanel::Library, NSLOCTEXT("Hayba", "More.Library", "Library"));
     Add(EHaybaPanel::Settings, NSLOCTEXT("Hayba", "More.Settings", "Settings"));
     return FHaybaMCPStyle::PopupSurface(Items, 210.f);
 }
@@ -377,8 +358,7 @@ void SHaybaMCPMainPanel::ShowPanel(EHaybaPanel Panel)
     const EHaybaSection* Remembered = LastSectionByPanel.Find(Panel);
     const EHaybaSection Target = Remembered && Sections.Contains(*Remembered)
         ? *Remembered : Sections[0];
-    // Re-selecting the open view must not restart an in-progress World scan.
-    // World has an explicit refresh control when the user wants a new scan.
+    // Re-selecting a view preserves its current state.
     if (!bShowingOnboarding && CurrentPanel == Panel && CurrentSection == Target && PanelCache.Contains(Target)) return;
     CurrentPanel = Panel;
     ShowSection(Target);
@@ -497,16 +477,6 @@ TSharedRef<SWidget> SHaybaMCPMainPanel::BuildPanelContent(EHaybaSection Section)
             Body = Panel2;
             break;
         }
-        case EHaybaSection::SceneMap:
-        {
-            // World owns the full canvas. Its compact controls and honest
-            // coverage state live over the surface, not in a separate header
-            // or inspector column.
-            TSharedRef<SHaybaMCPSceneMapWebPanel> W = SNew(SHaybaMCPSceneMapWebPanel);
-            Body = W;
-            PanelRefreshHook.Add(EHaybaSection::SceneMap, [W]() { W->Refresh(); });
-            break;
-        }
         case EHaybaSection::Plan:
         {
             Subtitle = NSLOCTEXT("Hayba", "Plan.Sub", "AI-proposed plan steps before destructive actions.");
@@ -555,7 +525,7 @@ TSharedRef<SWidget> SHaybaMCPMainPanel::BuildPanelContent(EHaybaSection Section)
         }
     }
 
-    if ((Section == EHaybaSection::Chat || Section == EHaybaSection::SceneMap) && Body.IsValid())
+    if ((Section == EHaybaSection::Chat) && Body.IsValid())
     {
         return Body.ToSharedRef();
     }

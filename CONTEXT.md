@@ -27,12 +27,13 @@ Agent host ──stdio──▶ Node MCP server ──TCP──▶ UE5 C++ plugi
   `mcp-tools/hayba-mcp/src/tcp-client.ts` and the UE plugin's
   `FHaybaMCPTcpServer`. They must agree on the envelope — this is the
   single most important invariant in the repo.
-- **UE plugin** — the C++ editor **adapter**: 33 command-handler domains,
-  Slate panels.
+- **UE plugin** — the C++ editor **adapter**: command-handler domains and
+  Slate panels. The chat workspace is a local HTML document inside Slate;
+  native code owns credentials, editor actions, approvals and provider setup.
 
 ## Glossary
 
-- **Handler domain** — one of 33 UE-side command groups (Actor, PCG,
+- **Handler domain** — a UE-side command group (Actor, PCG,
   Sequencer, …), each implementing `IHaybaMCPHandler` (`GetCommands()` /
   `Handle()`).
 - **Plan Mode** — every destructive op is wrapped in
@@ -41,9 +42,12 @@ Agent host ──stdio──▶ Node MCP server ──TCP──▶ UE5 C++ plugi
 - **PCG / PCGEx** — UE Procedural Content Generation; Hayba ships a SQLite
   registry of PCGEx nodes/pins/properties queried by intent.
 - **Code Mode meta-tools** — `list_tool_categories` / `get_tool_signature`
-  / `python_run`: the small interface that hides the full ~100-tool
+  / `python_run`: the small interface that hides the full tool
   catalog until needed (a deliberately **deep** module).
-- **Visual sidecar** — **one** Python FastAPI process on `:7821`
+- **Chat sidecar** — the Node HTTP service used by the native chat client.
+  Native chat checks its protocol identity before posting provider credentials.
+  Its configured URL is separate from the visual model service below.
+- **Visual sidecar** — **one** Python FastAPI process on `:7822` by default
   (`mcp-tools/hayba-mcp/addons/visual-embeddings`) serving CLIP/SpatialCLIP/
   OWL-ViT embeddings *and* SAM segmentation with world-position
   back-projection, for spatial grounding, physics validation and AI mask
@@ -106,8 +110,9 @@ re-litigate a recorded decision without reopening its ADR.
 
 ## Hard constraints
 
-- The authoritative gate is **local**: `tsc + npm test` in
-  `mcp-tools/hayba-mcp`. Run it before pushing.
+- The authoritative gate is **local**: `npm run build:server` then `npm test`
+  in `mcp-tools/hayba-mcp`. The build includes TypeScript checking; runtime
+  tests also require its fresh `dist/` output. Run both before pushing.
 - No `Co-Authored-By`/AI trailer in commits.
 - **Before changing any MCP tool or plugin handler, read
   [`docs/WORKFLOW-improving-the-mcp.md`](docs/WORKFLOW-improving-the-mcp.md).**

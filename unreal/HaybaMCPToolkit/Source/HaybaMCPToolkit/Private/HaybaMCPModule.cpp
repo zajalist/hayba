@@ -7,7 +7,6 @@
 #include "ContentBrowserMenuContexts.h"
 #include "HaybaMCPChatPanel.h"
 #include "HaybaMCPToolStreamPanel.h"
-#include "HaybaMCPSceneMapPanel.h"
 #include "HaybaMCPPlanPanel.h"
 #include "HaybaMCPDiffPanel.h"
 #include "HaybaMCPValidationPanel.h"
@@ -32,6 +31,7 @@
 #include "handlers/HaybaMCPLevelHandler.h"
 #include "handlers/HaybaMCPSceneGraphHandler.h"
 #include "handlers/HaybaMCPEditorHandler.h"
+#include "handlers/HaybaMCPFabHandler.h"
 #include "handlers/HaybaMCPPIEHandler.h"
 #include "handlers/HaybaMCPPythonHandler.h"
 #include "handlers/HaybaMCPAssetHandler.h"
@@ -179,6 +179,7 @@ void FHaybaMCPModule::StartupModule()
     CommandHandler->RegisterHandler(MakeShared<FHaybaMCPLevelHandler>());
     CommandHandler->RegisterHandler(MakeShared<FHaybaMCPSceneGraphHandler>());
     CommandHandler->RegisterHandler(MakeShared<FHaybaMCPEditorHandler>());
+    CommandHandler->RegisterHandler(MakeShared<FHaybaMCPFabHandler>());
     CommandHandler->RegisterHandler(MakeShared<FHaybaMCPPIEHandler>());
     CommandHandler->RegisterHandler(MakeShared<FHaybaMCPPythonHandler>());
     CommandHandler->RegisterHandler(MakeShared<FHaybaMCPAssetHandler>());
@@ -674,8 +675,9 @@ bool FHaybaMCPModule::IsTcpServerRunning() const
     return TcpServer.IsValid() && TcpServer->IsRunning();
 }
 
-bool FHaybaMCPModule::StartMCPServer()
+bool FHaybaMCPModule::StartMCPServer(FString* OutError)
 {
+    if (OutError) OutError->Empty();
     if (IsMCPServerRunning())
     {
         UE_LOG(LogHaybaMCP, Warning, TEXT("MCP server is already running."));
@@ -683,12 +685,17 @@ bool FHaybaMCPModule::StartMCPServer()
     }
     if (!IsTcpServerRunning())
     {
-        if (!StartTcpServer()) return false;
+        if (!StartTcpServer())
+        {
+            if (OutError) *OutError = TEXT("Could not start Hayba's editor connection. Check the Output Log, then retry.");
+            return false;
+        }
     }
 
     FString NodePath = FindNodeExecutable();
     if (NodePath.IsEmpty())
     {
+        if (OutError) *OutError = TEXT("Node.js is missing. Install Node.js 22.5 or newer, then retry your message.");
         UE_LOG(LogHaybaMCP, Error, TEXT("Node.js not found."));
         return false;
     }
@@ -696,6 +703,7 @@ bool FHaybaMCPModule::StartMCPServer()
     FString ServerPath = GetMCPServerPath();
     if (!FPaths::FileExists(ServerPath))
     {
+        if (OutError) *OutError = TEXT("The chat server is missing from this plugin installation. Run tools/link-chat-sidecar.ps1 from the Hayba checkout with -Project pointing to this .uproject, then retry.");
         UE_LOG(LogHaybaMCP, Error, TEXT("MCP server not found at: %s"), *ServerPath);
         return false;
     }
@@ -717,10 +725,13 @@ bool FHaybaMCPModule::StartMCPServer()
 
     FString Params = FString::Printf(TEXT("\"%s\""), *ServerPath);
     uint32 ProcessID = 0;
-    MCPProcessHandle = FPlatformProcess::CreateProc(*NodePath, *Params, false, true, true, &ProcessID, 0, nullptr, nullptr, nullptr);
+    if (MCPProcessHandle.IsValid()) FPlatformProcess::CloseProc(MCPProcessHandle);
+    const FString ProjectDir = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir());
+    MCPProcessHandle = FPlatformProcess::CreateProc(*NodePath, *Params, false, true, true, &ProcessID, 0, *ProjectDir, nullptr, nullptr);
 
     if (!MCPProcessHandle.IsValid())
     {
+        if (OutError) *OutError = TEXT("Could not launch the chat server. Check Node.js and the server entry path, then retry.");
         UE_LOG(LogHaybaMCP, Error, TEXT("Failed to start MCP server process."));
         return false;
     }

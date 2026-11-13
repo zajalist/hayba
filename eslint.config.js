@@ -40,6 +40,11 @@ export default tseslint.config(
     languageOptions: { globals: { cytoscape: 'readonly' } },
   },
   {
+    files: ['unreal/HaybaMCPToolkit/Resources/chat/*.test.cjs'],
+    // Playwright evaluates these callbacks inside the local chat preview.
+    languageOptions: { globals: { ...globals.browser, state: 'readonly', push: 'readonly', scene: 'readonly' } },
+  },
+  {
     rules: {
       '@typescript-eslint/no-explicit-any': 'warn',
       '@typescript-eslint/no-unused-vars': ['warn', { argsIgnorePattern: '^_' }],

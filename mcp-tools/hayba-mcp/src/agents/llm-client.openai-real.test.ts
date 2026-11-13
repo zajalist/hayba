@@ -180,6 +180,8 @@ beforeAll(async () => {
     }
     return originalFetch(input, init);
   }) as typeof globalThis.fetch;
+  // SDK module loading is fixture setup, outside the request behavior deadline.
+  await import('openai');
 });
 
 afterAll(async () => {

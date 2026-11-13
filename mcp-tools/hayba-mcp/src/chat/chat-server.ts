@@ -69,12 +69,13 @@ import type { BrainSession } from '../brain/brain-session.js';
 import { LocalApprovals } from '../brain/local-approvals.js';
 import { runRemoteLoop } from '../brain/remote-loop.js';
 import type { LlmMode, Permissions } from '@hayba/brain-protocol';
-import { getArchetype } from '../agents/agent-registry.js';
+import { createToolFilter, getArchetype } from '../agents/agent-registry.js';
 import { installExpressJsonRedaction, redactBoundaryValue } from '../security/secret-redaction.js';
 import { jsonObjectBody, stringQuery } from '../http/express-boundary.js';
 import { isLocalRequest, isLoopback } from '../http/loopback-guard.js';
 import { SessionStore, isValidSessionId, type SavedActivity, type SavedSession } from './session-store.js';
 import type { AgentStreamEvent } from './activity-events.js';
+import { SubagentManager, SubagentError } from './subagents.js';
 import {
   chatSessionDir,
   loadChatState,
@@ -321,6 +322,7 @@ const SWEEP_INTERVAL_MS = 60_000;
 /** Hard cap on concurrent sessions; oldest inactive are LRU-evicted past this. */
 const MAX_SESSIONS = 64;
 const sessions = new Map<string, ChatSession>();
+const subagentManagers = new Set<SubagentManager>();
 /** A single unref'd timer prunes all directories registered in this process. */
 const contextDirs = new Set<string>();
 const CONTEXT_PRUNE_INTERVAL_MS = 60_000;
@@ -657,13 +659,22 @@ export function registerChatRoutes(app: Express, options: ChatRoutesOptions = {}
   const makeClient = options.createClient ?? createLLMClient;
   const system = options.system ?? DEFAULT_SYSTEM;
   const sessionStore = options.sessionStore ?? new SessionStore();
+  const subagents = new SubagentManager(sessionStore);
+  subagentManagers.add(subagents);
 
   // Session history is a separate, allowlisted surface from transient SSE
   // buffers and provider transcripts. Storage errors never expose file paths.
   app.get('/chat/sessions', (req: Request, res: Response) => {
     if (!requireLoopback(req, res)) return;
+    const q = stringQuery(req.query.q, 'q');
+    const limit = stringQuery(req.query.limit, 'limit');
+    const offset = stringQuery(req.query.offset, 'offset');
+    if (!q.ok || !limit.ok || !offset.ok || (q.value?.length ?? 0) > 256 ||
+        (limit.value !== undefined && !/^(?:[1-9]|[1-4]\d|50)$/.test(limit.value)) ||
+        (offset.value !== undefined && (!/^\d{1,10}$/.test(offset.value) || !Number.isSafeInteger(Number(offset.value)))))
+      return res.status(400).json({ error: 'Invalid conversation search or page.' });
     try {
-      return res.json({ sessions: sessionStore.list() });
+      return res.json(sessionStore.listPage({ q: q.value, limit: limit.value === undefined ? 50 : Number(limit.value), offset: offset.value === undefined ? 0 : Number(offset.value) }));
     } catch {
       return res.status(500).json({ error: 'Unable to read session history' });
     }
@@ -692,7 +703,7 @@ export function registerChatRoutes(app: Express, options: ChatRoutesOptions = {}
     const id = req.params.id;
     if (!isValidSessionId(id)) return res.status(400).json({ error: 'invalid session id' });
     const active = sessions.get(id);
-    if (active?.running) return res.status(409).json({ error: 'session already has a turn in flight' });
+    if (active?.running || subagents.hasActive(id)) return res.status(409).json({ error: 'session already has a turn in flight' });
     try {
       if (!sessionStore.remove(id)) return res.status(404).json({ error: 'unknown session' });
       if (active) evictSession(active);
@@ -705,6 +716,24 @@ export function registerChatRoutes(app: Express, options: ChatRoutesOptions = {}
   });
   const contextDir = options.sessionDir ?? chatSessionDir();
   registerContextDir(contextDir);
+
+  // Child agents have independent execution and identity; no child events pass
+  // through the parent's single-activity stream or exact-operation approval.
+  app.get('/chat/sessions/:id/subagents', (req, res) => {
+    if (!requireLoopback(req, res)) return;
+    if (!isValidSessionId(req.params.id)) return res.status(400).json({ error: 'Invalid conversation identifier.' });
+    try {
+      if (!sessionStore.load(req.params.id)) return res.status(404).json({ error: 'Unknown parent conversation.' });
+      return res.json({ agents: subagents.list(req.params.id) });
+    } catch { return res.status(500).json({ error: 'Unable to read child tasks.' }); }
+  });
+  app.post('/chat/sessions/:id/subagents/:agentId/cancel', (req, res) => {
+    if (!requireLoopback(req, res)) return;
+    if (!req.is('application/json')) return res.status(415).json({ error: 'Content-Type must be application/json.' });
+    if (!isValidSessionId(req.params.id) || !isValidSessionId(req.params.agentId)) return res.status(400).json({ error: 'Invalid child task identifier.' });
+    try { return res.json({ agent: subagents.cancel(req.params.id, req.params.agentId) }); }
+    catch (error) { return res.status(error instanceof SubagentError ? error.status : 500).json({ error: error instanceof SubagentError ? error.message : 'Unable to cancel the child task.' }); }
+  });
 
   // ── POST /chat/config ────────────────────────────────────────────────────
   app.post('/chat/config', (req: Request, res: Response) => {
@@ -817,11 +846,12 @@ export function registerChatRoutes(app: Express, options: ChatRoutesOptions = {}
   app.post('/chat/cancel', (req: Request, res: Response) => {
     if (!requireLoopback(req, res)) return;
     const { session_id } = jsonObjectBody(req) as { session_id?: string };
-    if (!session_id) return res.status(400).json({ error: 'session_id is required' });
+    if (!isValidSessionId(session_id)) return res.status(400).json({ error: 'session_id is required' });
     const session = sessions.get(session_id);
-    if (!session) return res.status(404).json({ error: 'unknown session' });
-    touch(session);
-    session.abortController.abort();
+    try { if (!session && !sessionStore.load(session_id)) return res.status(404).json({ error: 'unknown session' }); }
+    catch { return res.status(500).json({ error: 'Unable to cancel the conversation.' }); }
+    subagents.cancelParent(session_id);
+    if (session) { touch(session); session.abortController.abort(); }
     return res.json({ ok: true, cancelled: true });
   });
 
@@ -1051,6 +1081,7 @@ export function registerChatRoutes(app: Express, options: ChatRoutesOptions = {}
     }
 
     // ── Hayba Pro: route the turn through the hosted brain ──────────────────
+    subagents.resumeParent(sessionId);
     if (body.loop === 'pro') {
       const permissions = resolvePermissions(body.permissions);
       const catalog = options.tools ?? buildToolCatalog();
@@ -1219,6 +1250,7 @@ export function registerChatRoutes(app: Express, options: ChatRoutesOptions = {}
     }
 
     // Drive the loop server-side, independent of the HTTP connection lifetime.
+    const delegationConfig = configStore.get(sessionId);
     void runTurn(session, {
       client,
       system: `${turnSystem}\n\n${modeGuidance(mode)}`,
@@ -1227,6 +1259,19 @@ export function registerChatRoutes(app: Express, options: ChatRoutesOptions = {}
       pinnedSpecialistId: body.archetype,
       tools: options.tools,
       dispatchTool,
+      delegateTask: async (input) => {
+        const explicit = configStore.get(sessionId);
+        if (session.abortController.signal.aborted) throw new SubagentError('The parent conversation was cancelled.', 409);
+        // Child billing cannot switch accounts mid-turn or fall back to defaults/environment keys.
+        if (!explicit || explicit !== delegationConfig || explicit.provider !== provider ||
+            (explicit.provider === 'mock' && !options.createClient) || (getProvider(explicit.provider)?.needsKey && !explicit.apiKey))
+          throw new SubagentError('Configure this conversation’s Community provider and credentials before delegating an inspection task.', 409);
+        const childClient = makeClient({ provider: explicit.provider, model, baseURL: explicit.baseURL, apiKey: explicit.apiKey ?? '' });
+        const allowed = createToolFilter(archetypeFilter ?? ['*']);
+        const child = subagents.start(sessionId, input, { client: childClient, tools: (options.tools ?? buildToolCatalog()).filter(tool => allowed(tool.name)), dispatchTool, secrets: explicit.apiKey ? [explicit.apiKey] : [] });
+        const result = await subagents.wait(sessionId, child.id);
+        return { agent_id: result.id, status: result.status, specialist_id: result.specialist_id, findings: result.output, ...(result.output_truncated ? { output_truncated: true } : {}), ...(result.error ? { error: result.error } : {}) };
+      },
       signal: session.abortController.signal,
       approvedCall: approvalFor(session.approvedCall, 'community'),
       sessionStore,
@@ -1263,6 +1308,7 @@ interface RunTurnParams {
   pinnedSpecialistId?: string;
   tools?: LLMTool[];
   dispatchTool: DispatchTool;
+  delegateTask?: (input: Record<string, unknown>) => Promise<unknown>;
   signal: AbortSignal;
   /** Call-bound Plan-Mode approval for this turn (C1); undefined = re-gate. */
   approvedCall?: ApprovedCall;
@@ -1386,6 +1432,7 @@ async function runTurn(session: ChatSession, params: RunTurnParams): Promise<voi
           archetypeFilter: params.archetypeFilter,
           pinnedSpecialistId: params.pinnedSpecialistId,
           dispatchTool,
+          delegateTask: params.delegateTask,
           signal: params.signal,
           planMode: true, // honour Plan Mode; UE side is authoritative, TS side gated
           approvedCall: params.approvedCall,
@@ -1583,6 +1630,8 @@ function forwardEvent(
 
 /** Clear all in-memory session + config state (tests). */
 export function __resetChatState(): void {
+  for (const manager of subagentManagers) manager.dispose();
+  subagentManagers.clear();
   for (const session of sessions.values()) void dropBrain(session);
   sessions.clear();
   for (const lifetime of settingsConfigLifetimes.values()) clearTimeout(lifetime.timer);

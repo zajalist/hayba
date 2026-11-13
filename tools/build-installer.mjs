@@ -1,0 +1,103 @@
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync, lstatSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { dirname, join, resolve, basename } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
+import { copyTree, packageDependencies } from './installer/package-runtime.mjs';
+
+const repo = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const options = {};
+for (let i = 2; i < process.argv.length; i += 2) {
+  if (!['--artifact', '--verification', '--engine', '--output'].includes(process.argv[i]) || !process.argv[i + 1]) throw new Error('Usage: node tools/build-installer.mjs --artifact <verified-plugin-folder> --verification <workspace-install.json> --engine <UE-folder> --output <new-output-folder>');
+  options[process.argv[i].slice(2)] = resolve(process.argv[i + 1]);
+}
+if (process.platform !== 'win32' || process.arch !== 'x64') throw new Error('Build this Windows x64 package on Windows x64.');
+for (const name of ['artifact', 'verification', 'engine', 'output']) if (!options[name]) throw new Error(`Missing --${name}`);
+if (existsSync(options.output)) throw new Error('Choose a new output folder; existing packages are never overwritten.');
+const json = file => JSON.parse(readFileSync(file, 'utf8').replace(/^\uFEFF/, ''));
+const hash = file => createHash('sha256').update(readFileSync(file)).digest('hex');
+const verification = json(options.verification);
+if (hash(verification.nativeReport).toLowerCase() !== verification.nativeReportSha256.toLowerCase()) throw new Error('Native test report hash differs from verification.');
+const report = json(verification.nativeReport);
+if (report.failed || report.notRun || report.inProcess || !(report.succeeded + report.succeededWithWarnings)) throw new Error('Native verification is incomplete or failed.');
+const moduleName = 'UnrealEditor-HaybaMCPToolkit.dll';
+const verifiedDll = verification.files.find(file => file.name === moduleName);
+if (!verifiedDll || hash(join(options.artifact, 'Binaries/Win64', moduleName)) !== verifiedDll.sha256.toLowerCase()) throw new Error('Native DLL does not match the tested artifact.');
+const modules = json(join(options.engine, 'Engine/Binaries/Win64/UnrealEditor.modules'));
+const artifactModules = json(join(options.artifact, 'Binaries/Win64/UnrealEditor.modules'));
+if (modules.BuildId !== artifactModules.BuildId) throw new Error('Engine build ID differs from tested plugin.');
+const engine = json(join(options.engine, 'Engine/Build/Build.version'));
+const version = `${engine.MajorVersion}.${engine.MinorVersion}.${engine.PatchVersion}`;
+const sourcePackage = join(repo, 'mcp-tools/hayba-mcp');
+for (const entry of ['dist/bootstrap.js','dist/index.js','dist/chat/subagents.js']) if (!existsSync(join(sourcePackage, entry))) throw new Error('Build the current server first: npm run build:server -w @hayba/mcp');
+console.log('Verifying the bundled Node executable against official release checksums...');
+const nodeVersion = process.versions.node;
+const checksumsResponse = await fetch(`https://nodejs.org/dist/v${nodeVersion}/SHASUMS256.txt`, { signal: AbortSignal.timeout(30000) });
+if (!checksumsResponse.ok) throw new Error('Cannot retrieve official Node checksums.');
+const checksums = await checksumsResponse.text();
+const expectedNode = checksums.split(/\r?\n/).map(line => line.trim().split(/\s+/)).find(parts => parts[1] === 'win-x64/node.exe')?.[0];
+if (!expectedNode || hash(process.execPath) !== expectedNode) throw new Error('Installed Node is not the official Windows x64 release.');
+const licenseResponse = await fetch(`https://raw.githubusercontent.com/nodejs/node/v${nodeVersion}/LICENSE`, { signal: AbortSignal.timeout(30000) });
+if (!licenseResponse.ok) throw new Error('Cannot retrieve Node redistribution license.');
+const nodeLicense = await licenseResponse.text();
+const bundle = join(options.output, 'Hayba Setup');
+const plugin = join(bundle, 'payload/HaybaMCPToolkit');
+mkdirSync(plugin, { recursive: true });
+console.log('Copying tested plugin and current bundled interface...');
+copyFileSync(join(options.artifact, 'HaybaMCPToolkit.uplugin'), join(plugin, 'HaybaMCPToolkit.uplugin'));
+for (const directory of ['Resources','Config','Source']) if (existsSync(join(options.artifact, directory))) copyTree(join(options.artifact, directory), join(plugin, directory));
+const binaries = join(plugin, 'Binaries/Win64');
+mkdirSync(binaries, { recursive: true });
+for (const name of [moduleName, 'UnrealEditor.modules', 'UnrealEditor-HaybaMCPToolkit.pdb']) {
+  const source = join(options.artifact, 'Binaries/Win64', name);
+  if (existsSync(source)) copyFileSync(source, join(binaries, name));
+}
+const node = join(plugin, 'ThirdParty/node');
+mkdirSync(node, { recursive: true });
+copyFileSync(process.execPath, join(node, 'node.exe'));
+writeFileSync(join(node, 'LICENSE'), nodeLicense);
+const server = join(plugin, 'ThirdParty/mcp_server');
+const packageJson = json(join(sourcePackage, 'package.json'));
+copyTree(join(sourcePackage, 'dist'), join(server, 'dist'), path => !/\.test\.|\.test-helpers\.|\.map$|\.d\.ts$/.test(path));
+writeFileSync(join(server, 'package.json'), JSON.stringify({ ...packageJson, scripts: undefined, devDependencies: undefined }, null, 2));
+copyFileSync(join(sourcePackage, 'hayba.agents.json'), join(server, 'hayba.agents.json'));
+copyFileSync(join(repo, 'tools/installer/run-mcp.cjs'), join(server, 'run-mcp.cjs'));
+mkdirSync(join(server, 'Resources'), { recursive: true });
+for (const name of ['node_catalog.json','pcgex_registry.db']) copyFileSync(join(plugin, 'Resources', name), join(server, 'Resources', name));
+if (existsSync(join(sourcePackage, 'addons/workflows'))) copyTree(join(sourcePackage, 'addons/workflows'), join(server, 'addons/workflows'));
+console.log('Bundling installed production dependency versions (no npm installation on teammate machines)...');
+const dependencies = packageDependencies(sourcePackage, server);
+writeFileSync(join(server, 'DEPENDENCIES.json'), JSON.stringify(dependencies, null, 2));
+copyFileSync(join(repo, 'LICENSE'), join(plugin, 'LICENSE'));
+copyFileSync(join(repo, 'LICENSE'), join(server, 'node_modules/@hayba/brain-protocol/LICENSE'));
+mkdirSync(join(bundle, 'installer'), { recursive: true });
+for (const name of ['Install.ps1','Installer.Core.ps1']) copyFileSync(join(repo, 'tools/installer', name), join(bundle, 'installer', name));
+copyFileSync(join(repo, 'tools/installer/Install Hayba.cmd'), join(bundle, 'Install Hayba.cmd'));
+const compiler = join(process.env.SystemRoot, 'Microsoft.NET/Framework64/v4.0.30319/csc.exe');
+const compile = spawnSync(compiler, ['/nologo', '/target:winexe', '/platform:x64', '/reference:System.Windows.Forms.dll', `/out:${join(bundle, 'Install Hayba.exe')}`, join(repo, 'tools/installer/Launcher.cs')], { stdio: 'inherit', windowsHide: true });
+if (compile.status !== 0) throw new Error('Could not build the small Windows installer launcher.');
+copyFileSync(join(repo, 'tools/installer/README.txt'), join(bundle, 'START HERE.txt'));
+const files = [];
+function inventory(directory, prefix = '') {
+  for (const name of readdirSync(directory).sort()) {
+    const path = join(directory, name);
+    const stat = lstatSync(path);
+    if (stat.isSymbolicLink()) throw new Error('Package must not contain machine-local links.');
+    const relative = prefix + name;
+    if (stat.isDirectory()) inventory(path, relative + '/');
+    else files.push({ path: relative, bytes: stat.size, sha256: hash(path) });
+  }
+}
+console.log('Hashing the complete payload...');
+inventory(plugin);
+writeFileSync(join(bundle, 'manifest.json'), JSON.stringify({ schemaVersion: 1, version: `${packageJson.version}-workspace`, createdAt: new Date().toISOString(), engine: { version, buildId: modules.BuildId }, node: nodeVersion, nativeVerification: { passed: report.succeeded + report.succeededWithWarnings, warnings: report.succeededWithWarnings, dllSha256: verifiedDll.sha256 }, files }, null, 2));
+const zip = join(options.output, `Hayba-Setup-UE${version}-build${modules.BuildId}.zip`);
+console.log(`Creating ${basename(zip)}...`);
+const quote = value => `'${value.replaceAll("'", "''")}'`;
+const script = `$ProgressPreference='SilentlyContinue'; Add-Type -AssemblyName System.IO.Compression.FileSystem; [IO.Compression.ZipFile]::CreateFromDirectory(${quote(bundle)},${quote(zip)},[IO.Compression.CompressionLevel]::Optimal,$false)`;
+const shellEnv = { ...process.env };
+for (const key of Object.keys(shellEnv)) if (key.toLowerCase() === 'psmodulepath') delete shellEnv[key];
+const result = spawnSync('powershell.exe', ['-NoProfile', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], { env: shellEnv, stdio: 'inherit', windowsHide: true });
+if (result.status !== 0) throw new Error('ZIP creation failed.');
+writeFileSync(zip + '.sha256', `${hash(zip)}  ${basename(zip)}\n`);
+console.log(JSON.stringify({ bundle, zip, files: files.length, dependencies: dependencies.length }, null, 2));

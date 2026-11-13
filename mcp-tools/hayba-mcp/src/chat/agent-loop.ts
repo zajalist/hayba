@@ -132,7 +132,7 @@ export function isDestructiveToolName(name: string): boolean {
 
 interface JsonSchema {
   type?: string;
-  enum?: string[];
+  enum?: Array<string | number>;
   items?: JsonSchema;
   description?: string;
   [k: string]: unknown;
@@ -147,19 +147,18 @@ function zodToJsonSchema(t: ZodTypeAny): { schema: JsonSchema; optional: boolean
   if (inner instanceof z.ZodString) schema = { type: 'string' };
   else if (inner instanceof z.ZodNumber) schema = { type: 'number' };
   else if (inner instanceof z.ZodBoolean) schema = { type: 'boolean' };
-  else if (inner instanceof z.ZodEnum)
-    schema = { type: 'string', enum: (inner as unknown as { _def: { values: string[] } })._def.values };
-  else if (inner instanceof z.ZodArray)
+  else if (inner instanceof z.ZodEnum) {
+    schema = { enum: inner.options };
+    if (inner.options.every((value) => typeof value === 'string')) schema.type = 'string';
+    else if (inner.options.every((value) => typeof value === 'number')) schema.type = 'number';
+  } else if (inner instanceof z.ZodArray)
     schema = {
       type: 'array',
-      items: zodToJsonSchema((inner as unknown as { _def: { type: ZodTypeAny } })._def.type).schema,
+      items: zodToJsonSchema(inner.element as ZodTypeAny).schema,
     };
   else if (inner instanceof z.ZodTuple) schema = { type: 'array' };
   else if (inner instanceof z.ZodObject) {
-    // Finding 4: emit nested properties one level deep (don't over-engineer;
-    // deeper nesting is left flat). shapeToInputSchema is hoisted below.
-    const nestedShape = (inner as unknown as { _def: { shape: () => ZodRawShape } })._def.shape();
-    schema = shapeToInputSchema(nestedShape);
+    schema = shapeToInputSchema(inner.shape);
   } else if (inner instanceof z.ZodRecord) schema = { type: 'object' };
   else schema = {};
 
@@ -237,6 +236,7 @@ export function buildToolCatalog(opts: ToolCatalogOptions = {}): LLMTool[] {
 export type DispatchTool = (name: string, args: Record<string, unknown>) => Promise<unknown>;
 
 const WARNING_REVIEW_TOOL = 'hayba_warning_review';
+export const DELEGATE_TASK_TOOL = 'delegate_task';
 const UNKNOWN_WARNING_SOURCE = '0000000000000000';
 const warningReviewTool: LLMTool = {
   name: WARNING_REVIEW_TOOL,
@@ -466,6 +466,8 @@ export type AgentEvent =
   | { type: 'error'; error: string; kind?: string; reason?: string };
 
 export interface AgentLoopParams {
+  /** Chat-scoped delegation; absent in child loops and global MCP tool catalogs. */
+  delegateTask?: (input: Record<string, unknown>) => Promise<unknown>;
   /** Existing manifest profiles, optionally supplied as one turn-scoped snapshot. */
   manifest?: AgentsManifest;
   /** Explicit /agent selection overrides intent routing. */
@@ -554,6 +556,7 @@ function planModePayload(result: unknown): Record<string, unknown> | null {
 
 function nativeApprovalMetadata(payload: Record<string, unknown>): NativeApprovalMetadata | null {
   const valid = (value: unknown, max: number): value is string =>
+    // eslint-disable-next-line no-control-regex -- Native approval identifiers must reject control characters.
     typeof value === 'string' && value.trim().length > 0 && value.length <= max && !/[\x00-\x1f\x7f]/.test(value);
   const { proposal_id, operation_digest, target_ref, target_fingerprint } = payload;
   if (!valid(proposal_id, 128) || !valid(operation_digest, 128) ||
@@ -582,7 +585,8 @@ async function* runExecutionLoop(params: AgentLoopParams): AsyncGenerator<AgentE
     maxTokens,
     signal,
   } = params;
-  const dispatchTool = params.dispatchTool ?? defaultDispatchTool;
+  const dispatchTool: DispatchTool = (name, input) => name === DELEGATE_TASK_TOOL && params.delegateTask
+    ? params.delegateTask(input) : (params.dispatchTool ?? defaultDispatchTool)(name, input);
   const warningLedger = params.warningLedger ?? new WarningReviewLedger();
   // Call-bound approval is one-shot: consumed on the first matching dispatch.
   let approvalUsed = false;
@@ -929,9 +933,15 @@ export async function* runAgentLoop(params: AgentLoopParams): AsyncGenerator<Age
     params.pinnedSpecialistId,
   );
   const selectedNames = new Set(specialist.toolNames);
+  const delegationTool: LLMTool = {
+    name: DELEGATE_TASK_TOOL,
+    description: 'Delegate a bounded read-only inspection or research task to a separate specialist agent, then wait for its findings. The child can inspect available project tools but cannot edit, request approval, or delegate. Use this directly when specialist evidence helps; the user browses progress in the Agents panel. Do not immediately retry a cancelled task. Requires this conversation’s configured Community provider; consumes provider tokens.',
+    input_schema: { type: 'object', properties: { task: { type: 'string', minLength: 1, maxLength: 4000, description: 'Self-contained task, context, and evidence to return. Children do not receive the parent transcript.' }, specialist_id: { type: 'string', enum: manifest.archetypes.map(profile => profile.id), description: 'Optional specialist profile; defaults to director.' } }, required: ['task'] },
+  };
+  const delegationEnabled = params.delegateTask && !disabled.has(DELEGATE_TASK_TOOL) && !isToolDisabled(DELEGATE_TASK_TOOL);
   const executionParams = {
     ...params,
-    tools: available.filter((tool) => selectedNames.has(tool.name)),
+    tools: [...available.filter((tool) => selectedNames.has(tool.name) && tool.name !== DELEGATE_TASK_TOOL), ...(delegationEnabled ? [delegationTool] : [])],
     system: `${params.system}\n\nSpecialist guidance:\n${resolveArchetype(specialist.id, manifest).system_prompt}`,
   };
   const activityId = params.activityId ?? randomUUID();

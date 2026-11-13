@@ -401,6 +401,7 @@ import { handleAmbientCgSearch, meta as ambientcgSearchMeta } from './asset-sour
 import { handleAmbientCgDownload, meta as ambientcgDownloadMeta } from './asset-sources/ambientcg-download.js';
 import { handleSketchfabSearch, meta as sketchfabSearchMeta } from './asset-sources/sketchfab-search.js';
 import { handleSketchfabDownload, meta as sketchfabDownloadMeta } from './asset-sources/sketchfab-download.js';
+import { fabTools } from './fab/fab-tools.js';
 
 // ── PCGEx tool handlers ───────────────────────────────────────────────────────
 import { searchNodeCatalog } from './search-node-catalog.js';
@@ -449,6 +450,7 @@ import {
 } from './pcg/pcg-primitives.js';
 import { actorPyDescriptors } from './actor/actor-py-tools.js';
 import { editorPyDescriptors } from './editor/editor-py-tools.js';
+import { chooserInspectDescriptor } from './chooser/chooser-inspect.js';
 import { assetPyDescriptors } from './asset/asset-py-tools.js';
 import { meshPyDescriptors } from './mesh/mesh-py-tools.js';
 import { sequencerPyDescriptors } from './sequencer/sequencer-py-tools.js';
@@ -3087,11 +3089,11 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
   {
     name: 'asset_validate',
     description:
-      'Run the editor data-validation rules over an asset or folder and return the errors and warnings. USE_WHEN: confirming an asset is sound before building on it. NOT_WHEN: checking UI layout — ui_validate is the tool for that.',
+      'Run bounded editor data-validation rules over an asset or folder and return coverage, errors and warnings. valid is true only for complete validation without failures; skipped, unsupported, cancelled or partial work is not a pass. Folders exceeding max_assets (default 100, maximum 1000) are refused before validation. USE_WHEN: confirming an asset is sound before building on it. NOT_WHEN: checking UI layout — ui_validate is the tool for that.',
     meta: assetValidateMeta,
     handler: assetValidateHandler,
     cost: 'medium',
-    returns: '{valid, num_valid, num_invalid, num_warnings, errors[], warnings[]}',
+    returns: '{valid, complete, status: passed|failed|partial|not_validated|cancelled, cancelled, asset_limit_reached, max_assets, num_requested, num_checked, num_valid, num_invalid, num_skipped, num_unable_to_validate, num_warnings, num_external_objects, assets[], errors[], warnings[]}',
     niche: ASSETGRAPH,
     schema: assetValidateSchema.shape,
   },
@@ -3444,13 +3446,7 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
     schema: renderCameraSchema.shape,
   },
 
-  // The Fab connector domain was removed. Its four tools sent fab_* commands
-  // that no plugin has ever declared -- they were written against an
-  // editor-side integration that was never built, so every call answered
-  // "unknown command", which reads as a stale plugin rather than a missing
-  // feature. Download Fab content through the Epic Games Launcher or the
-  // in-editor Fab plugin, then find it with hayba_asset_search /
-  // hayba_asset_browse.
+  ...fabTools,
 
   // ── Asset-source connectors (Poly Haven / ambientCG / Sketchfab) ────────
   {
@@ -3592,6 +3588,7 @@ const HANDWRITTEN_STANDARD_DESCRIPTORS: ToolDescriptor[] = [
     schema: assetRegistryQuerySchema.shape,
   },
   ...editorPyDescriptors.map((d) => d.name === 'asset_inspect' ? withAssetPreparationInspection(toToolDescriptor(d)) : toToolDescriptor(d)),
+  toToolDescriptor(chooserInspectDescriptor),
 
   // ── Asset & mesh P0 tools (Phase 2 Wave 2, Task 2) — factory path ─────────
   // Net-new asset-provenance/save/folder tools and StaticMesh-asset readbacks
@@ -4063,12 +4060,14 @@ export function inferDir(name: string): string | null {
   if (name.startsWith('world_')) return 'world';
   if (name.startsWith('scene_')) return 'scene';
   if (name.startsWith('editor_')) return 'editor';
+  if (name.startsWith('chooser_')) return 'chooser';
   if (name.startsWith('material_')) return 'material';
   if (name.startsWith('memory_')) return 'memory';
   if (name.startsWith('ui_')) return 'ui';
   if (name.startsWith('hayba_polyhaven_')) return 'asset-sources';
   if (name.startsWith('hayba_ambientcg_')) return 'asset-sources';
   if (name.startsWith('hayba_sketchfab_')) return 'asset-sources';
+  if (name.startsWith('fab_')) return 'fab';
   if (name === 'python_run') return 'python';
   if (name === 'list_tool_categories' || name === 'get_tool_signature') return 'code-mode';
   return null;

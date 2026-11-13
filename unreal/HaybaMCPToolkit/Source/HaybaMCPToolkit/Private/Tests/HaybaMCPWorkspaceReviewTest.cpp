@@ -391,7 +391,7 @@ bool FHaybaWorkspaceVisualReview::RunTest(const FString&)
             .SupportsMaximize(false).SupportsMinimize(false)[ Panel ];
         FSlateApplication::Get().AddWindow(Window);
         for (const FString View : { FString(TEXT("Agent")), FString(TEXT("Proposal")),
-            FString(TEXT("World")), FString(TEXT("Activity")), FString(TEXT("Rules")),
+            FString(TEXT("Activity")), FString(TEXT("Rules")),
             FString(TEXT("Library")), FString(TEXT("Settings")) })
         {
             if (View == TEXT("Proposal"))
@@ -411,7 +411,6 @@ bool FHaybaWorkspaceVisualReview::RunTest(const FString&)
                 Proposal.ExpiresAt = FDateTime::UtcNow() + FTimespan::FromMinutes(5);
                 Module.ProposeExactExternalOperation(MoveTemp(Proposal));
             }
-            if (View == TEXT("World")) Panel->ShowPanel(EHaybaPanel::World);
             if (View == TEXT("Activity"))
             {
                 Panel->ShowPanel(EHaybaPanel::Activity);

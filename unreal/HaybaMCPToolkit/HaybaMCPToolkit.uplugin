@@ -21,6 +21,7 @@
     { "Name": "PythonScriptPlugin", "Enabled": true },
     { "Name": "WebBrowserWidget", "Enabled": true },
     { "Name": "DataValidation", "Enabled": true },
+    { "Name": "Fab", "Enabled": false, "Optional": true },
     { "Name": "EnhancedInput", "Enabled": true }
   ]
 }

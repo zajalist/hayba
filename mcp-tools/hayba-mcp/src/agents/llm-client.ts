@@ -249,6 +249,9 @@ export function resolveConfig(config: LLMClientConfig): ResolvedConfig {
   const apiKey = config.apiKey ?? (envKey ? (process.env[envKey] ?? '') : '');
   const rawBaseURL = config.baseURL ?? entry.baseURLDefault;
   const baseURL = entry.protocol === 'openai' ? normalizeOpenAIBaseURL(rawBaseURL, entry.label) : rawBaseURL;
+  // Older editor builds shipped a nonexistent dated Opus 4.6 ID.
+  const model = entry.id === 'anthropic' && rawBaseURL === entry.baseURLDefault &&
+    config.model === 'claude-opus-4-6-20251101' ? 'claude-opus-4-6' : config.model ?? entry.defaultModel;
   const supportedEfforts: Record<string, readonly string[]> = {
     anthropic: ['low', 'medium', 'high', 'xhigh', 'max'],
     openai: ['none', 'minimal', 'low', 'medium', 'high', 'xhigh'],
@@ -267,7 +270,7 @@ export function resolveConfig(config: LLMClientConfig): ResolvedConfig {
   return {
     provider: entry.id,
     protocol: entry.protocol,
-    model: config.model ?? entry.defaultModel,
+    model,
     ...(config.reasoningEffort ? { reasoningEffort: config.reasoningEffort } : {}),
     baseURL,
     apiKey,

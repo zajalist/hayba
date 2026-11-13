@@ -36,6 +36,25 @@ const RESOLVED_CFG = {
   apiKey: 'k',
 };
 
+describe('legacy editor model selection', () => {
+  it('repairs the shipped invalid Opus 4.6 ID before an Anthropic request', async () => {
+    const create = vi.fn().mockResolvedValue({ content: [{ type: 'text', text: 'ok' }], stop_reason: 'end_turn' });
+    const client = createLLMClient(
+      { provider: 'anthropic', model: 'claude-opus-4-6-20251101', apiKey: 'test' },
+      { anthropic: { messages: { create, stream: vi.fn() } } },
+    );
+    await client.complete(baseParams());
+    expect(create.mock.calls[0][0].model).toBe('claude-opus-4-6');
+  });
+
+  it('preserves custom endpoint model names and other explicit choices', () => {
+    expect(createLLMClient({ provider: 'anthropic', model: 'claude-opus-4-6-20251101',
+      baseURL: 'https://custom.example', apiKey: 'test' }).model).toBe('claude-opus-4-6-20251101');
+    expect(createLLMClient({ provider: 'anthropic', model: 'claude-opus-4-8', apiKey: 'test' }).model)
+      .toBe('claude-opus-4-8');
+  });
+});
+
 describe('per-turn reasoning effort', () => {
   it('sends Anthropic effort in output_config with the exact selected model', async () => {
     const create = vi.fn().mockResolvedValue({ content: [{ type: 'text', text: 'ok' }], stop_reason: 'end_turn' });

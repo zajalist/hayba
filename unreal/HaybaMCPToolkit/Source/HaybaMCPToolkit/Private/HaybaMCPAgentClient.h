@@ -199,6 +199,9 @@ public:
 	FOnHaybaChatDone        OnDone;
 	FOnHaybaChatError       OnError;
 
+    /** Shared identity gate before sending credentials to the local sidecar. */
+    static bool HasCompatibleSidecarIdentity(const FJsonObject& Health);
+
 private:
     friend class FHaybaActivityClientFramesTest;
     friend class FHaybaActivityResumeDisconnectTest;
@@ -206,8 +209,8 @@ private:
     friend class FHaybaAgentStreamTerminalTest;
 	friend class FHaybaAgentSidecarIdentityTest;
 	/** Verify the HTTP service before any BYOK key leaves the vault. */
-	void CheckSidecarThenStream(const FString& UserPrompt);
-	static bool HasCompatibleSidecarIdentity(const FJsonObject& Health);
+	void CheckSidecarThenStream(const FString& UserPrompt, int32 RetryCount = 0);
+	TSharedRef<IHttpRequest, ESPMode::ThreadSafe> CreateSidecarIdentityRequest(const FString& UserPrompt, int32 RetryCount = 0);
 	void PostConfig(const FString& UserPrompt);
 	/** /chat/config when this session has none yet, then /chat/stream. */
 	void ConfigureAndStream(const FString& UserPrompt);

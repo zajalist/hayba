@@ -121,25 +121,31 @@ export function describeProcessIdentity(id: UeProcessIdentity): string {
  * answering it, which is precisely the "process nobody thought was running"
  * failure mode from issue #342.
  */
-export function buildProcessDiagnostic(id: UeProcessIdentity, connected: boolean): string | undefined {
+export function buildProcessDiagnostic(id: UeProcessIdentity, connected: boolean, connectedPid?: number): string | undefined {
   const hasGui = id.gui.length > 0;
   const hasHeadless = id.headless.length > 0;
   const hasCrash = id.crash_reporter.length > 0;
   const hasAny = hasGui || hasHeadless || hasCrash;
 
   if (connected) {
+    if (id.gui.some((p) => p.pid === connectedPid)) return undefined;
+    const answeringHeadless = id.headless.find((p) => p.pid === connectedPid);
+    if (answeringHeadless) {
+      return `Connected to headless ${describe([answeringHeadless], 'UnrealEditor-Cmd.exe')}. ` +
+        'If you expected another project, check the configured endpoint and project instance record. ' +
+        'This process may belong to an active automation run; do not stop it without verifying ownership.';
+    }
     if (hasHeadless && !hasGui) {
       return (
-        `Connected, but the process answering the MCP port is a headless ${describe(id.headless, 'UnrealEditor-Cmd.exe')} ` +
-        `— if you expected a GUI editor, this is likely a stray automation run holding the port instead. ` +
-        `Kill it (taskkill /PID ${id.headless[0].pid} /F) and launch the GUI editor.`
+        `Connected, and a headless ${describe(id.headless, 'UnrealEditor-Cmd.exe')} was detected. ` +
+        'The answering process was not identified; check the configured endpoint and project instance record before changing any running process.'
       );
     }
     if (hasHeadless && hasGui) {
       return (
         `Connected, but both a GUI ${describe(id.gui, 'UnrealEditor.exe')} and a headless ${describe(id.headless, 'UnrealEditor-Cmd.exe')} ` +
-        `are running — cannot tell from here which one answered the MCP port. If you only expected the GUI editor, the headless ` +
-        `process (PID ${id.headless[0].pid}) is probably a leftover automation run; consider killing it to remove the ambiguity.`
+        'are running — cannot tell from this older plugin reply which one answered the MCP port. ' +
+        'Check the configured endpoint and project instance record; another project or automation run may own either process.'
       );
     }
     return undefined; // GUI-only (or undetermined) and connected — nothing to flag.
@@ -148,9 +154,9 @@ export function buildProcessDiagnostic(id: UeProcessIdentity, connected: boolean
   // Not connected.
   if (hasHeadless) {
     return (
-      `Not connected, but a headless ${describe(id.headless, 'UnrealEditor-Cmd.exe')} is running — it may be holding the MCP ` +
-      `port or otherwise blocking a GUI editor from starting (this looks exactly like a slow boot). ` +
-      `Kill it (taskkill /PID ${id.headless[0].pid} /F) if you expected a GUI editor.`
+      `Not connected, but a headless ${describe(id.headless, 'UnrealEditor-Cmd.exe')} is running. ` +
+      'A process listing does not establish which project or endpoint it serves. Check the configured endpoint, ' +
+      'project instance record and editor log; do not stop another project’s automation run.'
     );
   }
   if (hasGui) {
@@ -204,6 +210,8 @@ export interface UeStatus {
   ue_processes?: UeProcessIdentity;
   /** Human-readable "what did we find" summary — always names flavor + PID. */
   process_identity?: string;
+  /** Matched against the PID returned by ping, never inferred from a process listing. */
+  connected_process?: UeProcessInfo;
   /** ping reported editor_unsafe; only a restart clears it (ADR-0011). */
   editor_restart_required?: true;
   [key: string]: unknown;
@@ -260,8 +268,11 @@ export async function checkUeStatus(opts: CheckUeStatusOpts = {}): Promise<UeSta
       // UnrealEditor-Cmd.exe answers pings identically (issue #342). Always
       // check identity, even on the happy path.
       const { identity, guiDetected } = await detectIdentity(listProcesses);
-      const diagnostic = identity ? buildProcessDiagnostic(identity, true) : undefined;
       const data = response.data as Record<string, unknown>;
+      const pid = Number.isSafeInteger(data.process_id) && (data.process_id as number) > 0
+        ? data.process_id as number : undefined;
+      const connectedProcess = identity ? [...identity.gui, ...identity.headless].find((p) => p.pid === pid) : undefined;
+      const diagnostic = identity ? buildProcessDiagnostic(identity, true, pid) : undefined;
       const restart = editorRestartDiagnostic(data);
       const combined = [restart, diagnostic].filter((part): part is string => Boolean(part)).join(' ');
       return {
@@ -271,6 +282,7 @@ export async function checkUeStatus(opts: CheckUeStatusOpts = {}): Promise<UeSta
         editor_process_detected: guiDetected,
         ue_processes: identity,
         process_identity: identity ? describeProcessIdentity(identity) : undefined,
+        ...(connectedProcess ? { connected_process: connectedProcess } : {}),
         ...(restart ? { editor_restart_required: true as const } : {}),
         ...(combined ? { diagnostic: combined } : {}),
       };

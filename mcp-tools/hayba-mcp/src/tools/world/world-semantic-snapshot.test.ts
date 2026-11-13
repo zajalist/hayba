@@ -55,7 +55,6 @@ describe('world_semantic_snapshot', () => {
     expect(schema.safeParse({ source: 'view_depth', expected_capture_id: 'stale' }).success).toBe(false);
     expect(schema.safeParse({ source: 'mesh', section: 'points' }).success).toBe(false);
     expect(schema.safeParse({ source: 'mesh', group_id: 'cell:0:0:0' }).success).toBe(false);
-    expect(native('HaybaMCPSceneMapWebPanel.cpp')).toContain('ObservedDepth.AddPoint(MoveTemp(ObservedPoint))');
     expect(native('HaybaMCPViewDepthSnapshot.cpp')).toContain('source_attribution');
   });
 

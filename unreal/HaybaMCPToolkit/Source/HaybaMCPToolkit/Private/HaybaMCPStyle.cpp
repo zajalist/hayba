@@ -158,7 +158,6 @@ TSharedRef<FSlateStyleSet> FHaybaMCPStyle::Create()
     Style->Set("Hayba.Icon.Nav.Chat",     new IMAGE_BRUSH_SVG(TEXT("Icons/chat"),     FVector2D(20.f, 20.f)));
     Style->Set("Hayba.Icon.Nav.Activity", new IMAGE_BRUSH_SVG(TEXT("Icons/activity"), FVector2D(20.f, 20.f)));
     Style->Set("Hayba.Icon.Nav.Rules",    new IMAGE_BRUSH_SVG(TEXT("Icons/rules"),    FVector2D(20.f, 20.f)));
-    Style->Set("Hayba.Icon.Nav.World",    new IMAGE_BRUSH_SVG(TEXT("Icons/world"),    FVector2D(20.f, 20.f)));
     Style->Set("Hayba.Icon.Nav.Library",  new IMAGE_BRUSH_SVG(TEXT("Icons/library"),  FVector2D(20.f, 20.f)));
     Style->Set("Hayba.Icon.Nav.Settings", new IMAGE_BRUSH_SVG(TEXT("Icons/settings"), FVector2D(20.f, 20.f)));
     Style->Set("Hayba.Icon.Nav.More",     new IMAGE_BRUSH_SVG(TEXT("Icons/more"),     FVector2D(20.f, 20.f)));
@@ -172,7 +171,7 @@ TSharedRef<FSlateStyleSet> FHaybaMCPStyle::Create()
     Style->Set("Hayba.Icon.Check",        new IMAGE_BRUSH_SVG(TEXT("Icons/check"),        FVector2D(14.f, 14.f)));
 
     // ── Design tokens ────────────────────────────────────────────────────────
-    // Neutral Slate ground is shared with cognitive-map/index.html. Ochre
+    // Neutral Slate ground anchors the editor palette. Ochre
     // carries interaction meaning and the logo remains unretinted.
     {
         // Named Tok, not Colour: a local named Colour would hide the static
@@ -242,11 +241,7 @@ TSharedRef<FSlateStyleSet> FHaybaMCPStyle::Create()
         Tok(TEXT("Hayba.Color.Cat.Image"),       FLinearColor::FromSRGBColor(FColor(0xDB, 0x72, 0xAF)));
         Tok(TEXT("Hayba.Color.Cat.Neutral"),     FLinearColor::FromSRGBColor(FColor(0xB0, 0xB6, 0xC0)));
 
-        // Scene-map node semantics. These lived as literals in
-        // HaybaMCPSceneMapPanel.cpp, outside the visual system: nothing could
-        // check them, reuse them, or notice them drifting. Registered here at
-        // their EXISTING values -- this moves them into the system without
-        // changing a pixel.
+        // Semantic colors remain available in the shared token palette.
         Tok(TEXT("Hayba.Color.Semantic.Foliage"),   FLinearColor(0.30f, 0.70f, 0.40f));
         Tok(TEXT("Hayba.Color.Semantic.Building"),  FLinearColor(0.55f, 0.60f, 0.75f));
         Tok(TEXT("Hayba.Color.Semantic.Light"),     FLinearColor(1.00f, 0.85f, 0.35f));

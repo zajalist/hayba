@@ -19,6 +19,8 @@ export default defineConfig({
     exclude: [
       '**/node_modules/**',
       '**/dist/**',
+      // Local build backups contain stale compiled copies of the source tests.
+      '**/dist.*/**',
       // The Gaea *tool* surface is parked: its registration block was commented
       // out in src/tools/index.ts and has since been deleted, so these files
       // test handlers that nothing can reach. They stay until the terrain

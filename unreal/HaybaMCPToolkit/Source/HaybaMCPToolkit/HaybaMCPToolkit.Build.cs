@@ -17,6 +17,11 @@ public class HaybaMCPToolkit : ModuleRules
 
         // FLandscapeImportHelper lives in LandscapeEditor's private headers
         var EngineDir = Path.GetFullPath(Target.RelativeEnginePath);
+        var FabHeader = Path.Combine(EngineDir, "Plugins/Fab/Source/Fab/Public/FabModule.h");
+        bool HasFabSearch = File.Exists(FabHeader) && File.ReadAllText(FabHeader).Contains("virtual void SearchCatalog(");
+        PrivateDefinitions.Add("HAYBA_HAS_FAB_SEARCH=" + (HasFabSearch ? "1" : "0"));
+        // Headers only: Fab stays optional and is loaded only after an explicit request.
+        if (HasFabSearch) PrivateIncludePathModuleNames.Add("Fab");
         PublicSystemIncludePaths.Add(
             Path.Combine(EngineDir, "Source/Editor/LandscapeEditor/Private")
         );

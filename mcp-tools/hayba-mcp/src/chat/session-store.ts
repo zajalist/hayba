@@ -51,6 +51,14 @@ const TurnSettingsSchema = z.object({
   mode: z.enum(['explore', 'draft', 'production']),
   loop: z.enum(['community', 'pro']),
 });
+export const SubagentRecordSchema = z.object({
+  id: safeText, parent_session_id: safeText, task: safeText, specialist_id: safeText,
+  status: z.enum(['queued', 'running', 'succeeded', 'failed', 'cancelled']),
+  created_at: safeText, updated_at: safeText, output: safeText,
+  tools: z.array(z.object({ id: safeText, name: safeText, status: z.enum(['running', 'succeeded', 'failed']) })).max(16),
+  output_truncated: z.boolean().optional(), tools_truncated: z.boolean().optional(), error: safeText.optional(),
+});
+export type SubagentRecord = z.infer<typeof SubagentRecordSchema>;
 const SessionSchema = z.object({
   version: z.literal(1),
   id: z.string(),
@@ -61,12 +69,14 @@ const SessionSchema = z.object({
   artifacts: z.array(ArtifactSchema),
   usage: UsageSchema.optional(),
   turnSettings: TurnSettingsSchema.optional(),
+  subagents: z.array(SubagentRecordSchema).max(30).optional(),
 });
 const RecordSchema = z.object({
   messages: z.array(z.object({ role: z.enum(['user', 'assistant']), content: z.unknown() })).optional(),
   activity: ActivitySchema.optional(),
   artifacts: z.array(ArtifactSchema).optional(),
   usage: UsageSchema.optional(),
+  subagent: SubagentRecordSchema.optional(),
 });
 
 export type SavedSession = z.infer<typeof SessionSchema>;
@@ -103,6 +113,7 @@ export function sessionMessages(input: unknown): SavedSession['messages'] {
 /** Single-sidecar store. Synchronous read/modify/rename prevents interleaved
  * appends in this process; separate sidecar processes must use separate roots. */
 export class SessionStore {
+  private readonly summaries = new Map<string, { mtime: number; size: number; summary: SessionSummary }>();
   constructor(private readonly directory = resolve(process.cwd(), 'Saved/HaybaMCP/sessions')) {}
 
   private path(id: string): string {
@@ -134,20 +145,31 @@ export class SessionStore {
     return readdirSync(this.directory)
       .filter((name) => name.endsWith('.json') && isValidSessionId(name.slice(0, -5)))
       .flatMap((name) => {
-        const session = this.load(name.slice(0, -5));
-        return session
-          ? [
-              {
-                id: session.id,
-                createdAt: session.createdAt,
-                updatedAt: session.updatedAt,
-                messageCount: session.messages.length,
-                title: session.messages.find((message) => message.role === 'user')?.content.slice(0, 80) ?? 'New conversation',
-              },
-            ]
-          : [];
+        const id = name.slice(0, -5);
+        const stat = statSync(this.path(id));
+        const cached = this.summaries.get(id);
+        if (cached && cached.mtime === stat.mtimeMs && cached.size === stat.size) return [cached.summary];
+        const session = this.load(id);
+        return session ? [this.cacheSummary(session)] : [];
       })
-      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || a.id.localeCompare(b.id))
+      .map(summary => ({ ...summary }));
+  }
+
+  listPage({ q = '', limit = 50, offset = 0 }: { q?: string; limit?: number; offset?: number } = {}) {
+    if (!Number.isInteger(limit) || limit < 1 || limit > 50 || !Number.isSafeInteger(offset) || offset < 0 || q.length > 256) throw new Error('invalid session page');
+    const query = q.trim().toLocaleLowerCase();
+    const matching = this.list().filter(session => !query || `${session.title} ${session.id}`.toLocaleLowerCase().includes(query));
+    const sessions = matching.slice(offset, offset + limit);
+    const has_more = offset + sessions.length < matching.length;
+    return { sessions, total: matching.length, has_more, next_offset: has_more ? offset + sessions.length : null };
+  }
+
+  private cacheSummary(session: SavedSession): SessionSummary {
+    const summary = { id: session.id, createdAt: session.createdAt, updatedAt: session.updatedAt, messageCount: session.messages.length, title: session.messages.find(message => message.role === 'user')?.content.slice(0, 80) ?? 'New conversation' };
+    const stat = statSync(this.path(session.id));
+    this.summaries.set(session.id, { mtime: stat.mtimeMs, size: stat.size, summary });
+    return summary;
   }
 
   append(id: string, input: unknown): SavedSession {
@@ -161,6 +183,11 @@ export class SessionStore {
       else session.activities[index] = record.activity;
     }
     if (record.artifacts) session.artifacts.push(...record.artifacts);
+    if (record.subagent) {
+      if (record.subagent.parent_session_id !== id) throw new Error('subagent parent mismatch');
+      // shortcut: retain the latest 30 completed child summaries, add archival storage if older tasks must be browsed.
+      session.subagents = [...(session.subagents ?? []).filter(agent => agent.id !== record.subagent!.id), record.subagent].slice(-30);
+    }
     if (record.usage) {
       session.usage ??= {};
       for (const key of Object.keys(UsageSchema.shape) as Array<keyof z.infer<typeof UsageSchema>>) {
@@ -184,6 +211,7 @@ export class SessionStore {
   remove(id: string): boolean {
     try {
       unlinkSync(this.path(id));
+      this.summaries.delete(id);
       return true;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
@@ -207,6 +235,7 @@ export class SessionStore {
         closeSync(fd);
       }
       renameSync(temporary, destination);
+      this.cacheSummary(safe);
     } finally {
       rmSync(temporary, { force: true });
     }

@@ -1,5 +1,7 @@
 # Install Hayba 0.4.1 (Windows, Unreal Engine 5.9)
 
+If your teammate supplied a matching **Hayba Setup ZIP**, use the [Windows installer guide](docs/windows-installer.md) for installation without Git, npm or a plugin compile. The instructions below build the published source release.
+
 This guide takes you from nothing to an AI agent that can see and edit your
 Unreal project. Every step is one action. Commands are for **PowerShell**:
 copy the grey box, paste it into PowerShell, press Enter, and wait for it to

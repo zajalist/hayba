@@ -15,6 +15,7 @@ import { makePyToolHandler, type PyToolDescriptor } from '../py-tool-factory.js'
 import { actorPyDescriptors } from '../actor/actor-py-tools.js';
 import { assetPyDescriptors } from '../asset/asset-py-tools.js';
 import { editorPyDescriptors } from '../editor/editor-py-tools.js';
+import { chooserInspectDescriptor } from '../chooser/chooser-inspect.js';
 import { foliagePyDescriptors } from '../foliage/foliage-py-tools.js';
 import { landscapePyDescriptors } from '../landscape/landscape-py-tools.js';
 import { lightingPyDescriptors } from '../lighting/lighting-py-tools.js';
@@ -22,6 +23,7 @@ import { meshPyDescriptors } from '../mesh/mesh-py-tools.js';
 import { niagaraPyDescriptors } from '../niagara/niagara-py-tools.js';
 import { sequencerPyDescriptors } from '../sequencer/sequencer-py-tools.js';
 import { waterPyDescriptors } from '../water/water-py-tools.js';
+import { pcgPyDescriptors } from '../pcg/pcg-primitives.js';
 
 vi.mock('../heavy-op-probe.js', () => ({ probeEditorProcess: async () => null }));
 
@@ -230,13 +232,14 @@ describe('lease enforcement contract (T8, wire)', () => {
 describe('python read declarations (R-1)', () => {
   const REVIEWED_READS = [
     'actor_find', 'actor_get_selection', 'actor_inspect', 'asset_get_source_path',
-    'asset_inspect', 'editor_cvar_get', 'editor_get_camera', 'foliage_capability_probe',
+    'asset_inspect', 'chooser_inspect', 'editor_cvar_get', 'editor_get_camera', 'foliage_capability_probe',
     'foliage_get_instance_count', 'foliage_scan_types', 'foliage_type_inspect', 'landscape_get_material',
     'landscape_inspect', 'landscape_layer_list', 'landscape_list', 'landscape_list_splines',
     'light_get', 'light_list', 'lighting_capability_probe', 'mesh_get_bounds',
     'mesh_get_lods', 'mesh_get_materials', 'mesh_get_sockets', 'niagara_component_inspect',
     'niagara_list_components', 'niagara_param_list', 'niagara_system_inspect', 'niagara_systems',
     'niagara_validate', 'object_exists', 'object_inspect', 'outliner_tree',
+    'pcg_get_node', 'pcg_inspect_instances', 'pcg_list_pins',
     'postprocess_get', 'postprocess_list_volumes', 'reflect_class', 'reflect_search_types',
     'selection_get', 'seq_inspect', 'seq_list', 'seq_list_bindings',
     'seq_validate', 'water_body_inspect', 'water_body_list', 'water_check_plugin',
@@ -251,6 +254,7 @@ describe('python read declarations (R-1)', () => {
     ['actor/actor-py-tools.ts', actorPyDescriptors],
     ['asset/asset-py-tools.ts', assetPyDescriptors],
     ['editor/editor-py-tools.ts', editorPyDescriptors],
+    ['chooser/chooser-inspect.ts', [chooserInspectDescriptor as unknown as PyToolDescriptor]],
     ['foliage/foliage-py-tools.ts', foliagePyDescriptors],
     ['landscape/landscape-py-tools.ts', landscapePyDescriptors],
     ['lighting/lighting-py-tools.ts', lightingPyDescriptors],
@@ -258,6 +262,7 @@ describe('python read declarations (R-1)', () => {
     ['niagara/niagara-py-tools.ts', niagaraPyDescriptors],
     ['sequencer/sequencer-py-tools.ts', sequencerPyDescriptors],
     ['water/water-py-tools.ts', waterPyDescriptors],
+    ['pcg/pcg-primitives.ts', pcgPyDescriptors],
   ];
   const all: PyToolDescriptor[] = byFile.flatMap(([, descriptors]) => descriptors);
 
@@ -288,7 +293,7 @@ describe('python read declarations (R-1)', () => {
 
   it('only the reviewed read tools declare read_only (a new one needs a reviewed entry here)', () => {
     expect(all.length).toBeGreaterThan(90);
-    expect(REVIEWED_READS).toHaveLength(47);
+    expect(REVIEWED_READS).toHaveLength(51);
     expect(all.filter((d) => d.readOnly === true).map((d) => d.name).sort()).toEqual(REVIEWED_READS);
   });
 
@@ -307,7 +312,7 @@ describe('python read declarations (R-1)', () => {
         .filter((m) => /\bmeta: readMeta,/.test(m[0]))
         .map((m) => /\bname: '([^']+)'/.exec(m[0])?.[1]);
     });
-    expect(readMetaNames).toHaveLength(49);
+    expect(readMetaNames).toHaveLength(53);
     expect(readMetaNames.sort()).toEqual([...REVIEWED_READS, ...UNDECLARED_ON_PURPOSE].sort());
   });
 
@@ -335,6 +340,7 @@ describe('python read declarations (R-1)', () => {
     expect(found['water/water-py-tools.ts']).toEqual(['_mark_dirty']);
     expect(found['niagara/niagara-py-tools.ts']).toEqual(['_apply_var']);
     expect(found['foliage/foliage-py-tools.ts']).toEqual(['_set']);
+    expect(found['pcg/pcg-primitives.ts']).toEqual(['_coerce']);
   });
 
   it('the factory declares read_only only for a read tool', async () => {

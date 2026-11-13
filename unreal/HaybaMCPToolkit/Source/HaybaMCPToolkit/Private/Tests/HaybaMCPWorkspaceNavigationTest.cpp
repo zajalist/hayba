@@ -12,16 +12,14 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FHaybaWorkspaceNavigationTest, "Hayba.MCP.Works
 bool FHaybaWorkspaceNavigationTest::RunTest(const FString&)
 {
     const TArray<EHaybaPanel> Destinations = SHaybaMCPMainPanel::RailDestinations();
-    TestEqual(TEXT("chat and world are the primary destinations"), Destinations.Num(), 2);
-    if (Destinations.Num() == 2)
+    TestEqual(TEXT("chat is the only primary destination"), Destinations.Num(), 1);
+    if (Destinations.Num() == 1)
     {
         TestTrue(TEXT("Chat first"), Destinations[0] == EHaybaPanel::Chat);
-        TestTrue(TEXT("World second"), Destinations[1] == EHaybaPanel::World);
     }
 
     for (EHaybaSection Section : { EHaybaSection::Chat,
                                    EHaybaSection::Slivers, EHaybaSection::ToolStream,
-                                   EHaybaSection::SceneMap,
                                    EHaybaSection::Diff, EHaybaSection::Validation,
                                    EHaybaSection::Memory,
                                    EHaybaSection::Settings })
@@ -74,7 +72,7 @@ bool FHaybaWorkspaceNavigationTest::RunTest(const FString&)
     const TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(TEXT("HaybaMCPToolkit"));
     TestTrue(TEXT("plugin found"), Plugin.IsValid());
     if (!Plugin.IsValid()) return false;
-    for (const TCHAR* Name : { TEXT("Chat"), TEXT("World"), TEXT("More") })
+    for (const TCHAR* Name : { TEXT("Chat"), TEXT("More") })
     {
         const FString Key = FString::Printf(TEXT("Hayba.Icon.Nav.%s"), Name);
         TestNotNull(*Key, FHaybaMCPStyle::GetBrush(*Key));

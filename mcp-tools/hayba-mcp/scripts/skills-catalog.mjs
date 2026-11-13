@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 // The small skill index is derived from SKILL.md frontmatter. A model sees the
 // index first and reads one body with `show`; no skill body enters every prompt.
 import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
@@ -166,7 +165,7 @@ function main(argv) {
     return;
   }
   if (command === 'validate') {
-    if (!existsSync(options.catalogPath) || readFileSync(options.catalogPath, 'utf8') !== json) {
+    if (!existsSync(options.catalogPath) || readFileSync(options.catalogPath, 'utf8').replace(/\r\n/g, '\n') !== json) {
       process.stderr.write('catalog.json is stale; run node scripts/skills-catalog.mjs index --write\n');
       process.exitCode = 1;
       return;

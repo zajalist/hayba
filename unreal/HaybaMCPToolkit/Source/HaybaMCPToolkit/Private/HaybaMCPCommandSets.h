@@ -66,6 +66,7 @@ namespace HaybaMCPCommandSets
 		static const TSet<FString> Set = {
 			// docs and the asset registry
 			TEXT("docs_search"), TEXT("docs_lookup_api"), TEXT("docs_lookup_class"),
+			TEXT("fab_search"), TEXT("fab_search_status"),
 			TEXT("asset_search"), TEXT("asset_registry_query"), TEXT("asset_get_info"), TEXT("asset_get_dependencies"),
 			TEXT("asset_get_referencers"), TEXT("asset_get_references"), TEXT("asset_browse"),
 			// plain reads

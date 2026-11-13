@@ -12,6 +12,7 @@
 #include "HaybaMCPMainPanel.h"
 #include "HaybaMCPStyle.h"
 #include "Slate/SHaybaActivityCard.h"
+#include "Slate/SHaybaChatTranscript.h"
 #include "HaybaMCPSettings.h"
 #include "HaybaMCPWizardPrompt.h"
 
@@ -49,6 +50,7 @@
 #include "Styling/AppStyle.h"
 #include "HttpModule.h"
 #include "Interfaces/IHttpResponse.h"
+#include "GenericPlatform/GenericPlatformHttp.h"
 
 #define LOCTEXT_NAMESPACE "HaybaMCPToolkit"
 
@@ -670,8 +672,30 @@ void SHaybaMCPChatPanel::Construct(const FArguments&, FHaybaMCPModule* InModule)
         ]
 
         // Keep the composer as the only persistent bottom control.
-        + SVerticalBox::Slot().AutoHeight().Padding(12.f, 8.f, 12.f, 12.f)
-        [ BuildInput() ]
+        + SVerticalBox::Slot().AutoHeight().Padding(12.f, 8.f, 12.f, 0.f)
+        [ SNew(SBox).Visibility_Lambda([this]() { return IsWebWorkspaceReady() ? EVisibility::Collapsed : EVisibility::Visible; })
+            [ BuildInput() ] ]
+        + SVerticalBox::Slot().AutoHeight().Padding(18.f, 6.f, 18.f, 10.f)
+        [ SNew(SHorizontalBox)
+            .Visibility_Lambda([this]() { return IsWebWorkspaceReady() ? EVisibility::Collapsed : EVisibility::Visible; })
+            + SHorizontalBox::Slot().FillWidth(1.f)
+            [ SNew(STextBlock)
+                .Text_Lambda([this]()
+                {
+                    return WebTranscript.IsValid() && WebTranscript->HasFailed()
+                        ? LOCTEXT("BasicTranscript", "Basic chat view")
+                        : bAwaitingPlanApproval ? LOCTEXT("ReviewRequired", "Review required")
+                        : WorkMode == TEXT("explore") ? LOCTEXT("ReadOnlyMode", "Read-only access")
+                        : LOCTEXT("ApprovalMode", "Changes need approval");
+                })
+                .Font(FHaybaMCPStyle::Font(9))
+                .ColorAndOpacity(FHaybaMCPStyle::Colour(TEXT("Hayba.Color.Text.Muted"))) ]
+            + SHorizontalBox::Slot().AutoWidth()
+            [ SNew(STextBlock).Text(LOCTEXT("ComposerKeys", "Shift+Enter for a new line"))
+                .Visibility_Lambda([this]() { return GetCachedGeometry().GetLocalSize().X >= 420.f
+                    ? EVisibility::Visible : EVisibility::Collapsed; })
+                .Font(FHaybaMCPStyle::Font(9))
+                .ColorAndOpacity(FHaybaMCPStyle::Colour(TEXT("Hayba.Color.Text.Muted"))) ] ]
     ];
 
     RebuildChat();
@@ -684,6 +708,18 @@ void SHaybaMCPChatPanel::Tick(const FGeometry& Geometry, double Time, float Delt
     SCompoundWidget::Tick(Geometry, Time, Delta);
     const FString CurrentId = Module ? Module->PendingExternalPlanId : FString();
     if (CurrentId != DisplayedExternalPlanId) RebuildExternalProposal();
+    if (WebTranscript.IsValid() && WebTranscript->HasFailed() && !ContextReferences.IsEmpty())
+    {
+        for (const FContextReference& Reference : ContextReferences) AppendToInput(Reference.Path);
+        ContextReferences.Empty();
+    }
+    Tick3DJobs(FPlatformTime::Seconds());
+    TickChildAgents(FPlatformTime::Seconds());
+    if (Time - LastTranscriptUpdate >= 0.1)
+    {
+        LastTranscriptUpdate = Time;
+        UpdateWebTranscript();
+    }
 }
 
 void SHaybaMCPChatPanel::RebuildExternalProposal()
@@ -780,6 +816,7 @@ void SHaybaMCPChatPanel::RebuildExternalProposal()
 
 SHaybaMCPChatPanel::~SHaybaMCPChatPanel()
 {
+    CancelAllChildAgents();
     InvalidateCurrentChatNativeApproval();
     InspectGeneration.Invalidate();
     if (ModelDiscoveryClient.IsValid()) ModelDiscoveryClient->Cancel();
@@ -865,12 +902,21 @@ TSharedRef<SWidget> SHaybaMCPChatPanel::BuildRecentSessionsMenu()
                 !bIsStreaming && !bAwaitingPlanApproval && !bLoadingSession)
         ];
     }
+    if (HistoryOffset > 0)
+        Items->AddSlot().AutoHeight()
+        [ FHaybaMCPStyle::PopupRow(LOCTEXT("PreviousRecent", "Previous conversations"), FOnClicked::CreateLambda([this]()
+            { HistoryOffset = FMath::Max(0, HistoryOffset - 50); RefreshRecentSessions(); return FReply::Handled(); })) ];
+    if (bHistoryHasMore)
+        Items->AddSlot().AutoHeight()
+        [ FHaybaMCPStyle::PopupRow(LOCTEXT("NextRecent", "More conversations"), FOnClicked::CreateLambda([this]()
+            { HistoryOffset = HistoryNextOffset; RefreshRecentSessions(); return FReply::Handled(); })) ];
     Items->AddSlot().AutoHeight().Padding(0.f, 7.f, 0.f, 0.f)
     [
         FHaybaMCPStyle::PopupRow(LOCTEXT("RefreshRecent", "Refresh conversations"),
             FOnClicked::CreateLambda([this]()
             {
                 if (TaskSwitcherButton.IsValid()) TaskSwitcherButton->SetIsOpen(false);
+                HistoryQuery.Empty(); HistoryOffset = 0;
                 RefreshRecentSessions();
                 return FReply::Handled();
             }))
@@ -880,16 +926,24 @@ TSharedRef<SWidget> SHaybaMCPChatPanel::BuildRecentSessionsMenu()
 
 void SHaybaMCPChatPanel::RefreshRecentSessions()
 {
+    bTranscriptDirty = true;
+    const uint64 RequestGeneration = ++HistoryRequestGeneration;
     RecentSessionsStatus = TEXT("Refreshing conversations…");
+    FString Base;
+    if (!FHaybaMCPModelDiscoveryClient::TryCanonicalLoopbackBase(FHaybaMCPSettings::Get().SidecarURL, Base))
+    { RecentSessionsStatus = TEXT("Conversation history requires a local Hayba sidecar."); return; }
     TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();
-    Request->SetURL(FHaybaMCPSettings::Get().SidecarURL / TEXT("chat/sessions"));
+    Request->SetURL(Base / TEXT("chat/sessions?q=") + FGenericPlatformHttp::UrlEncode(HistoryQuery) +
+        TEXT("&limit=50&offset=") + FString::FromInt(HistoryOffset));
     Request->SetVerb(TEXT("GET"));
+    Request->SetTimeout(10.f);
     TWeakPtr<SHaybaMCPChatPanel> WeakSelf = SharedThis(this);
-    Request->OnProcessRequestComplete().BindLambda([WeakSelf](FHttpRequestPtr, FHttpResponsePtr Response, bool bConnected)
+    Request->OnProcessRequestComplete().BindLambda([WeakSelf, RequestGeneration](FHttpRequestPtr, FHttpResponsePtr Response, bool bConnected)
     {
         TSharedPtr<SHaybaMCPChatPanel> Self = WeakSelf.Pin();
-        if (!Self.IsValid()) return;
-        if (!bConnected || !Response.IsValid() || Response->GetResponseCode() != 200)
+        if (!Self.IsValid() || RequestGeneration != Self->HistoryRequestGeneration) return;
+        Self->bTranscriptDirty = true;
+        if (!bConnected || !Response.IsValid() || Response->GetResponseCode() != 200 || Response->GetContent().Num() > 512 * 1024)
         {
             Self->RecentSessionsStatus = TEXT("Could not refresh conversations.");
             return;
@@ -919,6 +973,14 @@ void SHaybaMCPChatPanel::RefreshRecentSessions()
             Loaded.Add(MoveTemp(Recent));
         }
         Self->RecentSessions = MoveTemp(Loaded);
+        Self->HistoryTotal = Self->RecentSessions.Num();
+        double Total = 0, Next = 0;
+        if (Root->TryGetNumberField(TEXT("total"), Total) && FMath::IsFinite(Total) && Total >= 0 && Total <= MAX_int32)
+            Self->HistoryTotal = int32(Total);
+        Self->bHistoryHasMore = false;
+        Root->TryGetBoolField(TEXT("has_more"), Self->bHistoryHasMore);
+        Self->HistoryNextOffset = Root->TryGetNumberField(TEXT("next_offset"), Next) && Next >= 0 && Next <= MAX_int32
+            ? int32(Next) : Self->HistoryOffset + Self->RecentSessions.Num();
         Self->RecentSessionsStatus.Empty();
     });
     if (!Request->ProcessRequest()) RecentSessionsStatus = TEXT("Could not start conversation refresh.");
@@ -932,6 +994,7 @@ void SHaybaMCPChatPanel::OpenSavedSession(const FString& SavedId)
     TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();
     Request->SetURL(FHaybaMCPSettings::Get().SidecarURL / TEXT("chat/sessions") / SavedId);
     Request->SetVerb(TEXT("GET"));
+    Request->SetTimeout(15.f);
     TWeakPtr<SHaybaMCPChatPanel> WeakSelf = SharedThis(this);
     Request->OnProcessRequestComplete().BindLambda([WeakSelf, SavedId](FHttpRequestPtr, FHttpResponsePtr Response, bool bConnected)
     {
@@ -997,7 +1060,11 @@ void SHaybaMCPChatPanel::OpenSavedSession(const FString& SavedId)
                 Main->ShowPanel(EHaybaPanel::Chat);
         }
     });
-    Request->ProcessRequest();
+    if (!Request->ProcessRequest())
+    {
+        PendingSessionId.Empty(); bLoadingSession = false;
+        AddSystemError(TEXT("Could not start loading the saved conversation. Your draft is saved."), FString());
+    }
 }
 
 // ── Chat scroll ───────────────────────────────────────────────────────────
@@ -1012,7 +1079,7 @@ TSharedRef<SWidget> SHaybaMCPChatPanel::BuildChatArea()
             // scrolled back to the bottom themselves.
             if (IsScrolledNearBottom()) UnseenWhileScrolledUp = 0;
         });
-    return SNew(SOverlay)
+    TSharedRef<SWidget> NativeTranscript = SNew(SOverlay)
         + SOverlay::Slot().Padding(FMargin(16.f, 10.f, 16.f, 8.f))
         [ ChatScrollBox.ToSharedRef() ]
         + SOverlay::Slot().HAlign(HAlign_Center).VAlign(VAlign_Center)
@@ -1023,6 +1090,18 @@ TSharedRef<SWidget> SHaybaMCPChatPanel::BuildChatArea()
                 ? EVisibility::Visible : EVisibility::Collapsed; })
             [ BuildEmptyState() ]
         ];
+    return SNew(SOverlay)
+        + SOverlay::Slot()
+        [ SAssignNew(WebTranscript, SHaybaChatTranscript)
+            .Visibility_Lambda([this]() { return WebTranscript.IsValid() && WebTranscript->HasFailed()
+                ? EVisibility::Collapsed : WebTranscript.IsValid() && WebTranscript->IsReady()
+                    ? EVisibility::Visible : EVisibility::HitTestInvisible; })
+            .OnAction(FOnHaybaTranscriptAction::CreateSP(this, &SHaybaMCPChatPanel::HandleTranscriptAction)) ]
+        + SOverlay::Slot()
+        [ SNew(SBorder).BorderImage(FHaybaMCPStyle::GetBrush(TEXT("Hayba.Brush.Dock"))).Padding(0.f)
+            .Visibility_Lambda([this]() { return WebTranscript.IsValid() && WebTranscript->IsReady()
+                ? EVisibility::Collapsed : EVisibility::Visible; })
+            [ NativeTranscript ] ];
 }
 
 // ── Input area (inline send / stop, Q7-a) ─────────────────────────────────
@@ -1043,10 +1122,11 @@ TSharedRef<SWidget> SHaybaMCPChatPanel::BuildInput()
                     .AutoWrapText(true)
                     .Padding(FMargin(2.f, 2.f))
                     .Font(FHaybaMCPStyle::Font(13))
+                    .OnTextChanged_Lambda([this](const FText&) { ++DraftRevision; bTranscriptDirty = true; })
                     .HintText_Lambda([this]() { return bAwaitingPlanApproval
-                        ? LOCTEXT("InputAwait", "Review the proposed action above to continue.")
+                        ? LOCTEXT("InputAwait", "Draft a follow-up while you review…")
                         : bIsStreaming ? LOCTEXT("InputNext", "Draft your next message…")
-                        : LOCTEXT("InputPrompt", "Ask Hayba…"); })
+                        : LOCTEXT("InputPrompt", "Ask Hayba, or describe a change…"); })
                     // Keep the draft editable while a turn runs or approval is
                     // pending. OnSendCurrentInput owns the submission gate and
                     // leaves a blocked draft intact.
@@ -1108,9 +1188,7 @@ TSharedRef<SWidget> SHaybaMCPChatPanel::BuildInput()
                         [ SNew(SHorizontalBox)
                             + SHorizontalBox::Slot().FillWidth(1.f).VAlign(VAlign_Center)
                             [ SNew(STextBlock)
-                                .Text_Lambda([this]() { return FText::FromString(IsSubscriptionModel()
-                                    ? TEXT("Hayba Pro") : EffectiveModelId().IsEmpty()
-                                        ? TEXT("Choose model") : EffectiveModelId()); })
+                                .Text_Lambda([this]() { return FText::FromString(ModelDisplayName()); })
                                 .Font(FHaybaMCPStyle::Font(11))
                                 .OverflowPolicy(ETextOverflowPolicy::Ellipsis)
                                 .ColorAndOpacity(FHaybaMCPStyle::Colour(TEXT("Hayba.Color.Text.Secondary"))) ]
@@ -1177,6 +1255,17 @@ TSharedRef<SWidget> SHaybaMCPChatPanel::BuildInput()
                         .OnClicked(this, &SHaybaMCPChatPanel::OnTryUnverifiedCredential) ] ]
             ]
         ];
+}
+
+FString SHaybaMCPChatPanel::ModelDisplayName() const
+{
+    if (IsSubscriptionModel()) return TEXT("Hayba Pro");
+    if (const FHaybaMCPDiscoveredModel* Model = SelectedDiscoveredModel())
+        if (!Model->Name.IsEmpty()) return Model->Name;
+    const FString Id = EffectiveModelId();
+    if (Id == TEXT("claude-opus-4-6")) return TEXT("Claude Opus 4.6");
+    if (Id == TEXT("claude-sonnet-4-6")) return TEXT("Claude Sonnet 4.6");
+    return Id.IsEmpty() ? TEXT("Choose model") : Id;
 }
 
 TSharedRef<SWidget> SHaybaMCPChatPanel::BuildWorkModeMenu()
@@ -1250,6 +1339,17 @@ bool SHaybaMCPChatPanel::HasEffortChoices() const
     });
 }
 
+TArray<FString> SHaybaMCPChatPanel::AvailableReasoningEfforts() const
+{
+    TArray<FString> Values;
+    Values.Add(FString());
+    if (IsProLoopActive()) return Values;
+    if (const FHaybaMCPDiscoveredModel* Model = SelectedDiscoveredModel())
+        for (const FString& Effort : Model->ReasoningEfforts)
+            if (SupportsReasoningEffort(FHaybaMCPSettings::Get().SelectedProviderId, Effort)) Values.Add(Effort);
+    return Values;
+}
+
 TSharedRef<SWidget> SHaybaMCPChatPanel::BuildModelMenu()
 {
     ModelSearch.Empty();
@@ -1300,6 +1400,7 @@ TSharedRef<SWidget> SHaybaMCPChatPanel::BuildModelMenu()
 
 void SHaybaMCPChatPanel::RefreshModelMenuItems()
 {
+    bTranscriptDirty = true;
     if (!ModelMenuItems.IsValid()) return;
     ModelMenuItems->ClearChildren();
     auto AddNote = [this](const FText& Note)
@@ -1371,6 +1472,7 @@ FReply SHaybaMCPChatPanel::OnSetModel(const FString& ModelId)
     RestoredProviderId.Empty();
     Settings.Model = ModelId;
     Settings.Save();
+    bTranscriptDirty = true;
     if (ModelButton.IsValid()) ModelButton->SetIsOpen(false);
     return FReply::Handled();
 }
@@ -1421,6 +1523,7 @@ TSharedRef<SWidget> SHaybaMCPChatPanel::BuildEffortMenu()
 
 FReply SHaybaMCPChatPanel::OnSetEffort(const FString& Effort)
 {
+    bTranscriptDirty = true;
     if (bIsStreaming || bAwaitingPlanApproval || !HasEffortChoices()) return FReply::Handled();
     const FHaybaMCPDiscoveredModel* Model = SelectedDiscoveredModel();
     if (Effort.IsEmpty() || (Model && Model->ReasoningEfforts.Contains(Effort) &&
@@ -1474,7 +1577,7 @@ bool SHaybaMCPChatPanel::AppendToInput(const FString& Addition)
     Existing += Addition;
 
     InputBox->SetText(FText::FromString(Existing));
-    if (FSlateApplication::IsInitialized())
+    if (!IsWebWorkspaceReady() && FSlateApplication::IsInitialized())
     {
         FSlateApplication::Get().SetKeyboardFocus(InputBox);
     }
@@ -1520,6 +1623,11 @@ FReply SHaybaMCPChatPanel::OnDrop(const FGeometry& /*MyGeometry*/, const FDragDr
 
     if (Refs.Num() == 0) return FReply::Unhandled();
 
+    if (IsWebWorkspaceReady())
+    {
+        for (const FString& Ref : Refs) AddContextReference(Ref, Ref.StartsWith(TEXT("/Game/")) ? TEXT("asset") : TEXT("file"));
+        return FReply::Handled();
+    }
     const bool bAppended = AppendToInput(FString::Join(Refs, TEXT(" ")));
     if (bAppended)
     {
@@ -1659,7 +1767,7 @@ FReply SHaybaMCPChatPanel::RestoreRetryPrompt()
         return FReply::Handled();
     }
     InputBox->SetText(FText::FromString(RetryPromptText));
-    if (FSlateApplication::IsInitialized()) FSlateApplication::Get().SetKeyboardFocus(InputBox);
+    if (!IsWebWorkspaceReady() && FSlateApplication::IsInitialized()) FSlateApplication::Get().SetKeyboardFocus(InputBox);
     RetryPromptText.Empty();
     RetryMessageIndex = INDEX_NONE;
     RebuildChat();
@@ -1668,6 +1776,7 @@ FReply SHaybaMCPChatPanel::RestoreRetryPrompt()
 
 void SHaybaMCPChatPanel::RebuildChat()
 {
+    bTranscriptDirty = true;
     if (!ChatScrollBox.IsValid()) return;
     // Messages append within a session. Only an empty placeholder is removed;
     // a new/restored session clears this cache through OnNewConversation.
@@ -1744,6 +1853,7 @@ bool SHaybaMCPChatPanel::IsScrolledNearBottom() const
 
 EVisibility SHaybaMCPChatPanel::GetNewMessagesChipVisibility() const
 {
+    if (WebTranscript.IsValid() && WebTranscript->IsReady()) return EVisibility::Collapsed;
     return UnseenWhileScrolledUp > 0 ? EVisibility::Visible : EVisibility::Collapsed;
 }
 
@@ -1757,7 +1867,7 @@ FReply SHaybaMCPChatPanel::OnSendOrStop()
 
 FReply SHaybaMCPChatPanel::OnSendCurrentInput()
 {
-    if (!CanSend() || !InputBox.IsValid()) return FReply::Handled();
+    if (!CanSend() || bInspectInFlight || (Module && !Module->PendingExternalPlan.IsEmpty()) || !InputBox.IsValid()) return FReply::Handled();
     const bool bBypass = bAllowUnverifiedCredentialSendOnce;
     bAllowUnverifiedCredentialSendOnce = false;
     FString Text = InputBox->GetText().ToString().TrimStartAndEnd();
@@ -1765,9 +1875,13 @@ FReply SHaybaMCPChatPanel::OnSendCurrentInput()
     if (NeedsCredentialSetup() && !bBypass)
     {
         bCredentialSetupRequired = true;
+        bTranscriptDirty = true;
         return FReply::Handled();
     }
     bCredentialSetupRequired = false;
+    for (const FContextReference& Reference : ContextReferences)
+        Text += TEXT("\n\nContext reference: ") + Reference.Path;
+    ContextReferences.Empty();
 
     RetryPromptText.Empty();
     RetryMessageIndex = INDEX_NONE;
@@ -1821,6 +1935,15 @@ bool SHaybaMCPChatPanel::CanSend() const
 
 FReply SHaybaMCPChatPanel::OnNewConversation()
 {
+    CancelAllChildAgents();
+    DraftAck = 0;
+    ++DraftRevision;
+    ContextReferences.Empty();
+    ChildAgents.Empty();
+    ChildAgentsError.Empty();
+    bChildAgentsLoading = false;
+    NextChildAgentPoll = 0;
+    TranscriptGeneration = FGuid::NewGuid().ToString(EGuidFormats::Digits);
     InvalidateCurrentChatNativeApproval();
     InspectGeneration.Invalidate();
     bInspectInFlight = false;
@@ -2025,6 +2148,7 @@ void SHaybaMCPChatPanel::BeginInProgressBubble()
 
 void SHaybaMCPChatPanel::RefreshInProgressBubble()
 {
+    bTranscriptDirty = true;
     if (!Session.Messages.IsValidIndex(InProgressMessageIndex)) return;
 
     FString Composed = InProgressAssistantText;
@@ -2111,6 +2235,8 @@ void SHaybaMCPChatPanel::HandleActivityEvent(const FJsonObject& Event)
 
 FReply SHaybaMCPChatPanel::OnSetWorkMode(FString NewMode)
 {
+    if (bIsStreaming || bAwaitingPlanApproval || bLoadingSession || bInspectInFlight) return FReply::Handled();
+    bTranscriptDirty = true;
     if (NewMode == TEXT("explore") || NewMode == TEXT("draft") || NewMode == TEXT("production"))
         WorkMode = MoveTemp(NewMode);
     return FReply::Handled();
@@ -2264,6 +2390,7 @@ void SHaybaMCPChatPanel::HandlePlanRejected()
 
 void SHaybaMCPChatPanel::HandleStreamDone(const FHaybaChatDone& Done)
 {
+    NextChildAgentPoll = -1; // Request a final roster refresh after any in-flight poll.
     // A plan_request done leaves its exact native card available for review.
     // Every other terminal outcome retires any still-unused native token.
     if (!(bAwaitingPlanApproval && Done.Reason == TEXT("plan_request")))
@@ -2370,6 +2497,7 @@ void SHaybaMCPChatPanel::HandleStreamDone(const FHaybaChatDone& Done)
 
 void SHaybaMCPChatPanel::HandleStreamError(const FHaybaChatError& Error)
 {
+    NextChildAgentPoll = -1;
     InvalidateCurrentChatNativeApproval();
     if (bAwaitingPlanApproval)
     {

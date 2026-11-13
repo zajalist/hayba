@@ -144,6 +144,24 @@ describe('SessionStore', () => {
     expect(store.list()).toHaveLength(1);
   });
 
+  it('pages and searches cached metadata without reparsing transcripts, and updates the index on edits/deletion', () => {
+    const store = new SessionStore(directory);
+    for (let i = 0; i < 4; i++) { store.create(`thread_${i}`); store.append(`thread_${i}`, { messages: [{ role: 'user', content: i % 2 ? 'Find actors' : 'Find assets' }] }); }
+    const load = vi.spyOn(store, 'load');
+    const first = store.listPage({ q: 'ASSETS', limit: 1, offset: 0 });
+    expect(first).toMatchObject({ total: 2, has_more: true, next_offset: 1 });
+    expect(first.sessions).toHaveLength(1);
+    const second = store.listPage({ q: 'assets', limit: 1, offset: 1 });
+    expect(second).toMatchObject({ total: 2, has_more: false, next_offset: null });
+    expect(second.sessions[0].id).not.toBe(first.sessions[0].id);
+    expect(load).not.toHaveBeenCalled();
+    store.replaceMessages('thread_0', [{ role: 'user', content: 'Changed title' }]);
+    expect(store.listPage({ q: 'assets' }).total).toBe(1);
+    store.remove('thread_2');
+    expect(store.listPage({ q: 'assets' }).total).toBe(0);
+    expect(store.list()).toHaveLength(3);
+  });
+
   it('replaces message history through redaction while preserving activities, artifacts, and usage', () => {
     const store = new SessionStore(directory);
     const { id } = store.create();
