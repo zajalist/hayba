@@ -49,6 +49,9 @@ export const GRAPH_PATTERNS = `
 - Cluster nodes (Delaunay, Voronoi, etc.) output "Vtx" and "Edges" — not "Out".
 - Use validate_attribute_flow to check that custom attribute names are consistent across the graph before building.
 - Use initiate_infrastructure_brainstorm BEFORE building complex multi-subgraph systems — never create graphs without a user-approved approach.
+- Static Mesh Spawner: "MeshSelectorType" / "InstanceDataPackerType" take a class name (e.g. "PCGMeshSelectorByAttribute");
+  "MeshSelectorParameters" / "InstanceDataPackerParameters" take an object of that instance's fields, e.g.
+  {"AttributeName": "Asset", "TemplateDescriptor": {"InstanceEndCullDistance": 20000, "bCastShadow": false}}.
 `;
 
 export function getGraphPatterns(): string {
