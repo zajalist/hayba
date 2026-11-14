@@ -674,12 +674,28 @@ FHaybaHandlerResult FHaybaMCPEditorHandler::RunConsoleCommand(const TSharedPtr<F
     if (!GEngine)
         return FHaybaHandlerResult::Err(TEXT("editor_run_console_command: GEngine not available"));
 
-    UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
+    // auto = the PIE world while Play-In-Editor runs, else the editor world: the choice the editor's own console
+    // makes (FConsoleCommandExecutor::ExecInternal). Always passing the editor world left world-aware commands
+    // (FAutoConsoleCommandWithWorld*) blind to a running game.
+    FString Target = TEXT("auto");
+    P->TryGetStringField(TEXT("world"), Target);
+    Target = Target.ToLower();
+    if (Target != TEXT("auto") && Target != TEXT("pie") && Target != TEXT("editor"))
+        return FHaybaHandlerResult::Err(TEXT("editor_run_console_command: world must be auto, pie or editor. Nothing was executed."));
+    // With several PIE instances PlayWorld is the last PIE world context (UEditorEngine::Tick leaves it there).
+    UWorld* World = GEditor && Target != TEXT("editor") ? GEditor->PlayWorld.Get() : nullptr;
+    if (!World && Target == TEXT("pie"))
+        return FHaybaHandlerResult::Err(TEXT("editor_run_console_command: world \"pie\" was asked for but no Play-In-Editor session is running. Nothing was executed."));
+    if (!World && GEditor) World = GEditor->GetEditorWorldContext().World();
     GEngine->Exec(World, *Command, *GLog);
 
     TSharedPtr<FJsonObject> Result = MakeShareable(new FJsonObject());
     Result->SetStringField(TEXT("command"), Command);
     Result->SetBoolField(TEXT("executed"), true);
+    const FWorldContext* Context = World ? GEngine->GetWorldContextFromWorld(World) : nullptr;
+    const bool bPie = Context && Context->WorldType == EWorldType::PIE;
+    Result->SetStringField(TEXT("world"), bPie ? TEXT("pie") : TEXT("editor"));
+    if (bPie) Result->SetNumberField(TEXT("pie_instance"), Context->PIEInstance);
     return FHaybaHandlerResult::Ok(Result);
 }
 
