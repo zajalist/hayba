@@ -38,6 +38,10 @@ export const GRAPH_PATTERNS = `
 - The None-None type compatibility check can cause false validation errors for param-type pins
   (heuristics, blend ops, goal pickers) — these are safe to ignore; the UE validator has a guard.
 
+## Graph Settings
+- Graph-level settings go in "graphSettings" at the graph root, by property name, e.g.
+  {"bUseHierarchicalGeneration": true, "HiGenGridSize": "Grid256", "HiGenGridSizeMultiplier": 1}.
+
 ## Node Positions (UE5 coordinate system)
 - NodePosX and NodePosY must be integers.
 - Origin is top-left; positive Y is downward (NOT upward).
