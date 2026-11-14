@@ -8,7 +8,7 @@
 
 Inspect, plan, build, and validate Unreal Engine worlds through MCP. Native editor checks keep agent work accountable to the state of the project.
 
-**[Install Hayba 0.4.1 on Windows with Unreal Engine 5.9, step by step](INSTALL.md)**
+**[Install Hayba 0.4.3 on Windows with Unreal Engine 5.9, step by step](INSTALL.md)**
 
 [Explore the architecture](docs/ARCHITECTURE.md) | [Browse the tools](docs/wiki/) | [Changelog](CHANGELOG.md) | [Contribute](CONTRIBUTING.md)
 
@@ -16,7 +16,7 @@ Inspect, plan, build, and validate Unreal Engine worlds through MCP. Native edit
 
 Hayba connects MCP-capable agents to Unreal Editor. It gives them a wide tool library, a focused in-editor workspace, and a native safety boundary for changes to a shared project.
 
-> **Release status:** `v0.4.1` is the latest release. It is tested on Unreal Engine 5.9 (5.7 and 5.8 may work but were not tested for this release) and ships the new editor workspace, multi-agent editor leases and the editor safety train. See the [changelog](CHANGELOG.md) and [versioning](docs/VERSIONING.md).
+> **Release status:** `v0.4.3` is the latest release. It is tested on Unreal Engine 5.9 (5.7 and 5.8 may work but were not tested for this release) and ships the in-editor Chat workspace, the standalone Hayba app that serves the same HTML, multi-agent editor leases and the editor safety train. See the [changelog](CHANGELOG.md) and [versioning](docs/VERSIONING.md).
 
 <table>
   <tr>
@@ -76,7 +76,7 @@ The next layer will use that evidence to compare scene composition and productio
 **[Follow the step-by-step install guide](INSTALL.md).** It covers every click and command, how to check each part works, and a troubleshooting table. The short version, in PowerShell:
 
 ```powershell
-git clone --branch v0.4.1 https://github.com/zajalist/hayba.git C:\Tools\hayba
+git clone --branch v0.4.3 https://github.com/zajalist/hayba.git C:\Tools\hayba
 Set-Location C:\Tools\hayba; npm install; npm run build
 $Project = "C:\path\to\YourProject"   # the folder with your .uproject
 New-Item -ItemType Directory -Force "$Project\Plugins"

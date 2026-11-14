@@ -5,6 +5,7 @@ import { extname, join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { existsSync } from 'node:fs';
 import { registerApiRoutes } from './api.js';
+import { registerGeneration3DRoutes } from '../generation3d/routes.js';
 import { installExpressJsonRedaction } from '../security/secret-redaction.js';
 import { installHttpErrorBoundary } from '../http/express-boundary.js';
 
@@ -20,14 +21,7 @@ export interface DashboardAppOptions {
 }
 
 function detectStaticDir(): string | null {
-  // Auto-detect: standalone (../../dashboard) or bundled (../../../dashboard).
-  const candidates = [
-    join(__dirname, '..', '..', 'dashboard', 'dist'),
-    join(__dirname, '..', '..', 'dashboard'),
-    join(__dirname, '..', '..', '..', 'dashboard', 'dist'),
-    join(__dirname, '..', '..', '..', 'dashboard'),
-  ];
-  return candidates.find((candidate) => existsSync(candidate)) ?? null;
+  return null;
 }
 
 function isSpaNavigation(path: string): boolean {
@@ -56,6 +50,7 @@ export function createDashboardApp(options: DashboardAppOptions = {}): express.E
       }),
     );
   }
+  registerGeneration3DRoutes(app);
   app.use(express.json({ limit: '50mb', strict: true }));
 
   (options.registerRoutes ?? registerApiRoutes)(app);

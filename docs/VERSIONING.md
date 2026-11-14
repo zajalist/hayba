@@ -36,7 +36,8 @@ release candidates of that version:
 
 The 0.4 line was released as **0.4.1** (`v0.4.1`), which adds Unreal
 Engine 5.9 support and the multi-agent lease work to the safety train; no
-plain `v0.4.0` tag was cut.
+plain `v0.4.0` tag was cut. **0.4.3** (`v0.4.3`) is the in-editor Chat
+workspace plus the standalone app that serves the same HTML.
 
 The first installer release is **0.5.0**.
 

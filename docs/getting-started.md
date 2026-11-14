@@ -1,5 +1,7 @@
 # Getting started
 
+For teammates connecting an Unreal project to Claude Code or Claude Desktop, use the [team setup guide](team-setup.md).
+
 New to Hayba? The [step-by-step install guide](../INSTALL.md) is the
 simplest path (Windows, Unreal Engine 5.9). This page is the shorter
 developer version, plus the optional add-ons.
@@ -8,7 +10,7 @@ developer version, plus the optional add-ons.
 
 - **Node.js ≥ 22.5** (see [`.nvmrc`](../.nvmrc); the codebase uses
   `node:sqlite`)
-- **Unreal Engine 5.9** on Windows (5.7 and 5.8 were not tested for 0.4.1), and **Visual Studio with the C++ toolchain your Unreal Engine version requires** (to build the plugin)
+- **Unreal Engine 5.9** on Windows (5.7 and 5.8 were not tested for 0.4.3), and **Visual Studio with the C++ toolchain your Unreal Engine version requires** (to build the plugin)
 - Python 3.10+ and [`uv`](https://docs.astral.sh/uv/) (only for the
   optional visual sidecar, Tier 2)
 
@@ -41,7 +43,7 @@ Visual Studio project files and recompile:
 mklink /D "<YourProject>\Plugins\HaybaMCPToolkit" "<repo>\unreal\HaybaMCPToolkit"
 ```
 
-The link lets the plugin find the MCP server built in Step 1. If you copy the plugin instead, set `SidecarEntryPath` under `[HaybaMCPToolkit]` in `<YourProject>/Saved/Config/WindowsEditor/EditorPerProjectUserSettings.ini` to the full path of `mcp-tools/hayba-mcp/dist/index.js`.
+Make the built chat server available to the installed plugin by running `./tools/link-chat-sidecar.ps1 -Project '<YourProject>/YourGame.uproject'` from this checkout. This also works for a copied plugin; keep the checkout in place. Alternatively, set `SidecarEntryPath` under `[HaybaMCPToolkit]` in `<YourProject>/Saved/Config/WindowsEditor/EditorPerProjectUserSettings.ini` to the full path of `mcp-tools/hayba-mcp/dist/index.js` while the editor is closed.
 See the [plugin README](../unreal/HaybaMCPToolkit/README.md).
 
 ## Step 3 — Register the server with your agent host

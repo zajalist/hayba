@@ -23,6 +23,7 @@ import { createBrainConnector } from '../brain/brain-connector.js';
 import { registerBrainRoutes } from '../brain/brain-routes.js';
 import { HAYBA_VERSION } from '../version.js';
 import { jsonObjectBody, stringQuery } from '../http/express-boundary.js';
+import { registerWorkspaceRoutes } from '../standalone/routes.js';
 
 /**
  * Register REST API endpoints for the dashboard.
@@ -34,6 +35,7 @@ export function registerApiRoutes(app: Express): void {
   const brain = createBrainConnector({ brainUrl: config.brainUrl, clientVersion: HAYBA_VERSION });
   registerBrainRoutes(app, brain);
   registerChatRoutes(app, { brain });
+  registerWorkspaceRoutes(app, { chatBase: () => `http://127.0.0.1:${config.dashboardPort}` });
 
   // Server health
   app.get('/api/health', (_req: Request, res: Response) => {

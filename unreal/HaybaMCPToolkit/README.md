@@ -7,7 +7,7 @@ protocol across two language boundaries — see [`docs/ARCHITECTURE.md`](../../d
 and [`CONTEXT.md`](../../CONTEXT.md).
 
 - **Plugin:** `HaybaMCPToolkit` · Editor module · `LoadingPhase: PostEngineInit`
-- **Engine:** UE 5.9 (5.7 and 5.8 not tested for 0.4.1) · depends on the `PCG` plugin
+- **Engine:** UE 5.9 (5.7 and 5.8 not tested for 0.4.3) · depends on the `PCG` plugin
 - **Version:** see `HaybaMCPToolkit.uplugin`
 
 ## Install
@@ -25,16 +25,62 @@ files, and rebuild (Windows; UE 5.9; Visual Studio with the C++ toolchain your U
 mklink /D "<YourProject>\Plugins\HaybaMCPToolkit" "<repo>\unreal\HaybaMCPToolkit"
 ```
 
-The link lets the plugin find the built MCP server. If you copy the plugin instead, set `SidecarEntryPath` under `[HaybaMCPToolkit]` in `<YourProject>/Saved/Config/WindowsEditor/EditorPerProjectUserSettings.ini` to the full path of `mcp-tools/hayba-mcp/dist/index.js`.
+To make the chat server available to either a copied or linked plugin, run this from the checkout after `npm run build:server -w @hayba/mcp`:
+
+```powershell
+./tools/link-chat-sidecar.ps1 -Project 'P:/YourGame/YourGame.uproject'
+```
+
+This creates a junction at the plugin's `ThirdParty/mcp_server`, including the server's dependencies. Keep the checkout in place. It refuses to overwrite an existing server installation. New plugin builds start a stopped sidecar when you send a message and wait for its health check; older builds need an editor restart after linking. Chat retains the message if startup fails. An unrelated HTTP service is never treated as a chat server.
+
+Alternatively, set `SidecarEntryPath` under `[HaybaMCPToolkit]` in `<YourProject>/Saved/Config/WindowsEditor/EditorPerProjectUserSettings.ini` to the full path of `mcp-tools/hayba-mcp/dist/index.js` while the editor is closed.
 
 Build artifacts (`Binaries/`, `Intermediate/`, `Saved/`, `DerivedDataCache/`,
 `.vs/`) are intentionally **not** tracked — UBT regenerates them.
 
-The in-editor workspace has Agent, World, and Library destinations, plus a
-Settings gear. Agent owns the conversation and inline tool/approval activity;
-World combines the loaded-actor scene map with findings; Library groups asset
-profiles and recipes. The Agent composer starts in Explore mode, which exposes
-read-only tools. Draft and Production retain exact-call approval for edits.
+The in-editor workspace opens directly into Chat. More contains Activity
+(live calls, changes and checks), Subagents, Connections, Settings and keyboard help. The World/semantic-map tab has
+been removed; world inspection remains available through chat and agent tools.
+The composer starts in Inspect mode with read-only access. Draft and Production
+retain exact-call approval for edits.
+
+Chat renders its complete workspace from bundled `Resources/chat` HTML/CSS/JavaScript
+inside Unreal's existing WebBrowser module, including history, searchable model
+menus, effort/access controls, context attachments and the composer. Native Slate
+owns execution, session state, credential entry and exact-operation review. The
+page has no network access or API keys and accepts only a native state projection.
+A document-scoped, allowlisted bridge routes user actions back to existing handlers.
+Missing resources, browser errors or an eight-second startup timeout restore the
+full native interface without discarding the conversation or draft.
+Package `Resources/chat`, `Resources/Fonts` and `Resources/HaybaLogo.svg` with
+the plugin; there is no separate frontend server or build step.
+
+The navigator groups searchable Threads, This chat and Agents. Thread metadata
+is searched/paged on the sidecar (50 per page); the conversation renders at most
+80 messages at once and can jump directly to matching turns. Whole transcripts
+still load from JSON. The main agent calls `delegate_task` when a separate inspection
+helps, then receives the findings automatically. Delegated work appears inline;
+Agents is a viewer, not a manual task launcher. Read-only children have independent
+context, tool traces, cancel controls and retained findings; they cannot edit or
+recursively delegate.
+Community API sessions are supported, with three active children per parent,
+two-minute execution limits and the latest 30 bounded summaries retained.
+
+Create media connects Meshy, Tripo and Aholo/Lux3D for models, fal.ai for video,
+and World Labs for splat worlds through the local sidecar. Keys are
+entered in a native password dialog and saved in the existing DPAPI vault; every
+credential-bearing request first checks the sidecar's identity. Generations use
+provider credits only when explicitly submitted. Meshy texture refinement is a
+separate paid action. Jobs and result links stay in the current tab; polling stops
+after ten minutes. Open results or add them to a chat draft for import review.
+Fal key storage remains explicitly unverified until a real generation; no paid
+probe is performed merely to connect. The UI does not automatically download or
+import media. Provider contracts and
+limits are documented in `mcp-tools/hayba-mcp/src/generation3d/README.md`.
+
+For browser UI testing, run `node tools/chat-ui-preview.mjs` from the repository.
+It serves the same workspace with an explicitly simulated host and never accepts
+API keys or calls a provider. The collapsed Test controls menu supplies fixtures.
 
 After updating plugin C++ or SVG resources, close the editor and rebuild the
 plugin before reopening. A running editor keeps the old module DLL loaded.
@@ -69,7 +115,7 @@ Source/HaybaMCPToolkit/
   Public/   IHaybaMCPHandler.h · HaybaMCPCommandHandler.h · HaybaMCPModule.h
   Private/  module, TCP server, settings, Slate panels
   Private/handlers/  one *Handler.cpp per domain above
-Resources/  icons, PCGEx registry DB, embedded cognitive-map HTML
+Resources/  icons, fonts, PCGEx registry DB, embedded chat workspace
 ```
 
 ## Provenance

@@ -1,4 +1,6 @@
-# Install Hayba 0.4.1 (Windows, Unreal Engine 5.9)
+# Install Hayba 0.4.3 (Windows, Unreal Engine 5.9)
+
+If your teammate supplied a **Hayba Setup ZIP**, use the [Windows installer guide](docs/windows-installer.md). That path still compiles Hayba on the destination PC (no Git or npm). The instructions below build the published source release.
 
 This guide takes you from nothing to an AI agent that can see and edit your
 Unreal project. Every step is one action. Commands are for **PowerShell**:
@@ -79,10 +81,10 @@ already compile C++ for Unreal 5.9.
 New-Item -ItemType Directory -Force C:\Tools; Set-Location C:\Tools
 ```
 
-**Step 8.** Download Hayba 0.4.1.
+**Step 8.** Download Hayba 0.4.3.
 
 ```powershell
-git clone --branch v0.4.1 https://github.com/zajalist/hayba.git
+git clone --branch v0.4.3 https://github.com/zajalist/hayba.git
 ```
 
 **Step 9.** Go into the Hayba folder.
@@ -229,7 +231,7 @@ claude mcp list
 > Use the hayba_check_ue_status tool and tell me what it reports.
 
 The agent should report that it is connected, with your Unreal version (5.9)
-and the plugin version (0.4.1). If it says it cannot reach Unreal, see the
+and the plugin version (0.4.3). If it says it cannot reach Unreal, see the
 [troubleshooting table](#troubleshooting).
 
 **Step 26.** Approve edits. Hayba asks before an outside agent changes your

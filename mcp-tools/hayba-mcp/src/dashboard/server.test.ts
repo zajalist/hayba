@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createServer, type Server } from 'node:http';
+import { createServer, request, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import type { Express } from 'express';
 import { createDashboardApp, startDashboard } from './server.js';
@@ -48,6 +48,37 @@ afterEach(async () => {
 });
 
 describe('Express 5 dashboard boundary', () => {
+  it('guards 3D credentials before the global JSON parser and enforces the smaller body limit', async () => {
+    const upstream = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('Unexpected provider request'));
+    const app = createDashboardApp({ staticDir: null, rateLimit: false, registerRoutes: () => undefined });
+    const { url } = await listen(app);
+    const secret = 'integration-credential-never-reflect';
+    const malformed = `{"provider":"tripo","api_key":"${secret}",`;
+    const oversized = JSON.stringify({ provider: 'tripo', api_key: secret, prompt: 'x'.repeat(20000) });
+    const send = (path: string, body?: string, headers: Record<string, string> = {}) => new Promise<{ status: number; text: string; type: string }>((resolve, reject) => {
+      const req = request(`${url}/chat/3d${path}`, { method: body === undefined ? 'GET' : 'POST', headers: { 'content-type': 'application/json', ...headers } }, res => {
+        let text = '';
+        res.on('data', chunk => text += chunk);
+        res.on('end', () => resolve({ status: res.statusCode!, text, type: String(res.headers['content-type']) }));
+      });
+      req.on('error', reject); req.end(body);
+    });
+    expect((await send('/providers')).status).toBe(200);
+    for (const [body, headers, status, code] of [
+      [malformed, {}, 400, 'INVALID_INPUT'],
+      [oversized, {}, 413, 'REQUEST_TOO_LARGE'],
+      [malformed, { host: 'rebound.example' }, 403, 'LOCAL_ONLY'],
+      [oversized, { origin: 'https://attacker.example' }, 403, 'LOCAL_ONLY'],
+    ] as const) {
+      const response = await send('/connection', body, headers);
+      expect(response.status).toBe(status);
+      expect(response.type).toContain('application/json');
+      expect(JSON.parse(response.text)).toMatchObject({ error: { code } });
+      expect(response.text).not.toContain(secret);
+    }
+    expect(upstream).not.toHaveBeenCalled();
+  });
+
   it('identifies the service and chat protocol without exposing additional health fields', async () => {
     const app = createDashboardApp({ staticDir: null, rateLimit: false });
     const { url } = await listen(app);

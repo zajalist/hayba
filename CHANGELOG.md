@@ -5,7 +5,30 @@ All notable changes to Hayba MCP Toolkit are documented here. Format based on [K
 ## [Unreleased]
 
 Ports the production tool-gap fixes that were running on a separate
-integration branch onto the 0.4.1 code.
+integration branch onto the 0.4.3 code.
+
+## [0.4.3] — 2026-11-13
+
+Standalone Hayba app and in-editor Chat share one HTML workspace. The old
+web dashboard SPA is gone.
+
+### Added
+- Loopback Hayba app at `http://127.0.0.1:7821/` serves
+  `unreal/HaybaMCPToolkit/Resources/chat` (same Chat, Settings, Activity
+  as the editor plugin).
+- Desktop launcher (`Hayba.exe`) opens that workspace; API keys stay in
+  the native/loopback vault, not in the HTML.
+- Installer compiles the Unreal plugin on every PC (series 5.9, not a
+  pinned BuildId) and wipes plugin `Binaries`/`Intermediate` first.
+
+### Changed
+- Chat send keeps the draft until the workspace snapshot acknowledges it;
+  the editor mounts Chat in an iframe so Enter reaches the page.
+- Saving an API key selects that provider and persists
+  `SelectedProviderId`.
+
+### Removed
+- The React dashboard SPA and auto-serving `dashboard/dist` at `/`.
 
 ### Added
 - `asset_import` accepts `.gltf` / `.glb` as `static_mesh` under a strict
