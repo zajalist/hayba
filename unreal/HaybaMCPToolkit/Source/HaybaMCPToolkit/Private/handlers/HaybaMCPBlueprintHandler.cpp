@@ -40,6 +40,8 @@
 #include "K2Node_BreakStruct.h"
 #include "K2Node_MakeStruct.h"
 #include "K2Node_CallDelegate.h"
+#include "K2Node_AddDelegate.h"
+#include "K2Node_RemoveDelegate.h"
 #include "K2Node_Message.h"
 #include "K2Node_FunctionEntry.h"
 #include "K2Node_FunctionResult.h"
@@ -1209,6 +1211,7 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::AddNode(const TSharedPtr<FJsonObj
         TEXT("/Engine/EditorBlueprintResources/StandardMacros.StandardMacros"));
     const FString StructPath = ParamR.OptionalString(TEXT("struct_path"));
     const FString DispatcherName = ParamR.OptionalString(TEXT("dispatcher_name"));
+    const FString DelegateName = ParamR.OptionalString(TEXT("delegate_name"), DispatcherName);
     const FString KeyName = ParamR.OptionalString(TEXT("key"), FString(), 128);
     if (ParamR.HasErrors()) return FHaybaHandlerResult::Err(ParamR.ErrorMessage());
 
@@ -1233,6 +1236,7 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::AddNode(const TSharedPtr<FJsonObj
         TEXT("variable_get"), TEXT("variable_set"), TEXT("cast"), TEXT("custom_event"),
         TEXT("macro"), TEXT("break_struct"), TEXT("make_struct"), TEXT("call_dispatcher"),
         TEXT("message"), TEXT("function_entry"), TEXT("function_result"), TEXT("input_key"),
+        TEXT("bind_event"), TEXT("unbind_event"),
     };
     if (!SupportedNodeTypes.Contains(NodeType) && !SimpleNodeClasses.Contains(NodeType))
     {
@@ -1547,6 +1551,57 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::AddNode(const TSharedPtr<FJsonObj
         UK2Node_CallDelegate* Node = NewObject<UK2Node_CallDelegate>(Graph);
         Node->SetFromProperty(Dispatcher, true, Dispatcher->GetOwnerClass());
         return Place(Node);
+    }
+
+    // "Bind Event to X" / "Unbind Event from X" for a multicast delegate on any class (a subsystem's OnMessage, a
+    // component's OnHealthChanged), placed the way the palette places them. With event_name the matching custom event
+    // is linked to the node's Delegate pin, as the editor's "Create Event" does; bind_event creates it when missing.
+    if (NodeType == TEXT("bind_event") || NodeType == TEXT("unbind_event"))
+    {
+        const bool bBind = NodeType == TEXT("bind_event");
+        UClass* Scope = BP->SkeletonGeneratedClass ? BP->SkeletonGeneratedClass.Get() : BP->GeneratedClass.Get();
+        UClass* Owner = ClassPath.IsEmpty() ? Scope : LoadObject<UClass>(nullptr, *ClassPath);
+        const FMulticastDelegateProperty* Delegate = Owner && !DelegateName.IsEmpty()
+            ? FindFProperty<FMulticastDelegateProperty>(Owner, FName(*DelegateName)) : nullptr;
+        if (!Delegate)
+            return FHaybaHandlerResult::Err(FString::Printf(
+                TEXT("blueprint_add_node: %s needs delegate_name (or dispatcher_name) of a multicast delegate on class_path (default: this Blueprint); '%s' is not one on '%s'. Nothing was changed."),
+                *NodeType, *DelegateName, Owner ? *Owner->GetPathName() : *ClassPath));
+        UK2Node_Event* Event = EventName.IsEmpty() ? nullptr : FBlueprintEditorUtils::FindCustomEventNode(BP, FName(*EventName));
+        if (!EventName.IsEmpty())
+        {
+            if (!Event && !bBind)
+                return FHaybaHandlerResult::Err(FString::Printf(
+                    TEXT("blueprint_add_node: unbind_event: no custom event '%s' to unbind. Nothing was changed."), *EventName));
+            // A Delegate pin links only within its own graph, and custom events live in event graphs.
+            if (Event ? Event->GetGraph() != Graph : !BP->UbergraphPages.Contains(Graph))
+                return FHaybaHandlerResult::Err(FString::Printf(
+                    TEXT("blueprint_add_node: with event_name, %s goes in the event graph that holds (or will hold) '%s'. Nothing was changed."),
+                    *NodeType, *EventName));
+            TArray<UEdGraph*> AllGraphs;
+            BP->GetAllGraphs(AllGraphs);
+            if (!Event && AllGraphs.ContainsByPredicate([&EventName](const UEdGraph* G) { return G && G->GetFName() == FName(*EventName); }))
+                return FHaybaHandlerResult::Err(FString::Printf(
+                    TEXT("blueprint_add_node: '%s' is already a graph/function name on this Blueprint; pick another event_name. Nothing was changed."), *EventName));
+        }
+        UK2Node_BaseMCDelegate* Node = bBind
+            ? static_cast<UK2Node_BaseMCDelegate*>(NewObject<UK2Node_AddDelegate>(Graph))
+            : static_cast<UK2Node_BaseMCDelegate*>(NewObject<UK2Node_RemoveDelegate>(Graph));
+        // Self context for this Blueprint's own (or inherited) delegate; otherwise the node has a Target pin to wire.
+        Node->SetFromProperty(Delegate, Scope && Scope->IsChildOf(Delegate->GetOwnerClass()), Delegate->GetOwnerClass());
+        FHaybaHandlerResult Placed = Place(Node);
+        if (EventName.IsEmpty() || !Placed.Data.IsValid()) return Placed;
+        if (!Event)
+            Event = UK2Node_CustomEvent::CreateFromFunction(FVector2D(NX - 320, NY + 160), Graph, EventName, Delegate->SignatureFunction, /*bSelectNewNode=*/false);
+        UEdGraphPin* EventPin = Event ? Event->FindPin(UK2Node_Event::DelegateOutputName) : nullptr;
+        const bool bLinked = EventPin && GetDefault<UEdGraphSchema_K2>()->TryCreateConnection(EventPin, Node->GetDelegatePin());
+        Placed = Redescribe(Placed, Node);
+        if (Event) Placed.Data->SetObjectField(TEXT("event"), HaybaDescribeNode(Event));
+        Placed.Data->SetBoolField(TEXT("event_linked"), bLinked);
+        if (!bLinked)
+            Placed.Data->SetStringField(TEXT("event_link_error"),
+                TEXT("the event's Delegate pin did not link to this node; an existing event of that name must have exactly the delegate's parameters"));
+        return Placed;
     }
 
     if (NodeType.Equals(TEXT("timer_by_function"), ESearchCase::IgnoreCase))
