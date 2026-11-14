@@ -29,6 +29,7 @@
 #include "Engine/StaticMesh.h"
 #include "UObject/UObjectIterator.h"
 #include "UObject/SavePackage.h"
+#include "Misc/PackageName.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "AssetRegistry/IAssetRegistry.h"
 #include "AssetRegistry/AssetData.h"
@@ -650,11 +651,22 @@ FHaybaHandlerResult FHaybaMCPLegacyHandler::Cmd_CreateGraph(const TSharedPtr<FJs
         }
     }
 
+    // path picks the content folder; without it the graph lands where it always has.
     FString PackagePath = TEXT("/Game/Hayba/Generated");
+    Params->TryGetStringField(TEXT("path"), PackagePath);
+    PackagePath.TrimStartAndEndInline();
+    PackagePath.RemoveFromEnd(TEXT("/"));
     FString FullPath = FString::Printf(TEXT("%s/%s"), *PackagePath, *SafeName);
+    FText PathReason;
+    if (!FPackageName::IsValidLongPackageName(FullPath, /*bIncludeReadOnlyRoots=*/false, &PathReason))
+    {
+        return FHaybaHandlerResult::Err(FString::Printf(
+            TEXT("create_graph: path \"%s\" is not a writable content folder (%s). Nothing was created."),
+            *PackagePath, *PathReason.ToString()));
+    }
 
-    // Before CreatePackage: a read-only graph must not be displaced into the
-    // transient package (below) and then fail to save.
+    // Before CreatePackage: a read-only graph must not be rebuilt (below) and
+    // then fail to save.
     {
         FHaybaHandlerResult ReadOnly;
         if (HaybaSaveVerify::RefuseIfReadOnly(TEXT("create_graph"), FullPath, ReadOnly))
@@ -672,22 +684,45 @@ FHaybaHandlerResult FHaybaMCPLegacyHandler::Cmd_CreateGraph(const TSharedPtr<FJs
     // If this asset already exists on disk, CreatePackage returns the existing
     // package which may be only PARTIALLY loaded — and UPackage::SavePackage
     // refuses a partially-loaded package ("cannot be saved as it has only been
-    // partially loaded"). Fully load it, then move any existing object of the
-    // same name out of the way so we cleanly create-or-overwrite.
+    // partially loaded"). Fully load it first.
     if (!Package->IsFullyLoaded())
     {
         Package->FullyLoad();
     }
-    if (UObject* Existing = StaticFindObject(UObject::StaticClass(), Package, *SafeName))
+    // An existing graph is rebuilt IN PLACE. Renaming it into the transient
+    // package left every reference to it (subgraph nodes in other graphs, PCG
+    // components) pointing at a dead copy; the same object keeps them valid.
+    // Its graph settings and user parameters are kept; nodes and edges come
+    // from the spec.
+    UObject* Existing = StaticFindObject(UObject::StaticClass(), Package, *SafeName);
+    UPCGGraph* NewGraph = Cast<UPCGGraph>(Existing);
+    if (Existing && !NewGraph)
     {
-        Existing->Rename(nullptr, GetTransientPackage(),
-            REN_DontCreateRedirectors | REN_NonTransactional | REN_DoNotDirty);
+        return FHaybaHandlerResult::Err(FString::Printf(
+            TEXT("create_graph: %s already exists and is a %s, not a PCG graph. Nothing was changed."),
+            *FullPath, *Existing->GetClass()->GetName()));
     }
-
-    UPCGGraph* NewGraph = NewObject<UPCGGraph>(Package, *SafeName, RF_Public | RF_Standalone);
-    if (!NewGraph)
+    const bool bRebuiltInPlace = NewGraph != nullptr;
+    if (bRebuiltInPlace)
     {
-        return FHaybaHandlerResult::Err(TEXT("Failed to create PCGGraph object"));
+        TArray<UPCGNode*> OldNodes = NewGraph->GetNodes();
+        NewGraph->RemoveNodes(OldNodes);
+        // An edge straight from the graph Input node to its Output node is on no removed node.
+        if (UPCGNode* InputNode = NewGraph->GetInputNode())
+        {
+            for (UPCGPin* Pin : InputNode->GetOutputPins())
+            {
+                if (Pin) Pin->BreakAllEdges();
+            }
+        }
+    }
+    else
+    {
+        NewGraph = NewObject<UPCGGraph>(Package, *SafeName, RF_Public | RF_Standalone);
+        if (!NewGraph)
+        {
+            return FHaybaHandlerResult::Err(TEXT("Failed to create PCGGraph object"));
+        }
     }
 
     // Add nodes
@@ -968,7 +1003,7 @@ FHaybaHandlerResult FHaybaMCPLegacyHandler::Cmd_CreateGraph(const TSharedPtr<FJs
     }
 
     // Save
-    FAssetRegistryModule::AssetCreated(NewGraph);
+    if (!bRebuiltInPlace) FAssetRegistryModule::AssetCreated(NewGraph);
     Package->MarkPackageDirty();
 
     const HaybaSaveVerify::FResult Saved = HaybaSaveVerify::SaveAndVerify(NewGraph);
@@ -977,6 +1012,7 @@ FHaybaHandlerResult FHaybaMCPLegacyHandler::Cmd_CreateGraph(const TSharedPtr<FJs
     TSharedPtr<FJsonObject> Data = MakeShareable(new FJsonObject());
     Data->SetBoolField(TEXT("created"), true);
     Data->SetStringField(TEXT("assetPath"), FullPath);
+    Data->SetBoolField(TEXT("rebuiltInPlace"), bRebuiltInPlace);
     Data->SetNumberField(TEXT("nodeCount"), CreatedNodes.Num());
 
     // The save result was previously discarded, so a graph that failed to reach
