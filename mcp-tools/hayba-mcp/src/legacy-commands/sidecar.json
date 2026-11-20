@@ -3147,15 +3147,41 @@
           "name": "command",
           "type": "string",
           "required": true
+        },
+        {
+          "name": "world",
+          "type": "string",
+          "required": false,
+          "default": "auto",
+          "description": "auto (default): the PIE world while Play-In-Editor runs, else the editor world, as the editor's own console does. pie: the PIE world, refused when none is running. editor: the editor world even during PIE."
         }
       ],
       "returns": {
         "shape": "object",
-        "fields": []
+        "fields": [
+          {
+            "name": "command",
+            "type": "string"
+          },
+          {
+            "name": "executed",
+            "type": "boolean"
+          },
+          {
+            "name": "world",
+            "type": "string",
+            "description": "'pie' | 'editor': the world the command ran in"
+          },
+          {
+            "name": "pie_instance",
+            "type": "integer",
+            "description": "PIE instance that received it; present only when world is 'pie'"
+          }
+        ]
       },
       "agent_callable": true,
       "has_ts_wrapper": false,
-      "notes": "Run an editor console command (stat unit, r.* toggles, LiveCoding.Compile, etc). Arbitrary console access, so it is gated by Plan Mode. Effects are reported by the console, not returned — check editor_get_output_log."
+      "notes": "Run a console command (stat unit, r.* toggles, LiveCoding.Compile, game commands, etc). world picks the world that world-aware commands receive: auto (default) is the PIE world while Play-In-Editor runs, else the editor world. With several PIE instances, pie/auto mean GEditor->PlayWorld, the last PIE world context (the highest-numbered client); the reply's pie_instance names it. Arbitrary console access, so it is gated by Plan Mode. Effects are reported by the console, not returned — check editor_get_output_log."
     },
     "editor_get_output_log": {
       "aliases": [],
