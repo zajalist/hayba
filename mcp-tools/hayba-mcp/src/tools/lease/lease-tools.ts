@@ -55,11 +55,18 @@ export const leaseAcquireSchema = z
       .min(5)
       .max(900)
       .optional()
-      .describe('Lease lifetime in seconds (default 120, max 900). Renewed automatically while this server runs.'),
+      .describe(
+        'Lease lifetime in seconds (default 120, max 900). Renewed automatically while this server runs. At most 300 lets ' +
+          'the request go ahead of a whole-editor EXCLUSIVE that is still waiting for a holder; such a lease ends 300 s after its grant.',
+      ),
     lane: z
       .enum(['interactive', 'long'])
       .optional()
       .describe('interactive (default) is served first; long is for bulk work and ages to the front after a while.'),
+    front: z
+      .boolean()
+      .optional()
+      .describe('Serve this request ahead of every other waiter (never ahead of a holder). For the coordinator\'s urgent requests.'),
     ticket: z.string().optional().describe('The ticket from an earlier queued answer, to poll for the grant.'),
     label: z.string().max(128).optional().describe('What the lease is for, shown to other agents in lease_status.'),
     bind_connection: z
