@@ -36,7 +36,21 @@
   function flush() {
     if (sending || !commands.length) return;
     sending = true;
-    location.href = 'hayba-chat://event/' + encodeURIComponent(JSON.stringify(commands.shift()));
+    const command = commands.shift();
+    if (window.haybaDesktop) {
+      window.haybaDesktop.command(command).then(draft => {
+        if (command.action === 'ready' && draft) {
+          const prompt = document.getElementById('prompt');
+          prompt.value = draft;
+          prompt.dispatchEvent(new Event('input'));
+        }
+        window.haybaChat.ack({ action: command.action, ok: true });
+      }, () => {
+        if (command.action === 'send') document.getElementById('prompt').value ||= command.value;
+        window.haybaWorkspace?.toast('The desktop action failed. Please try again.');
+        window.haybaChat.ack({ action: command.action, ok: false });
+      });
+    } else location.href = 'hayba-chat://event/' + encodeURIComponent(JSON.stringify(command));
   }
   function button(label, action, cls = '') {
     const b = el('button', cls, label);

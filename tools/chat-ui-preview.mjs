@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 const resources = path.resolve(fileURLToPath(new URL('../unreal/HaybaMCPToolkit/Resources/', import.meta.url)));
 const page = fileURLToPath(new URL('./chat-ui-preview.html', import.meta.url));
 const types = { '.html': 'text/html', '.css': 'text/css', '.js': 'text/javascript', '.svg': 'image/svg+xml', '.woff2': 'font/woff2' };
-const nativeDispatch = "location.href = 'hayba-chat://event/' + encodeURIComponent(JSON.stringify(commands.shift()));";
+const nativeDispatch = "location.href = 'hayba-chat://event/' + encodeURIComponent(JSON.stringify(command));";
 
 const server = http.createServer(async (req, res) => {
   try {
@@ -19,7 +19,7 @@ const server = http.createServer(async (req, res) => {
     if (pathname === '/chat/chat.js') {
       const script = data.toString();
       if (!script.includes(nativeDispatch)) throw new Error('Preview bridge no longer matches the transcript.');
-      data = script.replace(nativeDispatch, 'window.parent.postMessage({ haybaPreview: commands.shift() }, location.origin);');
+      data = script.replace(nativeDispatch, 'window.parent.postMessage({ haybaPreview: command }, location.origin);');
     }
     res.writeHead(200, { 'Content-Type': types[path.extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
     res.end(data);

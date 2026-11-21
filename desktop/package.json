@@ -1,0 +1,16 @@
+{
+  "name": "hayba-desktop",
+  "productName": "Hayba Desktop",
+  "private": true,
+  "version": "0.1.0-preview.1",
+  "main": "main.cjs",
+  "scripts": {
+    "build": "node build.mjs",
+    "test": "node --test session.test.cjs"
+  },
+  "devDependencies": {
+    "electron": "45.4.1",
+    "esbuild": "0.28.2",
+    "playwright": "1.65.1"
+  }
+}

@@ -1,0 +1,9 @@
+.starters,
+#attach-button,
+#create-button,
+#effort-button,
+#mode-button,
+#mode-hint,
+#model-button svg:last-child {
+  display: none !important;
+}
