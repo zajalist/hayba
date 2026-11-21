@@ -17,6 +17,7 @@
 #include "PCGPin.h"
 #include "PCGGraph.h"
 #include "PCGNode.h"
+#include "PCGSubgraph.h"
 #include "PCGEdge.h"
 #include "Data/PCGPointData.h"
 #include "Data/PCGSplineData.h"
@@ -769,6 +770,24 @@ FHaybaHandlerResult FHaybaMCPLegacyHandler::Cmd_CreateGraph(const TSharedPtr<FJs
                 {
                     const FString PropName(Pair.Key);
                     const FString NodeLabel = FString::Printf(TEXT("node \"%s\" (%s).%s"), *NodeId, *NodeClass, *PropName);
+
+                    // A Subgraph node's graph lives in an instanced object, not an editable property, so the generic
+                    // path below cannot set it. Set it the way the editor does, then rebuild the node's pins from it.
+                    UPCGBaseSubgraphSettings* SubgraphSettings = Cast<UPCGBaseSubgraphSettings>(Settings);
+                    if (SubgraphSettings && PropName == TEXT("Subgraph"))
+                    {
+                        if (UPCGGraphInterface* Subgraph = Cast<UPCGGraphInterface>(HaybaReflection::ResolveObjectRef(Pair.Value)))
+                        {
+                            SubgraphSettings->SetSubgraph(Subgraph);
+                            NewNode->UpdateAfterSettingsChangeDuringCreation();
+                            ++PropertiesApplied;
+                        }
+                        else
+                        {
+                            PropertyProblems.Add(FString::Printf(TEXT("%s: not a loadable PCG graph"), *NodeLabel));
+                        }
+                        continue;
+                    }
 
                     FProperty* Prop = SettingsClass->FindPropertyByName(FName(*PropName));
                     if (!Prop)
