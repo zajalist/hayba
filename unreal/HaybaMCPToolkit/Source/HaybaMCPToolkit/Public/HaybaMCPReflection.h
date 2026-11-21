@@ -191,7 +191,11 @@ namespace HaybaReflection
             T->SetPropertyValue_InContainer(Container, FText::FromString(V->AsString()));
             return true;
         }
-        if (FObjectProperty* O = CastField<FObjectProperty>(Prop))
+        // FObjectPropertyBase, not FObjectProperty: soft, weak and lazy references
+        // (a Load Data Table node's TSoftObjectPtr DataTable, a virtual texture
+        // to prime) were refused while hard references worked. The asset is
+        // still loaded once here, to prove it exists and has the right type.
+        if (FObjectPropertyBase* O = CastField<FObjectPropertyBase>(Prop))
         {
             // An explicit null clears the reference; anything else must both
             // resolve and be type-compatible, otherwise this is a failure the
