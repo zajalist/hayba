@@ -1,11 +1,27 @@
 # Hayba Desktop for Windows
 
-This preview opens Hayba’s Unreal HTML chat in a standalone window. Choose **Hayba → Provider settings**, select Anthropic or OpenAI, and enter a model ID available to your API account. Keys are encrypted through Windows DPAPI. Conversations and drafts are saved locally. Sending a message sends the conversation to the selected provider.
+Install Hayba with `Hayba-Desktop-Setup.exe`. To add the chat panel to Unreal, close the editor and select your project's `.uproject` in the same wizard. You can also install Desktop on its own. The bundled editor plugin requires the Windows x64 Unreal build used to compile it.
 
-The setup executable installs the desktop app per user. The optional Unreal integration runs the bundled Hayba 0.4.2 project setup and can be opened later from Start. Desktop and the Unreal tab currently keep separate conversations. Scene inspection and approved editor operations run in the Unreal tab.
+Open **Hayba → Provider settings** in Desktop, choose OpenAI or Anthropic, and enter your API key and a model ID available to your account. Windows protects the saved key with DPAPI. Changing the model within the same provider keeps your saved key. Messages go to the selected provider when you send them.
 
-## Build and verify
+Desktop and Unreal render the same HTML interface. Each keeps its own conversations and provider settings. Open the Hayba tab in Unreal to inspect a scene or review proposed editor operations.
 
-On Windows x64, install Node, GitHub CLI and Inno Setup 6. From the repository root run `npm ci`, then from this directory run `npm ci`, `npm test`, and `npm run build`. Set `HAYBA_ISCC` if Inno Setup is outside its default per-user location. The build verifies the pinned Unreal installer by SHA-256.
+## Build on Windows x64
 
-Open `bin/Hayba-Desktop-Setup.exe` to install. Run `node smoke.cjs` to exercise the compiled desktop host with a fixture provider response and an isolated user profile.
+Install Node.js, the matching Unreal Engine and Inno Setup 6. From the repository root, run:
+
+```powershell
+npm ci
+npm ci --prefix desktop
+npm run build:server -w @hayba/mcp
+& "$Engine/Engine/Build/BatchFiles/RunUAT.bat" BuildPlugin "-Plugin=$PWD/unreal/HaybaMCPToolkit/HaybaMCPToolkit.uplugin" "-Package=$PWD/desktop/bin/native" -TargetPlatforms=Win64 -NoTargetPlatforms -Rocket
+node tools/build-installer.mjs --desktop --artifact desktop/bin/native --engine "$Engine" --output desktop/bin/setup
+```
+
+Set `$Engine` to your engine installation directory before running these commands. The output directory contains the setup executable and its SHA-256 checksum.
+
+## Exercise the installed app and editor
+
+Run `node desktop/smoke.cjs "path/to/installed/Hayba.exe"` to check the provider settings, encrypted key storage and a streaming reply with an offline fixture.
+
+For the editor test, install the plugin in a disposable project, select the mock provider and mock model, and open its Hayba tab with Unreal launched with `-cefdebug=39783`. Run `node desktop/test-editor.cjs "path/to/project.uproject" 39783` to send a message and inspect the current scene.

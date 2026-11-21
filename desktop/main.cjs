@@ -132,7 +132,7 @@ async function start() {
         typeof value.model !== 'string' ||
         !/^[\w.:-]{1,160}$/.test(value.model) ||
         typeof value.key !== 'string' ||
-        !value.key.trim() ||
+        (!value.key.trim() && !(config?.provider === value.provider && config.secret)) ||
         value.key.length > 4096 ||
         !safeStorage.isEncryptionAvailable()
       )
@@ -140,7 +140,7 @@ async function start() {
       const next = {
         provider: value.provider,
         model: value.model,
-        secret: safeStorage.encryptString(value.key.trim()).toString('base64'),
+        secret: value.key.trim() ? safeStorage.encryptString(value.key.trim()).toString('base64') : config.secret,
       };
       save('provider.json', next);
       config = next;

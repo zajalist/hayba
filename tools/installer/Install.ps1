@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory=$true)][string]$Project, [string]$Engine,
-    [string]$PackageRoot = (Split-Path -Parent $PSScriptRoot),
+    [string]$PackageRoot,
     [switch]$ClaudeCode, [switch]$ClaudeDesktop, [string]$DesktopConfig,
     [switch]$Cursor, [string]$CursorConfig,
     [switch]$ReplaceExisting, [switch]$CheckOnly, [switch]$Uninstall
@@ -16,6 +16,7 @@ try {
     if ($DesktopConfig) { $configs.DesktopConfig = $DesktopConfig }
     if ($CursorConfig) { $configs.CursorConfig = $CursorConfig }
     if ($Uninstall) { Invoke-HaybaUninstall -Project $Project @configs; exit 0 }
+    if (-not $PackageRoot) { $PackageRoot = Split-Path -Parent $PSScriptRoot }
     $settings = @{ Project=$Project; Engine=$Engine; PackageRoot=$PackageRoot; ClaudeCode=$ClaudeCode; ClaudeDesktop=$ClaudeDesktop; Cursor=$Cursor; ReplaceExisting=$ReplaceExisting; CheckOnly=$CheckOnly } + $configs
     $result = Invoke-HaybaInstall @settings
     Write-Host "HAYBA_OK $($result.ServerName)"

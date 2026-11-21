@@ -485,6 +485,8 @@
     .forEach((b) => b.addEventListener('click', () => dispatch(b.dataset.action, b.dataset.value || '')));
   window.haybaChat = {
     init(value) {
+      // Unreal may report load completion again after intercepting a bridge navigation.
+      if (token === value) return;
       token = value;
       updatesEnabled = false;
       dispatch('ready');

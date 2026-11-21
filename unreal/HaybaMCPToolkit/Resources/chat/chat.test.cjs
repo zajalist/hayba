@@ -154,6 +154,7 @@ test('local transcript: safe markup, streaming, selection, scroll, approvals and
     await page.evaluate(() => window.haybaChat.init('document-token'));
     await page.waitForTimeout(100);
     assert.equal(navigation[0].action, 'ready');
+    await page.evaluate(() => window.haybaChat.init('document-token'));
     await page.evaluate(() => window.haybaChat.ack());
     await page.getByRole('button', { name: /Understand my selection/ }).click();
     await page.waitForTimeout(100);

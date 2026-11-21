@@ -725,6 +725,9 @@ bool FHaybaMCPModule::StartMCPServer(FString* OutError)
     FPlatformMisc::SetEnvironmentVar(TEXT("HAYBA_CONSTRAINTS"), *FPaths::Combine(ScratchDir, TEXT("constraints.json")));
     FPlatformMisc::SetEnvironmentVar(TEXT("HAYBA_LESSONS"), *FPaths::Combine(ScratchDir, TEXT("lessons.json")));
 
+    // Unreal resolves plugin-relative paths from the editor binary directory. The child runs in the project directory.
+    ServerPath = FPaths::ConvertRelativePathToFull(ServerPath);
+    NodePath = FPaths::ConvertRelativePathToFull(NodePath);
     FString Params = FString::Printf(TEXT("\"%s\""), *ServerPath);
     uint32 ProcessID = 0;
     if (MCPProcessHandle.IsValid()) FPlatformProcess::CloseProc(MCPProcessHandle);

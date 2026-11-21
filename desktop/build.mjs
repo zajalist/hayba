@@ -6,19 +6,11 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 process.chdir(dirname(fileURLToPath(import.meta.url)));
-const plugin = 'bin/plugin/Hayba-Setup-0.4.2-Plugin+MCP.exe';
-mkdirSync('bin/plugin', { recursive: true });
-if (!existsSync(plugin))
-  execFileSync(
-    'gh',
-    ['release', 'download', 'v0.4.2', '-R', 'zajalist/hayba', '-p', plugin.split('/').pop(), '-D', 'bin/plugin'],
-    { stdio: 'inherit' },
-  );
-if (
-  createHash('sha256').update(readFileSync(plugin)).digest('hex') !==
-  '86a71e7cb4b9e8a669c6144d0ea240c0520070142ea1ecc43a7baa062f3fb53b'
-)
-  throw Error('Unreal plugin installer checksum mismatch');
+const payload = process.env.HAYBA_PACKAGE_ZIP;
+if (!payload || !existsSync(payload) || !process.env.HAYBA_PACKAGE_SHA256)
+  throw Error('Build the desktop installer with tools/build-installer.mjs --desktop and the compiled native artifact.');
+if (createHash('sha256').update(readFileSync(payload)).digest('hex') !== process.env.HAYBA_PACKAGE_SHA256)
+  throw Error('The plugin archive changed after packaging.');
 execFileSync(process.execPath, ['node_modules/electron/install.js'], { stdio: 'inherit' });
 cpSync('node_modules/electron/dist', 'bin/app', { recursive: true });
 renameSync('bin/app/electron.exe', 'bin/app/Hayba.exe');
@@ -36,6 +28,7 @@ for (const name of [
   cpSync(name, join(app, name));
 cpSync('../LICENSE', join(app, 'LICENSE'));
 await build({
+  absWorkingDir: process.cwd(),
   entryPoints: ['../mcp-tools/hayba-mcp/src/agents/llm-client.ts'],
   bundle: true,
   platform: 'node',
@@ -59,4 +52,17 @@ writeFileSync(
   ),
 );
 const compiler = process.env.HAYBA_ISCC || join(process.env.LOCALAPPDATA, 'Programs/Inno Setup 6/ISCC.exe');
-execFileSync(compiler, ['/Q', 'setup.iss'], { stdio: 'inherit' });
+execFileSync(
+  compiler,
+  [
+    '/Q',
+    '/DWithMcp=0',
+    '/DAppVersion=0.1.0',
+    '/DDesktopDir=' + join(process.cwd(), 'bin/app'),
+    '/DInstallerDir=' + join(process.cwd(), '../tools/installer'),
+    '/DPackageZip=' + payload,
+    '/O' + (process.env.HAYBA_OUTPUT_DIR || join(process.cwd(), 'bin')),
+    '../tools/installer/hayba-setup.iss',
+  ],
+  { stdio: 'inherit' },
+);

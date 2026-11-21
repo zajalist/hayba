@@ -15,13 +15,23 @@
 #endif
 
 [Setup]
+#ifdef DesktopDir
+AppId=HaybaDesktopPreview
+AppName=Hayba Desktop Preview
+UninstallDisplayName=Hayba Desktop Preview
+DefaultDirName={localappdata}\Programs\Hayba Desktop
+UninstallDisplayIcon={app}\Hayba.exe
+OutputBaseFilename=Hayba-Desktop-Setup
+#else
 AppId={#AppGuid}
 AppName=Hayba ({#Variant})
+UninstallDisplayName=Hayba {#AppVersion} ({#Variant})
+DefaultDirName={localappdata}\Hayba\{#VariantDir}
+OutputBaseFilename=Hayba-Setup-{#AppVersion}-{#Variant}
+#endif
 AppVersion={#AppVersion}
 AppPublisher=Hayba
 AppPublisherURL=https://github.com/zajalist/hayba
-UninstallDisplayName=Hayba {#AppVersion} ({#Variant})
-DefaultDirName={localappdata}\Hayba\{#VariantDir}
 DisableDirPage=yes
 DisableProgramGroupPage=yes
 DisableReadyPage=yes
@@ -29,8 +39,7 @@ DisableWelcomePage=yes
 PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
-OutputBaseFilename=Hayba-Setup-{#AppVersion}-{#Variant}
-Compression=lzma2/max
+Compression=lzma2/fast
 SolidCompression=yes
 WizardStyle=modern
 SetupLogging=yes
@@ -40,6 +49,15 @@ Source: "{#PackageZip}"; Flags: dontcopy
 ; The uninstaller runs these to remove Hayba from each project it was installed into.
 Source: "{#InstallerDir}\Install.ps1"; DestDir: "{app}"
 Source: "{#InstallerDir}\Installer.Core.ps1"; DestDir: "{app}"
+
+#ifdef DesktopDir
+Source: "{#DesktopDir}\*"; DestDir: "{app}"; Flags: recursesubdirs ignoreversion
+
+[Icons]
+Name: "{userprograms}\Hayba Desktop"; Filename: "{app}\Hayba.exe"
+[Run]
+Filename: "{app}\Hayba.exe"; Description: "Open Hayba Desktop"; Flags: postinstall nowait skipifsilent
+#endif
 
 [Code]
 var
@@ -77,9 +95,14 @@ var
   Engine: String;
   Top: Integer;
 begin
+#ifdef DesktopDir
+  ProjectPage := CreateInputFilePage(wpWelcome, 'Add Hayba to Unreal Engine', 'Optional project integration',
+    'Choose a closed Unreal Engine 5.9 project, or leave this blank to install the desktop app on its own.');
+#else
   ProjectPage := CreateInputFilePage(wpWelcome, 'Choose your Unreal project',
     'Hayba will be added to this project''s Plugins folder.',
     'Save your work and close this project in Unreal, then select its .uproject file.');
+#endif
   ProjectPage.Add('Unreal project (.uproject):', 'Unreal projects (*.uproject)|*.uproject', '.uproject');
   ProjectPage.Values[0] := ExpandConstant('{param:PROJECT|}');
 
@@ -140,6 +163,9 @@ var
   Pkg, Output, Flags, Clients: String;
 begin
   Result := '';
+#ifdef DesktopDir
+  if Project = '' then exit;
+#endif
   if (Project = '') or not FileExists(Project) or (CompareText(ExtractFileExt(Project), '.uproject') <> 0) then
   begin
     Result := 'Choose an existing .uproject file.';
@@ -185,6 +211,13 @@ var
 begin
   Result := True;
   if (CurPageID <> ProjectPage.ID) or WizardSilent then exit;
+#ifdef DesktopDir
+  // Defer project changes until the user commits to installation.
+  if Trim(ProjectPage.Values[0]) <> '' then
+    Result := FileExists(Trim(ProjectPage.Values[0])) and (CompareText(ExtractFileExt(Trim(ProjectPage.Values[0])), '.uproject') = 0);
+  if not Result then MsgBox('Choose an existing Unreal project (.uproject).', mbError, MB_OK);
+  exit;
+#endif
   WizardForm.NextButton.Enabled := False;
   WizardForm.BackButton.Enabled := False;
   try
@@ -203,7 +236,11 @@ end;
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
   Result := '';
+#ifdef DesktopDir
+  Result := DoInstall(Trim(ProjectPage.Values[0]));
+#else
   if WizardSilent then Result := DoInstall(Trim(ProjectPage.Values[0]));
+#endif
 end;
 procedure CurPageChanged(CurPageID: Integer);
 begin
@@ -211,6 +248,12 @@ begin
   if CurPageID = wpFinished then
   begin
     WizardForm.FinishedHeadingLabel.Caption := 'Hayba is installed';
+#ifdef DesktopDir
+    if Trim(ProjectPage.Values[0]) = '' then begin
+      WizardForm.FinishedLabel.Caption := 'Open Hayba Desktop and choose Hayba > Provider settings to connect your account. Run Setup again to add an Unreal project.';
+      exit;
+    end;
+#endif
     WizardForm.FinishedLabel.Caption :=
       'Hayba was added to ' + ProjectPage.Values[0] + '.'#13#10#13#10 +
       '1. Open the project in Unreal Engine 5.9.'#13#10 +
@@ -229,7 +272,7 @@ procedure CurStepChanged(CurStep: TSetupStep);
 var
   List: AnsiString;
 begin
-  if CurStep <> ssPostInstall then exit;
+  if (CurStep <> ssPostInstall) or (Trim(ProjectPage.Values[0]) = '') then exit;
   if not LoadStringFromFile(ExpandConstant('{app}\projects.txt'), List) then List := '';
   if Pos(ProjectPage.Values[0] + #13#10, List) = 0 then
     SaveStringToFile(ExpandConstant('{app}\projects.txt'), ProjectPage.Values[0] + #13#10, True);

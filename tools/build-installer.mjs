@@ -6,10 +6,12 @@ import { spawnSync } from 'node:child_process';
 import { copyTree, packageDependencies } from './installer/package-runtime.mjs';
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const desktop = process.argv.includes('--desktop');
+const args = process.argv.slice(2).filter(arg => arg !== '--desktop');
 const options = {};
-for (let i = 2; i < process.argv.length; i += 2) {
-  if (!['--artifact', '--verification', '--engine', '--output'].includes(process.argv[i]) || !process.argv[i + 1]) throw new Error('Usage: node tools/build-installer.mjs --artifact <plugin-folder> [--verification <workspace-install.json>] --engine <UE-folder> --output <new-output-folder>');
-  options[process.argv[i].slice(2)] = resolve(process.argv[i + 1]);
+for (let i = 0; i < args.length; i += 2) {
+  if (!['--artifact', '--verification', '--engine', '--output'].includes(args[i]) || !args[i + 1]) throw new Error('Usage: node tools/build-installer.mjs --artifact <plugin-folder> [--verification <workspace-install.json>] --engine <UE-folder> --output <new-output-folder>');
+  options[args[i].slice(2)] = resolve(args[i + 1]);
 }
 if (process.platform !== 'win32' || process.arch !== 'x64') throw new Error('Build this Windows x64 package on Windows x64.');
 for (const name of ['artifact', 'engine', 'output']) if (!options[name]) throw new Error(`Missing --${name}`);
@@ -103,6 +105,17 @@ const result = spawnSync('powershell.exe', ['-NoProfile', '-EncodedCommand', Buf
 if (result.status !== 0) throw new Error('Package ZIP creation failed.');
 const iscc = [process.env.HAYBA_ISCC, join(process.env.LOCALAPPDATA ?? '', 'Programs/Inno Setup 6/ISCC.exe'), 'C:/Program Files (x86)/Inno Setup 6/ISCC.exe'].find(path => path && existsSync(path));
 if (!iscc) throw new Error('Inno Setup 6 (ISCC.exe) is required to build the Setup .exe files. Set HAYBA_ISCC to its path.');
+if (desktop) {
+  const run = spawnSync(process.execPath, [join(repo,'desktop/build.mjs')], {
+    stdio:'inherit', windowsHide:true,
+    env:{ ...process.env, HAYBA_PACKAGE_ZIP:zip, HAYBA_PACKAGE_SHA256:hash(zip), HAYBA_ISCC:iscc, HAYBA_OUTPUT_DIR:options.output }
+  });
+  if (run.status !== 0) throw new Error('Desktop installer build failed.');
+  const exe = join(options.output,'Hayba-Desktop-Setup.exe');
+  writeFileSync(exe + '.sha256', hash(exe) + '  ' + basename(exe) + '\n');
+  console.log(exe);
+  process.exit(0);
+}
 const installers = [];
 for (const withMcp of [1, 0]) {
   const compile = spawnSync(iscc, ['/Q', `/DWithMcp=${withMcp}`, `/DAppVersion=${packageJson.version}`, `/DPackageZip=${zip}`, `/DInstallerDir=${join(repo, 'tools/installer')}`, `/O${options.output}`, join(repo, 'tools/installer/hayba-setup.iss')], { stdio: 'inherit', windowsHide: true });

@@ -22,6 +22,14 @@ async function main() {
     await settings.getByText('Save connection').click();
     await page.getByText('test-model', { exact: true }).waitFor();
     assert.ok(!fs.readFileSync(path.join(profile, 'provider.json'), 'utf8').includes('test-placeholder-only'));
+    const savedSecret = JSON.parse(fs.readFileSync(path.join(profile, 'provider.json'))).secret;
+    const changedSettings = app.waitForEvent('window');
+    await app.evaluate(({ Menu }) => Menu.getApplicationMenu().items[0].submenu.items[0].click());
+    const modelSettings = await changedSettings;
+    await modelSettings.getByLabel('Model ID').fill('second-test-model');
+    await modelSettings.getByText('Save connection').click();
+    await page.getByText('second-test-model', { exact: true }).waitFor();
+    assert.equal(JSON.parse(fs.readFileSync(path.join(profile, 'provider.json'))).secret, savedSecret);
     // Intercept the SDK in the test process so a fixture can never bill a provider.
     await app.evaluate(() => {
       global.fetch = async (url) => {
