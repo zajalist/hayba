@@ -14,6 +14,8 @@ Use a closed Unreal Engine 5.9 project on Windows x64. The release bundles the n
 3. Open the project and choose **Tools → Hayba MCP Toolkit**. In Settings, select a provider and enter your API key. Windows encrypts the saved key for your user account.
 4. Start with a read-only question such as “Which actors are in this level?” Review the result before asking for an edit.
 
+**Known issue in v0.4.2.** In-editor chat can stay on “Responding…” when the bundled server fails to start. The Desktop preview includes fixes for server startup and repeated chat initialization. [Preview build instructions](https://github.com/zajalist/hayba/tree/feature/desktop-preview/desktop)
+
 ## How it works
 
 The TypeScript MCP server translates tool calls into editor operations. The C++ plugin reads the current scene, checks editor state and ownership, and returns the result. For example, when two agents target the same asset, an editor lease lets the second agent see that the first one is still working. [Architecture](docs/ARCHITECTURE.md) · [Editor checks and approvals](docs/safety-model.md)
