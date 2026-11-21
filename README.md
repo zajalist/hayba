@@ -2,7 +2,7 @@
   <img src="unreal/HaybaMCPToolkit/Resources/HaybaLogo.svg" width="56" alt="">
   <h1>Hayba</h1>
   <p>Inspect and edit Unreal Engine projects with an AI assistant.</p>
-  <p><a href="https://github.com/zajalist/hayba/releases/tag/v0.4.2"><strong>Download for Windows</strong></a> · <a href="INSTALL.md">Installation guide</a> · <a href="docs/wiki/">Tool reference</a></p>
+  <p><a href="https://github.com/zajalist/hayba/releases/tag/desktop-v0.1.0-preview.1"><strong>Download Desktop for Windows (preview)</strong></a> · <a href="https://github.com/zajalist/hayba/releases/tag/v0.4.2"><strong>Download the v0.4.2 plugin</strong></a> · <a href="INSTALL.md">Installation guide</a> · <a href="docs/wiki/">Tool reference</a></p>
 </div>
 
 ## Get started
@@ -25,6 +25,10 @@ The TypeScript MCP server translates tool calls into editor operations. The C++ 
 ## Hayba Desktop preview
 
 The Windows desktop app uses the Unreal chat interface and supports streaming conversations with an OpenAI or Anthropic API key. Desktop and Unreal currently keep separate conversations. Scene inspection and approved editor edits run in the plugin. [Preview source and build instructions](https://github.com/zajalist/hayba/tree/feature/desktop-preview/desktop)
+
+Download **Hayba-Desktop-Setup.exe** from the [Windows Desktop preview](https://github.com/zajalist/hayba/releases/tag/desktop-v0.1.0-preview.1). Leave the project field blank for Desktop alone, or select a closed UE 5.9 project to install the editor panel. If the panel is missing after reopening the project, check **Edit → Plugins → Hayba MCP Toolkit** and restart Unreal after enabling it.
+
+To remove Desktop and its project integration, close Hayba and Unreal, then select **Windows Settings → Apps → Installed apps → Hayba Desktop Preview → Uninstall**. Setup keeps a backup of removed plugin files in the project's `Saved/HaybaInstaller` folder.
 
 ## Explore the code
 
