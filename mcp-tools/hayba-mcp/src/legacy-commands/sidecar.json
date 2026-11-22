@@ -2751,6 +2751,29 @@
       "has_ts_wrapper": false,
       "notes": "List every level asset in the project. Use it to find the exact path level_load wants."
     },
+    "editor_get_perf_stats": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPPerfHandler::GetPerfStats",
+      "params": [],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {"name":"avg_fps","type":"number"},
+          {"name":"avg_frame_ms","type":"number"},
+          {"name":"last_delta_ms","type":"number"},
+          {"name":"draw_calls","type":"number"},
+          {"name":"primitives_drawn","type":"number"},
+          {"name":"cpu_used_physical_mb","type":"number"},
+          {"name":"cpu_used_virtual_mb","type":"number"},
+          {"name":"cpu_peak_physical_mb","type":"number"},
+          {"name":"cpu_avail_physical_mb","type":"number"},
+          {"name":"gpu_dedicated_mb","type":"number"}
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": "Read editor frame timing, draw calls, rendered primitives, process memory and dedicated GPU memory. GPU memory is reported as zero when unavailable."
+    },
     "level_get_info": {
       "aliases": [],
       "handler_cpp": "FHaybaMCPLevelHandler::Handle",
