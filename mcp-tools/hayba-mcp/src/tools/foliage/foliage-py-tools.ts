@@ -602,8 +602,8 @@ export const FOLIAGE_SCATTER_WORK_LIMITS = Object.freeze({
 });
 
 function finiteScatterNumber(field: string, alternative: string) {
-  return z.custom<number>((value) => typeof value === 'number' && Number.isFinite(value), {
-    message: `bounded_work_limit: foliage_scatter_paint ${field} must be a finite number. ${alternative}; no Unreal request was sent`,
+  return z.number({
+    error: `bounded_work_limit: foliage_scatter_paint ${field} must be a finite number. ${alternative}; no Unreal request was sent`,
   });
 }
 
