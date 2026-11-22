@@ -347,6 +347,7 @@ describe('semantic runAgentLoop', () => {
         model: 'fake',
         protocol: 'anthropic',
         complete: async () => textResponse('unused'),
+        // eslint-disable-next-line require-yield -- Reproduce a provider failing before its first streamed frame.
         async *stream() {
           throw new Error('offline');
         },
@@ -1030,5 +1031,32 @@ describe('buildToolCatalog', () => {
     expect(schema.required, 'only the genuinely required param is required').toEqual(['needed']);
     expect(schema.properties.capped.default, 'the value it gets by omitting it').toBe(5);
     expect(schema.properties.maybe, 'a plain optional has no default to report').not.toHaveProperty('default');
+  });
+
+  it('builds nested object, array, and enum schemas with Zod 4', () => {
+    recordSchema('zzz_nested_probe', {
+      shape: { edits: z.array(z.object({
+        target: z.object({ name: z.string().describe('Actor name') }),
+        mode: z.enum(['move', 'rotate']),
+        priority: z.enum({ Low: 0, High: 1 }).optional(),
+        tags: z.array(z.string()).optional(),
+      })) },
+      cost: 'low', returns: '{ok}',
+    });
+    const [tool] = buildToolCatalog({ listCommands: () => ['zzz_nested_probe'] });
+    expect(tool.input_schema).toEqual({
+      type: 'object', required: ['edits'], properties: {
+        edits: { type: 'array', items: {
+          type: 'object', required: ['target', 'mode'], properties: {
+            target: { type: 'object', required: ['name'], properties: {
+              name: { type: 'string', description: 'Actor name' },
+            } },
+            mode: { type: 'string', enum: ['move', 'rotate'] },
+            priority: { type: 'number', enum: [0, 1] },
+            tags: { type: 'array', items: { type: 'string' } },
+          },
+        } },
+      },
+    });
   });
 });

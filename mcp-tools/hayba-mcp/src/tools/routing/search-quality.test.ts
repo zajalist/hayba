@@ -46,6 +46,7 @@ const CASES: Case[] = [
 
   // Capability phrasing.
   { query: 'compile a blueprint', expect: ['blueprint_compile', 'ui_compile_widget'] },
+  { query: 'inspect chooser table rows and input bindings', expect: ['chooser_inspect'] },
   { query: 'add a custom event to a blueprint', expect: ['blueprint_add_custom_event'] },
   { query: 'save an asset to disk', expect: ['asset_save'] },
   { query: 'delete an actor', expect: ['actor_delete'] },

@@ -18,6 +18,7 @@ class SButton;
 class SComboButton;
 class SEditableTextBox;
 class SMultiLineEditableText;
+class SHaybaChatTranscript;
 
 /** Replace a changed activity projection without dropping focus from its action. */
 namespace HaybaChatFocus
@@ -91,6 +92,7 @@ public:
     void Construct(const FArguments& InArgs, FHaybaMCPModule* InModule);
     /** Stage a guided request without sending or replacing a user's draft. */
     void DraftPrompt(const FString& Prompt);
+    bool IsWebWorkspaceReady() const;
 
     /** Controls hosted by the main panel's single task header. */
     TSharedRef<SWidget> BuildTaskSwitcher();
@@ -109,11 +111,49 @@ public:
     virtual FReply OnDrop(const FGeometry& MyGeometry, const FDragDropEvent& DragDropEvent) override;
 
 private:
+    friend class FHaybaChatWorkspaceStateTest;
     // Append `Addition` to InputBox, space-separating from any existing text,
     // then focus the input. Returns true if anything was appended.
     bool AppendToInput(const FString& Addition);
 
     FHaybaMCPModule* Module = nullptr;
+    TSharedPtr<SHaybaChatTranscript> WebTranscript;
+    FString TranscriptGeneration = FGuid::NewGuid().ToString(EGuidFormats::Digits);
+    double LastTranscriptUpdate = 0;
+    bool bTranscriptDirty = true;
+    uint32 LastTranscriptFlags = MAX_uint32;
+    FString LastWorkspaceSettings;
+    void UpdateWebTranscript();
+    void HandleTranscriptAction(const FJsonObject& Event);
+    FString ModelDisplayName() const;
+    TArray<FString> AvailableReasoningEfforts() const;
+    double DraftRevision = 0;
+    double DraftAck = 0;
+    struct FContextReference { FString Id, Label, Path, Kind; };
+    TArray<FContextReference> ContextReferences;
+    void AddContextReference(const FString& Path, const FString& Kind);
+    void AttachWorkspaceContext(bool bFile);
+    struct FGeneration3DJob
+    {
+        FString Id, Provider, TaskId, Prompt, Status, ModelUrl, ResultUrl, ThumbnailUrl, Error, Phase;
+        FString Kind = TEXT("model");
+        double Progress = 0, StartedAt = 0, NextPollAt = 0;
+        bool bProgressKnown = false, bRequestInFlight = false;
+    };
+    // shortcut: jobs live for this tab only; persist when cross-tab recovery is needed.
+    TArray<FGeneration3DJob> Generation3DJobs;
+    TMap<FString, FString> ConnectionStates, ConnectionMessages;
+    TMap<FString, uint32> ConnectionGenerations;
+    bool bGeneration3DBusy = false;
+    FString Generation3DError;
+    void Configure3DProvider(const FString& Provider);
+    void Check3DConnection(const FString& Provider);
+    void Start3DGeneration(const FJsonObject& Event);
+    void Refresh3DJob(const FString& Id);
+    void Tick3DJobs(double Time);
+    void Request3D(const FString& Provider, const FString& Path, const TSharedRef<FJsonObject>& Body,
+        TFunction<void(TSharedPtr<FJsonObject>, FString)> Completion);
+    void Apply3DResult(const FString& Id, const TSharedPtr<FJsonObject>& Result, const FString& Error);
 
     // ── Session ────────────────────────────────────────────────────────────
     // Lives in the widget for now; will migrate to the module so it survives
@@ -174,8 +214,23 @@ private:
     };
     TArray<FRecentSession> RecentSessions;
     FString RecentSessionsStatus;
+    FString HistoryQuery;
+    int32 HistoryOffset = 0, HistoryTotal = 0, HistoryNextOffset = 0;
+    bool bHistoryHasMore = false;
+    uint64 HistoryRequestGeneration = 0;
     FString PendingSessionId;
     bool bLoadingSession = false;
+    TArray<TSharedPtr<FJsonObject>> ChildAgents;
+    FString ChildAgentsError;
+    bool bChildAgentsLoading = false;
+    double NextChildAgentPoll = 0;
+    void RefreshChildAgents();
+    void CancelChildAgent(const FString& Id);
+    void CancelAllChildAgents();
+    void TickChildAgents(double Time);
+    void SetChildAgents(const TSharedPtr<FJsonObject>& Response);
+    void RequestChildAgents(const FString& Suffix, const FString& Verb, const TSharedRef<FJsonObject>& Body,
+        TFunction<void(TSharedPtr<FJsonObject>, FString)> Completion);
 
     // ── Streaming agent client (Task 7/8) ────────────────────────────────────
     // Held via MakeShared (NEVER stack — AsShared asserts). One client per panel
