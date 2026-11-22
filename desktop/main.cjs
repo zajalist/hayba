@@ -8,7 +8,8 @@ const { UETcpClient, discoverPortFromInstanceRegistry } = require('./editor-clie
 const page = path.join(__dirname, 'workspace.html');
 const settingsPage = path.join(__dirname, 'settings.html');
 let win, settings, active, chats, current, config, timer;
-let sharedProject;
+// Sharing lasts for the selected conversation and is cleared when the app exits.
+const sharedProjects = new Map();
 app.setName('Hayba Desktop');
 if (!app.requestSingleInstanceLock()) app.quit();
 else {
@@ -46,7 +47,7 @@ function saveChats() {
 function secureWindow(options) {
   const window = new BrowserWindow({
     ...options,
-    backgroundColor: '#171819',
+    backgroundColor: '#1d1b19',
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
@@ -70,6 +71,7 @@ function trusted(event, window, file) {
 }
 function publish() {
   if (!win || win.isDestroyed()) return;
+  const sharedProject = sharedProjects.get(current.id);
   win.webContents.send('snapshot', {
     generation: current.id,
     messages: current.messages,
@@ -108,8 +110,12 @@ function openSettings() {
   settings.loadFile(settingsPage);
 }
 function selectSharedProject(item) {
-  sharedProject = undefined;
+  if (active) {
+    item.checked = sharedProjects.has(current.id);
+    return;
+  }
   if (!item.checked) {
+    sharedProjects.delete(current.id);
     publish();
     return;
   }
@@ -118,8 +124,8 @@ function selectSharedProject(item) {
     properties: ['openFile'],
     filters: [{ name: 'Unreal project', extensions: ['uproject'] }],
   });
-  sharedProject = files?.[0];
-  item.checked = Boolean(sharedProject);
+  if (files?.[0]) sharedProjects.set(current.id, files[0]);
+  item.checked = sharedProjects.has(current.id);
   publish();
 }
 async function inspectLevel(project, signal) {
@@ -223,7 +229,10 @@ async function start() {
     }
     if (cmd.generation !== current.id) return;
     if (action === 'settings') openSettings();
-    if (action === 'project' && !active) Menu.getApplicationMenu().getMenuItemById('share-level').click();
+    if (action === 'project' && !active) {
+      Menu.getApplicationMenu().getMenuItemById('share-level').click();
+      return sharedProjects.has(current.id);
+    }
     if (action === 'copy') clipboard.writeText(value);
     if (action === 'stop') active?.abort();
     if (action === 'draft_changed') {
@@ -235,6 +244,7 @@ async function start() {
       const key = safeStorage.decryptString(Buffer.from(config.secret, 'base64'));
       const client = createLLMClient({ provider: config.provider, model: config.model, apiKey: key });
       active = new AbortController();
+      const sharedProject = sharedProjects.get(current.id);
       const inspect = sharedProject ? inspectLevel.bind(null, sharedProject) : undefined;
       void runTurn(current, value, client, active.signal, publish, inspect).finally(() => {
         active = null;
@@ -249,6 +259,7 @@ async function start() {
         current = newChat();
         chats.unshift(current);
       } else current = chats.find((c) => c.id === value) || current;
+      Menu.getApplicationMenu().getMenuItemById('share-level').checked = sharedProjects.has(current.id);
       saveChats();
       publish();
       win.webContents.send('draft', current.draft);

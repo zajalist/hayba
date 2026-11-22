@@ -6,7 +6,9 @@ Install Hayba with `Hayba-Desktop-Setup.exe`. To add the chat panel to Unreal, c
 
 Open **Provider settings** in the sidebar in Desktop, choose OpenAI or Anthropic, and enter your API key and a model ID available to your account. Windows protects the saved key with DPAPI. Changing the model within the same provider keeps your saved key. Messages go to the selected provider when you send them.
 
-Desktop has a React and Radix UI workspace with a searchable conversation sidebar. Press **Ctrl+K** to find a chat. The Unreal editor panel keeps its own conversations and provider settings. To let a Desktop conversation answer questions about the open level, select **Unreal level** in the composer. Desktop can then send the map name, package path, actor count and play state to your chosen provider when requested. Select the open project in the file picker. Hayba verifies its identity before reading the level, including when two editors are open. The option starts off each time Desktop opens. Use the Unreal panel for reviewed editor changes.
+Press **Ctrl+K** to find a conversation. Select **Share Unreal level** in the composer and choose an open project. Hayba verifies the editor’s identity before sharing the map name, package path, actor count and play state with your provider. Expand **Read level** in the reply to see what the editor returned. Sharing applies to that conversation until you disconnect it or quit Desktop.
+
+The Unreal panel has its own conversations, provider settings and review controls for editor changes. The [desktop workflow comparison](agent-workflows.md) describes which actions are available on each surface and what remains to connect them.
 
 ## Build on Windows x64
 

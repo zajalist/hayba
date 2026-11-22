@@ -58,5 +58,31 @@ test('a level tool failure reaches the provider as an error without inventing a 
   );
   assert.equal(result.is_error, true);
   assert.equal(result.tool_use_id, 'lookup');
+  assert.deepEqual(chat.messages.at(-1).levelRead, { status: 'unavailable' });
   assert.equal(chat.messages.at(-1).text, 'Please open the editor.');
+});
+
+test('the transcript records the level read even if the provider reply fails later', async () => {
+  const metadata = { map_name: 'Arena', package_path: '/Game/Arena', actor_count: 0, is_pie_running: false };
+  const chat = newChat();
+  const seen = [];
+  const client = {
+    async complete() {
+      return { toolCalls: [{ id: 'lookup', name: 'level_get_info', input: {} }] };
+    },
+    async *stream() {
+      throw Error('Connection closed');
+    },
+  };
+  await runTurn(
+    chat,
+    'Inspect',
+    client,
+    new AbortController().signal,
+    () => seen.push(chat.messages.at(-1).levelRead?.status),
+    async () => JSON.stringify(metadata),
+  );
+  assert.ok(seen.includes('reading'));
+  assert.deepEqual(chat.messages.at(-1).levelRead, { status: 'complete', metadata });
+  assert.equal(chat.messages.at(-1).notice, true);
 });

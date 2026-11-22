@@ -2,7 +2,7 @@
   "name": "hayba-desktop",
   "productName": "Hayba Desktop",
   "private": true,
-  "version": "0.1.0-preview.3",
+  "version": "0.1.0-preview.4",
   "main": "main.cjs",
   "scripts": {
     "build": "node build.mjs",

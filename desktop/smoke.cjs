@@ -13,10 +13,37 @@ async function main() {
   try {
     const page = await app.firstWindow();
     await page.getByText('Hayba Desktop', { exact: true }).waitFor();
+    // Exercise the native picker's two outcomes without interacting with the user's projects.
+    const fixtureProject = path.join(profile, 'Sample.uproject');
+    fs.writeFileSync(fixtureProject, '{}');
+    await app.evaluate(({ dialog }) => {
+      global.__qaPicker = dialog.showOpenDialogSync;
+      dialog.showOpenDialogSync = () => undefined;
+    });
+    const inspect = page.getByRole('button', { name: 'Inspect a level' });
+    await inspect.click();
+    assert.equal(await page.locator('#prompt').inputValue(), '');
+    await app.evaluate(({ dialog }, project) => {
+      dialog.showOpenDialogSync = () => [project];
+    }, fixtureProject);
+    await inspect.click();
+    await page.getByRole('button', { name: 'Sample', exact: true }).waitFor();
+    await page.waitForFunction(() => document.querySelector('#prompt').value.includes('actor count'));
+    await page.getByRole('button', { name: 'New chat', exact: true }).click();
+    await page.getByRole('button', { name: 'Share Unreal level' }).waitFor();
+    await page.getByRole('navigation', { name: 'Conversations' }).getByRole('button').last().click();
+    await page.getByRole('button', { name: 'Sample', exact: true }).click();
+    await page.getByRole('button', { name: 'Share Unreal level' }).waitFor();
+    await app.evaluate(({ dialog }) => {
+      dialog.showOpenDialogSync = global.__qaPicker;
+      delete global.__qaPicker;
+    });
+    await page.locator('#prompt').fill('');
     await page.getByRole('button', { name: 'Plan a feature' }).click();
     assert.match(await page.locator('#prompt').inputValue(), /implementation/);
     await page.keyboard.press('Control+k');
     const search = page.getByRole('dialog');
+    await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === 'Search conversations');
     await search.getByRole('textbox').fill('missing conversation');
     await search.getByText('No matching conversations.').waitFor();
     await page.keyboard.press('Escape');
@@ -111,6 +138,10 @@ async function main() {
             .innerText.includes('Rendered fixture reply'),
       );
       const result = await app.evaluate(() => global.__qaLevel);
+      const receipt = page.locator('details.read-result');
+      await receipt.locator('summary').click();
+      assert.ok((await receipt.innerText()).includes(result.package_path));
+      assert.equal(await receipt.getByText(String(result.actor_count), { exact: true }).count(), 1);
       console.log('Installed Desktop received the editor tool result:', JSON.stringify(result));
     }
     console.log('PASS: packaged React workspace, keyboard search, encrypted BYOK setup, SDK stream and transcript');

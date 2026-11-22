@@ -46,9 +46,15 @@ async function runTurn(chat, prompt, client, signal, update, inspectLevel) {
         throw Error('Unsupported editor action');
       messages.push({ role: 'assistant', content: [{ type: 'tool_use', ...call }] });
       let result;
+      reply.levelRead = { status: 'reading' };
+      update();
       try {
-        result = { content: await inspectLevel(signal) };
+        const content = await inspectLevel(signal);
+        signal.throwIfAborted();
+        reply.levelRead = { status: 'complete', metadata: JSON.parse(content) };
+        result = { content };
       } catch {
+        reply.levelRead = { status: signal.aborted ? 'stopped' : 'unavailable' };
         signal.throwIfAborted();
         result = {
           content:
@@ -56,6 +62,7 @@ async function runTurn(chat, prompt, client, signal, update, inspectLevel) {
           is_error: true,
         };
       }
+      update();
       messages.push({ role: 'user', content: [{ type: 'tool_result', tool_use_id: call.id, ...result }] });
     }
     let finished = false;

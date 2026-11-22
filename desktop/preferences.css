@@ -1,3 +1,5 @@
+@import './theme.css';
+
 @font-face {
   font-family: DM;
   src: url('@fontsource-variable/dm-sans/files/dm-sans-latin-wght-normal.woff2');
@@ -11,8 +13,8 @@ body {
     14px DM,
     'Segoe UI',
     sans-serif;
-  background: #faf9f6;
-  color: #2c2932;
+  background: var(--bg);
+  color: var(--text);
   margin: 0;
 }
 form {
@@ -23,11 +25,11 @@ form {
 .keyicon {
   display: grid;
   place-items: center;
-  background: #ebe5f1;
+  background: var(--raised);
   border-radius: 10px;
   width: 39px;
   height: 39px;
-  color: #665377;
+  color: var(--focus);
 }
 .keyicon svg {
   width: 20px;
@@ -39,7 +41,7 @@ h1 {
 }
 p {
   margin: 0;
-  color: #675f6d;
+  color: var(--secondary);
   line-height: 1.5;
 }
 fieldset {
@@ -59,8 +61,8 @@ select {
   width: 100%;
   font: 14px DM;
   color: inherit;
-  background: #fffefc;
-  border: 1px solid #cfc9cf;
+  background: var(--sunken);
+  border: 1px solid var(--strong);
   border-radius: 6px;
   padding: 9px 10px;
   margin-top: 5px;
@@ -70,7 +72,7 @@ select {
   gap: 9px;
   font-size: 12px;
   line-height: 1.5;
-  color: #62586a;
+  color: var(--secondary);
 }
 .privacy svg {
   flex: none;
@@ -84,7 +86,7 @@ select {
 }
 button {
   font: 600 13px DM;
-  color: #50475a;
+  color: var(--secondary);
   background: transparent;
   border: 0;
   border-radius: 6px;
@@ -92,8 +94,8 @@ button {
   cursor: pointer;
 }
 button[type='submit'] {
-  color: white;
-  background: #51425f;
+  color: var(--sunken);
+  background: var(--accent);
 }
 button:disabled {
   opacity: 0.55;
@@ -101,11 +103,11 @@ button:disabled {
 button:focus-visible,
 input:focus-visible,
 select:focus-visible {
-  outline: 2px solid #967ab4;
+  outline: 2px solid var(--focus);
   outline-offset: 2px;
 }
 p[role='alert'] {
   margin-top: 8px;
-  color: #92432e;
+  color: var(--fail);
   font-size: 13px;
 }

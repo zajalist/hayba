@@ -1,0 +1,17 @@
+/* Hayba's Unreal chat palette (Resources/chat/chat.css). */
+:root {
+  color-scheme: dark;
+  --bg: #1d1b19;
+  --raised: #292623;
+  --sunken: #171615;
+  --hover: #34302b;
+  --line: #3d3833;
+  --strong: #5e554d;
+  --text: #eae6e1;
+  --secondary: #bcb4ab;
+  --muted: #9b9187;
+  --accent: #c47a28;
+  --focus: #d0aa73;
+  --pass: #9bc5a6;
+  --fail: #e49790;
+}

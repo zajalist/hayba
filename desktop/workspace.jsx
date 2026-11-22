@@ -23,13 +23,12 @@ import {
   Check,
 } from 'lucide-react';
 import Markdown from 'react-markdown';
-import { Terrain } from './terrain';
 import './workspace.css';
 
 const api = window.haybaDesktop;
 const brand = <img className="brandmark" src="HaybaLogo.svg" alt="" />;
 const actions = [
-  [Layers3, 'Inspect a level', 'Summarize the current Unreal level and its actor count.'],
+  [Layers3, 'Inspect a level', 'Summarize the current Unreal level and its actor count.', true],
   [Workflow, 'Plan a feature', 'Help me break a new feature into implementation steps.'],
   [ListChecks, 'Review a design', 'Help me review a technical design and identify trade-offs.'],
 ];
@@ -51,6 +50,7 @@ function IconButton({ label, children, ...props }) {
 }
 function SearchDialog({ open, setOpen, sessions, choose }) {
   const [query, setQuery] = useState('');
+  const input = useRef(null);
   const filtered = sessions.filter((s) => s.title.toLowerCase().includes(query.trim().toLowerCase()));
   return (
     <Dialog.Root
@@ -62,7 +62,14 @@ function SearchDialog({ open, setOpen, sessions, choose }) {
     >
       <Dialog.Portal>
         <Dialog.Overlay className="overlay" />
-        <Dialog.Content className="palette" aria-describedby={undefined}>
+        <Dialog.Content
+          className="palette"
+          aria-describedby={undefined}
+          onOpenAutoFocus={(event) => {
+            event.preventDefault();
+            input.current?.focus();
+          }}
+        >
           <div className="dialoghead">
             <Dialog.Title>Find a conversation</Dialog.Title>
             <Dialog.Close asChild>
@@ -74,6 +81,7 @@ function SearchDialog({ open, setOpen, sessions, choose }) {
           <label className="searchbox">
             <Search />
             <input
+              ref={input}
               aria-label="Search conversations"
               placeholder="Search conversations…"
               value={query}
@@ -101,7 +109,45 @@ function SearchDialog({ open, setOpen, sessions, choose }) {
     </Dialog.Root>
   );
 }
-function Message({ message, copy }) {
+function LevelRead({ read, pending }) {
+  if (read.status !== 'complete') {
+    const label =
+      read.status === 'unavailable'
+        ? 'Level unavailable. Open this project in Unreal with Hayba enabled.'
+        : read.status === 'reading' && pending
+          ? 'Reading level from Unreal…'
+          : 'Level inspection stopped.';
+    return (
+      <p className="read-status" role="status">
+        <Layers3 />
+        {label}
+      </p>
+    );
+  }
+  const level = read.metadata;
+  return (
+    <details className="read-result">
+      <summary>
+        <Layers3 />
+        <span>
+          Read level <strong>{level.map_name}</strong>
+        </span>
+        <ChevronDown />
+      </summary>
+      <dl>
+        <dt>Package</dt>
+        <dd>{level.package_path ?? 'Unavailable'}</dd>
+        <dt>Actors</dt>
+        <dd>{level.actor_count ?? 'Unavailable'}</dd>
+        <dt>Play in Editor</dt>
+        <dd>
+          {typeof level.is_pie_running === 'boolean' ? (level.is_pie_running ? 'Running' : 'Stopped') : 'Unavailable'}
+        </dd>
+      </dl>
+    </details>
+  );
+}
+function Message({ message, copy, pending }) {
   const [copied, setCopied] = useState(false);
   const user = message.role === 'user';
   return (
@@ -113,6 +159,7 @@ function Message({ message, copy }) {
         {!user && brand}
         <strong>{user ? 'You' : 'Hayba'}</strong>
       </header>
+      {message.levelRead && <LevelRead read={message.levelRead} pending={pending} />}
       <div className="body">
         {user ? (
           message.text
@@ -180,6 +227,9 @@ function Workspace() {
   useLayoutEffect(() => {
     if (atEnd.current && scroll.current) scroll.current.scrollTop = scroll.current.scrollHeight;
   }, [state]);
+  useEffect(() => {
+    if (state?.generation) prompt.current?.focus();
+  }, [state?.generation]);
   if (!state) return null;
   const { workspace: w, messages, busy } = state;
   const command = (action, value = '') => api.command({ action, value, generation: state.generation });
@@ -250,7 +300,7 @@ function Workspace() {
             </aside>
           </>
         )}
-        <main>
+        <main className={messages.length ? '' : 'empty-chat'}>
           <div className="topbar">
             {!rail && (
               <IconButton label="Show sidebar" onClick={() => setRail(true)}>
@@ -273,42 +323,15 @@ function Workspace() {
               atEnd.current = el.scrollHeight - el.scrollTop - el.clientHeight < 50;
             }}
           >
-            {!messages.length ? (
-              <div className="welcome">
-                <section className="hero">
-                  <div className="heroart">
-                    <Terrain />
-                  </div>
-                  <div className="herotext">
-                    <h1>
-                      Your workspace<span>.</span>
-                    </h1>
-                    <p>Explore an idea, plan a build, or work with your Unreal level.</p>
-                  </div>
-                </section>
-                <div className="sectionhead">
-                  <h2>Start with a prompt</h2>
-                </div>
-                <div className="starters">
-                  {actions.map(([Icon, label, text]) => (
-                    <button
-                      key={label}
-                      onClick={() => {
-                        edit(text);
-                        prompt.current?.focus();
-                      }}
-                    >
-                      <Icon />
-                      <span>{label}</span>
-                      <ArrowUpRight />
-                    </button>
-                  ))}
-                </div>
-              </div>
-            ) : (
+            {messages.length > 0 && (
               <div id="messages" className="transcript">
                 {messages.map((m) => (
-                  <Message key={state.generation + '-' + m.id} message={m} copy={(text) => command('copy', text)} />
+                  <Message
+                    key={state.generation + '-' + m.id}
+                    message={m}
+                    pending={busy && m === messages.at(-1)}
+                    copy={(text) => command('copy', text)}
+                  />
                 ))}
                 {busy && (
                   <p role="status" className="responding">
@@ -319,6 +342,7 @@ function Workspace() {
             )}
           </div>
           <div className="dock">
+            {!messages.length && <h1>What are you working on?</h1>}
             {!state.canSend && (
               <div className="setup">
                 <Cable />
@@ -349,11 +373,15 @@ function Workspace() {
               <div className="tools">
                 <button
                   disabled={busy}
-                  title={w.sharedProject ? 'Stop sharing this project' : 'Select an open Unreal project'}
+                  title={
+                    w.sharedProject
+                      ? 'Stop sharing level metadata in this chat'
+                      : 'Share level metadata from an open Unreal project in this chat'
+                  }
                   onClick={() => command('project')}
                 >
                   <Box />
-                  <span>{w.sharedProject || 'Unreal level'}</span>
+                  <span>{w.sharedProject || 'Share Unreal level'}</span>
                 </button>
                 <span className="divider" />
                 <button className="model" disabled={busy} onClick={() => command('settings')}>
@@ -372,6 +400,23 @@ function Workspace() {
                 </IconButton>
               </div>
             </div>
+            {!messages.length && (
+              <div className="starters" data-drafting={Boolean(draft)} role="group" aria-label="Suggested prompts">
+                {actions.map(([Icon, label, text, needsProject]) => (
+                  <button
+                    key={label}
+                    onClick={async () => {
+                      if (needsProject && !w.sharedProject && !(await command('project'))) return;
+                      edit(text);
+                      prompt.current?.focus();
+                    }}
+                  >
+                    <Icon />
+                    {label}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         </main>
         <SearchDialog open={find} setOpen={setFind} sessions={w.sessions} choose={choose} />
