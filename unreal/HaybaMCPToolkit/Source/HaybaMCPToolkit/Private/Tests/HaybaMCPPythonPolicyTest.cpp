@@ -368,6 +368,19 @@ bool FHaybaMCPPythonPolicyBoundaryTest::RunTest(const FString& Parameters)
             Handler.IsTier3PolicyBlockedForTests(Tier3Script, true, true));
     }
 
+    // A method that shares a dynamic builtin's name is not Tier 3; the fatal table refuses the builtins themselves.
+    for (const TCHAR* MethodCall : { TEXT("blueprint.recompile()"), TEXT("ast.literal_eval(text)"), TEXT("model.eval()") })
+    {
+        TestFalse(*FString::Printf(TEXT("method call is not Tier-3: %s"), MethodCall),
+            Handler.IsTier3PolicyBlockedForTests(MethodCall, false, false));
+    }
+    for (const TCHAR* Builtin : { TEXT("eval('1')"), TEXT("compile('x', 'f', 'exec')") })
+    {
+        FString Code;
+        TestTrue(*FString::Printf(TEXT("builtin is still refused: %s"), Builtin), Handler.MatchFatalPolicyForTests(Builtin, Code));
+        TestEqual(*FString::Printf(TEXT("builtin refusal code: %s"), Builtin), Code, FString(TEXT("HCR-DYNAMIC-001")));
+    }
+
     // Handle() itself must refuse before PythonScriptPlugin access, and its
     // compatibility facts must say the requested override had no effect.
     const FHaybaHandlerResult LegacyOverride = RunPolicyProbe(

@@ -350,10 +350,10 @@ export const healthMeta: HaybaToolMeta = {
 export const healthHandler: ToolHandler = async (args) => {
   const sessionId = sessionIdOf(args);
   const cfg = getConfigEntry(sessionId);
-  let ueConnected = false;
+  let ueConnected: boolean;
   try {
-    await executeCommand('hayba_check_ue_status', {}, { timeout: 2000 });
-    ueConnected = true;
+    const ping = await executeCommand('ping', {}, { timeout: 2000 });
+    ueConnected = ping.status === 'ok' && ping.plugin === 'HaybaMCPToolkit';
   } catch {
     ueConnected = false;
   }

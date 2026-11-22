@@ -8,6 +8,7 @@ import {
   pcgLayoutDescriptor,
   pcgListPinsDescriptor,
   pcgGetNodeDescriptor,
+  pcgInspectInstancesDescriptor,
 } from './pcg-primitives.js';
 
 // Canned-stdout sender that drives the HAYBA_JSON parse path AND captures the
@@ -226,5 +227,22 @@ describe('pcg_wire loud pin validation (§4)', () => {
     const parsed = JSON.parse(res.content[0].text);
     expect(parsed.ok).toBe(false);
     expect(parsed.valid_from_pins).toEqual(['Out']);
+  });
+});
+
+describe('PCG read tools take a Read lease', () => {
+  // A production project, 2026-11-12: pcg_get_node during another lane's IX lease came back
+  // lease_conflict 'python_run' (write_world) wants X. Reads must declare read_only.
+  it('pcg_get_node, pcg_list_pins and pcg_inspect_instances send read_only; a write does not', async () => {
+    const m = mockStdout(emit({ ok: true }));
+    setDefaultSender(m.sender);
+    await makePyToolHandler(pcgGetNodeDescriptor)({ graph: '/Game/G', node: 0 });
+    expect(m.lastParams().read_only).toBe(true);
+    await makePyToolHandler(pcgListPinsDescriptor)({ graph: '/Game/G', node: 0 });
+    expect(m.lastParams().read_only).toBe(true);
+    await makePyToolHandler(pcgInspectInstancesDescriptor)({ actor: 'PCGVolume' });
+    expect(m.lastParams().read_only).toBe(true);
+    await makePyToolHandler(pcgWireDescriptor)({ graph: '/Game/G', from_node: 0, to_node: 1 });
+    expect(m.lastParams().read_only).toBeUndefined();
   });
 });
