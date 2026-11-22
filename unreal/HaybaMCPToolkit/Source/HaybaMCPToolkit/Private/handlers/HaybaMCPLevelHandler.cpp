@@ -1,4 +1,5 @@
 #include "HaybaMCPLevelHandler.h"
+#include "HaybaMCPLightEdit.h"
 #include "HaybaMCPSaveVerify.h"
 #include "CoreGlobals.h"
 #include "HaybaMCPUnattendedProbe.h"
@@ -134,6 +135,8 @@ TArray<FString> FHaybaMCPLevelHandler::GetCommands() const
         TEXT("level_save"),
         TEXT("level_create"),
         TEXT("level_get_info"),
+        TEXT("lighting_list_loaded"), TEXT("lighting_inspect_pair"),
+        TEXT("lighting_set_intensity_checked"), TEXT("lighting_review_status"),
         TEXT("level_get_spatial_index"),
         TEXT("level_set_bookmark"),
         TEXT("level_goto_bookmark"),
@@ -142,6 +145,7 @@ TArray<FString> FHaybaMCPLevelHandler::GetCommands() const
 
 FHaybaHandlerResult FHaybaMCPLevelHandler::Handle(const FString& Cmd, const TSharedPtr<FJsonObject>& Params)
 {
+    if (Cmd.StartsWith(TEXT("lighting_"))) return HaybaLightEdit::Handle(Cmd, Params);
     if (Cmd == TEXT("level_list"))              return LevelList(Params);
     if (Cmd == TEXT("level_load"))              return LevelLoad(Params);
     if (Cmd == TEXT("level_save"))              return LevelSave(Params);

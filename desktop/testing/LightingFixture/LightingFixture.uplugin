@@ -1,0 +1,5 @@
+{
+  "FileVersion": 3, "Version": 1, "VersionName": "1", "FriendlyName": "Hayba lighting acceptance fixture",
+  "CanContainContent": false, "EnabledByDefault": false,
+  "Modules": [{ "Name": "LightingFixture", "Type": "Editor", "LoadingPhase": "PostEngineInit" }]
+}

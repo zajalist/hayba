@@ -74,6 +74,7 @@ namespace HaybaMCPCommandSets
             TEXT("actor_list"), TEXT("world_budget_snapshot"), TEXT("world_semantic_snapshot"), TEXT("world_tile_capture"), TEXT("world_query"), TEXT("actor_get_properties"), TEXT("actor_get_components"), TEXT("object_get_property"),
 			TEXT("blueprint_get_info"), TEXT("blueprint_inspect_graph"), TEXT("anim_blueprint_get_info"), TEXT("bt_get_info"),
 			TEXT("material_get_info"), TEXT("material_list"), TEXT("data_get"), TEXT("level_get_info"), TEXT("level_list"),
+			TEXT("lighting_list_loaded"), TEXT("lighting_inspect_pair"), TEXT("lighting_review_status"),
 			TEXT("level_get_spatial_index"), TEXT("scene_get_actor_relations"), TEXT("spline_get_info"),
 			TEXT("texture_get_info"), TEXT("texture_list"), TEXT("mesh_get_info"), TEXT("mesh_list"), TEXT("ui_query"),
 			TEXT("ui_list_widget_types"), TEXT("ui_list_widget_blueprints"), TEXT("ui_report_findings"),

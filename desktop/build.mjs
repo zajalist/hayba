@@ -1,4 +1,5 @@
 import { build } from 'esbuild';
+import { rcedit } from 'rcedit';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { cpSync, existsSync, mkdirSync, readFileSync, renameSync } from 'node:fs';
@@ -17,18 +18,47 @@ cpSync('node_modules/electron/dist', appDir, { recursive: true });
 renameSync(join(appDir, 'electron.exe'), join(appDir, 'Hayba.exe'));
 const app = join(appDir, 'resources/app');
 mkdirSync(app, { recursive: true });
-for (const name of ['package.json', 'session.cjs', 'main.cjs', 'preload.cjs', 'settings.html', 'workspace.html'])
+const icon = join(process.cwd(), 'media/Hayba.ico');
+await rcedit(join(appDir, 'Hayba.exe'), {
+  icon,
+  'version-string': { ProductName: 'Hayba Desktop', FileDescription: 'Hayba Desktop', OriginalFilename: 'Hayba.exe', InternalName: 'Hayba' },
+});
+cpSync(icon, join(app, 'Hayba.ico'));
+for (const name of [
+  'package.json',
+  'session.cjs',
+  'history.cjs',
+  'preferences.cjs',
+  'main.cjs',
+  'lighting.cjs',
+  'preload.cjs',
+  'settings.html',
+  'workspace.html',
+])
   cpSync(name, join(app, name));
 cpSync('../LICENSE', join(app, 'LICENSE'));
 await build({
   absWorkingDir: process.cwd(),
-  entryPoints: ['../mcp-tools/hayba-mcp/src/agents/llm-client.ts'],
+  entryPoints: ['provider-entry.mjs'],
   bundle: true,
   platform: 'node',
   format: 'cjs',
   outfile: join(app, 'provider.cjs'),
 });
 const source = '../unreal/HaybaMCPToolkit/Resources';
+await build({
+  absWorkingDir: process.cwd(),
+  entryPoints: {
+    'lighting-mcp': 'lighting-client.cjs',
+    'lighting-server': '../mcp-tools/hayba-mcp/src/lighting-stdio.ts',
+  },
+  outdir: app,
+  bundle: true,
+  minify: true,
+  platform: 'node',
+  format: 'cjs',
+  outExtension: { '.js': '.cjs' },
+});
 await build({
   absWorkingDir: process.cwd(),
   entryPoints: ['../mcp-tools/hayba-mcp/src/tcp-client.ts'],

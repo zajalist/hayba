@@ -51,7 +51,7 @@ a:focus-visible,
 input:focus-visible,
 textarea:focus-visible,
 select:focus-visible {
-  outline: 2px solid var(--focus);
+  outline: 2px solid var(--button-outline);
   outline-offset: 2px;
 }
 svg {
@@ -115,8 +115,8 @@ button:hover:not(:disabled) {
   background: var(--hover);
 }
 .rail .new {
-  background: var(--accent);
-  color: var(--sunken);
+  background: var(--button-fill);
+  color: var(--button-ink);
   border-radius: 6px;
   height: 38px;
   justify-content: flex-start;
@@ -124,7 +124,7 @@ button:hover:not(:disabled) {
   font-weight: 650;
 }
 .rail .new:hover:not(:disabled) {
-  background: var(--focus);
+  background: var(--button-hover);
 }
 .find,
 .railsettings {
@@ -173,7 +173,7 @@ button:hover:not(:disabled) {
   color: var(--text);
 }
 .rail nav button[aria-current='page'] svg {
-  color: var(--focus);
+  color: var(--secondary);
 }
 .rail nav button span,
 .topbar strong,
@@ -287,7 +287,7 @@ main {
   border-radius: 8px;
 }
 .setup > svg {
-  color: var(--focus);
+  color: var(--secondary);
 }
 .setup div {
   display: flex;
@@ -307,7 +307,7 @@ main {
   font-size: 12px;
   font-weight: 650;
   margin-left: auto;
-  color: var(--focus);
+  color: var(--secondary);
 }
 .setup button svg {
   width: 13px;
@@ -319,7 +319,7 @@ main {
   padding: 14px;
 }
 .composer:focus-within {
-  border-color: var(--focus);
+  border-color: var(--accent);
 }
 .composer textarea {
   width: 100%;
@@ -359,16 +359,32 @@ main {
   margin-left: auto;
   flex: none;
   border-radius: 7px;
-  background: var(--accent);
-  color: var(--sunken);
+  background: var(--button-fill);
+  color: var(--button-ink);
   padding: 7px;
 }
 .tools .send:hover:not(:disabled) {
-  background: var(--focus);
+  background: var(--button-hover);
 }
 .tools .send:disabled {
   opacity: 0.65;
 }
+.permission-mode {
+  background: var(--sunken);
+  color: var(--secondary);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  max-width: 175px;
+  padding: 5px;
+  font: inherit;
+  font-size: 12px;
+}
+.mode-help { margin: 6px 0 0; font-size: 12px; color: var(--secondary); }
+.shell[data-transcript='small'] .transcript { font-size: 13px; }
+.shell[data-transcript='large'] .transcript { font-size: 17px; }
+.shell[data-density='compact'] .message { margin-bottom: 12px; line-height: 1.4; }
+.shell[data-density='compact'] .transcript { padding-top: 15px; }
+.shell[data-density='compact'] .light-card { padding: 10px 13px; margin-bottom: 12px; }
 .tools .send svg {
   width: 18px;
   height: 18px;
@@ -408,7 +424,7 @@ main {
   width: fit-content;
 }
 .read-result summary:focus-visible {
-  outline: 2px solid var(--focus);
+  outline: 2px solid var(--button-outline);
   outline-offset: 2px;
 }
 .read-result summary svg:first-child {
@@ -517,7 +533,7 @@ main {
   padding: 9px;
 }
 .searchbox:focus-within {
-  border-color: var(--focus);
+  border-color: var(--secondary);
 }
 .searchbox input {
   background: transparent;
@@ -593,5 +609,121 @@ main {
 @media (prefers-reduced-motion: reduce) {
   * {
     transition: none !important;
+  }
+}
+.light-card {
+  background: var(--raised);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  margin: 12px 0 20px;
+  padding: 16px 18px;
+}
+.light-card header,
+.light-actions,
+.light-edit {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.light-card header > svg {
+  color: var(--secondary);
+}
+.light-card header span,
+.light-card small,
+.light-card details {
+  font-size: 12px;
+  color: var(--secondary);
+}
+.light-card header span {
+  overflow-wrap: anywhere;
+}
+.light-card table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 14px 0;
+  font-size: 13px;
+}
+.light-card th,
+.light-card td {
+  text-align: right;
+  padding: 8px 3px;
+  border-bottom: 1px solid var(--line);
+  font-variant-numeric: tabular-nums;
+}
+.light-card th:first-child {
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+.light-card thead th {
+  font-weight: 500;
+  color: var(--secondary);
+}
+.light-card small {
+  display: block;
+  font-weight: 400;
+}
+.light-card p {
+  margin: 9px 0;
+}
+.light-card details {
+  margin-top: 12px;
+}
+.light-card summary {
+  cursor: pointer;
+}
+.light-edit {
+  align-items: end;
+  margin-top: 12px;
+}
+.light-card label,
+.light-picker label {
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+  min-width: 0;
+}
+.light-card select,
+.light-card input,
+.light-picker select {
+  background: var(--sunken);
+  color: var(--text);
+  border: 1px solid var(--strong);
+  padding: 7px;
+  border-radius: 4px;
+  max-width: 100%;
+}
+.light-card input {
+  width: 110px;
+}
+.light-card button,
+.light-picker .primary {
+  border: 1px solid var(--strong);
+  border-radius: 5px;
+  padding: 7px 10px;
+}
+.light-card .primary,
+.light-picker .primary {
+  background: var(--button-fill);
+  color: var(--button-ink);
+}
+.light-card .primary:hover:not(:disabled),
+.light-picker .primary:hover:not(:disabled) {
+  background: var(--button-hover);
+}
+.light-card [role='alert'],
+.light-picker [role='alert'] {
+  color: var(--fail);
+}
+.light-picker form {
+  display: grid;
+  gap: 12px;
+}
+.light-picker .primary {
+  justify-self: end;
+}
+@media (max-width: 580px) {
+  .tools {
+    flex-wrap: wrap;
   }
 }

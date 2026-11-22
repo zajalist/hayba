@@ -536,6 +536,7 @@ static bool IsDestructiveCommand(const FString& Cmd)
         // though it intentionally creates no editor undo record below.
         TEXT("editor_pie_click_actor"),
         // Actor lifecycle + mutation
+        TEXT("lighting_set_intensity_checked"),
         TEXT("actor_spawn"),
         TEXT("actor_delete"),
         TEXT("actor_transform"),
@@ -939,7 +940,7 @@ bool FHaybaMCPCommandHandler::CaptureExactApprovalTarget(const FString& Cmd,
     // in this slice. Generic Python, asset writes, batches, and creates need
     // operation-specific target inventories before they can be approved.
     const bool bNameOrLabel = Cmd == TEXT("actor_transform") || Cmd == TEXT("actor_delete");
-    const bool bNameOnly = Cmd == TEXT("actor_set_properties") || Cmd == TEXT("actor_tag") ||
+    const bool bNameOnly = Cmd == TEXT("lighting_set_intensity_checked") || Cmd == TEXT("actor_set_properties") || Cmd == TEXT("actor_tag") ||
         Cmd == TEXT("actor_set_visibility");
     if (!bNameOrLabel && !bNameOnly) return false;
     if (!Params.IsValid() || !GEditor || Params->HasField(TEXT("actorId"))) return false;

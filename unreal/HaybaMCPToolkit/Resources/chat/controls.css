@@ -1,0 +1,8 @@
+/* Shared primary controls for Desktop, the editor panel and the dashboard. */
+:root {
+  --button-fill: #d4d4d4;
+  --button-hover: #eeeeee;
+  --button-pressed: #bcbcbc;
+  --button-ink: #202020;
+  --button-outline: #bcbcbc;
+}

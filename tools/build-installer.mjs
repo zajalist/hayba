@@ -67,6 +67,11 @@ writeFileSync(join(node, 'LICENSE'), nodeLicense);
 const server = join(plugin, 'ThirdParty/mcp_server');
 const packageJson = json(join(sourcePackage, 'package.json'));
 copyTree(join(sourcePackage, 'dist'), join(server, 'dist'), path => !/\.test\.|\.test-helpers\.|\.map$|\.d\.ts$/.test(path));
+if (desktop) {
+  const dashboard = join(sourcePackage, 'dashboard', 'dist');
+  if (!existsSync(join(dashboard, 'index.html'))) throw new Error('Build @hayba/mcp with its dashboard before packaging Desktop.');
+  copyTree(dashboard, join(server, 'dashboard', 'dist'));
+}
 writeFileSync(join(server, 'package.json'), JSON.stringify({ ...packageJson, scripts: undefined, devDependencies: undefined }, null, 2));
 copyFileSync(join(sourcePackage, 'hayba.agents.json'), join(server, 'hayba.agents.json'));
 copyFileSync(join(repo, 'tools/installer/run-mcp.cjs'), join(server, 'run-mcp.cjs'));

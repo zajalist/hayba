@@ -11,7 +11,7 @@
 }
 .review-notice > .icon,
 .review-notice [data-icon] {
-  color: var(--focus);
+  color: var(--secondary);
 }
 .review-notice > span:nth-child(2) {
   flex: 1;
@@ -111,7 +111,7 @@
 }
 .navigator-tab[aria-selected='true'] {
   color: var(--text);
-  border-bottom-color: var(--focus);
+  border-bottom-color: var(--secondary);
 }
 .navigator-panel {
   padding: 13px 14px;
@@ -155,8 +155,8 @@
   border-color: var(--line);
 }
 .navigator-filters button[aria-pressed='true'] {
-  border-color: var(--focus);
-  color: var(--focus);
+  border-color: var(--button-outline);
+  color: var(--secondary);
 }
 .navigator-filters button:last-child {
   margin-left: auto;
@@ -251,9 +251,9 @@
   color: var(--secondary);
 }
 .media-category[aria-pressed='true'] {
-  color: var(--focus);
-  border-color: var(--focus);
-  background: #d0aa7308;
+  color: var(--secondary);
+  border-color: var(--button-outline);
+  background: var(--hover);
 }
 .media-category .icon {
   width: 20px;
@@ -365,7 +365,7 @@
   position: absolute;
   right: -1px;
   top: -1px;
-  background: var(--focus);
+  background: var(--button-fill);
   color: var(--sunken);
   border: 2px solid var(--bg);
   border-radius: 10px;
@@ -505,7 +505,7 @@
   min-height: 57px;
   max-height: 180px;
   padding: 0 4px;
-  caret-color: var(--focus);
+  caret-color: var(--secondary);
   overflow: auto;
 }
 #prompt::placeholder {
@@ -656,7 +656,7 @@
 }
 .workspace-notice {
   font-size: 12px;
-  color: var(--focus);
+  color: var(--secondary);
   padding: 5px 4px;
   line-height: 1.5;
   overflow-wrap: anywhere;
@@ -762,7 +762,7 @@
     sans-serif;
 }
 .search-field:focus-within {
-  border-color: var(--focus);
+  border-color: var(--button-outline);
 }
 .menu-list {
   overflow: auto;
@@ -797,7 +797,7 @@
   background: var(--hover);
 }
 .menu-row.selected > .icon:last-child {
-  color: var(--focus);
+  color: var(--secondary);
   width: 14px;
   height: 14px;
 }
@@ -881,9 +881,9 @@
   padding: 4px 8px;
 }
 .effort-options button.selected {
-  border-color: var(--focus);
-  color: var(--focus);
-  background: #d0aa730a;
+  border-color: var(--button-outline);
+  color: var(--secondary);
+  background: var(--hover);
 }
 .menu-divider {
   border-top: 1px solid var(--line);
@@ -954,7 +954,7 @@
   justify-content: center;
   border: 1px solid var(--line);
   border-radius: 9px;
-  color: var(--focus);
+  color: var(--secondary);
 }
 .sheet-body {
   min-height: 0;
@@ -1075,7 +1075,7 @@
   border-radius: 8px;
   padding: 10px 11px;
   outline: 0;
-  caret-color: var(--focus);
+  caret-color: var(--secondary);
 }
 .field textarea {
   resize: vertical;
@@ -1085,7 +1085,7 @@
 .field input:focus,
 .field textarea:focus,
 .field select:focus {
-  border-color: var(--focus);
+  border-color: var(--button-outline);
 }
 .field-note {
   font-size: 11px;
@@ -1111,9 +1111,9 @@
   background: var(--raised);
 }
 .provider-choice.selected {
-  border-color: var(--focus);
-  color: var(--focus);
-  background: #d0aa7308;
+  border-color: var(--button-outline);
+  color: var(--secondary);
+  background: var(--hover);
 }
 .provider-choice small {
   font-size: 9px;
@@ -1143,15 +1143,15 @@
   min-height: 37px;
   font-size: 12px;
   font-weight: 600;
-  background: var(--focus);
+  background: var(--button-fill);
   color: var(--sunken);
-  border-color: var(--focus);
+  border-color: var(--button-outline);
 }
 .generate-button:hover {
-  background: #dfbc8c;
+  background: var(--button-hover);
 }
 .generate-button:disabled:hover {
-  background: var(--focus);
+  background: var(--button-fill);
 }
 .credit-note {
   text-align: center;
@@ -1188,7 +1188,7 @@
   align-items: flex-start;
 }
 .job-heading > .icon {
-  color: var(--focus);
+  color: var(--secondary);
   margin-top: 3px;
   width: 18px;
   height: 18px;
@@ -1229,7 +1229,7 @@
 }
 .job-progress div {
   height: 100%;
-  background: var(--focus);
+  background: var(--button-fill);
   transition: width 0.2s ease-out;
 }
 .job-actions {
@@ -1425,3 +1425,5 @@
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   overflow-wrap: anywhere;
 }
+
+.composer:focus-within { border-color: var(--accent); }

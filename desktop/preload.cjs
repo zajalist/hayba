@@ -3,6 +3,8 @@ if (location.pathname.endsWith('/settings.html')) {
   contextBridge.exposeInMainWorld('providerSettings', {
     info: () => ipcRenderer.invoke('provider-info'),
     save: (value) => ipcRenderer.invoke('provider-save', value),
+    preferences: () => ipcRenderer.invoke('preferences-info'),
+    savePreferences: (patch) => ipcRenderer.invoke('preferences-save', patch),
   });
 } else {
   contextBridge.exposeInMainWorld('haybaDesktop', {

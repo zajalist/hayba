@@ -1,3 +1,4 @@
+@import '../../../../unreal/HaybaMCPToolkit/Resources/chat/controls.css';
 :root {
   --bg-deep:     #0d0d0d;
   --bg-base:     #141414;
@@ -7,13 +8,13 @@
   --border-hard: #0a0a0a;
   --border-mid:  #1e1e1e;
   --border-soft: #2a2a2a;
-  --accent:      #e8821c;
-  --accent-dim:  #e8821c22;
-  --accent-glow: #e8821c44;
+  --accent:      var(--button-fill);
+  --accent-dim:  #d4d4d422;
+  --accent-glow: #d4d4d444;
   --text-primary:   #c8c8c8;
   --text-secondary: #888;
   --text-muted:     #555;
-  --text-accent:    #e8821c;
+  --text-accent:    var(--button-fill);
   --status-green:   #4db34d;
   --status-orange:  #e8821c;
   --status-red:     #c0392b;
@@ -78,20 +79,19 @@ body {
   align-items: center;
   justify-content: center;
   padding: 0 12px;
-  height: 22px;
-  border-radius: 2px;
+  min-height: 28px;
+  border-radius: 5px;
   font-size: 10px;
   font-weight: 600;
   letter-spacing: 0.5px;
-  text-transform: uppercase;
   cursor: pointer;
   border: none;
   transition: filter 0.1s;
 }
 .btn:hover { filter: brightness(1.1); }
 .btn-primary {
-  background: linear-gradient(180deg, #f09030 0%, #e07820 100%);
-  color: #1a0800;
+  background: var(--button-fill);
+  color: var(--button-ink);
   box-shadow: 0 1px 3px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.15);
 }
 .btn-ghost {

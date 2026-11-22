@@ -1,3 +1,5 @@
+@import './controls.css';
+
 @font-face {
   font-family: Hayba;
   src: url('../Fonts/noto-sans-latin-400-normal.woff2') format('woff2');
@@ -73,7 +75,7 @@ button:focus-visible,
 a:focus-visible,
 summary:focus-visible,
 main:focus-visible {
-  outline: 2px solid var(--focus);
+  outline: 2px solid var(--button-outline);
   outline-offset: 2px;
 }
 button:focus:not(:focus-visible) {
@@ -255,7 +257,7 @@ button:focus:not(:focus-visible) {
   overflow-wrap: normal;
 }
 .body a {
-  color: var(--focus);
+  color: var(--secondary);
   text-decoration-color: var(--strong);
   text-underline-offset: 3px;
 }
@@ -331,7 +333,7 @@ button:focus:not(:focus-visible) {
   color: var(--fail);
 }
 .state.attention {
-  color: var(--focus);
+  color: var(--secondary);
 }
 .activity-content {
   padding: 0 12px 12px;
@@ -389,13 +391,13 @@ button:focus:not(:focus-visible) {
   font-size: 12px;
 }
 .actions .primary {
-  background: var(--focus);
-  border-color: var(--focus);
+  background: var(--button-fill);
+  border-color: var(--button-outline);
   color: var(--sunken);
   font-weight: 600;
 }
 .actions .primary:hover {
-  background: #dfbc8c;
+  background: var(--button-hover);
 }
 .notice {
   border: 1px solid var(--strong);
@@ -403,7 +405,7 @@ button:focus:not(:focus-visible) {
   padding: 12px 14px;
 }
 .notice .message-header {
-  color: var(--focus);
+  color: var(--secondary);
 }
 .notice .body {
   font-size: 13px;
@@ -479,7 +481,7 @@ button:focus:not(:focus-visible) {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: var(--focus);
+  background: var(--button-fill);
 }
 .latest {
   position: fixed;

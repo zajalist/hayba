@@ -100,7 +100,6 @@ void SHaybaChatTranscript::Construct(const FArguments& Args)
 {
     OnAction = Args._OnAction;
     DocumentToken = FGuid::NewGuid().ToString(EGuidFormats::Digits);
-    StartedAt = FPlatformTime::Seconds();
     const TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(TEXT("HaybaMCPToolkit"));
     const FString Path = Plugin.IsValid() ? FPaths::ConvertRelativePathToFull(Plugin->GetBaseDir() / TEXT("Resources/chat/index.html")) : FString();
     if (Path.IsEmpty() || !FPaths::FileExists(Path)) { bFailed = true; return; }
@@ -151,9 +150,13 @@ void SHaybaChatTranscript::Construct(const FArguments& Args)
         .OnLoadCompleted_Lambda([Weak]()
         {
             if (const auto Self = Weak.Pin())
-                Self->Browser->ExecuteJavascript(FString::Printf(TEXT("window.haybaChat && window.haybaChat.init('%s');"), *Self->DocumentToken));
+            {
+                Self->bDocumentLoaded = true;
+                Self->bFailed = false;
+                if (!Self->bReady) Self->InitializeDocument();
+            }
         })
-        .OnLoadError_Lambda([Weak]() { if (const auto Self = Weak.Pin()) { Self->bFailed = true; Self->bReady = false; } })
+        .OnLoadError_Lambda([Weak]() { if (const auto Self = Weak.Pin()) { Self->bDocumentLoaded = false; Self->bFailed = true; Self->bReady = false; } })
     ];
 }
 
@@ -164,10 +167,19 @@ void SHaybaChatTranscript::AcknowledgeCopy(bool bSucceeded)
         : TEXT("window.haybaChat && window.haybaChat.ack({action:'copy',ok:false});"));
 }
 
+void SHaybaChatTranscript::InitializeDocument()
+{
+    if (!Browser) return;
+    NextInitAt = FPlatformTime::Seconds() + 1.0;
+    Browser->ExecuteJavascript(FString::Printf(TEXT("window.haybaChat && window.haybaChat.init('%s');"), *DocumentToken));
+}
+
 void SHaybaChatTranscript::Tick(const FGeometry& Geometry, double Time, float Delta)
 {
     SCompoundWidget::Tick(Geometry, Time, Delta);
-    if (!bReady && FPlatformTime::Seconds() - StartedAt > 8.0) bFailed = true;
+    // Slate's native chat remains usable while CEF starts. A slow cold load can still take over.
+    if (!bReady && bDocumentLoaded && !bFailed && FPlatformTime::Seconds() >= NextInitAt)
+        InitializeDocument();
 }
 
 void SHaybaChatTranscript::SetSnapshot(const TSharedRef<FJsonObject>& Snapshot)

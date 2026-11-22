@@ -13,6 +13,22 @@ async function main() {
   try {
     const page = await app.firstWindow();
     await page.getByText('Hayba Desktop', { exact: true }).waitFor();
+    assert.equal(await page.locator('link[rel=icon]').getAttribute('href'), 'Hayba.ico');
+    assert.ok(await page.evaluate(async () => {
+      const icon = new Image();
+      icon.src = document.querySelector('link[rel=icon]').href;
+      await icon.decode();
+      return icon.naturalWidth > 0 && icon.naturalHeight > 0;
+    }));
+    await page.locator('#prompt').focus();
+    assert.equal(
+      await page.locator('.composer').evaluate((el) => getComputedStyle(el).borderTopColor),
+      'rgb(196, 122, 40)',
+    );
+    assert.equal(
+      await page.locator('.rail .new').evaluate((el) => getComputedStyle(el).backgroundColor),
+      'rgb(212, 212, 212)',
+    );
     // Exercise the native picker's two outcomes without interacting with the user's projects.
     const fixtureProject = path.join(profile, 'Sample.uproject');
     fs.writeFileSync(fixtureProject, '{}');
@@ -31,7 +47,7 @@ async function main() {
     await page.waitForFunction(() => document.querySelector('#prompt').value.includes('actor count'));
     await page.getByRole('button', { name: 'New chat', exact: true }).click();
     await page.getByRole('button', { name: 'Share Unreal level' }).waitFor();
-    await page.getByRole('navigation', { name: 'Conversations' }).getByRole('button').last().click();
+    await page.getByRole('navigation', { name: 'Conversations' }).getByRole('button', { name: /^Summarize the current Unreal level/ }).click();
     await page.getByRole('button', { name: 'Sample', exact: true }).click();
     await page.getByRole('button', { name: 'Share Unreal level' }).waitFor();
     await app.evaluate(({ dialog }) => {
@@ -51,10 +67,15 @@ async function main() {
     const next = app.waitForEvent('window');
     await page.getByRole('button', { name: 'Open settings' }).click();
     const settings = await next;
+    await settings.locator('button[type=submit]').waitFor();
+    assert.equal(
+      await settings.locator('button[type=submit]').evaluate((el) => getComputedStyle(el).backgroundColor),
+      'rgb(212, 212, 212)',
+    );
     await settings.locator('#provider').selectOption('openai');
     await settings.getByLabel('Model ID').fill('test-model');
     await settings.getByLabel('API key').fill('test-placeholder-only');
-    await settings.getByText('Save connection').click();
+    await settings.getByText('Save connection').click().catch((error) => { if (!settings.isClosed()) throw error; });
     await page.getByText('test-model', { exact: true }).waitFor();
     assert.ok(!fs.readFileSync(path.join(profile, 'provider.json'), 'utf8').includes('test-placeholder-only'));
     const savedSecret = JSON.parse(fs.readFileSync(path.join(profile, 'provider.json'))).secret;
@@ -62,7 +83,7 @@ async function main() {
     await app.evaluate(({ Menu }) => Menu.getApplicationMenu().items[0].submenu.items[0].click());
     const modelSettings = await changedSettings;
     await modelSettings.getByLabel('Model ID').fill('second-test-model');
-    await modelSettings.getByText('Save connection').click();
+    await modelSettings.getByText('Save connection').click().catch((error) => { if (!modelSettings.isClosed()) throw error; });
     await page.getByText('second-test-model', { exact: true }).waitFor();
     assert.equal(JSON.parse(fs.readFileSync(path.join(profile, 'provider.json'))).secret, savedSecret);
     // Intercept the SDK in the test process so a fixture can never bill a provider.
@@ -99,35 +120,8 @@ async function main() {
         } finally {
           dialog.showOpenDialogSync = pick;
         }
-        const stream = global.fetch;
-        global.fetch = async (url, options) => {
-          if (!String(url).startsWith('https://api.openai.com/')) throw Error('Unexpected provider');
-          const body = JSON.parse(options.body);
-          if (body.tools?.some((tool) => tool.function.name === 'level_get_info')) {
-            return Response.json({
-              id: 'fixture',
-              object: 'chat.completion',
-              choices: [
-                {
-                  index: 0,
-                  finish_reason: 'tool_calls',
-                  message: {
-                    role: 'assistant',
-                    content: null,
-                    tool_calls: [
-                      { id: 'inspect', type: 'function', function: { name: 'level_get_info', arguments: '{}' } },
-                    ],
-                  },
-                },
-              ],
-            });
-          }
-          const result = JSON.parse(body.messages.findLast((message) => message.role === 'tool').content);
-          if (!result.map_name || !Number.isInteger(result.actor_count)) throw Error('Missing live level metadata');
-          global.__qaLevel = result;
-          return stream(url, options);
-        };
       }, project);
+      await app.evaluate(require('./testing/streamed-provider.cjs'));
       await page.locator('#prompt').fill('Inspect the current Unreal level');
       await page.locator('#send-button').click();
       await page.waitForFunction(

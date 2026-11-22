@@ -21,6 +21,8 @@ AppName=Hayba Desktop Preview
 UninstallDisplayName=Hayba Desktop Preview
 DefaultDirName={localappdata}\Programs\Hayba Desktop
 UninstallDisplayIcon={app}\Hayba.exe
+SetupIconFile={#DesktopDir}\resources\app\Hayba.ico
+ChangesAssociations=yes
 OutputBaseFilename=Hayba-Desktop-Setup
 #else
 AppId={#AppGuid}
@@ -58,7 +60,7 @@ Source: "{#InstallerDir}\Installer.Core.ps1"; DestDir: "{app}"
 Source: "{#DesktopDir}\*"; DestDir: "{app}"; Flags: recursesubdirs ignoreversion
 
 [Icons]
-Name: "{userprograms}\Hayba Desktop"; Filename: "{app}\Hayba.exe"
+Name: "{userprograms}\Hayba Desktop"; Filename: "{app}\Hayba.exe"; IconFilename: "{app}\resources\app\Hayba.ico"; AppUserModelID: "Hayba.Desktop"
 [Run]
 Filename: "{app}\Hayba.exe"; Description: "Open Hayba Desktop"; Flags: postinstall nowait skipifsilent
 #endif

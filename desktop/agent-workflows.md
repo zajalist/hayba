@@ -1,5 +1,7 @@
 # What Hayba Desktop needs to finish an Unreal task
 
+This comparison describes preview 4. Preview 5 implements a first lighting workflow over MCP. Desktop can inspect two loaded lights, propose one intensity edit, record approval or decline, independently verify both values in Unreal, and undo the reviewed edit. The chat streams multi-step tool use and supports project-scoped automatic lighting edits with verified undo. Broader tool discovery, asset context and a common desktop/editor transcript remain open.
+
 The Windows preview can answer a question about the open map. Ask it which lights affect the entrance and it reaches its limit. The level tool returns the map name, package path, actor count and Play in Editor state. It cannot inspect a particular light, propose a change to it or check the result. Desktop exposes one tool call per turn. Hayba already has a broader tool catalog, an agent loop and a review surface elsewhere in the repository. [Desktop turn handler](session.cjs) · [Editor bridge](main.cjs) · [Hayba agent loop and tool filtering](../mcp-tools/hayba-mcp/src/chat/agent-loop.ts) · [Unreal chat panel](../unreal/HaybaMCPToolkit/Resources/chat/index.html)
 
 ## Gaps in order of impact
@@ -19,7 +21,7 @@ The Windows preview can answer a question about the open map. Ask it which light
 - **Returning to a project.** Search matches conversation titles derived from the first message. Users cannot name a chat, archive a finished task or find a conversation by an asset mentioned later. Add renaming, project grouping and transcript search. [Conversation list and search](workspace.jsx)
 - **Long BYOK sessions.** Desktop sends previous completed turns with the next message. It shows neither token usage nor how close the conversation is to the model’s context limit. Show provider-reported usage where available and let people review a summary before continuing a long task. [Desktop turn handler](session.cjs) · [Codex token and compaction events](https://github.com/openai/codex/blob/main/codex-rs/app-server-protocol/schema/typescript/ServerNotificationEnvelope.ts)
 
-## First end-to-end acceptance task
+## Lighting acceptance task
 
 Open a disposable Unreal level containing two named lights. From Desktop, inspect both lights in one request and propose a change to one. Decline once and confirm both values stay the same. Approve the second request, read back both values, undo the change and read them back again. Open the same task in the editor and verify its history. This exercises tool use, project identity, review, execution, verification and recovery with a result anyone can check in the Details panel.
 

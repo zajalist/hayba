@@ -23,6 +23,7 @@
 #include "Misc/CommandLine.h"
 #include "Misc/Guid.h"
 #include "Misc/Parse.h"
+#include "Modules/ModuleManager.h"
 #include "Misc/ScopeExit.h"
 #include "Tests/HaybaMCPLeaseTestUtil.h"
 #include "Modules/ModuleManager.h"
@@ -670,6 +671,8 @@ bool FHaybaMCPStatePieSafeDriftTest::RunTest(const FString& Parameters)
 		TEXT("actor_list"), TEXT("world_budget_snapshot"), TEXT("world_semantic_snapshot"), TEXT("world_tile_capture"), TEXT("world_query"), TEXT("actor_get_properties"), TEXT("actor_get_components"), TEXT("object_get_property"),
 		TEXT("blueprint_get_info"), TEXT("blueprint_inspect_graph"), TEXT("anim_blueprint_get_info"), TEXT("bt_get_info"),
 		TEXT("material_get_info"), TEXT("material_list"), TEXT("data_get"), TEXT("level_get_info"), TEXT("level_list"),
+		TEXT("lighting_list_loaded"), TEXT("lighting_inspect_pair"), TEXT("lighting_review_status"),
+		TEXT("fab_search"), TEXT("fab_search_status"), TEXT("chooser_inspect"),
 		TEXT("level_get_spatial_index"), TEXT("scene_get_actor_relations"), TEXT("spline_get_info"), TEXT("texture_get_info"),
 		TEXT("texture_list"), TEXT("mesh_get_info"), TEXT("mesh_list"), TEXT("ui_query"), TEXT("ui_list_widget_types"),
 		TEXT("ui_list_widget_blueprints"), TEXT("ui_report_findings"), TEXT("audio_list"), TEXT("audio_active_sounds"),
@@ -703,10 +706,17 @@ bool FHaybaMCPStatePieSafeDriftTest::RunTest(const FString& Parameters)
 		AddError(FString::Printf(TEXT("the PIE-safe sets gained %s without review"), *Cmd));
 	}
 
+	TSet<FString> Known = Registered;
+	Known.Append(HaybaMCPCommandSets::RouterInlineCommands());
+	if (!FModuleManager::Get().IsModuleLoaded(TEXT("HaybaMCPMetaSound")))
+	{
+		Known.Add(TEXT("metasound_inspect"));
+		Known.Add(TEXT("metasound_list"));
+	}
 	for (const FString& Cmd : Actual)
 	{
-		TestTrue(*FString::Printf(TEXT("PIE-safe %s is registered or router-inline"), *Cmd),
-			Registered.Contains(Cmd) || HaybaMCPCommandSets::RouterInlineCommands().Contains(Cmd));
+		TestTrue(*FString::Printf(TEXT("PIE-safe %s is registered, router-inline or supplied by the optional satellite"), *Cmd),
+			Known.Contains(Cmd));
 		TestEqual(*FString::Printf(TEXT("%s rules Safe"), *Cmd), PieRuleFor(Cmd), EPieRule::Safe);
 	}
 	for (const FString& Cmd : PieOwnerCommands())

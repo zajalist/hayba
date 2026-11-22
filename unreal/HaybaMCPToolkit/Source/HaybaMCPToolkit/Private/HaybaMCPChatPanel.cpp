@@ -93,6 +93,13 @@ namespace
             return TEXT("Review the exact parameters before approving.");
         }
         if (Operation.Command == TEXT("actor_delete")) return TEXT("Delete this actor");
+        if (Operation.Command == TEXT("lighting_set_intensity_checked"))
+        {
+            double Before, After, Other;
+            if (Params->TryGetNumberField(TEXT("expected"), Before) && Params->TryGetNumberField(TEXT("intensity"), After) &&
+                Params->TryGetNumberField(TEXT("other_expected"), Other))
+                return FString::Printf(TEXT("Intensity: %.9g to %.9g. The comparison light must remain at %.9g."), Before, After, Other);
+        }
         if (Operation.Command == TEXT("actor_set_visibility"))
         {
             bool bVisible = false;

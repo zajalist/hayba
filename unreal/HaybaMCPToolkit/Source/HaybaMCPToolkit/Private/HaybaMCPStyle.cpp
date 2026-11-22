@@ -312,11 +312,11 @@ TSharedRef<FSlateStyleSet> FHaybaMCPStyle::Create()
             .SetDisabled(RaisedBrush);
         Style->Set("Hayba.Button.Switcher", SwitcherButton);
 
-        const FLinearColor Approval = Style->GetColor("Hayba.Color.Accent.Ochre");
+        const FLinearColor Approval = FLinearColor::FromSRGBColor(FColor(0xD4, 0xD4, 0xD4));
         FButtonStyle ReviewPrimary = IconButton;
         ReviewPrimary.SetNormal(FSlateRoundedBoxBrush(Approval, ControlRadius))
-            .SetHovered(FSlateRoundedBoxBrush(Approval * 1.12f, ControlRadius))
-            .SetPressed(FSlateRoundedBoxBrush(Approval * 0.84f, ControlRadius))
+            .SetHovered(FSlateRoundedBoxBrush(FLinearColor::FromSRGBColor(FColor(0xEE, 0xEE, 0xEE)), ControlRadius))
+            .SetPressed(FSlateRoundedBoxBrush(FLinearColor::FromSRGBColor(FColor(0xBC, 0xBC, 0xBC)), ControlRadius))
             .SetDisabled(RaisedBrush);
         Style->Set("Hayba.Button.Review.Primary", ReviewPrimary);
 

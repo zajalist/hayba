@@ -34,12 +34,14 @@ public:
     static bool ValidateAction(const FJsonObject& Event, const FString& Token, const FString& Generation);
 private:
     void PushSnapshot();
+    void InitializeDocument();
     TSharedPtr<SWebBrowser> Browser;
     FOnHaybaTranscriptAction OnAction;
     FString DocumentToken, Generation;
     TSharedPtr<FJsonObject> LatestSnapshot;
     FHaybaTranscriptUpdates Updates;
-    double StartedAt = 0;
+    double NextInitAt = 0;
+    bool bDocumentLoaded = false;
     bool bReady = false;
     bool bMessageUpdates = false;
     bool bFailed = false;

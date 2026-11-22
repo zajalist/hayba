@@ -23,6 +23,9 @@ import {
   Check,
 } from 'lucide-react';
 import Markdown from 'react-markdown';
+import { LightingCard, LightingPicker } from './lighting';
+import { ConversationHistory } from './history.jsx';
+import { Lightbulb } from 'lucide-react';
 import './workspace.css';
 
 const api = window.haybaDesktop;
@@ -109,7 +112,7 @@ function SearchDialog({ open, setOpen, sessions, choose }) {
     </Dialog.Root>
   );
 }
-function LevelRead({ read, pending }) {
+function LevelRead({ read, pending, expand }) {
   if (read.status !== 'complete') {
     const label =
       read.status === 'unavailable'
@@ -126,7 +129,7 @@ function LevelRead({ read, pending }) {
   }
   const level = read.metadata;
   return (
-    <details className="read-result">
+    <details className="read-result" open={expand || undefined}>
       <summary>
         <Layers3 />
         <span>
@@ -147,7 +150,7 @@ function LevelRead({ read, pending }) {
     </details>
   );
 }
-function Message({ message, copy, pending }) {
+function Message({ message, copy, pending, expand }) {
   const [copied, setCopied] = useState(false);
   const user = message.role === 'user';
   return (
@@ -159,7 +162,13 @@ function Message({ message, copy, pending }) {
         {!user && brand}
         <strong>{user ? 'You' : 'Hayba'}</strong>
       </header>
-      {message.levelRead && <LevelRead read={message.levelRead} pending={pending} />}
+      {message.levelRead && <LevelRead read={message.levelRead} pending={pending} expand={expand} />}
+      {message.steps?.some((s) => s.label !== 'Read level') && (
+        <details className="read-result" open={expand || undefined}>
+          <summary><Workflow /><span>{message.steps.length} tool {message.steps.length === 1 ? 'step' : 'steps'}</span><ChevronDown /></summary>
+          <ol>{message.steps.map((s, i) => <li key={i}>{s.label} · {s.status}{s.detail && <span> — {s.detail}</span>}</li>)}</ol>
+        </details>
+      )}
       <div className="body">
         {user ? (
           message.text
@@ -197,6 +206,8 @@ function Message({ message, copy, pending }) {
 }
 function Workspace() {
   const [state, setState] = useState(null),
+    [lightsOpen, setLightsOpen] = useState(false),
+    [lightsList, setLightsList] = useState(null),
     [draft, setDraft] = useState(''),
     [find, setFind] = useState(false),
     [rail, setRail] = useState(() => window.innerWidth > 760);
@@ -215,9 +226,17 @@ function Workspace() {
       if (typeof value === 'string') setDraft(value);
     });
     const keys = (e) => {
+      if (document.querySelector('[role="dialog"]')) return;
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault();
         if (!snapshot.current?.busy) setFind((v) => !v);
+      }
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && ['n', ','].includes(e.key.toLowerCase())) {
+        e.preventDefault();
+        const s = snapshot.current;
+        if (s && !s.busy && !s.lightingBusy) {
+          void api.command({ action: e.key === ',' ? 'settings' : 'new', value: '', generation: s.generation });
+        }
       }
       if (e.key === 'Escape' && window.innerWidth <= 760) setRail(false);
     };
@@ -225,14 +244,23 @@ function Workspace() {
     return () => window.removeEventListener('keydown', keys);
   }, []);
   useLayoutEffect(() => {
-    if (atEnd.current && scroll.current) scroll.current.scrollTop = scroll.current.scrollHeight;
+    if (state?.workspace.preferences.followOutput && atEnd.current && scroll.current)
+      scroll.current.scrollTop = scroll.current.scrollHeight;
   }, [state]);
   useEffect(() => {
     if (state?.generation) prompt.current?.focus();
   }, [state?.generation]);
   if (!state) return null;
-  const { workspace: w, messages, busy } = state;
+  const { workspace: w, messages } = state;
+  const busy = state.busy || state.lightingBusy;
   const command = (action, value = '') => api.command({ action, value, generation: state.generation });
+  const lightCommand = (op, args = {}) => command('lighting-' + op, JSON.stringify(args));
+  const showLights = async () => {
+    if (!w.sharedProject && !(await command('project'))) return;
+    setLightsList(null);
+    setLightsOpen(true);
+    setLightsList(await lightCommand('list'));
+  };
   const edit = (text) => {
     setDraft(text);
     command('draft_changed', text);
@@ -252,7 +280,7 @@ function Workspace() {
   };
   return (
     <Tooltip.Provider delayDuration={250}>
-      <div className={'shell ' + (rail ? 'showrail' : '')}>
+      <div className={'shell ' + (rail ? 'showrail' : '')} data-density={w.preferences.density} data-transcript={w.preferences.transcriptSize}>
         {rail && (
           <>
             <button className="backdrop" onClick={() => setRail(false)} aria-label="Dismiss navigation" />
@@ -266,7 +294,8 @@ function Workspace() {
               </div>
               <button
                 className="new"
-                disabled={busy}
+                title="New chat (Ctrl+N)"
+                disabled={busy || (!messages.length && !draft.trim())}
                 onClick={() => {
                   command('new');
                   if (window.innerWidth <= 760) setRail(false);
@@ -279,23 +308,12 @@ function Workspace() {
                 <Search />
                 Search chats<kbd>Ctrl K</kbd>
               </button>
-              <div className="railheading">Conversations</div>
-              <nav aria-label="Conversations">
-                {w.sessions.map((s) => (
-                  <button
-                    key={s.id}
-                    disabled={busy}
-                    aria-current={s.id === state.generation ? 'page' : undefined}
-                    onClick={() => choose(s.id)}
-                  >
-                    <MessageSquare />
-                    <span>{s.title}</span>
-                  </button>
-                ))}
-              </nav>
+              <ConversationHistory sessions={w.sessions} archivedSessions={w.archivedSessions}
+                currentId={state.generation} busy={busy} choose={choose}
+                archive={(id) => command('archive', id)} restore={(id) => command('restore', id)} />
               <button className="railsettings" disabled={busy} onClick={() => command('settings')}>
                 <Settings2 />
-                Provider settings
+                Settings
               </button>
             </aside>
           </>
@@ -325,15 +343,28 @@ function Workspace() {
           >
             {messages.length > 0 && (
               <div id="messages" className="transcript">
-                {messages.map((m) => (
-                  <Message
-                    key={state.generation + '-' + m.id}
-                    message={m}
-                    pending={busy && m === messages.at(-1)}
-                    copy={(text) => command('copy', text)}
-                  />
-                ))}
-                {busy && (
+                {messages.map((m) =>
+                  m.lighting ? (
+                    <LightingCard
+                      key={m.lighting.id}
+                      record={m.lighting}
+                      active={state.activeLightingId === m.lighting.id}
+                      attached={Boolean(w.sharedProject)}
+                      automatic={w.mode === 'automatic'}
+                      busy={busy}
+                      run={lightCommand}
+                    />
+                  ) : (
+                    <Message
+                      key={state.generation + '-' + m.id}
+                      message={m}
+                      expand={w.preferences.expandToolDetails}
+                      pending={busy && m === messages.at(-1)}
+                      copy={(text) => command('copy', text)}
+                    />
+                  ),
+                )}
+                {state.busy && (
                   <p role="status" className="responding">
                     Responding…
                   </p>
@@ -348,7 +379,7 @@ function Workspace() {
                 <Cable />
                 <div>
                   <strong>Connect a provider</strong>
-                  <span>Use your OpenAI or Anthropic API key.</span>
+                  <span>Choose a hosted provider or a local model.</span>
                 </div>
                 <button aria-label="Open settings" onClick={() => command('settings')}>
                   Set up <ArrowUpRight />
@@ -364,7 +395,9 @@ function Workspace() {
                 value={draft}
                 onChange={(e) => edit(e.target.value)}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+                  const modifier = e.ctrlKey || e.metaKey;
+                  if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing &&
+                      (w.preferences.sendShortcut === 'modifier-enter' ? modifier : !modifier)) {
                     e.preventDefault();
                     if (!busy) send();
                   }
@@ -384,6 +417,18 @@ function Workspace() {
                   <span>{w.sharedProject || 'Share Unreal level'}</span>
                 </button>
                 <span className="divider" />
+                <button disabled={busy} title="Inspect two lights and review an intensity change" onClick={showLights}>
+                  <Lightbulb />
+                  <span>Lighting</span>
+                </button>
+                {w.sharedProject && (
+                  <select className="permission-mode" aria-label="Project approval mode" disabled={busy}
+                    title="Automatic applies supported edits without approval when Unreal Plan Mode is off."
+                    value={w.mode} onChange={(e) => command('mode', e.target.value)}>
+                    <option value="review">Review edits</option>
+                    <option value="automatic">Automatic · no approvals</option>
+                  </select>
+                )}
                 <button className="model" disabled={busy} onClick={() => command('settings')}>
                   <SlidersHorizontal />
                   <span>{w.model.name}</span>
@@ -393,13 +438,16 @@ function Workspace() {
                   id="send-button"
                   label={busy ? 'Stop response' : 'Send message'}
                   className="send"
-                  disabled={!busy && !draft.trim()}
+                  disabled={state.lightingBusy || (!busy && !draft.trim())}
                   onClick={send}
                 >
                   {busy ? <Square /> : <ArrowUp />}
                 </IconButton>
               </div>
             </div>
+            {w.sharedProject && w.mode === 'automatic' && (
+              <p className="mode-help">Automatic edits use this project. For zero approvals, switch off Plan Mode in Unreal’s Hayba settings.</p>
+            )}
             {!messages.length && (
               <div className="starters" data-drafting={Boolean(draft)} role="group" aria-label="Suggested prompts">
                 {actions.map(([Icon, label, text, needsProject]) => (
@@ -420,6 +468,14 @@ function Workspace() {
           </div>
         </main>
         <SearchDialog open={find} setOpen={setFind} sessions={w.sessions} choose={choose} />
+        {lightsOpen && (
+          <LightingPicker
+            open
+            close={() => setLightsOpen(false)}
+            list={lightsList}
+            inspect={(first, second) => lightCommand('inspect', { first, second })}
+          />
+        )}
       </div>
     </Tooltip.Provider>
   );
