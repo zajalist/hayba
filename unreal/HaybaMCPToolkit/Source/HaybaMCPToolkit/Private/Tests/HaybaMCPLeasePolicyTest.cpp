@@ -918,4 +918,74 @@ bool FHaybaMCPLeaseRenewByOwnerTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FHaybaMCPLeaseExclusivePassTest,
+	"Hayba.MCP.Lease.ExclusivePass",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+// Area leases on disjoint worlds used to queue behind a whole-editor EXCLUSIVE that was itself waiting
+// for a holder. A short one now goes ahead of it for the EXCLUSIVE's first AgingSeconds, capped at
+// BypassMaxTtlSeconds; front requests rank ahead of other waiters.
+bool FHaybaMCPLeaseExclusivePassTest::RunTest(const FString& Parameters)
+{
+	using namespace HaybaMCPLease;
+	double Now = 1000.0;
+	FTable Table([&Now]() { return Now; });
+	auto Ask = [this](const TCHAR* Owner, const TCHAR* Resource, double Ttl)
+	{
+		HaybaMCPLease::FRequest Request = MakeRequest(*this, Owner, Resource);
+		Request.TtlSeconds = Ttl;
+		return Request;
+	};
+
+	TestEqual(TEXT("lane-a holds world A"), Table.Acquire(Ask(TEXT("lane-a"), TEXT("world:/Game/A"), 120.0)).Status, EStatus::Granted);
+	const FAcquireResult X = Table.Acquire(Ask(TEXT("lane-x"), TEXT("global"), 120.0));
+	TestEqual(TEXT("the EXCLUSIVE waits for the holder"), X.Status, EStatus::Queued);
+
+	const FAcquireResult B = Table.Acquire(Ask(TEXT("lane-b"), TEXT("world:/Game/B"), 200.0));
+	TestEqual(TEXT("a short disjoint request passes the stuck EXCLUSIVE"), B.Status, EStatus::Granted);
+	const FLease* Passed = Table.FindLease(B.Token);
+	TestTrue(TEXT("the pass is marked"), Passed && Passed->bPassedExclusive);
+	double Expiry = 0.0;
+	FString Error;
+	TestTrue(TEXT("lane-b renews"), Table.Renew(B.Token, TEXT("lane-b"), 900.0, Expiry, Error));
+	TestTrue(TEXT("renewals cannot take a pass past the cap"), Expiry <= Now + Table.GetTuning().BypassMaxTtlSeconds);
+
+	TestEqual(TEXT("a long request does not pass"), Table.Acquire(Ask(TEXT("lane-c"), TEXT("world:/Game/C"), 600.0)).Status, EStatus::Queued);
+	TestEqual(TEXT("a holder still blocks a short request"), Table.Acquire(Ask(TEXT("lane-d"), TEXT("world:/Game/A"), 60.0)).Status, EStatus::Queued);
+	TestEqual(TEXT("an EXCLUSIVE never passes another"), Table.Acquire(Ask(TEXT("lane-y"), TEXT("global"), 60.0)).Status, EStatus::Queued);
+
+	// Keep the EXCLUSIVE's ticket alive while it ages (a waiter not polled for 30 s is dropped).
+	HaybaMCPLease::FRequest PollX;
+	PollX.Owner = TEXT("lane-x");
+	PollX.Ticket = X.Token;
+	for (int32 Step = 0; Step < 3; ++Step)
+	{
+		Now += Table.GetTuning().AgingSeconds / 3.0;
+		TestEqual(TEXT("the EXCLUSIVE is still waiting"), Table.Acquire(PollX).Status, EStatus::Queued);
+	}
+	TestEqual(TEXT("after AgingSeconds nothing passes it"), Table.Acquire(Ask(TEXT("lane-e"), TEXT("world:/Game/E"), 60.0)).Status, EStatus::Queued);
+
+	// front: ranks ahead of earlier conflicting waiters, never ahead of a holder.
+	double FrontNow = 5000.0;
+	FTable Fronts([&FrontNow]() { return FrontNow; });
+	const FAcquireResult Held = Fronts.Acquire(Ask(TEXT("lane-a"), TEXT("world:/Game/A"), 120.0));
+	const FAcquireResult First = Fronts.Acquire(Ask(TEXT("lane-1"), TEXT("world:/Game/A"), 120.0));
+	HaybaMCPLease::FRequest Urgent = Ask(TEXT("lane-2"), TEXT("world:/Game/A"), 120.0);
+	Urgent.bFront = true;
+	const FAcquireResult Second = Fronts.Acquire(Urgent);
+	TestEqual(TEXT("front still waits for the holder"), Second.Status, EStatus::Queued);
+	TestEqual(TEXT("front is first in line"), Second.Position, 1);
+	TestTrue(TEXT("the holder releases"), Fronts.Release(Held.Token, TEXT("lane-a"), Error));
+	HaybaMCPLease::FRequest PollFirst;
+	PollFirst.Owner = TEXT("lane-1");
+	PollFirst.Ticket = First.Token;
+	TestEqual(TEXT("the earlier waiter yields to front"), Fronts.Acquire(PollFirst).Status, EStatus::Queued);
+	HaybaMCPLease::FRequest PollSecond;
+	PollSecond.Owner = TEXT("lane-2");
+	PollSecond.Ticket = Second.Token;
+	TestEqual(TEXT("front is granted first"), Fronts.Acquire(PollSecond).Status, EStatus::Granted);
+	return true;
+}
+
 #endif

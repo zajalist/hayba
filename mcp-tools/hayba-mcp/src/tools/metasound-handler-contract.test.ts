@@ -208,8 +208,14 @@ describe('editor-safe MetaSound handler contract', () => {
   });
 
   it('validates folders recursively and returns per-asset diagnostics', () => {
-    expect(assetHandler).toContain('GetAssetsByPath(FName(*Path), ToValidate, /*bRecursive*/true)');
-    expect(assetHandler).toContain('Settings.bCollectPerAssetDetails = true');
-    expect(assetHandler).toContain('Results.AssetsDetails');
+    const validate = assetHandler.split('FHaybaMCPAssetHandler::AssetValidate(')[1]!.split('FHaybaMCPAssetHandler::AssetRename(')[0]!;
+    expect(validate).toContain('Filter.bRecursivePaths = true');
+    expect(validate).toContain('AR.EnumerateAssets(Filter');
+    expect(validate).toMatch(/ToValidate\.Num\(\) >= MaxAssets[\s\S]*return false/);
+    expect(validate).toMatch(/if \(bOverflow\)[\s\S]*return FHaybaHandlerResult::Err[\s\S]*ValidateAssetsWithSettings/);
+    expect(validate).toContain('Settings.MaxAssetsToValidate = MaxAssets');
+    expect(validate).toContain('Settings.bCollectPerAssetDetails = true');
+    expect(validate).toContain('HaybaAssetValidation::Summarize(Results)');
+    expect(validate).toContain('Results.AssetsDetails');
   });
 });

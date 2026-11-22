@@ -749,8 +749,8 @@
         ]
       },
       "agent_callable": false,
-      "has_ts_wrapper": false,
-      "notes": "Diagnostic ping used by sidecar discovery handshake. Not exposed to agents via hayba_invoke — call check_ue_status instead."
+      "has_ts_wrapper": true,
+      "notes": "Diagnostic ping used by sidecar discovery and the copilot_health wrapper. Reports answering process_id, project_name and engine_version alongside version fields. Not exposed through hayba_invoke; use check_ue_status or copilot_health."
     },
     "list_node_classes": {
       "aliases": [
@@ -2750,6 +2750,29 @@
       "agent_callable": true,
       "has_ts_wrapper": false,
       "notes": "List every level asset in the project. Use it to find the exact path level_load wants."
+    },
+    "editor_get_perf_stats": {
+      "aliases": [],
+      "handler_cpp": "FHaybaMCPPerfHandler::GetPerfStats",
+      "params": [],
+      "returns": {
+        "shape": "object",
+        "fields": [
+          {"name":"avg_fps","type":"number"},
+          {"name":"avg_frame_ms","type":"number"},
+          {"name":"last_delta_ms","type":"number"},
+          {"name":"draw_calls","type":"number"},
+          {"name":"primitives_drawn","type":"number"},
+          {"name":"cpu_used_physical_mb","type":"number"},
+          {"name":"cpu_used_virtual_mb","type":"number"},
+          {"name":"cpu_peak_physical_mb","type":"number"},
+          {"name":"cpu_avail_physical_mb","type":"number"},
+          {"name":"gpu_dedicated_mb","type":"number"}
+        ]
+      },
+      "agent_callable": true,
+      "has_ts_wrapper": false,
+      "notes": "Read editor frame timing, draw calls, rendered primitives, process memory and dedicated GPU memory. GPU memory is reported as zero when unavailable."
     },
     "level_get_info": {
       "aliases": [],
@@ -5316,7 +5339,7 @@
     "blueprint_graph_batch": {
       "aliases": [], "handler_cpp":"FHaybaMCPBlueprintHandler::GraphBatch",
       "params":[{"name":"path","type":"string","required":true},{"name":"graph_name","type":"string","required":false,"description":"default graph for every op (an op may set its own)"},{"name":"ops","type":"array","required":true,"description":"1-2048 ops run in order. Each is {op, ref?, ...the single command's own args}. op: add_node | add_event | connect | set_pin | comment | move | remove | disconnect | fit_comments. ref names the node an op creates; later ops may use that name wherever a node_id/from_node/to_node/node_ids entry goes. connect defaults from_pin 'then' and to_pin 'execute'; move accepts node_id,x,y inline."},{"name":"compile","type":"boolean","required":false,"default":false,"description":"compile in C++ after a fully applied batch"},{"name":"save","type":"boolean","required":false,"default":false,"description":"with compile: save after a clean compile"}],
-      "returns":{"shape":"object","fields":[{"name":"ok","type":"boolean"},{"name":"applied","type":"integer"},{"name":"total","type":"integer"},{"name":"refs","type":"object","description":"ref -> node GUID"},{"name":"results","type":"array"},{"name":"mutation_status","type":"string"},{"name":"failed_index","type":"integer"},{"name":"error","type":"string"},{"name":"hint","type":"string"},{"name":"compile","type":"object"},{"name":"compile_error","type":"string"},{"name":"dirty","type":"boolean"}]},"agent_callable":true,"has_ts_wrapper":false,
+      "returns":{"shape":"object","fields":[{"name":"wildcard_nodes_repaired","type":"integer","description":"Number of wildcard nodes repaired after applying the batch."},{"name":"ok","type":"boolean"},{"name":"applied","type":"integer"},{"name":"total","type":"integer"},{"name":"refs","type":"object","description":"ref -> node GUID"},{"name":"results","type":"array"},{"name":"mutation_status","type":"string"},{"name":"failed_index","type":"integer"},{"name":"error","type":"string"},{"name":"hint","type":"string"},{"name":"compile","type":"object"},{"name":"compile_error","type":"string"},{"name":"dirty","type":"boolean"}]},"agent_callable":true,"has_ts_wrapper":false,
       "notes":"Builds or edits a whole Blueprint graph in ONE call instead of one MCP call per node and link: the replacement for editor-Python graph builders (BlueprintGraphEditor / BlueprintGraphPinLibrary). Each op is the matching single blueprint_* command, so its validation and verified readback apply; the batch stops at the first failing op and reports failed_index plus refs so the rest can be resent. One editor transaction (one undo) and one skeleton regeneration for the whole batch. Example ops: {op:'add_event',ref:'begin',event_name:'ReceiveBeginPlay'}, {op:'add_node',ref:'print',node_type:'call_function',function_name:'/Script/Engine.KismetSystemLibrary:PrintString',x:300}, {op:'connect',from_node:'begin',to_node:'print'}, {op:'set_pin',node_id:'print',pin_name:'InString',value:'hi'}, {op:'comment',title:'Startup',node_ids:['begin','print'],color:[0.2,0.32,0.55]}, {op:'fit_comments'} last so every box fits the real node sizes."
     },
     "blueprint_add_comment": {

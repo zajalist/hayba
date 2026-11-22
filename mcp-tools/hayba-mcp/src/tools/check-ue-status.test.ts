@@ -77,7 +77,7 @@ describe('checkUeStatus / process identity (issue #342)', () => {
     expect(status.diagnostic).toBeUndefined();
   });
 
-  it('-Cmd only, connected: names the headless process and PID as the one answering the port', async () => {
+  it('-Cmd only, connected: lists the process without claiming an unverified endpoint owner', async () => {
     const { checkUeStatus } = await import('./check-ue-status.js');
     const status = await checkUeStatus({
       listProcesses: async () => [{ name: 'UnrealEditor-Cmd.exe', pid: 2222 }],
@@ -87,7 +87,8 @@ describe('checkUeStatus / process identity (issue #342)', () => {
     expect(status.process_identity).toContain('headless UnrealEditor-Cmd.exe (PID 2222)');
     expect(status.diagnostic).toContain('UnrealEditor-Cmd.exe');
     expect(status.diagnostic).toContain('2222');
-    expect(status.diagnostic).toMatch(/stray automation/i);
+    expect(status.diagnostic).toMatch(/not identified/i);
+    expect(status.diagnostic).not.toMatch(/taskkill|kill it/i);
   });
 
   it('both GUI and -Cmd, connected: flags the ambiguity by name and PID', async () => {
@@ -129,7 +130,7 @@ describe('checkUeStatus / process identity when disconnected (issue #342)', () =
     setCachedSidecarHealth(null);
   });
 
-  it('-Cmd only, disconnected: message says a headless process may be blocking the next launch', async () => {
+  it('-Cmd only, disconnected: asks to verify endpoint ownership without recommending a kill', async () => {
     const { checkUeStatus } = await import('./check-ue-status.js');
     const status = await checkUeStatus({
       listProcesses: async () => [{ name: 'UnrealEditor-Cmd.exe', pid: 3333 }],
@@ -138,7 +139,8 @@ describe('checkUeStatus / process identity when disconnected (issue #342)', () =
     expect(status.editor_process_detected).toBe(false);
     expect(status.process_identity).toContain('headless UnrealEditor-Cmd.exe (PID 3333)');
     expect(status.diagnostic).toContain('3333');
-    expect(status.diagnostic).toMatch(/blocking a GUI editor|slow boot/i);
+    expect(status.diagnostic).toMatch(/does not establish/i);
+    expect(status.diagnostic).not.toMatch(/taskkill|kill it/i);
   });
 
   it('neither process, disconnected: falls back to the generic "no process found" message', async () => {
@@ -148,6 +150,44 @@ describe('checkUeStatus / process identity when disconnected (issue #342)', () =
     expect(status.editor_process_detected).toBe(false);
     expect(status.process_identity).toBe('none detected');
     expect(status.diagnostic).toMatch(/No UnrealEditor process found/);
+  });
+});
+
+describe('checkUeStatus / answering editor identity', () => {
+  beforeEach(() => setCachedSidecarHealth({
+    available: false, url: '', models: {}, active_models: [], checked_at: Date.now(),
+  }));
+  afterEach(() => { tcpState.pingData = null; setCachedSidecarHealth(null); });
+  const listProcesses = async () => [
+    { name: 'UnrealEditor.exe' as const, pid: 1111 },
+    { name: 'UnrealEditor-Cmd.exe' as const, pid: 2222 },
+  ];
+
+  it('identifies the answering GUI even when another project runs headless automation', async () => {
+    tcpState.pingData = { status: 'ok', process_id: 1111, project_name: 'Game', engine_version: '5.9.0-60351404' };
+    const { checkUeStatus } = await import('./check-ue-status.js');
+    const status = await checkUeStatus({ listProcesses });
+    expect(status.connected_process).toEqual({ name: 'UnrealEditor.exe', pid: 1111 });
+    expect(status.project_name).toBe('Game');
+    expect(status.engine_version).toBe('5.9.0-60351404');
+    expect(status.diagnostic).toBeUndefined();
+  });
+
+  it('names the verified headless endpoint without recommending termination', async () => {
+    tcpState.pingData = { status: 'ok', process_id: 2222 };
+    const { checkUeStatus } = await import('./check-ue-status.js');
+    const status = await checkUeStatus({ listProcesses });
+    expect(status.connected_process?.pid).toBe(2222);
+    expect(status.diagnostic).toMatch(/Connected to headless.*2222/);
+    expect(status.diagnostic).not.toMatch(/taskkill|kill it/i);
+  });
+
+  it('does not coerce malformed process IDs into verified identity', async () => {
+    tcpState.pingData = { status: 'ok', process_id: '1111' };
+    const { checkUeStatus } = await import('./check-ue-status.js');
+    const status = await checkUeStatus({ listProcesses });
+    expect(status.connected_process).toBeUndefined();
+    expect(status.diagnostic).toMatch(/cannot tell/i);
   });
 });
 
