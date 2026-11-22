@@ -54,6 +54,11 @@ export async function runUePythonJson<T = unknown>(script: string, timeout?: num
   const payload: Record<string, unknown> = { script: full };
   if (opts.readOnly === true) payload.read_only = true;
   const data = await executeCommand<UePythonResult>('python_run', payload, timeout ? { timeout } : {});
+  return parseUePythonJson<T>(data);
+}
+
+/** Parse the existing Python reply envelope; does not dispatch or authorize code. */
+export function parseUePythonJson<T = unknown>(data: UePythonResult): T {
   // Plan Mode gates python_run as a destructive command. Surface that clearly
   // instead of the misleading "no HAYBA_JSON result" (live-validation finding:
   // the gate response has ok:true + empty stdout and was swallowed here).
@@ -76,7 +81,7 @@ export async function runUePythonJson<T = unknown>(script: string, timeout?: num
   try {
     return JSON.parse(line) as T;
   } catch (e) {
-    throw new Error(`failed to parse python JSON result: ${e instanceof Error ? e.message : String(e)}\nline: ${line.slice(0, 800)}`);
+    throw new Error(`failed to parse python JSON result: ${e instanceof Error ? e.message : String(e)}\nline: ${line.slice(0, 800)}`, { cause: e });
   }
 }
 

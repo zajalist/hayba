@@ -18,6 +18,7 @@ export function buildHandsManifest(tools: LLMTool[]): ToolManifestEntry[] {
 
 /** Explore exposes only known read-shaped commands. Unknown names fail closed. */
 export function isExploreReadOnlyTool(name: string): boolean {
+  if (name === 'delegate_task') return true; // Chat-only children enforce their own read-only catalog and cannot delegate.
   return !isDestructiveToolName(name) &&
     /(?:^|_)(?:get|list|search|inspect|validate|query|read|describe|count|find|status|stats|info)(?:_|$)/.test(name);
 }

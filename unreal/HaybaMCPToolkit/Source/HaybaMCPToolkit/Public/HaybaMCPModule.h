@@ -79,7 +79,7 @@ public:
     /** Active server's immutable, clamped transport limits; null while stopped. */
     TSharedPtr<FJsonObject> GetTcpTransportLimits() const;
 
-    bool StartMCPServer();
+    bool StartMCPServer(FString* OutError = nullptr);
     void StopMCPServer();
     bool IsMCPServerRunning() const;
 
@@ -101,7 +101,6 @@ public:
     // Weak references to live sub-panels (set by SHaybaMCPMainPanel as it builds them).
     TWeakPtr<class SHaybaMCPMainPanel>       MainPanel;
     TWeakPtr<class SHaybaMCPToolStreamPanel> ToolStreamPanel;
-    TWeakPtr<class SHaybaMCPSceneMapPanel>   SceneMapPanel;
     TWeakPtr<class SHaybaMCPPlanPanel>       PlanPanel;
     TWeakPtr<class SHaybaMCPDiffPanel>       DiffPanel;
     TWeakPtr<class SHaybaMCPValidationPanel> ValidationPanel;

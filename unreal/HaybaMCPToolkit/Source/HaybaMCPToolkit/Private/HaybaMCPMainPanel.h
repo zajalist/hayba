@@ -17,16 +17,16 @@ class SHaybaMCPChatPanel;
  */
 enum class EHaybaSection : uint8
 {
-    Chat, MCP, Slivers, ToolStream, SceneMap, Plan, Diff, Validation, Memory, Lessons, Settings
+    Chat, MCP, Slivers, ToolStream, Plan, Diff, Validation, Memory, Lessons, Settings
 };
 
 /**
- * A destination. Chat and World are primary; Activity, Checks, Library, and
- * Settings are available through More, with section tabs where useful.
+ * A destination. Chat is primary. Activity (including changes and checks) and Settings
+ * are available through More. Library remains for legacy direct callers.
  */
 enum class EHaybaPanel : uint8
 {
-    World, Library, Rules, Activity, Chat, Settings
+    Library, Rules, Activity, Chat, Settings
 };
 
 class SHaybaMCPMainPanel : public SCompoundWidget
