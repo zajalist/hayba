@@ -28,6 +28,8 @@
 #include "HaybaMCPCommandHandler.h"
 #include "HaybaMCPModule.h"
 #include "Modules/ModuleManager.h"
+#include "HAL/PlatformProcess.h"
+#include "Misc/EngineVersion.h"
 
 #if WITH_DEV_AUTOMATION_TESTS
 
@@ -289,6 +291,12 @@ bool FHaybaHealthAllowlistDriftTest::RunTest(const FString&)
 	const TSet<FString> Registered(Router->GetAllCommands());
 	TSet<FString> Known = Registered;
 	Known.Append(RouterInlineCommands());
+	// The core policy also covers commands supplied by the optional MetaSound satellite.
+	if (!FModuleManager::Get().IsModuleLoaded(TEXT("HaybaMCPMetaSound")))
+	{
+		Known.Add(TEXT("metasound_inspect"));
+		Known.Add(TEXT("metasound_list"));
+	}
 
 	auto CheckKnown = [this, &Known](const TCHAR* SetName, const TSet<FString>& Set)
 	{
@@ -346,7 +354,7 @@ bool FHaybaHealthAllowlistDriftTest::RunTest(const FString&)
 	TestEqual(TEXT("12 status commands"), StatusOnlyCommands().Num(), 12);
 	TestEqual(TEXT("20 control-plane commands"), ControlPlaneCommands().Num(), 20);
 	TestEqual(TEXT("10 PIE observation commands"), PieObservationCommands().Num(), 10);
-	TestEqual(TEXT("75 read commands"), ReadCommands().Num(), 75);
+	TestEqual(TEXT("78 read commands"), ReadCommands().Num(), 78);
 	TestEqual(TEXT("5 router-inline commands"), RouterInlineCommands().Num(), 5);
 	TestEqual(TEXT("3 unsafe control-plane commands"), UnsafeControlPlaneCommands().Num(), 3);
 	TestEqual(TEXT("27 unsafe reads"), UnsafeReads().Num(), 27);
@@ -1010,6 +1018,23 @@ bool FHaybaHealthBatchPumpStopsTest::RunTest(const FString&)
 	}
 	TestFalse(TEXT("the real editor health is untouched (R-7)"), FHaybaEditorHealth::IsUnsafe());
 	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FHaybaPingIdentityTest, "Hayba.MCP.Health.PingIdentity",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FHaybaPingIdentityTest::RunTest(const FString&)
+{
+    const auto Router = HaybaHealthTest::Router(*this);
+    if (!Router.IsValid()) return false;
+    const auto Reply = HaybaHealthTest::Send(*Router, TEXT("ping"), HaybaHealthTest::TestOwner());
+    TestTrue(TEXT("ping routes successfully"), HaybaHealthTest::Bool(Reply, TEXT("ok")));
+    const auto Data = HaybaHealthTest::Obj(Reply, TEXT("data"));
+    TestEqual(TEXT("PID identifies this answering editor"), Data->GetNumberField(TEXT("process_id")), double(FPlatformProcess::GetCurrentProcessId()));
+    TestEqual(TEXT("project identifies this host"), HaybaHealthTest::Str(Data, TEXT("project_name")), FString(FApp::GetProjectName()));
+    TestEqual(TEXT("exact engine build is reported"), HaybaHealthTest::Str(Data, TEXT("engine_version")), FEngineVersion::Current().ToString());
+    return true;
 }
 
 #endif // WITH_DEV_AUTOMATION_TESTS

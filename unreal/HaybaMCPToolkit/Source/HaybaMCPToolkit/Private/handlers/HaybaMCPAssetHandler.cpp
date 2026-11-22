@@ -1,6 +1,7 @@
 #include "HaybaMCPAssetHandler.h"
 #include "HaybaMCPSaveVerify.h"
 #include "HaybaMCPAssetRegistryQuery.h"
+#include "HaybaMCPAssetValidation.h"
 #include "Json.h"
 #include "Editor.h"
 #include "AssetRegistry/AssetRegistryModule.h"
@@ -2281,9 +2282,13 @@ FHaybaHandlerResult FHaybaMCPAssetHandler::AssetGetReferences(const TSharedPtr<F
 
 FHaybaHandlerResult FHaybaMCPAssetHandler::AssetValidate(const TSharedPtr<FJsonObject>& P)
 {
-    FString Path;
-    if (!P->TryGetStringField(TEXT("path"), Path) || Path.IsEmpty())
-        return FHaybaHandlerResult::Err(TEXT("asset_validate: missing path"));
+    FHaybaParamReader Reader(P, TEXT("asset_validate"));
+    FString Path = Reader.RequiredString(TEXT("path"), 4096).TrimStartAndEnd();
+    const int32 MaxAssets = Reader.OptionalIntInRange(TEXT("max_assets"), 100, 1, 1000);
+    if (P.IsValid() && P->HasField(TEXT("max_assets")) && !P->HasTypedField<EJson::Number>(TEXT("max_assets")))
+        Reader.AddError(TEXT("'max_assets' must be a JSON number"));
+    if (Reader.HasErrors()) return FHaybaHandlerResult::Err(Reader.ErrorMessage());
+    if (Path.IsEmpty()) return FHaybaHandlerResult::Err(TEXT("asset_validate: missing path"));
 
     if (!GEditor)
         return FHaybaHandlerResult::Err(TEXT("asset_validate: GEditor unavailable"));
@@ -2293,7 +2298,6 @@ FHaybaHandlerResult FHaybaMCPAssetHandler::AssetValidate(const TSharedPtr<FJsonO
         return FHaybaHandlerResult::Err(TEXT("asset_validate: EditorValidatorSubsystem unavailable"));
 
     IAssetRegistry& AR = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry")).Get();
-    Path.TrimStartAndEndInline();
     TArray<FAssetData> ToValidate;
 
     // The public contract accepts either an asset or a folder. For an asset,
@@ -2310,7 +2314,20 @@ FHaybaHandlerResult FHaybaMCPAssetHandler::AssetValidate(const TSharedPtr<FJsonO
     }
     else
     {
-        AR.GetAssetsByPath(FName(*Path), ToValidate, /*bRecursive*/true);
+        FARFilter Filter;
+        Filter.PackagePaths.Add(FName(*Path));
+        Filter.bRecursivePaths = true;
+        bool bOverflow = false;
+        const bool bEnumerated = AR.EnumerateAssets(Filter, [&](const FAssetData& Asset)
+        {
+            if (ToValidate.Num() >= MaxAssets) { bOverflow = true; return false; }
+            ToValidate.Add(Asset);
+            return true;
+        });
+        if (bOverflow)
+            return FHaybaHandlerResult::Err(FString::Printf(
+                TEXT("asset_validate: folder exceeds max_assets=%d; nothing was validated. Choose a narrower folder or an exact asset path, or raise max_assets (maximum 1000)."), MaxAssets));
+        if (!bEnumerated) return FHaybaHandlerResult::Err(TEXT("asset_validate: invalid asset registry filter"));
     }
     if (ToValidate.IsEmpty())
         return FHaybaHandlerResult::Err(FString::Printf(TEXT("asset_validate: asset or folder not found: %s"), *Path));
@@ -2318,25 +2335,15 @@ FHaybaHandlerResult FHaybaMCPAssetHandler::AssetValidate(const TSharedPtr<FJsonO
     Settings.bSkipExcludedDirectories = true;
     Settings.bCollectPerAssetDetails = true;
     Settings.ValidationUsecase = EDataValidationUsecase::Manual;
-
-    // Spin up a fresh AssetCheck message-log page so we can capture per-message
-    // results emitted by validators (the FValidateAssetsResults summary only
-    // exposes counts in this UE version).
-    FMessageLog AssetCheckLog("AssetCheck");
-    AssetCheckLog.NewPage(FText::FromString(TEXT("Hayba asset_validate")));
+    Settings.MaxAssetsToValidate = MaxAssets;
+    Settings.bSilent = true;
+    Settings.ShowMessageLogSeverity.Reset();
 
     FValidateAssetsResults Results;
     Validator->ValidateAssetsWithSettings(ToValidate, Settings, Results);
 
-    TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
-    Out->SetBoolField(TEXT("valid"), Results.NumInvalid == 0);
-    Out->SetNumberField(TEXT("num_valid"),   Results.NumValid);
-    Out->SetNumberField(TEXT("num_invalid"), Results.NumInvalid);
-    Out->SetNumberField(TEXT("num_warnings"), Results.NumWarnings);
-    Out->SetNumberField(TEXT("num_requested"), Results.NumRequested);
-    Out->SetNumberField(TEXT("num_checked"), Results.NumChecked);
-    Out->SetNumberField(TEXT("num_skipped"), Results.NumSkipped);
-    Out->SetNumberField(TEXT("num_unable_to_validate"), Results.NumUnableToValidate);
+    TSharedRef<FJsonObject> Out = HaybaAssetValidation::Summarize(Results);
+    Out->SetNumberField(TEXT("max_assets"), MaxAssets);
 
     TArray<TSharedPtr<FJsonValue>> Errors, Warnings, AssetResults;
     for (const TPair<FString, FValidateAssetsDetails>& Pair : Results.AssetsDetails)
