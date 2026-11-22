@@ -8,6 +8,7 @@
 #include "HaybaPCGLibrary.generated.h"
 
 class UPCGNode;
+class UPCGGraph;
 
 UCLASS()
 class HAYBAMCPTOOLKIT_API UHaybaPCGLibrary : public UBlueprintFunctionLibrary
@@ -25,4 +26,17 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Hayba|PCG")
 	static FString GetPCGNodeTitle(UPCGNode* Node);
+
+	/**
+	 * Sets a PCG graph user parameter from JSON, adding it first when it is missing. Python can neither add graph
+	 * parameters nor set a struct-typed one (e.g. FPCGVirtualTexturePrimingInfo, which PCG does not export).
+	 *   StructType: the struct of a parameter to add, by path ("/Script/PCG.PCGVirtualTexturePrimingInfo") or name
+	 *               ("PCGVirtualTexturePrimingInfo"); empty to set an existing parameter of any type.
+	 *   ValueJson:  a JSON value; a struct takes an object of its fields, e.g.
+	 *               {"VirtualTexture": "/Game/VT/RVT_Ground.RVT_Ground", "Grid": "Grid64", "WorldTexelSize": 50}.
+	 *               Text that is not JSON is imported as UE text, e.g. (Grid=Grid64,WorldTexelSize=50.0).
+	 * Returns an empty string when the value was applied, else what was not done.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Hayba|PCG")
+	static FString SetPCGGraphUserParameter(UPCGGraph* Graph, FName Name, const FString& StructType, const FString& ValueJson);
 };
