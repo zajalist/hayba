@@ -1,4 +1,5 @@
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -25,7 +26,21 @@ describe('Hayba skill catalog', () => {
     const { catalog, errors } = buildCatalog(workflows, knownToolNames(packageRoot));
     expect(errors).toEqual([]);
     expect(catalog.skills.length).toBeGreaterThanOrEqual(51);
-    expect(`${JSON.stringify(catalog, null, 2)}\n`).toBe(readFileSync(join(workflows, 'catalog.json'), 'utf8'));
+    expect(`${JSON.stringify(catalog, null, 2)}\n`).toBe(readFileSync(join(workflows, 'catalog.json'), 'utf8').replace(/\r\n/g, '\n'));
+  });
+
+  it('validates a Windows checkout while still rejecting stale catalog contents', () => {
+    const dir = fixture('Call `scene_export` for the result.');
+    const path = join(dir, 'catalog.json');
+    const { catalog } = buildCatalog(dir, new Set(['scene_export']));
+    const validate = () => spawnSync(process.execPath, [join(packageRoot, 'scripts', 'skills-catalog.mjs'), 'validate', '--skills-dir', dir, '--catalog', path], { encoding: 'utf8', windowsHide: true });
+    writeFileSync(path, `${JSON.stringify(catalog, null, 2)}\n`.replace(/\n/g, '\r\n'));
+    const valid = validate();
+    expect(valid.status, valid.stderr).toBe(0);
+    writeFileSync(path, `${JSON.stringify({ ...catalog, skills: [] }, null, 2)}\n`);
+    const stale = validate();
+    expect(stale.status).toBe(1);
+    expect(stale.stderr).toContain('catalog.json is stale');
   });
 
   // Fixture filesystem I/O can be delayed by the parallel UE test workload.

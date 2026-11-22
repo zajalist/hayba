@@ -102,6 +102,45 @@ describe('python_run crash guard + bounded inline output', () => {
     expect(send).not.toHaveBeenCalled();
   });
 
+  it('lets method calls named like eval/compile reach UE; the builtins themselves stay refused', async () => {
+    send.mockClear();
+    setDefaultSender(send);
+    const methodCalls = [
+      'blueprint.recompile()',
+      'unreal.MaterialEditingLibrary.recompile_material(m)',
+      'ast.literal_eval(text)',
+      'model.eval()',
+    ];
+    for (const script of methodCalls) {
+      send.mockResolvedValueOnce({ ok: true, data: { ok: true, stdout: '' } });
+      const r = await pythonRunHandler({ script }, {} as never);
+      expect(r.isError, script).toBeFalsy();
+    }
+    for (const script of ["eval('1')", "compile('x', 'f', 'exec')"]) {
+      const r = await pythonRunHandler({ script }, {} as never);
+      expect(r.isError, script).toBe(true);
+      expect(r.content[0].text, script).toContain('HCR-DYNAMIC-001');
+    }
+    expect(send).toHaveBeenCalledTimes(methodCalls.length);
+  });
+
+  it('keeps eval( and compile( out of both Tier-3 lists; the fatal tables own those builtins', () => {
+    const cpp = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..', '..', 'unreal', 'HaybaMCPToolkit', 'Source',
+        'HaybaMCPToolkit', 'Private', 'handlers', 'HaybaMCPPythonHandler.cpp'),
+      'utf8',
+    );
+    const start = cpp.indexOf('static const TArray<FString> Tier3Keywords = {');
+    const tier3 = cpp.slice(start, cpp.indexOf('};', start));
+    expect(start).toBeGreaterThan(-1);
+    expect(tier3).not.toContain('TEXT("eval(")');
+    expect(tier3).not.toContain('TEXT("compile(")');
+    expect(cpp).toContain('{ TEXT("eval("), TEXT("HCR-DYNAMIC-001")');
+    expect(cpp).toContain('{ TEXT("compile("), TEXT("HCR-DYNAMIC-001")');
+    const dynamic = PYTHON_CRASH_RULES.find((rule) => rule.code === 'HCR-DYNAMIC-001')!;
+    expect([...dynamic.patterns]).toEqual(expect.arrayContaining(['eval(', 'compile(']));
+  });
+
   it('accepts but strips allow_unsafe from a non-Tier-3 compatibility request', async () => {
     send.mockClear();
     setDefaultSender(send);
