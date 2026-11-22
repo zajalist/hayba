@@ -4,7 +4,7 @@ function newChat() {
   return { id: randomUUID(), updatedAt: new Date().toISOString(), draft: '', messages: [] };
 }
 
-async function runTurn(chat, prompt, client, signal, update) {
+async function runTurn(chat, prompt, client, signal, update, inspectLevel) {
   const add = (role, text) => {
     const row = { id: chat.messages.length, role, text };
     chat.messages.push(row);
@@ -21,11 +21,48 @@ async function runTurn(chat, prompt, client, signal, update) {
   chat.updatedAt = new Date().toISOString();
   update();
   try {
+    const system = inspectLevel
+      ? 'You are Hayba Desktop. Use level_get_info for questions about the live Unreal level. You have read-only access to its metadata.'
+      : 'You are Hayba Desktop. This standalone chat has no access to the Unreal scene or tools.';
+    if (inspectLevel) {
+      const tool = {
+        name: 'level_get_info',
+        description: 'Read the current map, package, actor count and play state.',
+        input_schema: { type: 'object', properties: {} },
+      };
+      const decision = await client.complete({ messages, signal, system, tools: [tool] });
+      if (!decision.toolCalls.length) {
+        if (!decision.content || !['end_turn', 'stop_sequence'].includes(decision.stopReason))
+          throw Error('Incomplete response');
+        signal.throwIfAborted();
+        reply.text = decision.content;
+        delete user.incomplete;
+        delete reply.incomplete;
+        update();
+        return;
+      }
+      const [call] = decision.toolCalls;
+      if (decision.toolCalls.length !== 1 || call.name !== tool.name || Object.keys(call.input).length)
+        throw Error('Unsupported editor action');
+      messages.push({ role: 'assistant', content: [{ type: 'tool_use', ...call }] });
+      let result;
+      try {
+        result = { content: await inspectLevel(signal) };
+      } catch {
+        signal.throwIfAborted();
+        result = {
+          content:
+            'The selected Unreal project did not return level information. Check that it is open with Hayba enabled.',
+          is_error: true,
+        };
+      }
+      messages.push({ role: 'user', content: [{ type: 'tool_result', tool_use_id: call.id, ...result }] });
+    }
     let finished = false;
     for await (const event of client.stream({
       messages,
       signal,
-      system: 'You are Hayba Desktop. This standalone chat has no access to the Unreal scene or tools.',
+      system,
     })) {
       if (event.type === 'text_delta') {
         reply.text += event.text;

@@ -39,7 +39,11 @@ DisableWelcomePage=yes
 PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
+#ifdef DesktopDir
+Compression=lzma2/max
+#else
 Compression=lzma2/fast
+#endif
 SolidCompression=yes
 WizardStyle=modern
 SetupLogging=yes
@@ -47,7 +51,7 @@ SetupLogging=yes
 [Files]
 Source: "{#PackageZip}"; Flags: dontcopy
 ; The uninstaller runs these to remove Hayba from each project it was installed into.
-Source: "{#InstallerDir}\Install.ps1"; DestDir: "{app}"
+Source: "{#InstallerDir}\Install.ps1"; DestDir: "{app}"; Flags: solidbreak
 Source: "{#InstallerDir}\Installer.Core.ps1"; DestDir: "{app}"
 
 #ifdef DesktopDir

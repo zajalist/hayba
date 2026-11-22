@@ -52,6 +52,59 @@ async function main() {
     await page.locator('#send-button').click();
     await page.getByText('Rendered fixture reply', { exact: true }).waitFor();
     assert.equal(await page.locator('#messages article').count(), 2);
+    if (process.argv.includes('--live-editor')) {
+      const project = path.resolve(process.argv[process.argv.indexOf('--live-editor') + 1]);
+      assert.ok(project.endsWith('.uproject') && fs.existsSync(project));
+      await app.evaluate(({ Menu, dialog }, project) => {
+        const item = Menu.getApplicationMenu().getMenuItemById('share-level');
+        const pick = dialog.showOpenDialogSync;
+        dialog.showOpenDialogSync = () => [project];
+        try {
+          item.click();
+        } finally {
+          dialog.showOpenDialogSync = pick;
+        }
+        const stream = global.fetch;
+        global.fetch = async (url, options) => {
+          if (!String(url).startsWith('https://api.openai.com/')) throw Error('Unexpected provider');
+          const body = JSON.parse(options.body);
+          if (body.tools?.some((tool) => tool.function.name === 'level_get_info')) {
+            return Response.json({
+              id: 'fixture',
+              object: 'chat.completion',
+              choices: [
+                {
+                  index: 0,
+                  finish_reason: 'tool_calls',
+                  message: {
+                    role: 'assistant',
+                    content: null,
+                    tool_calls: [
+                      { id: 'inspect', type: 'function', function: { name: 'level_get_info', arguments: '{}' } },
+                    ],
+                  },
+                },
+              ],
+            });
+          }
+          const result = JSON.parse(body.messages.findLast((message) => message.role === 'tool').content);
+          if (!result.map_name || !Number.isInteger(result.actor_count)) throw Error('Missing live level metadata');
+          global.__qaLevel = result;
+          return stream(url, options);
+        };
+      }, project);
+      await page.locator('#prompt').fill('Inspect the current Unreal level');
+      await page.locator('#send-button').click();
+      await page.waitForFunction(
+        () =>
+          document.querySelectorAll('article[aria-label="Hayba message"] .body').length === 2 &&
+          document
+            .querySelectorAll('article[aria-label="Hayba message"] .body')[1]
+            .innerText.includes('Rendered fixture reply'),
+      );
+      const result = await app.evaluate(() => global.__qaLevel);
+      console.log('Installed Desktop received the editor tool result:', JSON.stringify(result));
+    }
     console.log('PASS: packaged window, shared HTML, encrypted BYOK setup, SDK stream and transcript');
   } finally {
     await app.close();

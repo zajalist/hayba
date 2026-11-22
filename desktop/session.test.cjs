@@ -33,3 +33,30 @@ test('stream, interruption and retry keep only complete turns in provider contex
     ['first', 'hello', 'retry'],
   );
 });
+
+test('a level tool failure reaches the provider as an error without inventing a scene', async () => {
+  const chat = newChat();
+  let result;
+  const client = {
+    async complete() {
+      return { toolCalls: [{ id: 'lookup', name: 'level_get_info', input: {} }] };
+    },
+    async *stream({ messages }) {
+      result = messages.at(-1).content[0];
+      yield { type: 'done', response: { stopReason: 'end_turn', content: 'Please open the editor.' } };
+    },
+  };
+  await runTurn(
+    chat,
+    'Which level is open?',
+    client,
+    new AbortController().signal,
+    () => {},
+    async () => {
+      throw Error('offline');
+    },
+  );
+  assert.equal(result.is_error, true);
+  assert.equal(result.tool_use_id, 'lookup');
+  assert.equal(chat.messages.at(-1).text, 'Please open the editor.');
+});

@@ -4,9 +4,11 @@ const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { newChat, runTurn } = require('./session.cjs');
 const { createLLMClient } = require('./provider.cjs');
+const { UETcpClient, discoverPortFromInstanceRegistry } = require('./editor-client.cjs');
 const page = path.join(__dirname, 'Resources/chat/index.html');
 const settingsPage = path.join(__dirname, 'settings.html');
 let win, settings, active, chats, current, config, timer;
+let sharedProject;
 app.setName('Hayba Desktop');
 if (!app.requestSingleInstanceLock()) app.quit();
 else {
@@ -104,6 +106,45 @@ function openSettings() {
   });
   settings.loadFile(settingsPage);
 }
+function selectSharedProject(item) {
+  sharedProject = undefined;
+  if (!item.checked) return;
+  const files = dialog.showOpenDialogSync(win, {
+    title: 'Choose the open Unreal project whose level the provider may inspect',
+    properties: ['openFile'],
+    filters: [{ name: 'Unreal project', extensions: ['uproject'] }],
+  });
+  sharedProject = files?.[0];
+  item.checked = Boolean(sharedProject);
+}
+async function inspectLevel(project, signal) {
+  const root = path.dirname(project);
+  const port = discoverPortFromInstanceRegistry(root);
+  if (!port) throw Error('Project is offline');
+  const editor = new UETcpClient('127.0.0.1', port);
+  const disconnect = () => editor.disconnect();
+  signal.throwIfAborted();
+  signal.addEventListener('abort', disconnect, { once: true });
+  try {
+    await editor.connect();
+    signal.throwIfAborted();
+    const identity = await editor.send('project_get_info', {}, 5000);
+    if (
+      !identity.ok ||
+      typeof identity.data?.project_dir !== 'string' ||
+      path.relative(root, identity.data.project_dir) !== '' ||
+      identity.data.project_name.toLowerCase() !== path.basename(project, '.uproject').toLowerCase()
+    )
+      throw Error('Editor project changed');
+    const result = await editor.send('level_get_info', {}, 5000);
+    if (!result.ok || typeof result.data?.map_name !== 'string') throw Error('Level unavailable');
+    const { map_name, package_path, actor_count, is_pie_running } = result.data;
+    return JSON.stringify({ map_name, package_path, actor_count, is_pie_running });
+  } finally {
+    signal.removeEventListener('abort', disconnect);
+    disconnect();
+  }
+}
 async function start() {
   fs.mkdirSync(app.getPath('userData'), { recursive: true });
   const stored = load('conversations.json', null);
@@ -113,7 +154,19 @@ async function start() {
   win = secureWindow({ width: 960, height: 760, minWidth: 400, minHeight: 460, title: 'Hayba Desktop' });
   Menu.setApplicationMenu(
     Menu.buildFromTemplate([
-      { label: 'Hayba', submenu: [{ label: 'Provider settings…', click: openSettings }, { role: 'quit' }] },
+      {
+        label: 'Hayba',
+        submenu: [
+          { label: 'Provider settings…', click: openSettings },
+          {
+            id: 'share-level',
+            type: 'checkbox',
+            label: 'Share Unreal level with provider…',
+            click: selectSharedProject,
+          },
+          { role: 'quit' },
+        ],
+      },
       { role: 'editMenu' },
     ]),
   );
@@ -169,7 +222,8 @@ async function start() {
       const key = safeStorage.decryptString(Buffer.from(config.secret, 'base64'));
       const client = createLLMClient({ provider: config.provider, model: config.model, apiKey: key });
       active = new AbortController();
-      void runTurn(current, value, client, active.signal, publish).finally(() => {
+      const inspect = sharedProject ? inspectLevel.bind(null, sharedProject) : undefined;
+      void runTurn(current, value, client, active.signal, publish, inspect).finally(() => {
         active = null;
         saveChats();
         publish();

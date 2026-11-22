@@ -36,6 +36,14 @@ await build({
   outfile: join(app, 'provider.cjs'),
 });
 const source = '../unreal/HaybaMCPToolkit/Resources';
+await build({
+  absWorkingDir: process.cwd(),
+  entryPoints: ['../mcp-tools/hayba-mcp/src/tcp-client.ts'],
+  bundle: true,
+  platform: 'node',
+  format: 'cjs',
+  outfile: join(app, 'editor-client.cjs'),
+});
 for (const name of ['chat', 'Fonts', 'HaybaLogo.svg'])
   cpSync(join(source, name), join(app, 'Resources', name), {
     recursive: true,
@@ -57,7 +65,7 @@ execFileSync(
   [
     '/Q',
     '/DWithMcp=0',
-    '/DAppVersion=0.1.0',
+    '/DAppVersion=' + JSON.parse(readFileSync('package.json', 'utf8')).version,
     '/DDesktopDir=' + join(process.cwd(), 'bin/app'),
     '/DInstallerDir=' + join(process.cwd(), '../tools/installer'),
     '/DPackageZip=' + payload,
