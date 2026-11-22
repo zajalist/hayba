@@ -1,7 +1,7 @@
 import { build } from 'esbuild';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { cpSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readFileSync, renameSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -12,19 +12,12 @@ if (!payload || !existsSync(payload) || !process.env.HAYBA_PACKAGE_SHA256)
 if (createHash('sha256').update(readFileSync(payload)).digest('hex') !== process.env.HAYBA_PACKAGE_SHA256)
   throw Error('The plugin archive changed after packaging.');
 execFileSync(process.execPath, ['node_modules/electron/install.js'], { stdio: 'inherit' });
-cpSync('node_modules/electron/dist', 'bin/app', { recursive: true });
-renameSync('bin/app/electron.exe', 'bin/app/Hayba.exe');
-const app = 'bin/app/resources/app';
+const appDir = join(process.env.HAYBA_OUTPUT_DIR || join(process.cwd(), 'bin'), 'app');
+cpSync('node_modules/electron/dist', appDir, { recursive: true });
+renameSync(join(appDir, 'electron.exe'), join(appDir, 'Hayba.exe'));
+const app = join(appDir, 'resources/app');
 mkdirSync(app, { recursive: true });
-for (const name of [
-  'package.json',
-  'session.cjs',
-  'main.cjs',
-  'preload.cjs',
-  'settings.html',
-  'settings.css',
-  'settings.js',
-])
+for (const name of ['package.json', 'session.cjs', 'main.cjs', 'preload.cjs', 'settings.html', 'workspace.html'])
   cpSync(name, join(app, name));
 cpSync('../LICENSE', join(app, 'LICENSE'));
 await build({
@@ -44,21 +37,21 @@ await build({
   format: 'cjs',
   outfile: join(app, 'editor-client.cjs'),
 });
-for (const name of ['chat', 'Fonts', 'HaybaLogo.svg'])
-  cpSync(join(source, name), join(app, 'Resources', name), {
-    recursive: true,
-    filter: (p) => !p.endsWith('.test.cjs'),
-  });
-const chat = join(app, 'Resources/chat');
-for (const name of ['desktop.js', 'desktop.css']) cpSync(name, join(chat, name));
-const index = join(chat, 'index.html');
-writeFileSync(
-  index,
-  readFileSync(index, 'utf8').replace(
-    '</head>',
-    '<link rel="stylesheet" href="desktop.css"><script src="desktop.js" defer></script></head>',
-  ),
-);
+cpSync(join(source, 'HaybaLogo.svg'), join(app, 'HaybaLogo.svg'));
+await build({
+  absWorkingDir: process.cwd(),
+  entryPoints: { workspace: 'workspace.jsx', preferences: 'preferences.jsx' },
+  outdir: app,
+  bundle: true,
+  minify: true,
+  legalComments: 'eof',
+  loader: { '.woff2': 'file' },
+  define: { 'process.env.NODE_ENV': '"production"' },
+  assetNames: 'assets/[name]-[hash]',
+});
+for (const font of ['dm-sans', 'space-grotesk']) {
+  cpSync('node_modules/@fontsource-variable/' + font + '/LICENSE', join(app, 'assets', font + '-LICENSE.txt'));
+}
 const compiler = process.env.HAYBA_ISCC || join(process.env.LOCALAPPDATA, 'Programs/Inno Setup 6/ISCC.exe');
 execFileSync(
   compiler,
@@ -66,7 +59,7 @@ execFileSync(
     '/Q',
     '/DWithMcp=0',
     '/DAppVersion=' + JSON.parse(readFileSync('package.json', 'utf8')).version,
-    '/DDesktopDir=' + join(process.cwd(), 'bin/app'),
+    '/DDesktopDir=' + appDir,
     '/DInstallerDir=' + join(process.cwd(), '../tools/installer'),
     '/DPackageZip=' + payload,
     '/O' + (process.env.HAYBA_OUTPUT_DIR || join(process.cwd(), 'bin')),

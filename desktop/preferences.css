@@ -1,0 +1,111 @@
+@font-face {
+  font-family: DM;
+  src: url('@fontsource-variable/dm-sans/files/dm-sans-latin-wght-normal.woff2');
+  font-weight: 100 1000;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  font:
+    14px DM,
+    'Segoe UI',
+    sans-serif;
+  background: #faf9f6;
+  color: #2c2932;
+  margin: 0;
+}
+form {
+  max-width: 520px;
+  padding: 25px 30px;
+  margin: auto;
+}
+.keyicon {
+  display: grid;
+  place-items: center;
+  background: #ebe5f1;
+  border-radius: 10px;
+  width: 39px;
+  height: 39px;
+  color: #665377;
+}
+.keyicon svg {
+  width: 20px;
+}
+h1 {
+  margin: 14px 0 4px;
+  font-size: 26px;
+  letter-spacing: -1px;
+}
+p {
+  margin: 0;
+  color: #675f6d;
+  line-height: 1.5;
+}
+fieldset {
+  border: 0;
+  padding: 0;
+  margin: 18px 0 0;
+}
+label {
+  display: block;
+  font-size: 13px;
+  font-weight: 650;
+  margin: 0 0 13px;
+}
+input,
+select {
+  display: block;
+  width: 100%;
+  font: 14px DM;
+  color: inherit;
+  background: #fffefc;
+  border: 1px solid #cfc9cf;
+  border-radius: 6px;
+  padding: 9px 10px;
+  margin-top: 5px;
+}
+.privacy {
+  display: flex;
+  gap: 9px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #62586a;
+}
+.privacy svg {
+  flex: none;
+  width: 16px;
+}
+.buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 20px;
+}
+button {
+  font: 600 13px DM;
+  color: #50475a;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  padding: 10px 15px;
+  cursor: pointer;
+}
+button[type='submit'] {
+  color: white;
+  background: #51425f;
+}
+button:disabled {
+  opacity: 0.55;
+}
+button:focus-visible,
+input:focus-visible,
+select:focus-visible {
+  outline: 2px solid #967ab4;
+  outline-offset: 2px;
+}
+p[role='alert'] {
+  margin-top: 8px;
+  color: #92432e;
+  font-size: 13px;
+}

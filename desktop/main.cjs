@@ -5,7 +5,7 @@ const { pathToFileURL } = require('node:url');
 const { newChat, runTurn } = require('./session.cjs');
 const { createLLMClient } = require('./provider.cjs');
 const { UETcpClient, discoverPortFromInstanceRegistry } = require('./editor-client.cjs');
-const page = path.join(__dirname, 'Resources/chat/index.html');
+const page = path.join(__dirname, 'workspace.html');
 const settingsPage = path.join(__dirname, 'settings.html');
 let win, settings, active, chats, current, config, timer;
 let sharedProject;
@@ -77,6 +77,7 @@ function publish() {
     canSend: !!config,
     workspace: {
       project: 'Hayba Desktop',
+      sharedProject: sharedProject ? path.basename(sharedProject, '.uproject') : null,
       title: current.messages[0]?.text.slice(0, 70) || 'New conversation',
       sessionId: current.id,
       sessions: chats.map((c) => ({
@@ -99,8 +100,8 @@ function openSettings() {
   settings = secureWindow({
     parent: win,
     modal: true,
-    width: 475,
-    height: 470,
+    width: 480,
+    height: 600,
     title: 'Provider settings',
     autoHideMenuBar: true,
   });
@@ -108,7 +109,10 @@ function openSettings() {
 }
 function selectSharedProject(item) {
   sharedProject = undefined;
-  if (!item.checked) return;
+  if (!item.checked) {
+    publish();
+    return;
+  }
   const files = dialog.showOpenDialogSync(win, {
     title: 'Choose the open Unreal project whose level the provider may inspect',
     properties: ['openFile'],
@@ -116,6 +120,7 @@ function selectSharedProject(item) {
   });
   sharedProject = files?.[0];
   item.checked = Boolean(sharedProject);
+  publish();
 }
 async function inspectLevel(project, signal) {
   const root = path.dirname(project);
@@ -151,7 +156,14 @@ async function start() {
   chats = stored?.chats || [newChat()];
   current = chats.find((c) => c.id === stored?.current) || chats[0];
   config = load('provider.json', null);
-  win = secureWindow({ width: 960, height: 760, minWidth: 400, minHeight: 460, title: 'Hayba Desktop' });
+  win = secureWindow({
+    width: 1160,
+    height: 800,
+    autoHideMenuBar: true,
+    minWidth: 400,
+    minHeight: 460,
+    title: 'Hayba Desktop',
+  });
   Menu.setApplicationMenu(
     Menu.buildFromTemplate([
       {
@@ -211,6 +223,7 @@ async function start() {
     }
     if (cmd.generation !== current.id) return;
     if (action === 'settings') openSettings();
+    if (action === 'project' && !active) Menu.getApplicationMenu().getMenuItemById('share-level').click();
     if (action === 'copy') clipboard.writeText(value);
     if (action === 'stop') active?.abort();
     if (action === 'draft_changed') {

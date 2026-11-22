@@ -1,10 +1,12 @@
 # Hayba Desktop for Windows
 
+![Hayba Desktop workspace with conversation history, project sharing and provider setup](media/workspace.png)
+
 Install Hayba with `Hayba-Desktop-Setup.exe`. To add the chat panel to Unreal, close the editor and select your project's `.uproject` in the same wizard. You can also install Desktop on its own. The bundled editor plugin requires the Windows x64 Unreal build used to compile it.
 
-Open **Hayba → Provider settings** in Desktop, choose OpenAI or Anthropic, and enter your API key and a model ID available to your account. Windows protects the saved key with DPAPI. Changing the model within the same provider keeps your saved key. Messages go to the selected provider when you send them.
+Open **Provider settings** in the sidebar in Desktop, choose OpenAI or Anthropic, and enter your API key and a model ID available to your account. Windows protects the saved key with DPAPI. Changing the model within the same provider keeps your saved key. Messages go to the selected provider when you send them.
 
-Desktop and Unreal render the same HTML interface. Each keeps its own conversations and provider settings. To let a Desktop conversation answer questions about the open level, enable **Hayba → Share Unreal level with provider…**. Desktop can then send the map name, package path, actor count and play state to your chosen provider when requested. Select the open project in the file picker. Hayba verifies its identity before reading the level, including when two editors are open. The option starts off each time Desktop opens. Use the Unreal panel for reviewed editor changes.
+Desktop has a React and Radix UI workspace with a searchable conversation sidebar. Press **Ctrl+K** to find a chat. The Unreal editor panel keeps its own conversations and provider settings. To let a Desktop conversation answer questions about the open level, select **Unreal level** in the composer. Desktop can then send the map name, package path, actor count and play state to your chosen provider when requested. Select the open project in the file picker. Hayba verifies its identity before reading the level, including when two editors are open. The option starts off each time Desktop opens. Use the Unreal panel for reviewed editor changes.
 
 ## Build on Windows x64
 

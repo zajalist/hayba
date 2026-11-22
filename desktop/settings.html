@@ -2,31 +2,16 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'none'; style-src 'self'; script-src 'self'; form-action 'none'"
+      content="default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self'; form-action 'none'"
     />
     <title>Provider settings</title>
-    <link rel="stylesheet" href="settings.css" />
-    <script src="settings.js" defer></script>
+    <link rel="stylesheet" href="preferences.css" />
+    <script src="preferences.js" defer></script>
   </head>
   <body>
-    <form>
-      <h1>Provider settings</h1>
-      <p>
-        Your key is encrypted for your Windows account. Your chosen provider receives the conversation when you send.
-      </p>
-      <label
-        >Provider<select id="provider">
-          <option value="anthropic">Anthropic</option>
-          <option value="openai">OpenAI</option>
-        </select></label
-      ><label>Model ID<input id="model" required maxlength="160" autocomplete="off" /></label
-      ><label>API key<input id="key" required type="password" autocomplete="off" maxlength="4096" /></label>
-      <div>
-        <button type="submit">Save connection</button> <button type="button" id="remove" hidden>Remove key</button>
-      </div>
-      <p id="status" role="status"></p>
-    </form>
+    <div id="root"></div>
   </body>
 </html>

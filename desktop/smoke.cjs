@@ -13,6 +13,14 @@ async function main() {
   try {
     const page = await app.firstWindow();
     await page.getByText('Hayba Desktop', { exact: true }).waitFor();
+    await page.getByRole('button', { name: 'Plan a feature' }).click();
+    assert.match(await page.locator('#prompt').inputValue(), /implementation/);
+    await page.keyboard.press('Control+k');
+    const search = page.getByRole('dialog');
+    await search.getByRole('textbox').fill('missing conversation');
+    await search.getByText('No matching conversations.').waitFor();
+    await page.keyboard.press('Escape');
+    await search.waitFor({ state: 'hidden' });
     const next = app.waitForEvent('window');
     await page.getByRole('button', { name: 'Open settings' }).click();
     const settings = await next;
@@ -105,7 +113,7 @@ async function main() {
       const result = await app.evaluate(() => global.__qaLevel);
       console.log('Installed Desktop received the editor tool result:', JSON.stringify(result));
     }
-    console.log('PASS: packaged window, shared HTML, encrypted BYOK setup, SDK stream and transcript');
+    console.log('PASS: packaged React workspace, keyboard search, encrypted BYOK setup, SDK stream and transcript');
   } finally {
     await app.close();
   }
