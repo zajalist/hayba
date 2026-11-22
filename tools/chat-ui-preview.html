@@ -1,0 +1,547 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Hayba · workspace preview</title>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: #141312;
+        color: #bcb4ab;
+        font:
+          12px 'Segoe UI',
+          sans-serif;
+        height: 100vh;
+        display: flex;
+        flex-direction: column;
+      }
+      header {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        min-height: 42px;
+        padding: 6px 15px;
+        border-bottom: 1px solid #37322e;
+      }
+      header strong {
+        color: #eae6e1;
+        font-weight: 600;
+      }
+      header > span {
+        flex: 1;
+      }
+      button,
+      select {
+        font: inherit;
+        background: #262320;
+        color: #eae6e1;
+        border: 1px solid #4c433b;
+        border-radius: 5px;
+        padding: 5px 8px;
+        cursor: pointer;
+      }
+      button:hover {
+        background: #39312a;
+      }
+      details {
+        position: relative;
+      }
+      summary {
+        cursor: pointer;
+        padding: 5px;
+      }
+      nav {
+        position: absolute;
+        z-index: 2;
+        right: 0;
+        top: 30px;
+        width: 240px;
+        background: #262320;
+        border: 1px solid #4c433b;
+        border-radius: 8px;
+        padding: 12px;
+        box-shadow: 0 8px 25px #0008;
+      }
+      nav button,
+      nav select {
+        margin: 4px;
+      }
+      nav p {
+        line-height: 1.6;
+      }
+      main {
+        flex: 1;
+        min-height: 0;
+        display: flex;
+        justify-content: center;
+      }
+      iframe {
+        display: block;
+        border: 0;
+        border-left: 1px solid #302a25;
+        border-right: 1px solid #302a25;
+        width: 900px;
+        max-width: 100%;
+        height: 100%;
+      }
+      #feedback {
+        font-size: 11px;
+        color: #d0aa73;
+      }
+      @media (max-width: 550px) {
+        header {
+          padding: 5px 9px;
+          gap: 8px;
+        }
+        header > span {
+          font-size: 10px;
+        }
+        #feedback {
+          display: none;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <strong>Hayba</strong><span>UI preview · simulated actions</span><span id="feedback" role="status"></span>
+      <details>
+        <summary>Test controls</summary>
+        <nav>
+          <p>This is the actual plugin web UI. This preview uses sample data and makes no model or 3D API calls.</p>
+          <select id="width" aria-label="Preview width">
+            <option value="900">Wide · 900px</option>
+            <option value="460">Editor · 460px</option>
+            <option value="350">Narrow · 350px</option></select
+          ><button data-scene="empty">Empty</button><button data-scene="conversation">Conversation</button
+          ><button data-scene="long">Long history</button><button data-scene="approval">Approval</button
+          ><button data-scene="error">Error</button><button id="demo-connections">Simulate connected accounts</button>
+        </nav>
+      </details>
+    </header>
+    <main><iframe id="workspace-frame" src="/chat/index.html" title="Hayba workspace"></iframe></main>
+    <script>
+      const frame = document.getElementById('workspace-frame');
+      let state,
+        timer,
+        jobTimers = [];
+      const reply =
+        'I found **three lights** near the entrance. The fill is competing with the warm key light.\n\n## Suggested change\n- Keep the warm key light\n- Lower the fill intensity\n- Check the result from the player camera\n\n```cpp\nLight->SetIntensity(1200.f);\n```\n\nWe can review the exact operation before applying it.';
+      const activity = (approval = false) => ({
+        id: 'lighting',
+        title: 'Inspect entrance lighting',
+        state: approval ? 'Awaiting approval' : 'Succeeded',
+        steps: [
+          {
+            id: 'lights',
+            name: 'Read selected actors',
+            state: 'Succeeded',
+            input: '{"selection":true}',
+            result: '3 light actors found',
+          },
+          {
+            id: 'target',
+            name: 'Validate target',
+            state: 'Succeeded',
+            input: '{"actor":"Entrance_Fill"}',
+            result: 'Target is unchanged',
+          },
+        ],
+        ...(approval
+          ? {
+              approval: {
+                id: 'demo-approval',
+                hint: 'Preview only: lower the selected fill light’s intensity.',
+                input: 'actor_set_property\n{"actor":"Entrance_Fill","Intensity":1200}',
+                native: false,
+                enabled: true,
+              },
+            }
+          : {}),
+      });
+      function initial() {
+        return {
+          generation: crypto.randomUUID(),
+          canSend: true,
+          messages: [],
+          workspace: {
+            preview: true,
+            diagnostics: { engine: '5.9.0-60351404', processId: 1234, bridgeRunning: true, restartRequired: false, credentialsReady: true, observedAt: new Date().toISOString() },
+            sessionId: '',
+            title: 'New conversation',
+            project: 'OutOfFrame',
+            draft: { text: '', ack: 0, revision: 0 },
+            mode: 'explore',
+            model: {
+              id: 'claude-opus-4-6',
+              name: 'Claude Opus 4.6',
+              provider: 'Anthropic',
+              manualAllowed: true,
+              models: [
+                {
+                  id: 'claude-opus-4-6',
+                  name: 'Claude Opus 4.6',
+                  available: true,
+                  description: 'Complex reasoning and agentic work',
+                },
+                {
+                  id: 'claude-sonnet-4-6',
+                  name: 'Claude Sonnet 4.6',
+                  available: true,
+                  description: 'A balance of speed and capability',
+                },
+                {
+                  id: 'claude-haiku-4-5',
+                  name: 'Claude Haiku 4.5',
+                  available: true,
+                  description: 'Fast, focused responses',
+                },
+              ],
+            },
+            effort: { value: 'medium', options: ['', 'low', 'medium', 'high'] },
+            sessions: [
+              { id: 'entrance', title: 'Improve entrance lighting', updatedAt: new Date().toISOString() },
+              { id: 'props', title: 'Plan props for the abandoned station', updatedAt: '2026-11-11T18:00:00Z' },
+            ],
+            context: [],
+            connections: ['meshy', 'tripo', 'aholo', 'fal', 'worldlabs'].map((id) => ({
+              id,
+              name: id,
+              configured: false,
+              state: 'not_connected',
+            })),
+            jobs: [],
+            generation3d: { busy: false },
+            subagents: { agents: [], loading: false },
+            history: { query: '', offset: 0, total: 2, hasMore: false, nextOffset: 2 },
+          },
+        };
+      }
+      let previewSessions = [];
+      const push = () => {
+        frame.contentWindow.haybaChat?.receive(structuredClone(state));
+      };
+      const feedback = (text) => {
+        document.getElementById('feedback').textContent = text;
+        frame.contentWindow.haybaWorkspace?.toast(text);
+      };
+      function reset() {
+        clearInterval(timer);
+        timer = null;
+        jobTimers.forEach(clearInterval);
+        jobTimers = [];
+        state = initial();
+        previewSessions = state.workspace.sessions;
+        push();
+      }
+      function scene(name) {
+        reset();
+        if (name === 'empty') return;
+        state.messages = [
+          { id: 0, role: 'user', text: 'Help me improve the lighting in this entrance.' },
+          { id: 1, role: 'assistant', text: reply, activity: activity(name === 'approval') },
+        ];
+        state.workspace.title = 'Improve entrance lighting';
+        state.workspace.sessionId = 'entrance';
+        if (name === 'long') {
+          state.workspace.title = 'Lighting investigation · long history fixture';
+          state.messages = Array.from({ length: 2000 }, (_, id) => ({
+            id,
+            role: id % 2 ? 'assistant' : 'user',
+            text:
+              id % 2
+                ? 'Inspection findings for pass ' +
+                  Math.ceil(id / 2) +
+                  '. The scene context is stable.\n\n- Read the selected actors\n- Compare light intensity\n- Review the next proposed change'
+                : 'Lighting investigation ' + (id / 2 + 1) + ': inspect the entrance and explain the next change.',
+          }));
+          previewSessions = Array.from({ length: 125 }, (_, i) => ({
+            id: 'sample-' + i,
+            title: 'Scene investigation ' + (i + 1),
+            updatedAt: new Date(Date.now() - i * 3600000).toISOString(),
+          }));
+          state.workspace.sessions = previewSessions.slice(0, 50);
+          state.workspace.history = { query: '', offset: 0, total: 125, hasMore: true, nextOffset: 50 };
+        }
+        if (name === 'approval') {
+          state.awaitingApproval = true;
+          state.canSend = false;
+        }
+        if (name === 'error')
+          state.messages[1] = {
+            id: 1,
+            role: 'assistant',
+            notice: true,
+            text: 'The chat connection was interrupted. Your message is still here. Try again when the connection is available.',
+            retry: true,
+          };
+        push();
+      }
+      function stream(text) {
+        state.workspace.sessionId ||= 'preview-session';
+        state.workspace.draft.text = '';
+        state.workspace.draft.revision++;
+        if (!state.messages.length) state.workspace.title = text;
+        state.messages.push(
+          { id: state.messages.length, role: 'user', text },
+          { id: state.messages.length + 1, role: 'assistant', text: '' },
+        );
+        const message = state.messages.at(-1);
+        if (/delegat|subagent/i.test(text)) {
+          const agent = {
+            id: crypto.randomUUID(),
+            task: 'Inspect entrance lighting',
+            parent_session_id: state.workspace.sessionId,
+            specialist_id: 'asset-manager',
+            created_at: new Date().toISOString(),
+            status: 'running',
+            output: '',
+            tools: [{ id: 'read', name: 'Inspect selected actors', status: 'running' }],
+          };
+          state.workspace.subagents.agents.push(agent);
+          const tick = setTimeout(() => {
+            if (agent.status !== 'running') return;
+            agent.status = 'succeeded';
+            agent.tools[0].status = 'succeeded';
+            agent.output =
+              'Simulated findings for UI testing.\n\nThe fill light is competing with the key light. Inspect its intensity and review a small reduction from the player camera.';
+            push();
+          }, 1800);
+          jobTimers.push(tick);
+        }
+        state.busy = true;
+        state.canSend = false;
+        let at = 0;
+        const sample = 'This is a **simulated response** for testing the workspace.\n\n' + reply;
+        timer = setInterval(() => {
+          at += 14;
+          message.text = sample.slice(0, at);
+          if (at >= sample.length) {
+            clearInterval(timer);
+            timer = null;
+            state.busy = false;
+            state.canSend = true;
+            message.activity = activity();
+          }
+          push();
+        }, 35);
+      }
+      frame.addEventListener('load', () => {
+        state = initial();
+        previewSessions = state.workspace.sessions;
+        frame.contentWindow.haybaChat.init('preview-only');
+      });
+      window.addEventListener('message', async (event) => {
+        if (event.source !== frame.contentWindow || event.origin !== location.origin || !event.data.haybaPreview)
+          return;
+        const c = event.data.haybaPreview,
+          host = frame.contentWindow;
+        if (c.action === 'copy') {
+          try {
+            await navigator.clipboard.writeText(c.value);
+            host.haybaChat.ack({ action: 'copy', ok: true });
+          } catch {
+            host.haybaChat.ack({ action: 'copy', ok: false });
+          }
+          return;
+        }
+        host.haybaChat.ack();
+        if (c.action === 'ready') {
+          push();
+          return;
+        }
+        if (c.generation !== state.generation) return;
+        const w = state.workspace;
+        switch (c.action) {
+          case 'history': {
+            const query = c.query || '',
+              offset = c.offset || 0;
+            const matches = previewSessions.filter((s) =>
+              (s.title + ' ' + s.id).toLowerCase().includes(query.trim().toLowerCase()),
+            );
+            w.sessions = matches.slice(offset, offset + 50);
+            w.history = {
+              query,
+              offset,
+              total: matches.length,
+              hasMore: offset + 50 < matches.length,
+              nextOffset: Math.min(offset + 50, matches.length),
+            };
+            break;
+          }
+          case 'subagents':
+            break;
+          case 'cancel_subagent': {
+            const agent = w.subagents.agents.find((a) => a.id === c.value);
+            if (agent) agent.status = 'cancelled';
+            break;
+          }
+          case 'use_subagent_result': {
+            const agent = w.subagents.agents.find((a) => a.id === c.value);
+            if (agent?.output) {
+              w.draft.text = 'Review these subagent findings:\n\n' + agent.output;
+              w.draft.revision++;
+            }
+            break;
+          }
+          case 'new':
+            reset();
+            break;
+          case 'session':
+            scene('conversation');
+            break;
+          case 'draft_changed':
+            w.draft = { text: c.value, ack: c.seq, revision: w.draft.revision + 1 };
+            break;
+          case 'send':
+            w.draft.ack = c.seq;
+            if (state.canSend) stream(c.value);
+            else w.draft.text = c.value;
+            break;
+          case 'stop':
+            clearInterval(timer);
+            timer = null;
+            state.busy = false;
+            state.canSend = true;
+            break;
+          case 'draft':
+            w.draft.text += (w.draft.text && !/\s$/.test(w.draft.text) ? ' ' : '') + c.value;
+            w.draft.revision++;
+            break;
+          case 'retry':
+            w.draft.text = state.messages[0]?.text || '';
+            w.draft.revision++;
+            break;
+          case 'mode':
+            w.mode = c.value;
+            break;
+          case 'effort':
+            w.effort.value = c.value;
+            break;
+          case 'model':
+            w.model.id = c.value;
+            w.model.name = w.model.models.find((m) => m.id === c.value)?.name || c.value;
+            break;
+          case 'attach_selection':
+            w.context.push({
+              id: crypto.randomUUID(),
+              label: '3 selected actors',
+              path: '/Game/Maps/Entrance',
+              kind: 'selection',
+            });
+            break;
+          case 'attach_file':
+            feedback('The native file picker opens in Unreal. This preview does not read your files.');
+            break;
+          case 'remove_context':
+            w.context = w.context.filter((x) => x.id !== c.value);
+            break;
+          case 'inspect':
+            state.messages.push({
+              id: state.messages.length,
+              role: 'inspection',
+              text: '## Loaded world · preview fixture\n3 lights, 12 static meshes, and 1 player start.\n\nSample scene data; the preview does not connect to Unreal.',
+            });
+            break;
+          case 'approve':
+          case 'reject': {
+            const a = state.messages.find((m) => m.activity)?.activity;
+            if (a) {
+              a.state = c.action === 'approve' ? 'Succeeded' : 'Failed';
+              delete a.approval;
+            }
+            state.awaitingApproval = false;
+            state.canSend = true;
+            feedback('Simulated review only — no project changes.');
+            break;
+          }
+          case 'connect_provider':
+            feedback('Enter API keys in Unreal’s secure dialog. Use Test controls to simulate a connection here.');
+            break;
+          case 'disconnect_provider':
+            Object.assign(
+              w.connections.find((p) => p.id === c.value),
+              { configured: false, state: 'not_connected' },
+            );
+            break;
+          case 'generate_3d': {
+            if (!w.connections.find((p) => p.id === c.value)?.configured || w.generation3d.busy) break;
+            const job = {
+              kind: c.value === 'fal' ? 'video' : c.value === 'worldlabs' ? 'splat' : 'model',
+              id: crypto.randomUUID(),
+              task_id: 'preview-' + Date.now(),
+              provider: c.value,
+              prompt: c.prompt || 'Textured preview model',
+              status: 'queued',
+              progress: 0,
+              ...(c.value === 'meshy' ? { phase: c.preview_task_id ? 'refine' : 'preview' } : {}),
+            };
+            w.jobs.push(job);
+            w.generation3d.busy = true;
+            const tick = setInterval(() => {
+              job.progress += 10;
+              job.status = 'running';
+              if (job.progress >= 100) {
+                job.status = 'succeeded';
+                job.result_url = 'https://example.com/simulated-result';
+                if (job.kind === 'model') job.model_url = job.result_url;
+                w.generation3d.busy = false;
+                clearInterval(tick);
+              }
+              push();
+            }, 500);
+            jobTimers.push(tick);
+            feedback('Simulated generation — no provider credits used.');
+            break;
+          }
+          case 'open_result':
+            feedback('Preview fixture only. Real model downloads open from Unreal.');
+            break;
+          case 'use_result':
+            w.draft.text =
+              'Review this generated 3D asset and propose importing it into the project: [simulated model]';
+            w.draft.revision++;
+            break;
+          case 'diagnostics':
+            w.diagnostics.observedAt = new Date().toISOString();
+            break;
+          case 'fab_browser':
+            feedback('Preview only. In Unreal, this opens Epic’s Fab plugin; no purchase or import is simulated.');
+            break;
+          case 'settings':
+          case 'activity':
+            feedback(
+              c.action === 'settings'
+                ? 'Provider and editor settings open natively in Unreal.'
+                : 'The full activity panel opens natively in Unreal.',
+            );
+            break;
+          case 'link':
+            feedback('Asset and link navigation is handled by Unreal.');
+            break;
+        }
+        push();
+      });
+      document.querySelectorAll('[data-scene]').forEach(
+        (b) =>
+          (b.onclick = () => {
+            scene(b.dataset.scene);
+            b.closest('details').open = false;
+          }),
+      );
+      document.getElementById('width').onchange = (e) => (frame.style.width = e.target.value + 'px');
+      document.getElementById('demo-connections').onclick = () => {
+        state.workspace.connections.forEach((c) =>
+          Object.assign(c, { configured: true, state: 'verified', message: 'Simulated account · preview only' }),
+        );
+        push();
+        document.querySelector('details').open = false;
+        feedback('Simulated accounts enabled. No credentials are stored.');
+      };
+    </script>
+  </body>
+</html>

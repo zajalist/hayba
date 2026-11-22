@@ -2,7 +2,45 @@
 
 All notable changes to Hayba MCP Toolkit are documented here. Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.4.2] - 2026-11-13
+
+- Windows Setup programs: **Hayba-Setup-0.4.2-Plugin+MCP.exe** (plugin plus MCP registration for Claude Code, Claude Desktop and Cursor) and **Hayba-Setup-0.4.2-Plugin.exe** (plugin only). Per-user, bundled Node and prebuilt server, uninstaller, any Unreal 5.9.x accepted.
+- In-editor chat: turns may take 60 tool rounds by default (was 16); set `chatMaxSteps` in `Saved/HaybaMCP/settings.json`. `python_run` is permitted by default for Community/BYOK and Pro chats; a request can withhold it with `permissions.python_run: false`.
+- `blueprint_graph_batch` and Blueprint compiles repair wildcard pins left undetermined by batched connections, and report `wildcard_nodes_repaired`.
 ## [Unreleased]
+
+### UE 5.9 editor workspace update
+
+- Local HTML chat with searchable conversation history, bounded visible message
+  pages, context references, model/effort menus and browsable agent-delegated work.
+  Manual subagent creation and the obsolete semantic World tab are removed.
+- Incremental transcript updates retain older messages while avoiding repeated
+  full-history transfers during streaming. Older native/document pairs continue
+  to use full snapshots; interrupted revision sequences request a fresh snapshot.
+- Editor status shows the local listener, native fault guard, project/build and
+  credential setup state. Diagnostics preserve the draft and distinguish local
+  listener state from remote chat/provider availability.
+- Media connections for Meshy, Tripo, Aholo, fal.ai and World Labs, with native
+  credential storage and explicit generation/download/import boundaries.
+- Portable Windows project installer with bundled Node/MCP runtime, exact engine
+  build checks, optional Claude configuration, backups and rollback.
+- `chooser_inspect` reads bounded pages of UE 5.9 Chooser tables through the
+  optional Chooser editor API, including columns, bindings and cell/result values.
+  A named native read route works under Plan Mode without allowing caller Python.
+  Text-heavy pages exceeding 48 KiB return an explicit smaller-page error.
+- Fab catalog/library search uses UE 5.9's real optional Fab API and bounded,
+  caller-owned query jobs. Chat can open the native Fab browser and attach imported
+  selections; purchasing and Add to Project remain explicit actions in Fab.
+- `asset_validate` refuses oversized folders before validation and distinguishes
+  passed, failed, partial, unsupported/skipped and cancelled validation.
+- PCG read tools request read leases; Python guards distinguish builtin
+  `compile`/`eval` calls from similarly named editor methods.
+- Chat health uses the real native ping command. Ping reports the answering PID,
+  project and engine build; connection diagnostics no longer recommend terminating
+  a process based solely on its presence.
+- Production dependency lockfile updates remove the audited production findings.
+  Tests exclude stale compiled backups, handle Windows catalog line endings, and
+  load SDK fixtures separately from request deadlines.
 
 Ports the production tool-gap fixes that were running on a separate
 integration branch onto the 0.4.1 code.
