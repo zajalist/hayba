@@ -126,6 +126,43 @@ TArray<FString> FHaybaMCPBlueprintHandler::GetCommands() const
     };
 }
 
+// Re-runs K2 type propagation on nodes left holding a linked wildcard pin. blueprint_graph_batch defers the skeleton
+// regeneration, so array functions (Array_Length/Add/Insert/RemoveIndex...) linked mid-batch copied a not-yet-resolved
+// type and stayed wildcard ("The type of Target Array is undetermined"). ReconstructNode makes such nodes re-read their
+// links (their PostReconstructNode propagates the linked type), the same as the editor's Refresh Nodes.
+static int32 HaybaRepairWildcardPins(UBlueprint* BP)
+{
+    if (!BP) return 0;
+    TArray<UEdGraph*> Graphs;
+    BP->GetAllGraphs(Graphs);
+    int32 Repaired = 0;
+    for (int32 Pass = 0; Pass < 3; ++Pass) // a chain of wildcard nodes resolves one link per pass
+    {
+        int32 ThisPass = 0;
+        for (UEdGraph* Graph : Graphs)
+        {
+            const UEdGraphSchema* Schema = Graph ? Graph->GetSchema() : nullptr;
+            if (!Schema) continue;
+            for (UEdGraphNode* Node : TArray<UEdGraphNode*>(Graph->Nodes))
+            {
+                const bool bStuck = Node && Node->Pins.ContainsByPredicate([](const UEdGraphPin* Pin)
+                {
+                    return Pin && Pin->PinType.PinCategory == UEdGraphSchema_K2::PC_Wildcard && Pin->LinkedTo.Num() > 0
+                        && Pin->LinkedTo.ContainsByPredicate([](const UEdGraphPin* Other)
+                           { return Other && Other->PinType.PinCategory != UEdGraphSchema_K2::PC_Wildcard; });
+                });
+                if (!bStuck) continue;
+                Schema->ReconstructNode(*Node, /*bIsBatchRequest=*/true);
+                ++ThisPass;
+            }
+        }
+        Repaired += ThisPass;
+        if (ThisPass == 0) break;
+    }
+    if (Repaired > 0) UE_LOG(LogHaybaMCPBP, Display, TEXT("BP %s: re-propagated %d wildcard node(s)"), *BP->GetPathName(), Repaired);
+    return Repaired;
+}
+
 TSet<FString>& FHaybaMCPBlueprintHandler::BrokenBlueprintsRef()
 {
     static TSet<FString> S;
@@ -170,6 +207,7 @@ static void AttachCompileReport(const TSharedPtr<FJsonObject>& Out, bool bClean,
 bool FHaybaMCPBlueprintHandler::RecompileAndTrack(UBlueprint* BP, TArray<FString>& OutErrors, TArray<FString>& OutWarnings)
 {
     if (!BP) return false;
+    HaybaRepairWildcardPins(BP); // heals graphs a batch left with undetermined wildcard types before judging the compile
     FCompilerResultsLog ResultsLog;
     ResultsLog.SetSourcePath(BP->GetPathName());
     ResultsLog.BeginEvent(TEXT("Compile"));
@@ -1840,6 +1878,7 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::Compile(const TSharedPtr<FJsonObj
         }
     }
 
+    HaybaRepairWildcardPins(BP); // a batch-broken graph (undetermined wildcard types) heals on its next compile
     FCompilerResultsLog ResultsLog;
     ResultsLog.SetSourcePath(BP->GetPathName());
     ResultsLog.BeginEvent(TEXT("Compile"));
@@ -2994,12 +3033,16 @@ FHaybaHandlerResult FHaybaMCPBlueprintHandler::GraphBatch(const TSharedPtr<FJson
     bDeferStructuralMark = false;
     if (bStructuralPending) FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(BP);
     bStructuralPending = false;
+    // The deferred skeleton is now current: let wildcard nodes linked during the batch take their real types.
+    const int32 WildcardsRepaired = HaybaRepairWildcardPins(BP);
+    if (WildcardsRepaired > 0) FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(BP);
 
     const bool bAllApplied = FailedIndex == INDEX_NONE;
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
     Out->SetBoolField(TEXT("ok"), bAllApplied);
     Out->SetNumberField(TEXT("applied"), Applied);
     Out->SetNumberField(TEXT("total"), Ops->Num());
+    Out->SetNumberField(TEXT("wildcard_nodes_repaired"), WildcardsRepaired);
     TSharedPtr<FJsonObject> RefJson = MakeShared<FJsonObject>();
     for (const TPair<FString, FString>& Pair : Refs) RefJson->SetStringField(Pair.Key, Pair.Value);
     Out->SetObjectField(TEXT("refs"), RefJson);

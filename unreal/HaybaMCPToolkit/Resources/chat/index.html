@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"
+    />
+    <title>Hayba workspace</title>
+    <link rel="stylesheet" href="chat.css" />
+    <link rel="stylesheet" href="workspace.css" />
+    <script src="icons.js" defer></script>
+    <script src="chat.js" defer></script>
+    <script src="workspace.js" defer></script>
+  </head>
+  <body>
+    <div id="workspace">
+      <header class="workspace-header">
+        <button
+          id="history-button"
+          class="icon-button"
+          aria-label="Conversation history"
+          title="Conversation history"
+          aria-haspopup="dialog"
+        >
+          <span data-icon="history"></span>
+        </button>
+        <div class="task-heading">
+          <div class="project-heading">
+            <img src="../HaybaLogo.svg" alt="" width="12" height="15" /><span id="project-name">Unreal project</span>
+          </div>
+          <h1 id="task-title">New conversation</h1>
+        </div>
+        <div class="header-actions">
+          <button
+            id="find-button"
+            class="icon-button"
+            aria-label="Find in conversation"
+            title="Find in conversation (Ctrl+F)"
+          >
+            <span data-icon="search"></span>
+          </button>
+          <button id="create-button" class="icon-button" aria-label="Assets and media" title="Assets and media">
+            <span data-icon="cube"></span><span id="job-count" class="count" hidden></span></button
+          ><button id="new-button" class="icon-button" aria-label="New conversation" title="New conversation">
+            <span data-icon="new"></span></button
+          ><button
+            id="more-button"
+            class="icon-button"
+            aria-label="More actions"
+            title="More actions"
+            aria-haspopup="menu"
+          >
+            <span data-icon="more"></span>
+          </button>
+        </div>
+      </header>
+      <div class="conversation-region">
+        <main id="conversation" aria-label="Conversation" tabindex="0">
+          <section id="empty" aria-labelledby="welcome-title">
+            <div class="welcome-mark"><img src="../HaybaLogo.svg" width="30" height="36" alt="" /></div>
+            <h2 id="welcome-title">What’s next for your world?</h2>
+            <p>Work through an idea. Understand your scene.<br />Make something worth building.</p>
+            <div class="starters">
+              <button data-action="inspect">
+                <span data-icon="selection"></span
+                ><span
+                  ><strong>Explore the scene</strong
+                  ><span class="starter-detail">Inspect what’s loaded in your editor</span></span
+                ><span data-icon="right"></span>
+              </button>
+              <button
+                data-action="draft"
+                data-value="Help me understand the selected actors and how they fit into this level."
+              >
+                <span data-icon="search"></span
+                ><span
+                  ><strong>Understand my selection</strong
+                  ><span class="starter-detail">Start with the actors you’re working on</span></span
+                ><span data-icon="right"></span>
+              </button>
+              <button
+                data-action="draft"
+                data-value="Help me plan the next change to this level. Inspect the relevant context first, then propose a plan."
+              >
+                <span data-icon="new"></span
+                ><span
+                  ><strong>Plan a change</strong
+                  ><span class="starter-detail">Think it through before editing</span></span
+                ><span data-icon="right"></span>
+              </button>
+              <button id="starter-3d">
+                <span data-icon="cube"></span
+                ><span
+                  ><strong>Create an asset</strong
+                  ><span class="starter-detail">3D models, video and splat worlds</span></span
+                ><span data-icon="right"></span>
+              </button>
+            </div>
+            <p class="empty-note"><span data-icon="attach"></span> Add assets or your selection as context.</p>
+          </section>
+          <div id="messages"></div>
+          <div id="working" role="status" hidden>
+            <span class="pulse"></span><span id="working-label">Working…</span>
+          </div>
+          <div id="delegated-activity" class="delegated-activity" aria-label="Delegated work" hidden></div>
+        </main>
+        <button id="latest" class="latest" hidden>Jump to latest <span data-icon="send"></span></button>
+      </div>
+      <footer class="composer-region">
+        <div id="review-notice" class="review-notice" hidden role="status">
+          <span data-icon="shield"></span><span id="review-label">An action needs your review</span
+          ><button id="review-button" class="small-button">Review action</button>
+        </div>
+        <div id="context-chips" class="context-chips" aria-label="Attached context" hidden></div>
+        <div class="composer" id="composer">
+          <textarea
+            id="prompt"
+            rows="2"
+            placeholder="Ask Hayba to inspect, plan, or build…"
+            aria-label="Message Hayba"
+            spellcheck="true"
+          ></textarea>
+          <div class="composer-controls">
+            <button
+              id="attach-button"
+              class="icon-button"
+              aria-label="Add context"
+              title="Add context"
+              aria-haspopup="menu"
+            >
+              <span data-icon="attach"></span>
+            </button>
+            <button id="model-button" class="control model-control" aria-haspopup="dialog">
+              <span id="model-label">Choose model</span><span data-icon="chevron"></span>
+            </button>
+            <button
+              id="effort-button"
+              class="icon-button effort-control"
+              title="Reasoning effort"
+              aria-label="Reasoning effort"
+              aria-haspopup="menu"
+            >
+              <span data-icon="brain"></span>
+            </button>
+            <button
+              id="send-button"
+              class="send-button"
+              aria-label="Send message"
+              title="Send message (Enter)"
+              disabled
+            >
+              <span data-icon="send"></span>
+            </button>
+          </div>
+        </div>
+        <div class="composer-meta">
+          <button id="mode-button" class="access-control" aria-haspopup="menu">
+            <span data-icon="shield"></span><span id="mode-label">Inspect</span
+            ><span data-icon="chevron"></span></button
+          ><span id="mode-hint">Read-only access</span><span class="key-hint">Shift + Enter <span>new line</span></span>
+        </div>
+        <div id="workspace-notice" class="workspace-notice" role="status" hidden></div>
+      </footer>
+    </div>
+    <div id="overlay-root"></div>
+    <div id="toast" class="workspace-toast" role="status" hidden></div>
+    <div id="announcement" class="sr-only" role="status" aria-live="polite"></div>
+  </body>
+</html>

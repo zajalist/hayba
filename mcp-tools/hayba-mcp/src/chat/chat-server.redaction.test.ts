@@ -187,6 +187,7 @@ describe('chat HTTP/SSE redaction boundary', () => {
     expect(bytes).not.toContain('tool_trace');
     expect(await (await fetch(`${url}/chat/sessions`)).json()).toEqual({
       sessions: [expect.objectContaining({ id, messageCount: 2 })],
+      total: 1, has_more: false, next_offset: null,
     });
     await collectSse(await post('/chat/stream', { session_id: id, last_seq: 0 }));
     expect(sessionStore.load(id)?.activities).toHaveLength(1);
@@ -360,7 +361,6 @@ describe('chat HTTP/SSE redaction boundary', () => {
     };
     const app = express();
     app.use(express.json());
-    let url: string;
     let deleteStatus: number | undefined;
     registerChatRoutes(app, {
       sessionStore,
@@ -377,7 +377,7 @@ describe('chat HTTP/SSE redaction boundary', () => {
       },
     });
     server = app.listen(0);
-    url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
     const frames = await collectSse(
       await fetch(`${url}/chat/stream`, {
         method: 'POST',

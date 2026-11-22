@@ -58,7 +58,7 @@ describe('chat server specialist routing compatibility', () => {
     }
     expect(semantic.filter((event) => event.type !== 'activity_started').every((event) => !event.specialistId)).toBe(true);
     if (expectedTools) {
-      expect(requests[0].tools?.map((tool) => tool.name)).toEqual(expectedTools);
+      expect(requests[0].tools?.map((tool) => tool.name)).toEqual([...expectedTools, 'delegate_task']);
       expect(frames).not.toContain('event: error');
     } else {
       expect(requests).toHaveLength(0);

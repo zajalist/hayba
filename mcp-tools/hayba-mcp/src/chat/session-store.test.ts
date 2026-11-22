@@ -121,17 +121,36 @@ describe('SessionStore', () => {
       'a\\b',
       '..',
       'C:outside',
+      '/outside',
+      '\\\\server\\share\\outside',
+      '%2e%2e%2foutside',
+      'safe\u0000outside',
+      'safe.json:outside',
       'CON',
       'sk-ant-api03-SENTINEL_PROVIDER_KEY_123456789',
     ]) {
       expect(() => store.load(id)).toThrow(/invalid session id/);
       expect(() => store.create(id)).toThrow(/invalid session id/);
       expect(() => store.remove(id)).toThrow(/invalid session id/);
+      expect(() => store.append(id, { messages: [] })).toThrow(/invalid session id/);
+      expect(() => store.replaceMessages(id, [])).toThrow(/invalid session id/);
     }
     const { id } = store.create();
     store.remove(id);
     expect(() => store.append(id, { messages: [] })).toThrow(/unknown session/);
     expect(readdirSync(directory)).toEqual([]);
+  });
+
+  it('normalizes the configured root before reading, updating and deleting session files', () => {
+    const root = join(directory, 'sessions');
+    const store = new SessionStore(root + '/nested/..');
+    store.create('safe-thread_1');
+    store.append('safe-thread_1', { messages: [{ role: 'user', content: 'Inspect this scene' }] });
+    expect(new SessionStore(root).load('safe-thread_1')?.messages).toHaveLength(1);
+    expect(store.list()).toEqual([expect.objectContaining({ id: 'safe-thread_1', messageCount: 1 })]);
+    expect(readdirSync(root)).toEqual(['safe-thread_1.json']);
+    expect(store.remove('safe-thread_1')).toBe(true);
+    expect(readdirSync(root)).toEqual([]);
   });
 
   it('preserves the previous JSON when an append fails validation', () => {
@@ -142,6 +161,24 @@ describe('SessionStore', () => {
     expect(readFileSync(join(directory, `${id}.json`), 'utf8')).toBe(before);
     writeFileSync(join(directory, 'unfinished.tmp'), '{');
     expect(store.list()).toHaveLength(1);
+  });
+
+  it('pages and searches cached metadata without reparsing transcripts, and updates the index on edits/deletion', () => {
+    const store = new SessionStore(directory);
+    for (let i = 0; i < 4; i++) { store.create(`thread_${i}`); store.append(`thread_${i}`, { messages: [{ role: 'user', content: i % 2 ? 'Find actors' : 'Find assets' }] }); }
+    const load = vi.spyOn(store, 'load');
+    const first = store.listPage({ q: 'ASSETS', limit: 1, offset: 0 });
+    expect(first).toMatchObject({ total: 2, has_more: true, next_offset: 1 });
+    expect(first.sessions).toHaveLength(1);
+    const second = store.listPage({ q: 'assets', limit: 1, offset: 1 });
+    expect(second).toMatchObject({ total: 2, has_more: false, next_offset: null });
+    expect(second.sessions[0].id).not.toBe(first.sessions[0].id);
+    expect(load).not.toHaveBeenCalled();
+    store.replaceMessages('thread_0', [{ role: 'user', content: 'Changed title' }]);
+    expect(store.listPage({ q: 'assets' }).total).toBe(1);
+    store.remove('thread_2');
+    expect(store.listPage({ q: 'assets' }).total).toBe(0);
+    expect(store.list()).toHaveLength(3);
   });
 
   it('replaces message history through redaction while preserving activities, artifacts, and usage', () => {

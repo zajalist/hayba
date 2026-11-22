@@ -262,9 +262,17 @@ describe('copilot_health', () => {
   });
 
   it('reports ue_connected=true when the UE bridge answers', async () => {
-    const okSender: Sender = async () => ({ id: 't', ok: true, data: {} });
+    const okSender: Sender = vi.fn(async (command) => command === 'ping'
+      ? { id: 't', ok: true, data: { status: 'ok', plugin: 'HaybaMCPToolkit' } }
+      : { id: 't', ok: false, error: 'Unknown command' });
     setDefaultSender(okSender);
     const data = textOf(await healthHandler({}, {})) as { ue_connected: boolean };
     expect(data.ue_connected).toBe(true);
+    expect(okSender).toHaveBeenCalledWith('ping', {}, 2000);
+  });
+
+  it('does not treat an unrelated or empty success reply as an editor connection', async () => {
+    setDefaultSender(async () => ({ id: 't', ok: true, data: {} }));
+    expect(textOf(await healthHandler({}, {}))).toMatchObject({ ue_connected: false });
   });
 });
