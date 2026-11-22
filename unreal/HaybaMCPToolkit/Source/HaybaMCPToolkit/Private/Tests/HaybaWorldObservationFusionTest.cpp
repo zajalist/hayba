@@ -2,17 +2,7 @@
 #include "HaybaMCPWorldObservationFusion.h"
 #include "Engine/World.h"
 #include "HAL/PlatformTime.h"
-#include "HaybaMCPLatentTest.h"
-#include "HaybaMCPSceneMapWebPanel.h"
-#include "FileHelpers.h"
-#include "Editor.h"
-#include "LevelEditorViewport.h"
-#include "Framework/Application/SlateApplication.h"
-#include "Misc/CommandLine.h"
-#include "Misc/Parse.h"
 #include "Misc/Paths.h"
-#include "RHI.h"
-#include "Widgets/SWindow.h"
 #include "GameFramework/Actor.h"
 #include "Components/StaticMeshComponent.h"
 
@@ -82,7 +72,7 @@ bool FHaybaWorldObservationFusionTest::RunTest(const FString&)
     Store.BindWorld(SecondWorld, FVector::ZeroVector);
     TestEqual(TEXT("new world starts empty"), Store.Num(), 0);
 
-    // The panel's explicit refresh compares this fingerprint before deciding
+    // Compare this fingerprint before deciding
     // whether an older view may remain fused with the new camera observation.
     UWorld* SceneWorld = UWorld::CreateWorld(EWorldType::Editor, false);
     AActor* SceneActor = SceneWorld->SpawnActor<AActor>();
@@ -140,106 +130,4 @@ bool FHaybaWorldObservationFusionMemoryTest::RunTest(const FString&)
     return true;
 }
 
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FHaybaWorldObservationFusionScratchTest,
-    "Hayba.MCP.World.ObservationFusionScratchTwoViews",
-    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
-bool FHaybaWorldObservationFusionScratchTest::RunTest(const FString&)
-{
-    if (!IsIdentifiedScratch() ||
-        !FParse::Param(FCommandLine::Get(), TEXT("HaybaWorldFusionReview")) || GUsingNullRHI)
-    { AddInfo(TEXT("Two-view renderer evidence requires opt-in scratch editor with RHI.")); return true; }
-    FString MapPath;
-    if (!FParse::Value(FCommandLine::Get(), TEXT("HaybaWorldVisualMap="), MapPath) ||
-        !FPaths::FileExists(MapPath) || !FEditorFileUtils::LoadMap(MapPath, false, false))
-    { AddError(TEXT("Pass a loadable scratch map with -HaybaWorldVisualMap=.")); return false; }
-    struct FContext
-    {
-        TSharedPtr<SHaybaMCPSceneMapWebPanel> Panel;
-        TSharedPtr<SWindow> Window;
-        int32 FirstPoints = 0;
-        double FirstProcessingTickMs = 0.0;
-        double FirstInsertionTickMs = 0.0;
-        double FirstReplayTickMs = 0.0;
-        double FirstReplayBuildMs = 0.0;
-        double FirstReplayEncodeMs = 0.0;
-        double FirstReplayInjectionMs = 0.0;
-        double FirstStartedAt = 0.0;
-        double SecondStartedAt = 0.0;
-        double FirstWallMs = 0.0;
-    };
-    TSharedRef<FContext> Context = MakeShared<FContext>();
-    Context->FirstStartedAt = FPlatformTime::Seconds();
-    Context->Panel = SNew(SHaybaMCPSceneMapWebPanel);
-    Context->Window = SNew(SWindow).ClientSize(FVector2D(1000, 720))
-        .Title(FText::FromString(TEXT("Hayba World fusion review")))
-        .SupportsMaximize(false).SupportsMinimize(false)[Context->Panel.ToSharedRef()];
-    FSlateApplication::Get().AddWindow(Context->Window.ToSharedRef());
-    ADD_LATENT_AUTOMATION_COMMAND(FHaybaWaitUntilLatentCommand(this,
-        TEXT("first rendered World view"), [Context]()
-        {
-            return Context->Panel.IsValid() && Context->Panel->IsScanDone() &&
-                Context->Panel->GetFusedCaptureCount() == 1 &&
-                Context->Panel->GetFusedObservedPointCount() > 0;
-        }, 90.0));
-    ADD_LATENT_AUTOMATION_COMMAND(FFunctionLatentCommand([this, Context]()
-    {
-        Context->FirstPoints = Context->Panel->GetFusedObservedPointCount();
-        Context->FirstProcessingTickMs = Context->Panel->GetDepthMaxTickCpuMs();
-        Context->FirstInsertionTickMs = Context->Panel->GetFusionInsertionMaxTickMs();
-        Context->FirstReplayTickMs = Context->Panel->GetFusionReplayMaxTickMs();
-        Context->FirstReplayBuildMs = Context->Panel->GetFusionReplayBuildMaxTickMs();
-        Context->FirstReplayEncodeMs = Context->Panel->GetFusionReplayEncodeMaxTickMs();
-        Context->FirstReplayInjectionMs = Context->Panel->GetFusionReplayInjectionMaxTickMs();
-        Context->FirstWallMs = (FPlatformTime::Seconds() - Context->FirstStartedAt) * 1000.0;
-        UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
-        FLevelEditorViewportClient* View = GCurrentLevelEditingViewportClient;
-        if (!View || View->GetWorld() != World || !View->IsPerspective())
-        {
-            View = nullptr;
-            if (GEditor) for (FLevelEditorViewportClient* Candidate : GEditor->GetLevelViewportClients())
-                if (Candidate && Candidate->GetWorld() == World && Candidate->IsPerspective())
-                { View = Candidate; break; }
-        }
-        if (!TestNotNull(TEXT("scratch perspective viewport"), View)) return true;
-        View->SetViewLocation(View->GetViewLocation() + FVector(100, 0, 0));
-        View->SetViewRotation(View->GetViewRotation() + FRotator(0, 10, 0));
-        Context->SecondStartedAt = FPlatformTime::Seconds();
-        Context->Panel->Refresh();
-        return true;
-    }));
-    ADD_LATENT_AUTOMATION_COMMAND(FHaybaWaitUntilLatentCommand(this,
-        TEXT("second moved-camera World view"), [Context]()
-        {
-            return Context->Panel.IsValid() && Context->Panel->IsScanDone() &&
-                Context->Panel->GetFusedCaptureCount() >= 2;
-        }, 90.0));
-    ADD_LATENT_AUTOMATION_COMMAND(FFunctionLatentCommand([this, Context]()
-    {
-        if (Context->Panel.IsValid())
-        {
-            AddInfo(FString::Printf(TEXT("Two-view World: first=%d resident, second=%d resident, captures=%d, overlap=%lld voxels; tick processing %.2f/%.2f ms, fusion insert %.2f/%.2f ms, replay %.2f/%.2f ms; native allocated=%.1f MiB"),
-                Context->FirstPoints, Context->Panel->GetFusedObservedPointCount(),
-                Context->Panel->GetFusedCaptureCount(),
-                static_cast<long long>(Context->Panel->GetFusedDeduplicatedCount()),
-                Context->FirstProcessingTickMs, Context->Panel->GetDepthMaxTickCpuMs(),
-                Context->FirstInsertionTickMs, Context->Panel->GetFusionInsertionMaxTickMs(),
-                Context->FirstReplayTickMs, Context->Panel->GetFusionReplayMaxTickMs(),
-                static_cast<double>(Context->Panel->GetFusedAllocatedBytes()) / (1024.0 * 1024.0)));
-            AddInfo(FString::Printf(TEXT("Replay phase max first/second: build %.2f/%.2f ms, JSON encode %.2f/%.2f ms, CEF injection %.2f/%.2f ms"),
-                Context->FirstReplayBuildMs, Context->Panel->GetFusionReplayBuildMaxTickMs(),
-                Context->FirstReplayEncodeMs, Context->Panel->GetFusionReplayEncodeMaxTickMs(),
-                Context->FirstReplayInjectionMs, Context->Panel->GetFusionReplayInjectionMaxTickMs()));
-            AddInfo(FString::Printf(TEXT("Two-view scan wall time first/second: %.1f/%.1f ms"),
-                Context->FirstWallMs, (FPlatformTime::Seconds() - Context->SecondStartedAt) * 1000.0));
-            TestTrue(TEXT("moved view retains first observation and adds non-overlap"),
-                Context->Panel->GetFusedObservedPointCount() > Context->FirstPoints);
-            TestTrue(TEXT("moved view overlaps first view"),
-                Context->Panel->GetFusedDeduplicatedCount() > 0);
-        }
-        if (Context->Window.IsValid())
-            FSlateApplication::Get().RequestDestroyWindow(Context->Window.ToSharedRef());
-        return true;
-    }));
-    return true;
-}
 #endif

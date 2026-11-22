@@ -184,6 +184,7 @@ FHaybaHandlerResult FHaybaMCPLeaseHandler::Acquire(const TSharedPtr<FJsonObject>
 	Request.Lane = Lane == TEXT("long") ? ELane::Long : ELane::Interactive;
 	P->TryGetNumberField(TEXT("ttl_s"), Request.TtlSeconds);
 	P->TryGetNumberField(TEXT("confirm_within_s"), Request.ConfirmWithinSeconds);
+	P->TryGetBoolField(TEXT("front"), Request.bFront);
 
 	bool bBind = true;
 	P->TryGetBoolField(TEXT("bind_connection"), bBind);
@@ -211,6 +212,13 @@ FHaybaHandlerResult FHaybaMCPLeaseHandler::Acquire(const TSharedPtr<FJsonObject>
 			Out->SetNumberField(TEXT("ttl_s"), Lease->TtlSeconds);
 			Out->SetBoolField(TEXT("bind_connection"), Lease->bBindConnection);
 			Out->SetArrayField(TEXT("resources"), ClaimsToJson(Lease->Claims));
+			if (Lease->bPassedExclusive)
+			{
+				// Granted ahead of a waiting EXCLUSIVE: renewals cannot take it past this.
+				Out->SetBoolField(TEXT("passed_exclusive"), true);
+				Out->SetNumberField(TEXT("hard_expires_in_s"), FMath::Max(0.0,
+					Lease->GrantedAt + Manager.Table().GetTuning().BypassMaxTtlSeconds - Manager.Now()));
+			}
 		}
 		Out->SetNumberField(TEXT("max_ttl_s"), Manager.Table().GetTuning().MaxTtlSeconds);
 		Out->SetNumberField(TEXT("orphan_grace_s"), Manager.Table().GetTuning().OrphanGraceSeconds);
