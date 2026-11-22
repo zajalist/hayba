@@ -84,7 +84,7 @@ describe('editor-state policy names real commands', () => {
       expect(reads, `R-12 read ${name}`).toContain(name);
     }
     expect(observation.length).toBe(10);
-    expect(pieOwner.length).toBe(8);
+    expect(pieOwner.length).toBe(9);
   });
 
   it('every PIE-safe and PIE-owner name is a handler command or router-inline', () => {

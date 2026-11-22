@@ -54,7 +54,7 @@ bool FHaybaMCPStatePieRuleTest::RunTest(const FString& Parameters)
 		TestEqual(*FString::Printf(TEXT("%s is PIE-safe by its lease_ prefix"), Cmd), PieRuleFor(Cmd), EPieRule::Safe);
 	}
 
-	TestEqual(TEXT("exactly eight PIE-owner commands"), PieOwnerCommands().Num(), 8);
+	TestEqual(TEXT("exactly nine PIE-owner commands"), PieOwnerCommands().Num(), 9);
 	for (const FString& Cmd : PieOwnerCommands())
 	{
 		TestEqual(*FString::Printf(TEXT("%s is a PIE-owner command"), *Cmd), PieRuleFor(Cmd), EPieRule::PieOwner);
@@ -103,6 +103,7 @@ bool FHaybaMCPStatePieVerdictTest::RunTest(const FString& Parameters)
 	TestFalse(TEXT("a write is refused during the user's PIE"), CheckPie(UserPie, TEXT("blueprint_add_node"), TEXT("lane-b")).bAllow);
 	TestFalse(TEXT("nobody drives the user's PIE"), CheckPie(UserPie, TEXT("editor_pie_press_key"), TEXT("lane-b")).bAllow);
 	TestFalse(TEXT("nobody stops the user's PIE"), CheckPie(UserPie, TEXT("editor_stop_pie"), TEXT("lane-b")).bAllow);
+	TestFalse(TEXT("nobody sends console commands into the user's PIE"), CheckPie(UserPie, TEXT("editor_run_console_command"), TEXT("lane-b")).bAllow);
 	TestFalse(TEXT("an empty caller owner does not match the user's empty owner"), CheckPie(UserPie, TEXT("editor_pie_press_key"), FString()).bAllow);
 
 	// An agent's PIE, running or queued: its owner drives, anyone stops, nobody edits.
@@ -119,6 +120,10 @@ bool FHaybaMCPStatePieVerdictTest::RunTest(const FString& Parameters)
 		TestTrue(TEXT("any caller stops an agent PIE"), ForeignStop.bAllow && ForeignStop.bAuthorizedAsPie);
 		TestTrue(TEXT("a foreign stop is flagged for the Warning"), ForeignStop.bNonOwnerStop);
 		TestFalse(TEXT("the owner cannot edit during its own PIE"), CheckPie(Agent, TEXT("blueprint_add_node"), TEXT("lane-a")).bAllow);
+		const FPieVerdict OwnerConsole = CheckPie(Agent, TEXT("editor_run_console_command"), TEXT("lane-a"));
+		TestTrue(TEXT("the owner runs console commands into its PIE"), OwnerConsole.bAllow && OwnerConsole.bAuthorizedAsPie);
+		TestFalse(TEXT("another owner does not"), CheckPie(Agent, TEXT("editor_run_console_command"), TEXT("lane-b")).bAllow);
+		TestFalse(TEXT("python_run stays refused, even for the owner"), CheckPie(Agent, TEXT("python_run"), TEXT("lane-a")).bAllow);
 		const FPieVerdict Observe = CheckPie(Agent, TEXT("editor_pie_actor_list"), TEXT("lane-b"));
 		TestTrue(TEXT("anyone observes"), Observe.bAllow);
 		TestFalse(TEXT("observation needs no lease-gate skip"), Observe.bAuthorizedAsPie);

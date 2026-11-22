@@ -203,7 +203,8 @@ namespace HaybaMCPState
 		}
 	}
 
-	/** Drive commands plus editor_stop_pie: the agent that owns a PIE drives it; any caller stops an agent PIE. */
+	/** Drive commands, console commands into the owner's own game, plus editor_stop_pie: the agent that owns a PIE
+	 *  drives it; any caller stops an agent PIE. The console handler refuses world "editor" during PIE itself. */
 	inline const TSet<FString>& PieOwnerCommands()
 	{
 		static const TSet<FString> Commands = {
@@ -214,6 +215,7 @@ namespace HaybaMCPState
 			TEXT("editor_pie_click_widget"),
 			TEXT("editor_pie_set_text"),
 			TEXT("editor_pie_click_actor"),
+			TEXT("editor_run_console_command"),
 			TEXT("editor_stop_pie"),
 		};
 		return Commands;

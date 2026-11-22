@@ -682,6 +682,9 @@ FHaybaHandlerResult FHaybaMCPEditorHandler::RunConsoleCommand(const TSharedPtr<F
     Target = Target.ToLower();
     if (Target != TEXT("auto") && Target != TEXT("pie") && Target != TEXT("editor"))
         return FHaybaHandlerResult::Err(TEXT("editor_run_console_command: world must be auto, pie or editor. Nothing was executed."));
+    // During PIE only the session's owner reaches this (PieOwnerCommands), and only to drive its game.
+    if (Target == TEXT("editor") && GEditor && GEditor->PlayWorld)
+        return FHaybaHandlerResult::Err(TEXT("editor_run_console_command: world \"editor\" is refused while a Play-In-Editor session runs; Hayba makes no editor changes during PIE. Use world auto or pie, or stop PIE first. Nothing was executed."));
     // With several PIE instances PlayWorld is the last PIE world context (UEditorEngine::Tick leaves it there).
     UWorld* World = GEditor && Target != TEXT("editor") ? GEditor->PlayWorld.Get() : nullptr;
     if (!World && Target == TEXT("pie"))
