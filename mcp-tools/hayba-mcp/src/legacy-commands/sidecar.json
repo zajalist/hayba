@@ -1015,13 +1015,20 @@
           "name": "name",
           "type": "string",
           "required": true,
-          "description": "Asset name; non-alnum chars are collapsed to '_'. Saved under /Game/Hayba/Generated/<name>"
+          "description": "Asset name; non-alnum chars are collapsed to '_'. Saved under <path>/<name>"
         },
         {
           "name": "graph",
           "type": "object",
           "required": true,
           "description": "Graph payload: {nodes:[{id, class, position?:{x,y}, properties:{...}}], edges:[{fromNode|from, fromPin, toNode|to, toPin}]}"
+        },
+        {
+          "name": "path",
+          "type": "string",
+          "required": false,
+          "default": "/Game/Hayba/Generated",
+          "description": "Content folder for the graph asset. A PCG graph that already exists there under this name is rebuilt in place (same object, so subgraph and component references stay valid); a non-graph asset there is refused."
         }
       ],
       "returns": {
@@ -1034,7 +1041,12 @@
           {
             "name": "assetPath",
             "type": "string",
-            "description": "/Game/Hayba/Generated/<sanitized-name> (only when created:true)"
+            "description": "<path>/<sanitized-name> (only when created:true)"
+          },
+          {
+            "name": "rebuiltInPlace",
+            "type": "boolean",
+            "description": "true when an existing graph was cleared and rebuilt rather than created"
           },
           {
             "name": "nodeCount",
@@ -1049,7 +1061,7 @@
       },
       "agent_callable": true,
       "has_ts_wrapper": true,
-      "notes": "Wrapped by hayba_create_pcg_graph (src/tools/create-pcg-graph.ts). Validates before creating; on validation failure returns {created:false, errors:[...]}. A read-only /Game/Hayba/Generated/<name> package is refused before anything is created or replaced (code package_read_only, data.make_writable_hint); the existing graph is kept."
+      "notes": "Wrapped by hayba_create_pcg_graph (src/tools/create-pcg-graph.ts). Validates before creating; on validation failure returns {created:false, errors:[...]}. An existing graph at <path>/<name> is rebuilt in place: its nodes and edges are replaced from the spec, its graph settings and user parameters are kept. A read-only package is refused before anything is created or replaced (code package_read_only, data.make_writable_hint); the existing graph is kept."
     },
     "pcg_create_graph": {
       "aliases": [
@@ -1066,6 +1078,13 @@
           "name": "graph",
           "type": "object",
           "required": true
+        },
+        {
+          "name": "path",
+          "type": "string",
+          "required": false,
+          "default": "/Game/Hayba/Generated",
+          "description": "Content folder for the graph asset; an existing PCG graph there is rebuilt in place"
         }
       ],
       "returns": {
@@ -1078,6 +1097,10 @@
           {
             "name": "assetPath",
             "type": "string"
+          },
+          {
+            "name": "rebuiltInPlace",
+            "type": "boolean"
           },
           {
             "name": "nodeCount",
