@@ -752,6 +752,56 @@ FHaybaHandlerResult FHaybaMCPLegacyHandler::Cmd_CreateGraph(const TSharedPtr<FJs
             const TSharedPtr<FJsonObject>& PropsObj = NodeObj->GetObjectField(TEXT("properties"));
             if (PropsObj.IsValid() && Settings)
             {
+                // A Static Mesh Spawner's selector and packer are instanced objects built from MeshSelectorType and
+                // InstanceDataPackerType. Writing those classes directly (the generic loop below) left the old
+                // instance in place, so the types go through the engine's setters first and their *Parameters then
+                // fill the new instances. The generic loop skips these four keys.
+                UPCGStaticMeshSpawnerSettings* Spawner = Cast<UPCGStaticMeshSpawnerSettings>(Settings);
+                if (Spawner)
+                {
+                    for (const TCHAR* TypeKey : { TEXT("MeshSelectorType"), TEXT("InstanceDataPackerType") })
+                    {
+                        if (!PropsObj->HasField(TypeKey)) continue;
+                        FString TypeName;
+                        PropsObj->TryGetStringField(TypeKey, TypeName);
+                        const FClassProperty* TypeProp = CastField<FClassProperty>(SettingsClass->FindPropertyByName(TypeKey));
+                        UClass* Type = TypeName.StartsWith(TEXT("/")) ? LoadObject<UClass>(nullptr, *TypeName)
+                            : FindFirstObject<UClass>(*TypeName, EFindFirstObjectOptions::NativeFirst);
+                        if (!TypeProp || !TypeProp->MetaClass || !Type || !Type->IsChildOf(TypeProp->MetaClass)
+                            || Type->HasAnyClassFlags(CLASS_Abstract))
+                        {
+                            PropertyProblems.Add(FString::Printf(TEXT("node \"%s\" (%s).%s: '%s' is not a concrete %s class"),
+                                *NodeId, *NodeClass, TypeKey, *TypeName,
+                                TypeProp && TypeProp->MetaClass ? *TypeProp->MetaClass->GetName() : TEXT("selector/packer")));
+                            continue;
+                        }
+                        if (FCString::Strcmp(TypeKey, TEXT("MeshSelectorType")) == 0) Spawner->SetMeshSelectorType(Type);
+                        else Spawner->SetInstancePackerType(Type);
+                        ++PropertiesApplied;
+                    }
+                    for (const TCHAR* ParamsKey : { TEXT("MeshSelectorParameters"), TEXT("InstanceDataPackerParameters") })
+                    {
+                        if (!PropsObj->HasField(ParamsKey)) continue;
+                        UObject* Instanced = FCString::Strcmp(ParamsKey, TEXT("MeshSelectorParameters")) == 0
+                            ? static_cast<UObject*>(Spawner->MeshSelectorParameters)
+                            : static_cast<UObject*>(Spawner->InstanceDataPackerParameters);
+                        const TSharedPtr<FJsonObject>* Fields = nullptr;
+                        if (!Instanced || !PropsObj->TryGetObjectField(ParamsKey, Fields) || !Fields)
+                        {
+                            PropertyProblems.Add(FString::Printf(TEXT("node \"%s\" (%s).%s: needs an object of fields for the node's %s"),
+                                *NodeId, *NodeClass, ParamsKey, Instanced ? *Instanced->GetClass()->GetName() : TEXT("instance (none)")));
+                            continue;
+                        }
+                        for (const auto& Field : (*Fields)->Values)
+                        {
+                            const FString FieldName(Field.Key);
+                            if (HaybaReflection::SetProp(Instanced, FieldName, Field.Value)) ++PropertiesApplied;
+                            else PropertyProblems.Add(FString::Printf(TEXT("node \"%s\" (%s).%s.%s: could not apply to a %s"),
+                                *NodeId, *NodeClass, ParamsKey, *FieldName, *Instanced->GetClass()->GetName()));
+                        }
+                    }
+                }
+
                 // Every rejection here is reported, not swallowed.
                 //
                 // A property that does not land on a PCG node does not fail
@@ -782,6 +832,11 @@ FHaybaHandlerResult FHaybaMCPLegacyHandler::Cmd_CreateGraph(const TSharedPtr<FJs
                         PropertyProblems.Add(FString::Printf(
                             TEXT("%s: property is not editable (no CPF_Edit), so it cannot be set this way"), *NodeLabel));
                         continue;
+                    }
+                    if (Spawner && (PropName == TEXT("MeshSelectorType") || PropName == TEXT("InstanceDataPackerType")
+                        || PropName == TEXT("MeshSelectorParameters") || PropName == TEXT("InstanceDataPackerParameters")))
+                    {
+                        continue; // applied above, through the engine's setters
                     }
 
                     // Routed through the shared reflection module rather than
